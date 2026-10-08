@@ -147,3 +147,13 @@ describe("scanTaskTree", () => {
     expect(globToRegExp("mission_planner/**").test("mission_planner/x/y.md")).toBe(true);
   });
 });
+
+describe("-simplified.md companions", () => {
+  it("count as the simple slot in overlay reports", () => {
+    const r = overlayReport(
+      { tagged: new Map([["WC-0001", ["w/done/a.md", "w/done/a-simplified.md"]]]), untracked: [] },
+      [{ id: "WC-0001", source: "w/a.md", simple_source: "w/a-simplified.md" }],
+    );
+    expect(r.moves).toEqual([{ id: "WC-0001", source: "w/done/a.md", simple_source: "w/done/a-simplified.md" }]);
+  });
+});

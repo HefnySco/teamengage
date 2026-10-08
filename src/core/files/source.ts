@@ -10,6 +10,9 @@ import YAML from "yaml";
  * module only ever adds or rewrites that one key.
  */
 
+/** Plain-English companion of a task file: `X.simple.md` or `X-simplified.md`. */
+export const SIMPLE_SUFFIX = /(?:\.simple|-simplified)\.md$/i;
+
 const LEADING_FM = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /** Leading frontmatter, only when it is a YAML map (a leading `---` rule is not). */
@@ -72,7 +75,8 @@ export interface ResolvedSource {
 /**
  * Find an item's task file: the recorded path when it still carries this id
  * (or no tag at all), else any `.md` under the root tagged `te: <id>` — a
- * main file is preferred over a `.simple.md` companion. Dot-dirs (the plans
+ * main file is preferred over a simple companion (`.simple.md` /
+ * `-simplified.md`). Dot-dirs (the plans
  * dir, .git) are never searched.
  */
 export async function resolveSource(
@@ -102,7 +106,7 @@ export async function resolveSource(
     }
   };
   if (existsSync(root)) await walk(root);
-  const isSimple = (h: ResolvedSource) => /\.simple\.md$/i.test(h.path);
+  const isSimple = (h: ResolvedSource) => SIMPLE_SUFFIX.test(h.path);
   return hits.find((h) => isSimple(h) === Boolean(opts.simple)) ?? (opts.simple ? undefined : hits[0]);
 }
 
@@ -180,7 +184,7 @@ export function overlayReport(
   const findings: OverlayFinding[] = [];
   const known = new Set(items.map((i) => i.id));
   const untracked = new Set(scan.untracked);
-  const isSimple = (p: string) => /\.simple\.md$/i.test(p);
+  const isSimple = (p: string) => SIMPLE_SUFFIX.test(p);
 
   for (const it of items) {
     if (!it.source) continue;
@@ -190,7 +194,7 @@ export function overlayReport(
       ["source", it.source, paths.filter((p) => !isSimple(p))],
       ["simple_source", it.simple_source, paths.filter(isSimple)],
     ];
-    // a source that is itself a .simple.md (no main file) lives in `source`
+    // a source that is itself a simple companion (no main file) lives in `source`
     if (isSimple(it.source)) {
       slots[0][2] = paths.filter(isSimple);
       slots.pop();

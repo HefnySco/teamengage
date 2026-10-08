@@ -332,7 +332,7 @@ guessing, `submit` — never mark done, never push."
 `te import ~/de_code/Tasks --dry-run`:
 - folder → status (`done/` → done, `partially-done/` → in_progress, …)
 - `Depends on:` / `Order: after` lines → `depends_on` (ambiguous ones flagged)
-- `X.simple.md` merged into `X`'s `## Simple` section
+- `X.simple.md` (or `X-simplified.md`) merged into `X`'s `## Simple` section
 - filename prefix → type (`TASK`→task, `PLAN`/`PHASE`/`MEGAPLAN`→epic, `REVIEW`→review)
 - output: a diff and a list of items needing a human decision.
 

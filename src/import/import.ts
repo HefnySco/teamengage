@@ -1,5 +1,6 @@
 import type { Status, ItemType } from "../core/model/item.js";
 import { allocateId } from "../core/address/refs.js";
+import { SIMPLE_SUFFIX } from "../core/files/source.js";
 
 /**
  * Markdown-folder importer (DESIGN §9, IM-0001). Pure planning: takes file
@@ -98,7 +99,6 @@ const DEP_RE =
 /** Values that mean "no dependencies" rather than naming one. */
 const NO_DEP_RE = /^(nothing|none|no\b.*|-|—|n\/a)$/i;
 const TITLE_RE = /^#\s+(.+)$/m;
-const SIMPLE_SUFFIX = /\.simple\.md$/i;
 /** A dep-list ends at the next bold LABEL (`**Unblocks:**`), not any `**`. */
 const DEP_CUT_RE = /\*\*[A-Za-z][^*]*:\*\*/;
 /** Ref-shaped tokens: `P4B-10`, `SU-05`, `TASK-P4B-03A` → `P4B-03A`. */
@@ -141,7 +141,7 @@ export function planImport(
   const amb: Ambiguity[] = [];
   const seenLegacy = new Map<string, string>(); // legacy → file
 
-  // group by full dir + base name: X.md and X.simple.md merge
+  // group by full dir + base name: X.md and X.simple.md / X-simplified.md merge
   const groups = new Map<
     string,
     { main?: ImportSource; simple?: ImportSource; dirSegments: string[] }
