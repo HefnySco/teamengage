@@ -16,10 +16,12 @@ import { SessionRegistry } from "./sessions/sessions.js";
 import { EventBus, registerEventRoutes } from "./api/events.js";
 import { registerApiRoutes } from "./api/api.js";
 import { LinkedWorkspaces } from "./links/links.js";
+import { registerUiRoutes } from "./api/ui.js";
 import { registerMcpRoutes } from "../mcp/server/mcp.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
 import { parseDuration } from "../core/model/workspace.js";
+import { reconcile } from "./sync/sync.js";
 
 /**
  * teamengaged — one instance per machine (DESIGN §6.1).
@@ -55,8 +57,17 @@ async function main(): Promise<number | undefined> {
       const links = await LinkedWorkspaces.load(ws, home);
       const watcher = new PlansWatcher(store, {
         staleAfterMs: parseDuration(ws.config.stale_after),
-        onEvent: (e) =>
-          ctx.bus.notify("watch", { workspace: name, kind: e.kind, path: e.path, item: e.item, message: e.message }),
+        onEvent: (e) => {
+          ctx.bus.notify("watch", { workspace: name, kind: e.kind, path: e.path, item: e.item, message: e.message });
+          if (e.kind === "claim_change") {
+            const wsr = ctx.workspaces.get(name);
+            if (wsr) {
+              void reconcile(wsr, (msg) =>
+                ctx.bus.notify("reconcile", { workspace: name, message: msg }),
+              );
+            }
+          }
+        },
       });
       await watcher.start();
       ctx.workspaces.set(name, { ws, store, watcher, links });
@@ -81,6 +92,7 @@ async function main(): Promise<number | undefined> {
     register: async (app) => {
       registerApiRoutes(app, ctx);
       registerEventRoutes(app, ctx.bus);
+      registerUiRoutes(app);
       registerMcpRoutes(app, {
         ctx,
         tools: (server, binding, c) => {

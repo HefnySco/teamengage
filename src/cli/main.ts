@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initCmd } from "./commands/init.js";
-import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd } from "./commands/read.js";
+import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
+import { importCmd } from "./commands/import.js";
 import {
   approveCmd,
   acceptCmd,
@@ -88,6 +89,8 @@ async function main(argv: string[]): Promise<number> {
       return validateCmd(rest, home);
     case "status":
       return statusCmd(rest, home);
+    case "sync":
+      return syncCmd(rest, home);
     case "approve":
       return approveCmd(rest, home);
     case "answer":
@@ -104,6 +107,8 @@ async function main(argv: string[]): Promise<number> {
       return releaseCmd(rest, home);
     case "renumber":
       return renumberCmd(rest, home);
+    case "import":
+      return importCmd(rest, home);
     case "mcp": {
       const { runShim } = await import("../mcp/shim/shim.js");
       await runShim(home);
@@ -120,6 +125,15 @@ async function main(argv: string[]): Promise<number> {
     case "agents-md":
       process.stdout.write(AGENTS_SNIPPET);
       return 0;
+    case "ui": {
+      const { ensureDaemon } = await import("./client.js");
+      const { port, token } = await ensureDaemon(home);
+      const url = `http://127.0.0.1:${port}/ui/#t=${token}`;
+      process.stdout.write(`${url}\n`);
+      const { spawn } = await import("node:child_process");
+      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+      return 0;
+    }
     default:
       process.stderr.write(`te: unknown command '${cmd}'\n`);
       process.stdout.write(USAGE);

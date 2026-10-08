@@ -112,6 +112,32 @@ export async function validateCmd(args: string[], home?: string): Promise<number
   return findings.some((f) => f.severity === "error") ? 1 : 0;
 }
 
+export async function syncCmd(args: string[], home?: string): Promise<number> {
+  const s = (await daemonApi("GET", `/api/sync?${wsQ(args)}`, undefined, home)) as {
+    repo: { remote: boolean; ahead: number; behind: number; upstream?: string };
+    unsyncedClaims: string[];
+    notPushed: Array<{ item: string; resource: string; merge_commit: string }>;
+    pushed: Array<{ item: string; resource: string; remotes: string[] }>;
+  };
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify(s, null, 2) + "\n");
+    return 0;
+  }
+  if (!s.repo.remote) {
+    process.stdout.write("plans repo has no remote (sync is manual file/git ops)\n");
+  } else {
+    process.stdout.write(`plans repo: ${s.repo.ahead} ahead, ${s.repo.behind} behind ${s.repo.upstream ?? "?"}\n`);
+  }
+  if (s.unsyncedClaims.length) process.stdout.write(`unsynced claims: ${s.unsyncedClaims.join(", ")}\n`);
+  for (const d of s.notPushed) {
+    process.stdout.write(`not pushed: ${d.item} ${d.resource} ${d.merge_commit.slice(0, 12)}\n`);
+  }
+  for (const d of s.pushed) {
+    process.stdout.write(`pushed: ${d.item} ${d.resource} → ${d.remotes.join(", ")}\n`);
+  }
+  return 0;
+}
+
 export async function statusCmd(args: string[], home?: string): Promise<number> {
   const inbox = await daemonApi("GET", `/api/inbox?${wsQ(args)}`, undefined, home);
   if (flag(args, "--json")) {

@@ -81,7 +81,12 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
   app.addHook("onRequest", async (req, reply) => {
     if (req.url === "/health") return;
     const auth = req.headers.authorization;
-    if (auth !== `Bearer ${token}`) {
+    // browsers can't set headers on navigation/SSE — accept the same token
+    // via ?token= or a te_token cookie (set by the UI once, then dropped from
+    // the URL). Still loopback-only.
+    const q = (req.query ?? {}) as { token?: string };
+    const cookie = /(?:^|;\s*)te_token=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
+    if (auth !== `Bearer ${token}` && q.token !== token && cookie !== token) {
       await reply.code(401).send({ error: "unauthorized" });
     }
   });

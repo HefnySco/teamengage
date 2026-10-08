@@ -15,7 +15,7 @@ import { okText, errText, errFrom, itemLine, type ToolResult } from "../format.j
 export function opsFor(binding: AgentBinding, ctx: DaemonCtx, workspace?: string) {
   const wsr = pickWorkspace(binding, ctx, workspace);
   if ("content" in wsr) return wsr; // ToolResult error
-  return new WorkspaceOps(wsr, ctx.sessions, wsr.links);
+  return new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
 }
 
 export function needSession(binding: AgentBinding): ToolResult | Session {

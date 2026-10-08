@@ -265,6 +265,110 @@ export class PlansStore {
     });
   }
 
+  /**
+   * Bulk import (IM-0001): create items with an explicit status and legacy_id
+   * in one commit. Idempotent — items whose legacy_id already exists are
+   * skipped. Human-side operation; agents can't reach it.
+   */
+  importItems(
+    items: Array<{
+      id: string;
+      legacy_id: string;
+      type: string;
+      title: string;
+      status: string;
+      depends_on: string[];
+      summary: string;
+      simple?: string;
+      project?: string;
+    }>,
+    actor: Actor,
+  ): Promise<{ created: string[]; skipped: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const { ItemMeta, Status } = await import("../../core/model/item.js");
+      const existingLegacy = new Set(
+        [...this.index.items.values()]
+          .map((i) => (i.meta as { legacy_id?: string }).legacy_id)
+          .filter((x): x is string => Boolean(x)),
+      );
+      const now = new Date().toISOString().slice(0, 10);
+      const created: string[] = [];
+      const skipped: string[] = [];
+      const writes: Array<{ rel: string; content: string }> = [];
+      for (const d of items) {
+        if (existingLegacy.has(d.legacy_id)) {
+          skipped.push(d.id);
+          continue;
+        }
+        const meta = ItemMeta.parse({
+          id: d.id,
+          type: d.type,
+          title: d.title,
+          status: Status.parse(d.status),
+          project: d.project,
+          targets: [],
+          depends_on: d.depends_on,
+          priority: 2,
+          version: 1,
+          created: now,
+          updated: now,
+          legacy_id: d.legacy_id,
+        });
+        let body = `\n## Summary\n${d.summary}\n`;
+        if (d.simple) body += `\n## Simple\n${d.simple}\n`;
+        const { idPrefix } = await import("../../core/address/refs.js");
+        writes.push({
+          rel: join("items", idPrefix(d.id), `${d.id}.md`),
+          content: `${emitFrontmatter(meta)}${body}`,
+        });
+        created.push(d.id);
+      }
+      for (const w of writes) {
+        await writeFileAtomic(join(this.ws.plansDir, w.rel), w.content);
+      }
+      if (writes.length) {
+        await this.commitPaths(
+          writes.map((w) => w.rel),
+          `te: import ${created.length} items by ${actor.session}`,
+        );
+        for (const w of writes) await this.index.upsertFile(join(this.ws.plansDir, w.rel));
+      }
+      return { created, skipped };
+    });
+  }
+
+  /**
+   * Daemon-internal annotation: append lines to a section and/or patch
+   * frontmatter, bump version, commit. Used for merge records and sync notes —
+   * not a state transition.
+   */
+  annotate(
+    id: string,
+    opts: { heading: string; lines: string[]; metaPatch?: Record<string, unknown> },
+  ): Promise<ItemMeta> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const absPath = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absPath, "utf8"), absPath);
+      const meta = {
+        ...doc.meta,
+        ...(opts.metaPatch ?? {}),
+        version: doc.meta.version + 1,
+        updated: new Date().toISOString().slice(0, 10),
+      } as ItemMeta;
+      await this.writeItemDoc(absPath, doc.raw.text, meta, [], [
+        { heading: opts.heading, text: opts.lines.join("\n") + "\n" },
+      ]);
+      await this.commitPaths([it.path], `te: ${id} annotated`);
+      await this.index.upsertFile(absPath);
+      return meta;
+    });
+  }
+
   private items(): { metaIds: () => string[] } {
     return { metaIds: () => [...this.index.items.keys()] };
   }

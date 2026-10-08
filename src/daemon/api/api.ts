@@ -21,7 +21,7 @@ function opsFor(ctx: DaemonCtx, ws?: string): WorkspaceOps {
       ws ? `workspace '${ws}' not registered` : "no workspace registered on this machine",
     );
   }
-  return new WorkspaceOps(wsr, ctx.sessions, wsr.links);
+  return new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
 }
 
 function sendErr(reply: FastifyReply, e: unknown) {
@@ -126,6 +126,69 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         claims: [...ops.index.claims.values()].filter((c) => c.conflicted),
         findings: ops.findings(),
       };
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  /** Sync status (SY-0001, RS-0004): plans repo ahead/behind, unsynced claims,
+   * merged-but-not-pushed deliveries, pushes detected on fetch. */
+  app.get("/api/sync", async (req, reply) => {
+    try {
+      const wsr = wsOf(req.query)
+        ? ctx.workspaces.get(wsOf(req.query)!)
+        : ctx.workspaces.size === 1
+          ? ctx.workspaces.values().next().value
+          : undefined;
+      if (!wsr) throw new NotFoundError("no workspace registered on this machine");
+      const { syncStatus } = await import("../sync/sync.js");
+      return await syncStatus(wsr);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  /** Markdown-folder import (IM-0001): dry-run preview or apply. */
+  app.post("/api/import", async (req, reply) => {
+    try {
+      const b = req.body as { folder?: string; project?: string; apply?: boolean };
+      if (!b.folder) throw new TeError("USAGE", "import needs {folder}");
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { scanFolder } = await import("../../import/scan.js");
+      const { planImport } = await import("../../import/import.js");
+      const prefix = b.project
+        ? ops.wsr.ws.config.projects[b.project]?.prefix
+        : ops.wsr.ws.config.prefix;
+      if (!prefix) throw new NotFoundError(`unknown project '${b.project}'`);
+      const files = await scanFolder(b.folder);
+      const existingLegacyIds = new Set(
+        [...ops.index.items.values()]
+          .map((i) => (i.meta as { legacy_id?: string }).legacy_id)
+          .filter((x): x is string => Boolean(x)),
+      );
+      const plan = planImport(files, {
+        prefix,
+        existingIds: ops.index.items.keys(),
+        existingLegacyIds,
+      });
+      if (!b.apply) {
+        return { apply: false, preview: plan.preview, ambiguities: plan.ambiguities, count: plan.items.length };
+      }
+      const r = await ops.store.importItems(
+        plan.items.map((i) => ({
+          id: i.suggestedId,
+          legacy_id: i.legacy_id,
+          type: i.type,
+          title: i.title,
+          status: i.status,
+          depends_on: i.depends_on,
+          summary: i.summary,
+          simple: i.simple,
+          project: b.project,
+        })),
+        { kind: "human", session: "human", machine: ops.wsr.store.machine },
+      );
+      return { apply: true, ...r, ambiguities: plan.ambiguities };
     } catch (e) {
       return sendErr(reply, e);
     }

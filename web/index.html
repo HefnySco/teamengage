@@ -4,9 +4,59 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TeamEngage</title>
+    <style>
+      :root {
+        --bg: #f6f7f9; --fg: #1a1d23; --card: #fff; --line: #d8dce3;
+        --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --err: #dc2626; --muted: #6b7280;
+      }
+      html[data-theme="dark"] {
+        --bg: #10131a; --fg: #e4e7ec; --card: #1a1f2a; --line: #2c3442;
+        --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --muted: #9ca3af;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+      header { display: flex; gap: 14px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 5; }
+      header b { font-size: 15px; }
+      nav a { color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 6px; }
+      nav a.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+      main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+      .row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+      .muted { color: var(--muted); }
+      .id { font-family: ui-monospace, monospace; font-weight: 600; }
+      .st { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); }
+      .st-draft { color: var(--muted); } .st-ready { color: var(--accent); border-color: var(--accent); }
+      .st-in_progress { color: var(--warn); border-color: var(--warn); }
+      .st-waiting { color: var(--warn); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+      .st-in_review { color: var(--ok); border-color: var(--ok); }
+      .st-done { color: var(--muted); text-decoration: line-through; }
+      .st-dropped { color: var(--err); }
+      button { font: inherit; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+      button:hover { border-color: var(--accent); color: var(--accent); }
+      button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+      input, textarea, select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+      pre { overflow-x: auto; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 6px; }
+      .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(190px, 1fr); gap: 10px; overflow-x: auto; }
+      .col h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 4px 0 8px; }
+      .mini { padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+      .err { color: var(--err); } .warn { color: var(--warn); } .ok { color: var(--ok); }
+      .right { margin-left: auto; }
+      .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+      a.item { color: var(--accent); text-decoration: none; cursor: pointer; }
+      .evt { font-family: ui-monospace, monospace; font-size: 12px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+      #theme-toggle { margin-left: auto; }
+      .claim-note { font-size: 12px; color: var(--warn); }
+      .badge { font-size: 11px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; margin-left: 4px; }
+      .badge.err { color: var(--err); } .badge.warn { color: var(--warn); }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <header>
+      <b>TeamEngage</b>
+      <nav id="nav"></nav>
+      <button id="theme-toggle" title="toggle theme">◐</button>
+    </header>
+    <main id="app"></main>
+    <script type="module" src="/assets/app.js"></script>
   </body>
 </html>

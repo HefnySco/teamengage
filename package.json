@@ -13,27 +13,33 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:web",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:web": "esbuild web/app.js --bundle --format=esm --splitting --outdir=web/dist --minify"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
     "chokidar": "^4.0.3",
     "fastify": "^5.2.0",
+    "htm": "3.1",
+    "mermaid": "^11.17.2",
+    "preact": "10.26",
     "yaml": "^2.5.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "^9.27.0",
     "@types/node": "^24.0.0",
+    "esbuild": "^0.25.12",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
+    "globals": "^16.5.0",
     "prettier": "^3.5.3",
     "typescript": "~5.9.2",
     "typescript-eslint": "^8.39.0",
