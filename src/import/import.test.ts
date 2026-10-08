@@ -136,7 +136,99 @@ describe("import planning (IM-0001)", () => {
     rmSync(f2, { recursive: true, force: true });
   });
 
-  it("apply creates items idempotently (legacy_id dedup)", async () => {
+  it("a second import dedups by source path — same-name files elsewhere still import", async () => {
+    // 'seed/TASK-02 add scopes.md' was already imported; a different file
+    // that happens to share the basename must NOT be silently dropped
+    await store.importItems(
+      [
+        {
+          id: "WS-0901",
+          legacy_id: "TASK-02 add scopes",
+          type: "task",
+          title: "Add scopes",
+          status: "ready",
+          depends_on: [],
+          summary: "s",
+          source: "seed/TASK-02 add scopes.md",
+        },
+      ],
+      human,
+    );
+    const files = [
+      { path: "seed/TASK-02 add scopes.md", content: "# Add scopes\n" },
+      { path: "other/TASK-02 add scopes.md", content: "# Add scopes — second doc\n" },
+      { path: "other/NEW-99 thing.md", content: "# Thing\n" },
+    ];
+    const existing = new Set(
+      [...store.idx.items.values()]
+        .map((i) => (i.meta as { imported_from?: string }).imported_from)
+        .filter((x): x is string => Boolean(x)),
+    );
+    expect(existing.has("seed/TASK-02 add scopes.md")).toBe(true); // imported_from persisted
+    const plan = planImport(files, {
+      prefix: "WS",
+      existingIds: store.idx.items.keys(),
+      existingSources: existing,
+    });
+    // 'seed/TASK-02…' skipped by path; the same-named 'other/' copy and the
+    // new file still produce items
+    expect(plan.items.map((i) => i.sources[0]).sort()).toEqual([
+      "other/NEW-99 thing.md",
+      "other/TASK-02 add scopes.md",
+    ]);
+    const ids = new Set(plan.items.map((i) => i.suggestedId));
+    expect(ids.size).toBe(plan.items.length);
+  });
+
+  it("dep lists skip prose and expand ranges/shorthand (P6-01…03, P1F-01/02)", async () => {
+    const mk = (name: string) => ({ path: `todo/${name}.md`, content: `# ${name}\n` });
+    const files = [
+      mk("TASK-P4B-10-sar"),
+      mk("TASK-P6-01-a"),
+      mk("TASK-P6-02-b"),
+      mk("TASK-P6-03-c"),
+      mk("TASK-P1F-01-d"),
+      mk("TASK-P1F-02-e"),
+      {
+        path: "todo/TASK-Z-01-main.md",
+        content:
+          "# Main\n\n**Depends on:** Phase 4A (roster, world model), P4B-10 (SAR), this, (all done), P6-01…P6-03, P1F-01/02\n",
+      },
+    ];
+    const plan = planImport(files, { prefix: "WS", existingIds: [] });
+    const main = plan.items.find((i) => i.legacy_id === "TASK-Z-01-main")!;
+    const idOf = (l: string) => plan.items.find((i) => i.legacy_id === l)!.suggestedId;
+    expect(main.depends_on.sort()).toEqual(
+      [
+        "TASK-P4B-10-sar",
+        "TASK-P6-01-a",
+        "TASK-P6-02-b",
+        "TASK-P6-03-c",
+        "TASK-P1F-01-d",
+        "TASK-P1F-02-e",
+      ]
+        .map(idOf)
+        .sort(),
+    );
+    // prose entries are not ambiguities; genuinely missing refs still are
+    const unresolved = plan.ambiguities.filter((a) => a.kind === "unresolved_dep");
+    expect(unresolved).toEqual([]);
+
+    const files2 = [
+      {
+        path: "todo/TASK-Z-02-x.md",
+        content: "# X\n\n**Depends on:** ZZ-99 (missing)\n",
+      },
+    ];
+    const plan2 = planImport(files2, { prefix: "WS", existingIds: [] });
+    expect(
+      plan2.ambiguities.some(
+        (a) => a.kind === "unresolved_dep" && a.message.includes("ZZ-99"),
+      ),
+    ).toBe(true);
+  });
+
+  it("apply creates items idempotently (imported_from dedup)", async () => {
     const files = await scanFolder(src);
     const plan = planImport(files, { prefix: "WS", existingIds: [] });
     const mk = () =>
@@ -149,10 +241,12 @@ describe("import planning (IM-0001)", () => {
         depends_on: i.depends_on,
         summary: i.summary,
         simple: i.simple,
+        source: i.sources[0],
       }));
+    const before = store.idx.items.size;
     const r1 = await store.importItems(mk(), human);
     expect(r1.created).toHaveLength(plan.items.length);
-    expect(store.idx.items.size).toBe(plan.items.length);
+    expect(store.idx.items.size).toBe(before + plan.items.length);
     // re-run: everything skipped
     const r2 = await store.importItems(mk(), human);
     expect(r2.created).toHaveLength(0);
@@ -209,6 +303,7 @@ describe("import planning (IM-0001)", () => {
         depends_on: i.depends_on,
         summary: i.summary,
         simple: i.simple,
+        source: i.sources[0],
       })),
       human,
     );

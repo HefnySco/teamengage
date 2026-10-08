@@ -315,6 +315,8 @@ export class PlansStore {
       summary: string;
       simple?: string;
       project?: string;
+      /** relative path of the source file — the idempotency key */
+      source?: string;
     }>,
     actor: Actor,
   ): Promise<{ created: string[]; skipped: string[] }> {
@@ -322,9 +324,11 @@ export class PlansStore {
       await this.assertReady();
       await this.plansRepoHealthy();
       const { ItemMeta, Status } = await import("../../core/model/item.js");
-      const existingLegacy = new Set(
+      // dedup by source path (imported_from), not legacy_id — different
+      // folders can legitimately share a basename
+      const existingSources = new Set(
         [...this.index.items.values()]
-          .map((i) => (i.meta as { legacy_id?: string }).legacy_id)
+          .map((i) => (i.meta as { imported_from?: string }).imported_from)
           .filter((x): x is string => Boolean(x)),
       );
       const now = new Date().toISOString().slice(0, 10);
@@ -332,7 +336,7 @@ export class PlansStore {
       const skipped: string[] = [];
       const writes: Array<{ rel: string; content: string }> = [];
       for (const d of items) {
-        if (existingLegacy.has(d.legacy_id)) {
+        if (d.source && existingSources.has(d.source)) {
           skipped.push(d.id);
           continue;
         }
@@ -349,6 +353,7 @@ export class PlansStore {
           created: now,
           updated: now,
           legacy_id: d.legacy_id,
+          imported_from: d.source,
         });
         let body = `\n## Summary\n${d.summary}\n`;
         if (d.simple) body += `\n## Simple\n${d.simple}\n`;

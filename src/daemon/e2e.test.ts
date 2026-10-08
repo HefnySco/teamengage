@@ -37,13 +37,16 @@ const dirty = () =>
 
 const settle = (ms = 900) => new Promise((r) => setTimeout(r, ms));
 
-async function mcpClient(name: string): Promise<Client> {
+async function mcpClient(name: string): Promise<{
+  client: Client;
+  transport: StreamableHTTPClientTransport;
+}> {
   const c = new Client({ name, version: "0.0.1" });
   const tr = new StreamableHTTPClientTransport(new URL(`${daemon.url}/mcp`), {
     requestInit: { headers: { authorization: `Bearer ${daemon.token}` } },
   });
   await c.connect(tr);
-  return c;
+  return { client: c, transport: tr };
 }
 
 beforeAll(async () => {
@@ -58,6 +61,10 @@ beforeAll(async () => {
   writeFileSync(
     join(plans, "items", "WS", "WS-0001.md"),
     `---\nid: WS-0001\ntype: task\ntitle: t1\nstatus: ready\nversion: 1\ntargets: ["@self:src/a.ts"]\n---\n\n## Summary\nx\n`,
+  );
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0002.md"),
+    `---\nid: WS-0002\ntype: task\ntitle: t2\nstatus: ready\nversion: 1\ntargets: ["@self:src/b.ts"]\n---\n\n## Summary\ny\n`,
   );
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
@@ -103,25 +110,56 @@ afterAll(async () => {
 describe("e2e daemon + watcher + MCP", () => {
   it("an agent's claim survives an MCP reconnect — hello rebinds it to the new session", async () => {
     const c1 = await mcpClient("first");
-    await c1.callTool({ name: "hello", arguments: { agent: "claude" } });
-    const claim = await c1.callTool({ name: "claim", arguments: { id: "WS-0001" } });
+    await c1.client.callTool({ name: "hello", arguments: { agent: "claude" } });
+    const claim = await c1.client.callTool({ name: "claim", arguments: { id: "WS-0001" } });
     expect(text(claim as never)).toMatch(/^claimed WS-0001/);
     await settle();
     expect(dirty()).toBe(""); // daemon writes are committed, not re-detected
-    await c1.close();
+    // graceful disconnect: DELETE terminates the MCP session → the te
+    // session is dead → a later hello may rebind its claims
+    await c1.transport.terminateSession();
+    await c1.client.close();
 
     // reconnect: new MCP transport + new te session for the same agent
     const c2 = await mcpClient("second");
-    const h = await c2.callTool({ name: "hello", arguments: { agent: "claude" } });
+    const h = await c2.client.callTool({ name: "hello", arguments: { agent: "claude" } });
     expect(text(h as never)).toContain("resume: WS-0001");
     // without rebinding this is FORBIDDEN: held by claude@test#<old-hex>
-    const l = await c2.callTool({ name: "log", arguments: { id: "WS-0001", note: "resumed" } });
+    const l = await c2.client.callTool({ name: "log", arguments: { id: "WS-0001", note: "resumed" } });
     expect(text(l as never)).toBe("logged WS-0001");
     await settle();
     expect(dirty()).toBe("");
     const claimFile = ctx.workspaces.get("ws")!.store.idx.claims.get("WS-0001")!;
     expect(claimFile.holder).toContain("claude@test#");
-    await c2.close();
+    await c2.client.close();
+  });
+
+  it("a second live window of the same agent does not steal the first's claims", async () => {
+    // two simultaneous MCP connections as the same agent on one machine —
+    // a normal multi-window IDE setup
+    const w1 = await mcpClient("w1");
+    await w1.client.callTool({ name: "hello", arguments: { agent: "codex" } });
+    const c = await w1.client.callTool({ name: "claim", arguments: { id: "WS-0002" } });
+    expect(text(c as never)).toMatch(/^claimed WS-0002/);
+    await settle();
+    expect(dirty()).toBe("");
+
+    const w2 = await mcpClient("w2");
+    const h = await w2.client.callTool({ name: "hello", arguments: { agent: "codex" } });
+    // the live claim is NOT 'resumed' onto the second window's session
+    expect(text(h as never)).not.toContain("WS-0002");
+    expect(ctx.workspaces.get("ws")!.store.idx.claims.get("WS-0002")!.holder).toContain(
+      "codex@test#",
+    );
+    // w1 still holds it; w2 is refused
+    const l1 = await w1.client.callTool({ name: "log", arguments: { id: "WS-0002", note: "mine" } });
+    expect(text(l1 as never)).toBe("logged WS-0002");
+    const l2 = await w2.client.callTool({ name: "log", arguments: { id: "WS-0002", note: "steal" } });
+    expect(text(l2 as never)).toContain("FORBIDDEN");
+    await settle();
+    expect(dirty()).toBe("");
+    await w1.client.close();
+    await w2.client.close();
   });
 
   it("daemon writes produce no human_edit version bumps or duplicate findings", async () => {

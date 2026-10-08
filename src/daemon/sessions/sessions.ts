@@ -35,6 +35,20 @@ export class SessionRegistry {
     return this.sessions.get(id);
   }
 
+  /**
+   * A session is live while it's registered. `disconnect` marks the end of
+   * its MCP transport; a daemon restart empties the registry, so claims held
+   * by anything not in the map are dead and rebindable on `hello`.
+   */
+  isLive(id: string): boolean {
+    return this.sessions.has(id);
+  }
+
+  /** Mark a session dead — its transport closed (or it was replaced). */
+  disconnect(id: string): void {
+    this.sessions.delete(id);
+  }
+
   touch(id: string): void {
     const s = this.sessions.get(id);
     if (s) s.last_seen = new Date().toISOString();

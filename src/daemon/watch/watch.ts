@@ -1,7 +1,8 @@
 import { watch, type FSWatcher } from "chokidar";
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, relative, sep } from "node:path";
 import { createHash } from "node:crypto";
+import { git, showFile } from "../../resources/git/git.js";
 import { parseItemFile, serializeMarkdown } from "../../core/files/markdown.js";
 import { ConflictMarkersError, TeError } from "../../core/model/errors.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
@@ -18,7 +19,7 @@ import type { PlansStore } from "../store/store.js";
  */
 
 export interface WatchEvent {
-  kind: "human_edit" | "invalid" | "removed" | "claim_change";
+  kind: "human_edit" | "resynced" | "invalid" | "removed" | "claim_change";
   path: string;
   item?: string;
   message?: string;
@@ -38,6 +39,7 @@ export class PlansWatcher {
   private ownWrites = new Map<string, string>(); // path → content hash | DELETED
   private pending = new Map<string, NodeJS.Timeout>();
   private closed = false;
+  private repoRoot: string | null | undefined;
 
   constructor(
     private store: PlansStore,
@@ -146,6 +148,22 @@ export class PlansWatcher {
     if (!this.isItemFile(path)) return; // decisions: index already scans on demand
 
     await this.store.enqueue(async () => {
+      // git ops (stash/pull/checkout) restore files to their HEAD content —
+      // that's repo state moving, not a human edit: re-index, never rewrite
+      const root = await this.plansRepoRoot();
+      if (root) {
+        const rel = relative(root, path).split(sep).join("/");
+        const committed = await showFile(root, "HEAD", rel).catch(() => null);
+        if (committed !== null && committed === text) {
+          await this.store.idx.upsertFile(path);
+          const relPlans = relative(this.store.ws.plansDir, path);
+          const item = [...this.store.idx.items.values()].find(
+            (i) => i.path === relPlans,
+          )?.meta.id;
+          this.emit({ kind: "resynced", path, item });
+          return;
+        }
+      }
       try {
         const doc = parseItemFile(text, path);
         // human edit accepted: bump version, write back as actor human
@@ -168,6 +186,19 @@ export class PlansWatcher {
         }
       }
     });
+  }
+
+  /** Plans repo root (cached; null when the plans dir isn't a git repo). */
+  private async plansRepoRoot(): Promise<string | null> {
+    if (this.repoRoot !== undefined) return this.repoRoot;
+    try {
+      this.repoRoot = (
+        await git(this.store.ws.plansDir, ["rev-parse", "--show-toplevel"])
+      ).trim();
+    } catch {
+      this.repoRoot = null;
+    }
+    return this.repoRoot;
   }
 
   /** Current findings for the inbox (validator + invalid files). */

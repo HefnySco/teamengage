@@ -161,15 +161,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         : ops.wsr.ws.config.prefix;
       if (!prefix) throw new NotFoundError(`unknown project '${b.project}'`);
       const files = await scanFolder(b.folder);
-      const existingLegacyIds = new Set(
+      const existingSources = new Set(
         [...ops.index.items.values()]
-          .map((i) => (i.meta as { legacy_id?: string }).legacy_id)
+          .map((i) => (i.meta as { imported_from?: string }).imported_from)
           .filter((x): x is string => Boolean(x)),
       );
       const plan = planImport(files, {
         prefix,
         existingIds: ops.index.items.keys(),
-        existingLegacyIds,
+        existingSources,
       });
       if (!b.apply) {
         return { apply: false, preview: plan.preview, ambiguities: plan.ambiguities, count: plan.items.length };
@@ -185,6 +185,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           summary: i.summary,
           simple: i.simple,
           project: b.project,
+          source: i.sources[0],
         })),
         { kind: "human", session: "human", machine: ops.wsr.store.machine },
       );

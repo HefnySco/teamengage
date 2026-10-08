@@ -116,4 +116,34 @@ describe("file watcher (DM-0002)", () => {
     await waitFor(() => events.some((e) => e.kind === "removed" && e.path === p));
     expect(store.idx.items.has("WS-0004")).toBe(false);
   });
+
+  it("git stash/checkout restoring HEAD content is a resync, not a human edit", async () => {
+    const p = join(plans, "items", "WS", "WS-0005.md");
+    events = [];
+    writeFileSync(p, item("WS-0005"));
+    await waitFor(() => store.idx.items.has("WS-0005"));
+    // commit whatever the human_edit handling left on disk — HEAD = on-disk
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-m", "ws-0005"], { cwd: plans });
+    const headVersion = store.idx.items.get("WS-0005")!.meta.version;
+
+    // human edits the file (bumped, left uncommitted), then git restores HEAD
+    events = [];
+    const head = execFileSync("git", ["show", "HEAD:items/WS/WS-0005.md"], {
+      cwd: plans,
+      encoding: "utf8",
+    });
+    writeFileSync(p, head.replace("status: ready", "status: in_progress"));
+    await waitFor(() => events.some((e) => e.kind === "human_edit" && e.item === "WS-0005"));
+    expect(store.idx.items.get("WS-0005")!.meta.version).toBe(headVersion + 1);
+
+    events = [];
+    execFileSync("git", ["checkout", "--", "items/WS/WS-0005.md"], { cwd: plans });
+    await waitFor(() => events.some((e) => e.item === "WS-0005"));
+    // index re-read at HEAD content — no version bump, nothing left uncommitted
+    expect(store.idx.items.get("WS-0005")!.meta.version).toBe(headVersion);
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: plans, encoding: "utf8" }).trim(),
+    ).toBe("");
+  });
 });

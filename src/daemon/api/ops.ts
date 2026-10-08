@@ -58,10 +58,12 @@ export class WorkspaceOps {
 
   async hello(agent: string): Promise<{ session: Session; resume: Claim[] }> {
     const session = this.sessions.hello(agent);
-    const prior = this.sessions.resumeClaims(agent, this.index.claims.values());
-    // rebind claims held by this agent's dead sessions onto the new one —
-    // otherwise requireHolder() sees the old id and every log/ask/submit
-    // returns FORBIDDEN after a reconnect
+    // rebind only claims held by DEAD sessions — a second window of the same
+    // agent on this machine must not take over a live session's claims.
+    // (Dead = transport closed or minted before a daemon restart.)
+    const prior = this.sessions
+      .resumeClaims(agent, this.index.claims.values())
+      .filter((c) => !this.sessions.isLive(c.holder));
     const resume = await this.store.rebindClaims(prior, session.id);
     return { session, resume };
   }

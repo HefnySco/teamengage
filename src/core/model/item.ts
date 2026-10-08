@@ -48,6 +48,8 @@ export const ItemMeta = z
     created: DateStr.optional(),
     updated: DateStr.optional(),
     legacy_id: z.string().optional(),
+    /** relative path of the file an item was imported from (idempotency key) */
+    imported_from: z.string().optional(),
     question: Question.optional(),
   })
   .passthrough();

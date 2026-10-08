@@ -99,10 +99,44 @@ const DEP_RE =
 const NO_DEP_RE = /^(nothing|none|no\b.*|-|—|n\/a)$/i;
 const TITLE_RE = /^#\s+(.+)$/m;
 const SIMPLE_SUFFIX = /\.simple\.md$/i;
+/** A dep-list ends at the next bold LABEL (`**Unblocks:**`), not any `**`. */
+const DEP_CUT_RE = /\*\*[A-Za-z][^*]*:\*\*/;
+/** Ref-shaped tokens: `P4B-10`, `SU-05`, `TASK-P4B-03A` → `P4B-03A`. */
+const REF_TOKEN_RE = /[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z]?\b/g;
+/** Normalize a name for equality: lowercase, alnum only. */
+const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * Pull ref-shaped tokens out of a dep-list entry, expanding ranges
+ * (`P6-01…P6-08`, same letter prefix) and `/NN` shorthand (`P1F-01/02`).
+ * Entries with no ref-shaped token are prose, not references.
+ */
+function extractRefs(entry: string): string[] {
+  // expand `X-nn…X-mm` / `X-nn..mm` / `X-nn–mm` ranges sharing a prefix
+  let s = entry.replace(
+    /([A-Za-z][A-Za-z0-9]*)-(\d+)([A-Za-z]?)\s*(?:…|\.\.|–)\s*(?:\1-)?(\d+)([A-Za-z]?)/g,
+    (all, p: string, a: string, aSuf: string, b: string) => {
+      const lo = parseInt(a, 10);
+      const hi = parseInt(b, 10);
+      if (hi <= lo || hi - lo > 50) return all;
+      return Array.from(
+        { length: hi - lo + 1 },
+        (_, i) => `${p}-${String(lo + i).padStart(a.length, "0")}${aSuf}`,
+      ).join(" ");
+    },
+  );
+  // expand `X-nn/mm` shorthand — `P1F-01/02` → `P1F-01 P1F-02`
+  s = s.replace(
+    /([A-Za-z][A-Za-z0-9]*)-(\d+[A-Za-z]?)((?:\/\d+[A-Za-z]?)+)/g,
+    (_all, p: string, first: string, rest: string) =>
+      [`${p}-${first}`, ...rest.slice(1).split("/").map((n) => `${p}-${n}`)].join(" "),
+  );
+  return [...s.matchAll(REF_TOKEN_RE)].map((m) => m[0]);
+}
 
 export function planImport(
   files: ImportSource[],
-  opts: { prefix: string; existingIds?: Iterable<string>; existingLegacyIds?: Set<string> },
+  opts: { prefix: string; existingIds?: Iterable<string>; existingSources?: Set<string> },
 ): ImportPlan {
   const amb: Ambiguity[] = [];
   const seenLegacy = new Map<string, string>(); // legacy → file
@@ -128,10 +162,18 @@ export function planImport(
   const ids = new Set(opts.existingIds ?? []);
   const keyToId = new Map<string, string>();
   const legacyToIds = new Map<string, string[]>();
+  const normToIds = new Map<string, string[]>();
   const entries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
   for (const [key, g] of entries) {
     const legacy = key.split("/").pop()!;
-    if (opts.existingLegacyIds?.has(legacy)) continue; // idempotent: already imported
+    // idempotent: skip files already imported — identified by their RELATIVE
+    // PATH (recorded as `imported_from`), not the bare basename; different
+    // folders can legitimately share one
+    if (
+      opts.existingSources &&
+      [g.main?.path, g.simple?.path].some((p) => p && opts.existingSources!.has(p))
+    )
+      continue;
     if (seenLegacy.has(legacy)) {
       // same basename elsewhere: still gets its OWN id — human resolves which
       amb.push({
@@ -146,6 +188,7 @@ export function planImport(
     ids.add(id);
     keyToId.set(key, id);
     legacyToIds.set(legacy, [...(legacyToIds.get(legacy) ?? []), id]);
+    normToIds.set(normName(legacy), [...(normToIds.get(normName(legacy)) ?? []), id]);
   }
 
   /** Resolve a dep name to new ids: exact or boundary-anchored short ref
@@ -177,28 +220,46 @@ export function planImport(
     const depM = DEP_RE.exec(content);
     const depends_on: string[] = [];
     if (depM) {
-      // the dep list ends where the next bold marker begins (**Unblocks:**…)
-      const depText = depM[1].split("**")[0];
+      // the dep list ends where the next bold LABEL begins (**Unblocks:**…)
+      const depText = depM[1].split(DEP_CUT_RE)[0];
       for (const raw of depText.split(/[,;]/)) {
-        const name = raw
+        const entry = raw
+          .replace(/\([^)]*\)/g, " ")
+          .replace(/\s+/g, " ")
           .trim()
-          .replace(/\.$/, "")
+          .replace(/[.\s]+$/, "")
           .replace(/\.md$/i, "")
           .replace(SIMPLE_SUFFIX, "")
           .trim();
-        if (!name || NO_DEP_RE.test(name)) continue;
-        const m = matchDep(name);
-        if (m.ids.length === 1) {
-          depends_on.push(m.ids[0]);
-        } else {
-          amb.push({
-            kind: "unresolved_dep",
-            message:
-              m.ids.length > 1
-                ? `'${name}' matches ${m.ids.length} items — ambiguous`
-                : `'${name}' not found among imported items`,
-            file: g.main?.path ?? key,
-          });
+        if (!entry || NO_DEP_RE.test(entry)) continue;
+        const refs = extractRefs(entry);
+        if (!refs.length) {
+          // no ref-shaped token: a full name still resolves by normalized
+          // equality; otherwise it's prose ("Phase 2", "this") — skip it
+          const hit = normToIds.get(normName(entry));
+          if (hit?.length === 1) depends_on.push(hit[0]);
+          else if (hit && hit.length > 1)
+            amb.push({
+              kind: "unresolved_dep",
+              message: `'${entry}' matches ${hit.length} items — ambiguous`,
+              file: g.main?.path ?? key,
+            });
+          continue;
+        }
+        for (const ref of refs) {
+          const m = matchDep(ref);
+          if (m.ids.length === 1) {
+            depends_on.push(m.ids[0]);
+          } else {
+            amb.push({
+              kind: "unresolved_dep",
+              message:
+                m.ids.length > 1
+                  ? `'${ref}' matches ${m.ids.length} items — ambiguous`
+                  : `'${ref}' not found among imported items`,
+              file: g.main?.path ?? key,
+            });
+          }
         }
       }
     }

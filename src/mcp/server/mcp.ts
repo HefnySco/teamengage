@@ -62,12 +62,17 @@ export function registerMcpRoutes(app: FastifyInstance, deps: McpDeps): void {
 
       if (!entry) {
         // new connection: only an initialize request may open a session
-        const { server, binding: _binding } = createMcpServer(deps);
+        const { server, binding } = createMcpServer(deps);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
         });
-        transport.onclose = () => {
+        // transport.onclose belongs to the connected protocol, and McpServer
+        // wraps the inner Protocol — hook THAT one's onclose
+        server.server.onclose = () => {
           if (transport.sessionId) sessions.delete(transport.sessionId);
+          // the session is dead — a later hello() by the same agent may
+          // rebind its claims; while it was live they were unreachable
+          if (binding.session) deps.ctx.sessions.disconnect(binding.session.id);
         };
         await server.connect(transport);
         entry = { transport, server };

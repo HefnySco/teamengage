@@ -44,6 +44,9 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
+        // a repeat hello on this connection replaces the old session —
+        // retire it so its claims rebind instead of looking "live"
+        if (binding.session) ctx.sessions.disconnect(binding.session.id);
         const { session, resume } = await ops.hello(agent);
         binding.session = session;
         const ws = ops.wsr.ws;
