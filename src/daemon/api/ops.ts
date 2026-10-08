@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { resolveSource, stripFrontmatter } from "../../core/files/source.js";
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import type { IndexedItem } from "../../core/index/index.js";
@@ -110,8 +111,9 @@ export class WorkspaceOps {
     return it;
   }
 
-  brief(id: string) {
+  async brief(id: string) {
     const it = this.item(id);
+    const source = await this.source(it);
     const sectionBody = (dep: IndexedItem, name: string) =>
       dep.sections.find((s) => s.heading.toLowerCase() === name.toLowerCase())?.body ?? "";
     const lastLine = (s: string) => s.trim().split("\n").filter(Boolean).at(-1) ?? "";
@@ -144,7 +146,32 @@ export class WorkspaceOps {
         host: res?.config.kind === "ssh" ? res.config.host : undefined,
       };
     });
-    return { item: it, deps, decisions, targets, question: it.meta.question };
+    return { item: it, deps, decisions, targets, question: it.meta.question, source };
+  }
+
+  /**
+   * Overlay mode: the item's task file (frontmatter stripped), found by its
+   * recorded path or, after a rename/move, by its `te:` tag. `missing` when
+   * the item records a source that no longer exists anywhere.
+   */
+  private async source(it: IndexedItem): Promise<
+    | { path: string; text: string; moved: boolean; simple?: { path: string; text: string } }
+    | { path: string; missing: true }
+    | undefined
+  > {
+    if (this.wsr.ws.config.mode !== "overlay" || !it.meta.source) return undefined;
+    const root = this.wsr.ws.root;
+    const main = await resolveSource(root, it.meta.id, it.meta.source);
+    if (!main) return { path: it.meta.source, missing: true };
+    const simple = it.meta.simple_source
+      ? await resolveSource(root, it.meta.id, it.meta.simple_source, { simple: true })
+      : undefined;
+    return {
+      path: main.path,
+      text: stripFrontmatter(main.text),
+      moved: main.moved,
+      ...(simple ? { simple: { path: simple.path, text: stripFrontmatter(simple.text) } } : {}),
+    };
   }
 
   query(filter: Parameters<Index["query"]>[0]): IndexedItem[] {

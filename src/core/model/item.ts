@@ -50,6 +50,10 @@ export const ItemMeta = z
     legacy_id: z.string().optional(),
     /** relative path of the file an item was imported from (idempotency key) */
     imported_from: z.string().optional(),
+    /** overlay mode: task file holding the content, relative to the workspace root */
+    source: z.string().optional(),
+    /** overlay mode: companion `.simple.md`, relative to the workspace root */
+    simple_source: z.string().optional(),
     question: Question.optional(),
   })
   .passthrough();

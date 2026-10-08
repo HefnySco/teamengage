@@ -29,7 +29,7 @@ export interface PlannedItem {
 }
 
 export interface Ambiguity {
-  kind: "unresolved_dep" | "unknown_status" | "duplicate_legacy" | "no_title";
+  kind: "unresolved_dep" | "unknown_status" | "duplicate_legacy" | "no_title" | "unknown_tag";
   message: string;
   file: string;
 }
@@ -94,7 +94,7 @@ function statusFor(dirSegments: string[], file: string, amb: Ambiguity[]): Statu
  * The value ends at a new `**bold**` span (e.g. `**Unblocks:**`), else EOL.
  */
 const DEP_RE =
-  /^\s*\*{0,2}\s*(?:depends\s+on|order\s*:\s*after|blocked\s+by)\s*:?\s*\*{0,2}\s*(.+?)\s*$/im;
+  /^\s*\*{0,2}\s*(?:depends\s+on|order\s*:\s*\*{0,2}\s*after|blocked\s+by)\s*:?\s*\*{0,2}\s*(.+?)\s*$/im;
 /** Values that mean "no dependencies" rather than naming one. */
 const NO_DEP_RE = /^(nothing|none|no\b.*|-|—|n\/a)$/i;
 const TITLE_RE = /^#\s+(.+)$/m;

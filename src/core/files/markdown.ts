@@ -28,6 +28,9 @@ const META_KEY_ORDER = [
   "created",
   "updated",
   "legacy_id",
+  "imported_from",
+  "source",
+  "simple_source",
   "question",
 ];
 

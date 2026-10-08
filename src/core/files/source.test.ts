@@ -1,0 +1,65 @@
+import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readTeTag, withTeTag, stripFrontmatter, resolveSource } from "./source.js";
+
+describe("overlay task-file tags", () => {
+  it("adds a two-line block to a file without frontmatter", () => {
+    const out = withTeTag("# Title\n\nBody.\n", "GL-0013");
+    expect(out).toBe("---\nte: GL-0013\n---\n# Title\n\nBody.\n");
+    expect(readTeTag(out)).toBe("GL-0013");
+    expect(stripFrontmatter(out)).toBe("# Title\n\nBody.\n");
+  });
+
+  it("keeps other frontmatter keys verbatim and rewrites only te", () => {
+    const src = "---\nowner: me # mine\nte: GL-0001\n---\n# T\n";
+    expect(withTeTag(src, "GL-0002")).toBe("---\nowner: me # mine\nte: GL-0002\n---\n# T\n");
+    const untagged = "---\nowner: me\n---\n# T\n";
+    expect(withTeTag(untagged, "GL-0003")).toBe("---\nte: GL-0003\nowner: me\n---\n# T\n");
+  });
+
+  it("is idempotent and keeps CRLF files CRLF", () => {
+    const once = withTeTag("# T\r\nx\r\n", "GL-0001");
+    expect(once).toBe("---\r\nte: GL-0001\r\n---\r\n# T\r\nx\r\n");
+    expect(withTeTag(once, "GL-0001")).toBe(once);
+    expect(readTeTag(once)).toBe("GL-0001");
+  });
+
+  it("does not treat a leading horizontal rule as frontmatter", () => {
+    const text = "---\n\n# T\n\nsome prose here.\n\n---\n";
+    expect(readTeTag(text)).toBeUndefined();
+    expect(withTeTag(text, "GL-0001").startsWith("---\nte: GL-0001\n---\n---\n")).toBe(true);
+  });
+});
+
+describe("resolveSource", () => {
+  it("uses the recorded path, else finds the moved file by its tag", async () => {
+    const root = mkdtempSync(join(tmpdir(), "te-src-"));
+    try {
+      mkdirSync(join(root, "global", "done"), { recursive: true });
+      mkdirSync(join(root, ".teamengage"), { recursive: true });
+      writeFileSync(join(root, "global", "a.md"), "---\nte: GL-0001\n---\n# A\n");
+      expect(await resolveSource(root, "GL-0001", "global/a.md")).toMatchObject({
+        path: "global/a.md",
+        moved: false,
+      });
+
+      // moved into done/ and another item's file now sits at the old path
+      writeFileSync(join(root, "global", "done", "a.md"), "---\nte: GL-0001\n---\n# A\n");
+      writeFileSync(join(root, "global", "done", "a.simple.md"), "---\nte: GL-0001\n---\nplain\n");
+      writeFileSync(join(root, "global", "a.md"), "---\nte: GL-0009\n---\n# other\n");
+      writeFileSync(join(root, ".teamengage", "x.md"), "---\nte: GL-0001\n---\n");
+      expect(await resolveSource(root, "GL-0001", "global/a.md")).toMatchObject({
+        path: "global/done/a.md",
+        moved: true,
+      });
+      expect(
+        await resolveSource(root, "GL-0001", "global/a.simple.md", { simple: true }),
+      ).toMatchObject({ path: "global/done/a.simple.md" });
+      expect(await resolveSource(root, "GL-0404", "nope.md")).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

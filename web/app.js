@@ -311,9 +311,10 @@ const ItemView = ({ id }) => {
         `,
       )}
     </ul>
-    ${tab === "simple" && html`<div class="card card-body"><pre class="mb-0">${sec("Simple") || "(no Simple section)"}</pre></div>`}
+    ${b.source && html`<div class="text-secondary small mb-2">source ${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</div>`}
+    ${tab === "simple" && html`<div class="card card-body"><pre class="mb-0">${b.source?.simple?.text ?? (sec("Simple") || "(no Simple section)")}</pre></div>`}
     ${tab === "technical" && html`
-      <div class="card card-body"><pre class="mb-0">${sec("Summary")}\n${sec("Acceptance")}</pre></div>
+      <div class="card card-body"><pre class="mb-0">${b.source?.text ?? `${sec("Summary")}\n${sec("Acceptance")}`}</pre></div>
       ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
       ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}

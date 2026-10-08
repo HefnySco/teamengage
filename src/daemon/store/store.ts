@@ -11,6 +11,7 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
+import { withTeTag } from "../../core/files/source.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
 import { DecisionMeta, type Event, type ItemMeta } from "../../core/model/index.js";
@@ -317,6 +318,8 @@ export class PlansStore {
       project?: string;
       /** relative path of the source file — the idempotency key */
       source?: string;
+      /** overlay mode: companion `.simple.md`, relative to the workspace root */
+      simple_source?: string;
     }>,
     actor: Actor,
   ): Promise<{ created: string[]; skipped: string[] }> {
@@ -324,11 +327,12 @@ export class PlansStore {
       await this.assertReady();
       await this.plansRepoHealthy();
       const { ItemMeta, Status } = await import("../../core/model/item.js");
-      // dedup by source path (imported_from), not legacy_id — different
-      // folders can legitimately share a basename
+      // dedup by source path (imported_from / source), not legacy_id —
+      // different folders can legitimately share a basename
+      const overlay = this.ws.config.mode === "overlay";
       const existingSources = new Set(
         [...this.index.items.values()]
-          .map((i) => (i.meta as { imported_from?: string }).imported_from)
+          .map((i) => (overlay ? i.meta.source : i.meta.imported_from))
           .filter((x): x is string => Boolean(x)),
       );
       const now = new Date().toISOString().slice(0, 10);
@@ -353,10 +357,13 @@ export class PlansStore {
           created: now,
           updated: now,
           legacy_id: d.legacy_id,
-          imported_from: d.source,
+          ...(overlay
+            ? { source: d.source, simple_source: d.simple_source }
+            : { imported_from: d.source }),
         });
-        let body = `\n## Summary\n${d.summary}\n`;
-        if (d.simple) body += `\n## Simple\n${d.simple}\n`;
+        // overlay: the task file is the content — never copy it
+        let body = overlay ? "" : `\n## Summary\n${d.summary}\n`;
+        if (d.simple && !overlay) body += `\n## Simple\n${d.simple}\n`;
         const { idPrefix } = await import("../../core/address/refs.js");
         writes.push({
           rel: join("items", idPrefix(d.id), `${d.id}.md`),
@@ -375,6 +382,17 @@ export class PlansStore {
           `te: import ${created.length} items by ${actor.session}`,
         );
         for (const w of writes) await this.index.upsertFile(join(this.ws.plansDir, w.rel));
+      }
+      if (overlay) {
+        // tag each task file after its item exists: a half-done tagging pass
+        // still resolves by the recorded `source` path. Task files are the
+        // human's content — tagged, never committed by the daemon.
+        for (const d of items) {
+          if (!created.includes(d.id)) continue;
+          for (const rel of [d.source, d.simple_source]) {
+            if (rel) await this.tagSource(rel, d.id);
+          }
+        }
       }
       return { created, skipped };
     });
@@ -444,12 +462,28 @@ export class PlansStore {
     });
   }
 
+  /** Overlay mode: write `te: <id>` into a task file's frontmatter. */
+  private async tagSource(rel: string, id: string): Promise<void> {
+    const abs = join(this.ws.root, rel);
+    if (!existsSync(abs)) return;
+    const text = await readFile(abs, "utf8");
+    const out = withTeTag(text, id);
+    if (out === text) return;
+    await writeFileAtomic(abs, out);
+    this.onFileWrite?.(abs, out);
+  }
+
   private items(): { metaIds: () => string[] } {
     return { metaIds: () => [...this.index.items.keys()] };
   }
 
-  /** Commit specific paths (+deletions) in the plans repo; skips when no repo or nothing changed. */
+  /**
+   * Commit specific paths (+deletions) in the plans repo; skips when no repo,
+   * nothing changed, or the workspace leaves committing to the human
+   * (`commit: false`).
+   */
   private async commitPaths(paths: string[], message: string, deletes: string[] = []): Promise<void> {
+    if (!this.ws.config.commit) return;
     if (!(await isRepo(this.ws.plansDir))) return;
     const rel = paths.map((p) => relative(this.ws.plansDir, join(this.ws.plansDir, p)));
     const onDisk = rel.filter((p) => existsSync(join(this.ws.plansDir, p)));

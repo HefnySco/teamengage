@@ -63,6 +63,7 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
     deps: Array<{ ref: string; status: string; outcome: string }>;
     decisions: Array<{ meta: { id: string; title: string } }>;
     targets: Array<{ ref: string; kind: string; path?: string }>;
+    source?: { path: string; text?: string; moved?: boolean; missing?: boolean };
   };
   if (flag(args, "--json")) {
     process.stdout.write(JSON.stringify(b, null, 2) + "\n");
@@ -70,6 +71,11 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
   }
   const m = b.item.meta;
   process.stdout.write(`${m.id} ${m.status} "${m.title}" v${m.version}\n`);
+  if (b.source) {
+    const note = b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : "";
+    process.stdout.write(`source: ${b.source.path}${note}\n`);
+    if (b.source.text) process.stdout.write(`\n${b.source.text.trimEnd()}\n`);
+  }
   for (const s of b.item.sections) {
     if (s.body.trim()) process.stdout.write(`\n## ${s.heading}\n${s.body.trimEnd()}\n`);
   }

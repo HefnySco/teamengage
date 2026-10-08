@@ -31,7 +31,7 @@ const USAGE = `te — TeamEngage CLI
 usage: te <command> [options]
 
 commands:
-  init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>]
+  init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>] [--overlay]
                    create a workspace (.teamengage plans repo)
   ls [--status s] [--project p] [--text t] [--json]
   show <ID> [--json]

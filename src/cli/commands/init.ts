@@ -7,9 +7,13 @@ import { teHome } from "../../core/config/config.js";
 import { isRepo, git } from "../../resources/git/git.js";
 
 /**
- * `te init [--plans <path>] [--name <n>] [--prefix <P>]` — create a workspace:
- * plans dir + workspace.yaml + git init + .gitignore, register it in
- * `~/.teamengage/workspaces.yaml`, create `machine.yaml` when missing.
+ * `te init [--plans <path>] [--name <n>] [--prefix <P>] [--overlay]` — create
+ * a workspace: plans dir + workspace.yaml + git init + .gitignore, register it
+ * in `~/.teamengage/workspaces.yaml`, create `machine.yaml` when missing.
+ *
+ * `--overlay` tracks an existing Markdown task folder in place (the root):
+ * `mode: overlay`, `commit: false`, and no `git init` — the folder's own repo
+ * carries the plans dir and the human commits it.
  */
 export async function initCmd(args: string[], home?: string): Promise<number> {
   const flag = (n: string) => {
@@ -20,6 +24,7 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
   const plansDir = resolve(root, flag("--plans") ?? ".teamengage");
   const name = flag("--name") ?? basename(root);
   const prefix = (flag("--prefix") ?? name.slice(0, 2)).toUpperCase();
+  const overlay = args.includes("--overlay");
 
   mkdirSync(join(plansDir, "items"), { recursive: true });
   mkdirSync(join(plansDir, "claims"), { recursive: true });
@@ -35,10 +40,11 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
         prefix,
         plans: ".teamengage",
         sync: "manual",
+        ...(overlay ? { mode: "overlay", commit: false } : {}),
         stale_after: "24h",
         projects: {},
         links: {},
-        resources: { self: { kind: "git", path: "." } },
+        resources: overlay ? {} : { self: { kind: "git", path: "." } },
       }),
     );
   }
@@ -46,7 +52,7 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
   const ignore = join(plansDir, ".gitignore");
   if (!existsSync(ignore)) writeFileSync(ignore, "*.tmp\nworktrees/\n");
 
-  if (!(await isRepo(plansDir))) {
+  if (!overlay && !(await isRepo(plansDir))) {
     execFileSync("git", ["init", "-b", "main"], { cwd: plansDir });
     await git(plansDir, ["add", "-A"]);
     await git(plansDir, ["-c", "user.email=teamengage@local", "-c", "user.name=teamengage", "commit", "-m", "te: init workspace"]);

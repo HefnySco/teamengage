@@ -54,6 +54,14 @@ export const WorkspaceConfig = z
     prefix: Prefix,
     plans: z.string().default(".teamengage"),
     sync: z.enum(["manual", "auto"]).default("manual"),
+    /**
+     * `standard`: item files hold the content. `overlay`: the workspace root is
+     * an existing Markdown task folder; item files hold only tracking state and
+     * point at the task file via `source` (relative to the root).
+     */
+    mode: z.enum(["standard", "overlay"]).default("standard"),
+    /** Commit each plans mutation. `false` leaves committing to the human. */
+    commit: z.boolean().default(true),
     /** Duration string like `24h`, `30m`, `7d`. */
     stale_after: z.string().default("24h"),
     projects: z.record(z.string(), ProjectConfig).default({}),

@@ -1,8 +1,11 @@
+import { join, relative, sep } from "node:path";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
 import { TeError, NotFoundError } from "../../core/model/errors.js";
+import { readTeTag, toSourcePath } from "../../core/files/source.js";
+import type { Ambiguity } from "../../import/import.js";
 
 /**
  * Human action API (DM-0005): REST endpoints for the human-only transitions
@@ -161,21 +164,57 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         : ops.wsr.ws.config.prefix;
       if (!prefix) throw new NotFoundError(`unknown project '${b.project}'`);
       const files = await scanFolder(b.folder);
-      // imported_from holds absolute (~/…) keys; map the ones under this
-      // folder back to folder-relative paths so subfolder-then-parent imports
-      // recognise files they already brought in
       const root = importRoot(b.folder);
-      const existingSources = sourcesUnder(
-        root,
-        [...ops.index.items.values()]
-          .map((i) => (i.meta as { imported_from?: string }).imported_from)
-          .filter((x): x is string => Boolean(x)),
-      );
+      const ws = ops.wsr.ws;
+      const overlay = ws.config.mode === "overlay";
+      const tagged: Ambiguity[] = [];
+      let existingSources: Set<string>;
+      let keyOf: (rel: string) => string;
+      if (overlay) {
+        // overlay: sources are workspace-relative, so the folder must be the
+        // root or under it; a file already tagged `te:` is never re-imported
+        const wsRoot = importRoot(ws.root);
+        if (root !== wsRoot && !root.startsWith(wsRoot + sep)) {
+          throw new TeError("USAGE", `overlay import folder must be inside the workspace root ${wsRoot}`);
+        }
+        keyOf = (rel) => toSourcePath(wsRoot, join(root, rel));
+        existingSources = new Set();
+        for (const i of ops.index.items.values()) {
+          for (const s of [i.meta.source, i.meta.simple_source]) {
+            const abs = s ? join(wsRoot, s) : undefined;
+            if (abs?.startsWith(root + sep)) existingSources.add(relative(root, abs));
+          }
+        }
+        for (const f of files) {
+          const tag = readTeTag(f.content);
+          if (!tag) continue;
+          existingSources.add(f.path);
+          if (!ops.index.get(tag)) {
+            tagged.push({
+              kind: "unknown_tag",
+              message: `tagged te: ${tag}, which is not in this workspace — pull the plans first?`,
+              file: f.path,
+            });
+          }
+        }
+      } else {
+        // imported_from holds absolute (~/…) keys; map the ones under this
+        // folder back to folder-relative paths so subfolder-then-parent
+        // imports recognise files they already brought in
+        keyOf = (rel) => sourceKey(root, rel);
+        existingSources = sourcesUnder(
+          root,
+          [...ops.index.items.values()]
+            .map((i) => i.meta.imported_from)
+            .filter((x): x is string => Boolean(x)),
+        );
+      }
       const plan = planImport(files, {
         prefix,
         existingIds: ops.index.items.keys(),
         existingSources,
       });
+      plan.ambiguities.push(...tagged);
       if (!b.apply) {
         return { apply: false, preview: plan.preview, ambiguities: plan.ambiguities, count: plan.items.length };
       }
@@ -190,7 +229,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           summary: i.summary,
           simple: i.simple,
           project: b.project,
-          source: sourceKey(root, i.sources[0]),
+          source: keyOf(i.sources[0]),
+          simple_source: overlay && i.sources[1] ? keyOf(i.sources[1]) : undefined,
         })),
         { kind: "human", session: "human", machine: ops.wsr.store.machine },
       );
