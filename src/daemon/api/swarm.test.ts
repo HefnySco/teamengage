@@ -10,6 +10,7 @@ import { WorkspaceOps } from "./ops.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import { parseItemFile } from "../../core/files/markdown.js";
+import { ClaimRefusedError, ConflictError, InvalidTransitionError } from "../../core/model/errors.js";
 
 /**
  * MC-0006: N=8 agents racing through next → claim → log → submit against a
@@ -68,6 +69,7 @@ describe("agent swarm (MC-0006)", () => {
       const done = new Set<string>();
       const errors: unknown[] = [];
       const violations: string[] = [];
+      let contention = 0;
       const checkLive = () => {
         const live = [...wsr.store.idx.claims.values()];
         for (let a = 0; a < live.length; a++) {
@@ -88,15 +90,27 @@ describe("agent swarm (MC-0006)", () => {
             if (done.size >= N_ITEMS) break;
             continue;
           }
-          const it = candidates[0];
+          // pick a random candidate — always taking [0] means every agent
+          // herds onto the same item and the claim race never triggers
+          const it = candidates[Math.floor(Math.random() * candidates.length)];
           try {
             await ops.claim(it.meta.id, session);
             checkLive(); // probe: no two live claims may overlap right now
             await ops.log(it.meta.id, session, "working");
             await ops.submit(it.meta.id, session, { notes: "done" });
             done.add(it.meta.id);
-          } catch {
-            // claim refused / CAS retry — another agent won; move on
+          } catch (e) {
+            // claim refused / CAS retry / submit-after-accept — expected
+            // contention; anything else is a real bug and must fail below
+            if (
+              !(e instanceof ClaimRefusedError) &&
+              !(e instanceof ConflictError) &&
+              !(e instanceof InvalidTransitionError)
+            ) {
+              errors.push(e);
+            } else {
+              contention++;
+            }
           }
         }
       };
@@ -115,6 +129,8 @@ describe("agent swarm (MC-0006)", () => {
 
       expect(errors).toEqual([]);
       expect(violations).toEqual([]);
+      // contention actually happened — otherwise the race invariants mean nothing
+      expect(contention).toBeGreaterThan(0);
       // every item was processed exactly once and is done
       expect(done.size).toBe(N_ITEMS);
       const claims = [...wsr.store.idx.claims.values()];

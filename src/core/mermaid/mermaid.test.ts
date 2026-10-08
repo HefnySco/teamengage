@@ -70,4 +70,27 @@ describe("renderMermaid", () => {
     expect(out).toContain("GL_0001");
     expect(out).not.toContain("GL_0002");
   });
+
+  it("output parses as a real mermaid flowchart (CR-0010)", async () => {
+    // node exposes dompurify's factory, not the browser instance mermaid
+    // expects — stub the sanitize surface so grammar parsing runs headless
+    const { default: dompurify } = await import("dompurify");
+    Object.assign(dompurify, {
+      sanitize: (t: string) => t,
+      addHook: () => {},
+      removeHook: () => {},
+      removeHooks: () => {},
+      removeAllHooks: () => {},
+    });
+    const { default: mermaid } = await import("mermaid");
+    for (const opts of [
+      {},
+      { roots: ["TE-0001"] },
+      { filter: { status: "in_progress" } },
+      { maxNodes: 2 },
+    ]) {
+      const parsed = await mermaid.parse(renderMermaid(idx, opts));
+      expect(parsed.diagramType).toBe("flowchart-v2");
+    }
+  });
 });

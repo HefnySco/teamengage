@@ -136,7 +136,12 @@ export async function setupWork(
       for (const base of bases) {
         const dest = join(root, resource, base);
         mkdirSync(dest, { recursive: true });
-        await rsyncSnapshot(`${r.config.host}:${join(r.config.path, base)}/`, dest, r.config.exclude);
+        await rsyncSnapshot(
+          `${r.config.host}:${join(r.config.path, base)}/`,
+          dest,
+          r.config.exclude,
+          r.config.ssh_opts,
+        );
       }
     } else if (r.config.kind === "folder" && r.config.snapshot && r.path) {
       const bases = snapshotBases(claim.targets, resource);
@@ -295,8 +300,21 @@ async function readBases(dir: string, res: string): Promise<string[]> {
 }
 
 /** rsync a target into a local snapshot dir (RS-0006/7). */
-async function rsyncSnapshot(src: string, dest: string, exclude?: string[]): Promise<void> {
-  const args = ["-a", "--delete", ...(exclude ?? []).flatMap((e) => ["--exclude", e]), src, dest];
+async function rsyncSnapshot(
+  src: string,
+  dest: string,
+  exclude?: string[],
+  sshOpts?: string[],
+): Promise<void> {
+  const args = [
+    "-a",
+    "--checksum", // quick-check misses same-size same-mtime edits → wrong bytes restored
+    "--delete",
+    ...(exclude ?? []).flatMap((e) => ["--exclude", e]),
+    ...(sshOpts?.length ? ["-e", `ssh ${sshOpts.join(" ")}`] : []),
+    src,
+    dest,
+  ];
   try {
     await execFileP("rsync", args, { timeout: 120_000 });
   } catch (e) {
@@ -329,19 +347,31 @@ export async function snapshotDiff(
   const src = liveSource(ws, resource);
   if (!src || !existsSync(dest)) return "";
   const parts: string[] = [];
+  const resCfg = ws.resources.get(resource)?.config;
+  const sshOpts = resCfg?.kind === "ssh" ? resCfg.ssh_opts : undefined;
   for (const base of await readBases(root, resource)) {
-    const d = await rsyncDryDiff(join(src.replace(/\/$/, ""), base) + "/", join(dest, base) + "/");
+    const d = await rsyncDryDiff(
+      join(src.replace(/\/$/, ""), base) + "/",
+      join(dest, base) + "/",
+      sshOpts,
+    );
     if (d) parts.push(base ? `# ${base}\n${d}` : d);
   }
   return formatDiff(parts);
 }
 
 /** rsync dry-run diff of one subtree; "" when identical or failed silently. */
-async function rsyncDryDiff(src: string, dest: string): Promise<string> {
+async function rsyncDryDiff(src: string, dest: string, sshOpts?: string[]): Promise<string> {
   try {
     const { stdout } = await execFileP(
       "rsync",
-      ["-arn", "--out-format=%n %l", src, dest],
+      [
+        "-arcn",
+        "--out-format=%n %l",
+        ...(sshOpts?.length ? ["-e", `ssh ${sshOpts.join(" ")}`] : []),
+        src,
+        dest,
+      ],
       { timeout: 60_000 },
     );
     return stdout
@@ -379,11 +409,15 @@ export async function rollbackWork(
     const snap = join(root, res);
     const dest = liveSource(ws, res);
     if (!dest || !existsSync(snap)) continue;
+    const rc = ws.resources.get(res)?.config;
+    const sshOpts = rc?.kind === "ssh" ? rc.ssh_opts : undefined;
     // restore only the subtrees that were claimed — never the whole resource
     for (const base of await readBases(root, res)) {
       await rsyncSnapshot(
         `${join(snap, base)}/`,
         `${join(dest.replace(/\/$/, ""), base)}/`,
+        rc?.kind === "ssh" ? rc.exclude : undefined,
+        sshOpts,
       );
     }
     restored.push(res);

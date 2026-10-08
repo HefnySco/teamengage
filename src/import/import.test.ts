@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -119,5 +119,60 @@ describe("import planning (IM-0001)", () => {
     // dep edge imported
     const depItem = [...store.idx.items.values()].find((i) => i.meta.depends_on.length > 0);
     expect(depItem).toBeDefined();
+  });
+
+  it("imports the real ~/de_code/Tasks/global folder end-to-end", async () => {
+    const real = join(process.env.HOME ?? "", "de_code", "Tasks", "global");
+    if (!existsSync(real)) return; // machine without the repo — nothing to verify
+    const files = await scanFolder(real);
+    expect(files.length).toBeGreaterThan(10);
+
+    const plan = planImport(files, { prefix: "WS", existingIds: [] });
+    expect(plan.items.length).toBeGreaterThan(10);
+    // unique ids, real titles, merged .simple.md companions
+    const idSet = new Set(plan.items.map((i) => i.suggestedId));
+    expect(idSet.size).toBe(plan.items.length);
+    for (const i of plan.items) {
+      expect(i.suggestedId).toMatch(/^WS-\d{4}$/);
+      expect(i.title.trim().length).toBeGreaterThan(0);
+    }
+    expect(plan.items.filter((i) => i.simple).length).toBeGreaterThan(0);
+    // dep refs resolve to allocated ids or are reported as ambiguities
+    for (const i of plan.items) for (const d of i.depends_on) expect(idSet.has(d)).toBe(true);
+
+    // apply into a fresh store — every created file must re-parse (real
+    // titles carry `:` `()` `` ` `` and other YAML-hostile characters)
+    const root2 = mkdtempSync(join(tmpdir(), "te-import-real-"));
+    const plans2 = join(root2, ".teamengage");
+    mkdirSync(join(plans2, "items"), { recursive: true });
+    writeFileSync(
+      join(plans2, "workspace.yaml"),
+      "name: ws\nprefix: WS\nresources:\n  self: { kind: git, path: . }\n",
+    );
+    execFileSync("git", ["init", "-b", "main"], { cwd: plans2 });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans2 });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: plans2 });
+    const store2 = new PlansStore(resolveWorkspace(root2, { home }), "test");
+    await store2.init();
+    const r = await store2.importItems(
+      plan.items.map((i) => ({
+        id: i.suggestedId,
+        legacy_id: i.legacy_id,
+        type: i.type,
+        title: i.title,
+        status: i.status,
+        depends_on: i.depends_on,
+        summary: i.summary,
+        simple: i.simple,
+      })),
+      human,
+    );
+    expect(r.created).toHaveLength(plan.items.length);
+    // reload the index from disk: zero invalid files
+    const { Index } = await import("../core/index/index.js");
+    const idx2 = await Index.load(plans2);
+    expect(idx2.invalidFiles.size).toBe(0);
+    expect(idx2.items.size).toBe(plan.items.length);
+    rmSync(root2, { recursive: true, force: true });
   });
 });

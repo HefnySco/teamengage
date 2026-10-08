@@ -21,6 +21,8 @@ export const ResourceConfig = z.discriminatedUnion("kind", [
     snapshot: z.boolean().default(true),
     exclude: z.array(z.string()).optional(),
     max_file_size: z.string().optional(),
+    /** extra args for the ssh transport, e.g. ["-p","2222","-i","~/.ssh/id"] */
+    ssh_opts: z.array(z.string()).optional(),
   }),
   z.object({
     kind: z.literal("folder"),
