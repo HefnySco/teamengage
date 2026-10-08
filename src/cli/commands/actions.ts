@@ -80,6 +80,17 @@ export async function dropCmd(args: string[], home?: string): Promise<number> {
 
 export const undropCmd = (args: string[], home?: string) => act("undrop", args, {}, home);
 
+/** `te done <ID> [note]` — mark done from any status (no review, no merge). */
+export async function doneCmd(args: string[], home?: string): Promise<number> {
+  const pos = positional(args);
+  const [id, ...rest] = pos;
+  if (!id) {
+    process.stderr.write("usage: te done <ID> [note]\n");
+    return 2;
+  }
+  return act("complete", [id, ...args.filter((a) => a.startsWith("--"))], { note: rest.join(" ") }, home);
+}
+
 export async function releaseCmd(args: string[], home?: string): Promise<number> {
   const pos = positional(args);
   const [id, ...rest] = pos;

@@ -182,7 +182,10 @@ done     = terminal
 
 - `turn`: `draft`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
-  `undrop`, and `release` of someone else's claim.
+  `undrop`, `complete`, and `release` of someone else's claim.
+- `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
+  any non-done item straight to `done` — for work finished outside
+  TeamEngage. No review and no merge: a claim is released, branches are kept.
 - `accept` **auto-merges** the item's branches locally (§6.3) — never pushes.
   A merge conflict sends the item back to `in_progress`, turn → agent, with the
   conflict as a log note.

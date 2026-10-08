@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -249,5 +249,36 @@ describe("import route (IM-0001)", () => {
     const titles = [...ctx.workspaces.get("ws")!.store.idx.items.values()].map((i) => i.meta.title);
     expect(titles).toContain("Roadmap");
     expect(titles).toContain("Phase 5 index");
+  });
+});
+
+describe("complete — human marks done from any status", () => {
+  it("draft → done, and a claimed item → done with its claim released", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "finished long ago" },
+        { type: "task", title: "finished by hand" },
+      ],
+      human,
+    );
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    const r1 = await post(`/api/items/${ids[0]}/complete`, { note: "already done" });
+    expect(r1.status).toBe(200);
+    expect(store.idx.get(ids[0])!.meta.status).toBe("done");
+
+    expect((await post(`/api/items/${ids[1]}/approve`)).status).toBe(200);
+    expect((await post(`/api/items/${ids[1]}/claim`)).status).toBe(200);
+    expect(existsSync(join(plans, "claims", `${ids[1]}.yaml`))).toBe(true);
+    expect((await post(`/api/items/${ids[1]}/complete`)).status).toBe(200);
+    expect(store.idx.get(ids[1])!.meta.status).toBe("done");
+    expect(store.idx.claims.has(ids[1])).toBe(false);
+    expect(existsSync(join(plans, "claims", `${ids[1]}.yaml`))).toBe(false);
+
+    // done is terminal for complete
+    expect((await post(`/api/items/${ids[1]}/complete`)).status).toBeGreaterThanOrEqual(400);
   });
 });

@@ -43,6 +43,12 @@ describe("every arrow in DESIGN §5", () => {
     ["ready →reject→ draft", "ready", human, { type: "reject" }, "draft", {}],
     ["in_progress →drop→ dropped", "in_progress", human, { type: "drop" }, "dropped", { claim: claimOf() }],
     ["dropped →undrop→ draft", "dropped", human, { type: "undrop" }, "draft", {}],
+    ["draft →complete→ done", "draft", human, { type: "complete" }, "done", {}],
+    ["ready →complete→ done", "ready", human, { type: "complete", note: "did it by hand" }, "done", {}],
+    ["in_progress →complete→ done", "in_progress", human, { type: "complete" }, "done", { claim: claimOf() }],
+    ["waiting →complete→ done", "waiting", human, { type: "complete" }, "done", { claim: claimOf() }],
+    ["in_review →complete→ done", "in_review", human, { type: "complete" }, "done", { claim: claimOf() }],
+    ["dropped →complete→ done", "dropped", human, { type: "complete" }, "done", {}],
     ["in_review →merge_conflict→ in_progress", "in_review", daemon, { type: "merge_conflict", conflicts: ["a.ts"] }, "in_progress", {}],
   ];
   it.each(cases)("%s", (_name, from, actor, action, to, extra) => {
@@ -63,6 +69,8 @@ describe("every non-arrow is rejected", () => {
     ["done", human, { type: "undrop" }, {}], // only dropped items restore
     ["ready", human, { type: "undrop" }, {}],
     ["dropped", agent, { type: "undrop" }, {}], // human-only
+    ["done", human, { type: "complete" }, {}], // already done
+    ["in_progress", agent, { type: "complete" }, { claim: claimOf() }], // human-only
     ["dropped", agent, { type: "claim", claim: claimOf() }, {}],
     ["waiting", agent, { type: "submit" }, { claim: claimOf() }],
     ["in_review", agent, { type: "accept" }, {}], // human-only
@@ -74,6 +82,20 @@ describe("every non-arrow is rejected", () => {
     expect(() => transition(item(from), action, actor, ctx(extra))).toThrow(
       /human-only|cannot|held by/i,
     );
+  });
+});
+
+describe("complete (human marks done from any status)", () => {
+  it("releases a claim but keeps branches, never merges, clears the question", () => {
+    const meta = { ...item("waiting"), question: { text: "?", asked_by: agent.session, asked_at: NOW } };
+    const r = transition(meta, { type: "complete", note: "shipped" }, human, ctx({ claim: claimOf() }));
+    expect(r.meta.question).toBeUndefined();
+    expect(r.effects).toEqual([{ type: "delete_claim" }, { type: "cleanup_work", keepBranches: true }]);
+    expect(r.log[0]).toMatch(/marked done \(from waiting\): shipped$/);
+  });
+
+  it("no claim → no effects", () => {
+    expect(transition(item("draft"), { type: "complete" }, human, ctx()).effects).toEqual([]);
   });
 });
 

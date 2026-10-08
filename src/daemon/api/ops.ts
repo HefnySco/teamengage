@@ -487,6 +487,18 @@ export class WorkspaceOps {
     return r;
   }
 
+  /** Human: mark done from any status — no review, no merge; branches kept. */
+  async complete(id: string, note?: string) {
+    const it = this.item(id);
+    const claim = it.claim;
+    const r = await this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "complete",
+      note,
+    });
+    if (claim) await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    return r;
+  }
+
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });

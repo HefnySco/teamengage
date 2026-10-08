@@ -39,6 +39,11 @@ export type Action =
   | { type: "drop"; reason?: string }
   /** Restore a dropped item to draft (re-approval required before claim). */
   | { type: "undrop" }
+  /**
+   * Human marks an item done from any status (e.g. work finished outside
+   * TeamEngage). No review, no merge: a claim is released, branches kept.
+   */
+  | { type: "complete"; note?: string }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -278,6 +283,19 @@ export function transition(
       if (ctx.claim) {
         out.effects.push({ type: "delete_claim" });
         out.effects.push({ type: "cleanup_work" });
+      }
+      return out;
+    }
+
+    case "complete": {
+      requireHuman(actor, action.type);
+      if (from === "done") fail(from, action.type);
+      delete out.meta.question;
+      set("done", action.note);
+      out.log.push(`- ${stamp} ${who} marked done (from ${from})${action.note ? `: ${action.note}` : ""}`);
+      if (ctx.claim) {
+        out.effects.push({ type: "delete_claim" });
+        out.effects.push({ type: "cleanup_work", keepBranches: true });
       }
       return out;
     }

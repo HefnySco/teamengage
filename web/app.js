@@ -155,6 +155,7 @@ const Inbox = ({ onOpen }) => {
               <${ItemLine} i=${{ id, status: "draft", title: "" }} onOpen=${onOpen} />
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
+                <button class="btn btn-sm btn-outline-success btn-act" onClick=${() => act(id, "complete", { note: "already done" })}>already done</button>
                 <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
               </div>
             </div>
@@ -300,6 +301,7 @@ const ItemView = ({ id }) => {
       ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success btn-act" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
       ${it.claim && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
       ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}
+      ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success btn-act" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
       ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
     </div>
     <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
