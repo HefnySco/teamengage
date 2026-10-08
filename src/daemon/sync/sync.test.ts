@@ -110,7 +110,7 @@ describe("fetch-before-claim (SY-0001)", () => {
     expect(remote.map((c) => c.item)).toContain("WS-0001");
 
     // machine A (stale) tries to claim the same item
-    const session = opsA.hello("claude").session;
+    const session = (await opsA.hello("claude")).session;
     await expect(opsA.claim("WS-0001", session)).rejects.toThrow(/pull first/);
     // and the local index was never touched
     expect(wsrA.store.idx.claims.has("WS-0001")).toBe(false);
@@ -124,7 +124,7 @@ describe("fetch-before-claim (SY-0001)", () => {
     await store.init();
     const sessions = new SessionRegistry("machine-c");
     const ops = new WorkspaceOps({ ws, store }, sessions, undefined, home);
-    const session = ops.hello("claude").session;
+    const session = (await ops.hello("claude")).session;
     const { claim: c } = await ops.claim("WS-0001", session);
     expect(c.unsynced).toBe(true);
   });
@@ -228,7 +228,7 @@ describe("two-machine integration (SY-0003)", () => {
     execFileSync("git", ["add", "-A"], { cwd: plansC });
     execFileSync("git", ["commit", "-m", "ws-0005 item"], { cwd: plansC });
     await wsrC.store.idx.upsertFile(join(plansC, "items", "WS", "WS-0005.md"));
-    const sc = opsC.hello("claude");
+    const sc = await opsC.hello("claude");
     await opsC.claim("WS-0005", sc.session);
     push(plansC);
     // D pulls → the claim file is on disk; D's claim on the same item is refused
@@ -237,7 +237,7 @@ describe("two-machine integration (SY-0003)", () => {
     await wsrD.store.idx.upsertFile(join(plansD, "items", "WS", "WS-0005.md"));
     const yaml = readFileSync(join(plansD, "claims", "WS-0005.yaml"), "utf8");
     wsrD.store.idx.setClaim(parseClaimFile(yaml));
-    const sd = opsD.hello("gemini");
+    const sd = await opsD.hello("gemini");
     await expect(opsD.claim("WS-0005", sd.session)).rejects.toThrow(/claim/i);
   });
 

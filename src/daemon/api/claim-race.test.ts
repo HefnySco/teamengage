@@ -59,8 +59,8 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 describe("claim serialization (MC-0003)", () => {
   it("two concurrent claims on overlapping targets: exactly one wins", async () => {
-    const s1 = ops.hello("a1").session;
-    const s2 = ops.hello("a2").session;
+    const s1 = (await ops.hello("a1")).session;
+    const s2 = (await ops.hello("a2")).session;
     const [r1, r2] = await Promise.allSettled([
       ops.claim("WS-0001", s1),
       ops.claim("WS-0002", s2),
@@ -75,7 +75,7 @@ describe("claim serialization (MC-0003)", () => {
   it("the surviving claim holds; a second try on the same item is refused", async () => {
     const held = [...wsr.store.idx.claims.keys()];
     expect(held).toHaveLength(1);
-    const s3 = ops.hello("a3").session;
+    const s3 = (await ops.hello("a3")).session;
     await expect(ops.claim(held[0], s3)).rejects.toThrow(/claimed/i);
   });
 });

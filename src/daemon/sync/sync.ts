@@ -208,7 +208,9 @@ export async function reconcile(
         marked.add(lose.item);
         const rel = join("claims", `${lose.item}.yaml`);
         const path = join(wsr.ws.plansDir, rel);
-        await writeFileAtomic(path, claimToYaml({ ...lose, conflicted: true }));
+        const yaml = claimToYaml({ ...lose, conflicted: true });
+        await writeFileAtomic(path, yaml);
+        wsr.store.onFileWrite?.(path, yaml);
         wsr.store.idx.setClaim({ ...lose, conflicted: true });
         touched.push(rel);
         notify?.(

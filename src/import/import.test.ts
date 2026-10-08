@@ -91,6 +91,51 @@ describe("import planning (IM-0001)", () => {
     expect(ids[0]).toBe("WS-0001");
   });
 
+  it("status comes from ANY path segment; duplicate names get unique ids; **Depends on:** parses", async () => {
+    const f2 = mkdtempSync(join(tmpdir(), "te-import2-"));
+    mkdirSync(join(f2, "Phase-1", "DONE"), { recursive: true });
+    mkdirSync(join(f2, "Phase-4-Fixes"), { recursive: true });
+    mkdirSync(join(f2, "Redesigned", "B1"), { recursive: true });
+    writeFileSync(join(f2, "Phase-1", "DONE", "TASK-P1F-01 cloud store.md"), "# Cloud store\n\nDone work.\n");
+    writeFileSync(
+      join(f2, "Phase-1", "DONE", "TASK-P1F-02 op ui.md"),
+      "# Op UI\n\n**Depends on:** P1F-01. **Unblocks:** P4A-09.\n",
+    );
+    // same basename under two different dirs — both must get their own id
+    writeFileSync(join(f2, "Phase-4-Fixes", "TASK-P4F-04 schema.md"), "# Schema v1\n");
+    writeFileSync(join(f2, "Redesigned", "B1", "TASK-P4F-04 schema.md"), "# Schema v2\n");
+    writeFileSync(join(f2, "Phase-4-Fixes", "TASK-P4F-05 auth.md"), "# Auth\n\n**Depends on:** nothing.\n");
+
+    const files = await scanFolder(f2);
+    const plan = planImport(files, { prefix: "WS", existingIds: [] });
+
+    // nested DONE/ anywhere in the path → done
+    const items = plan.items;
+    expect(items.find((i) => i.legacy_id === "TASK-P1F-01 cloud store")!.status).toBe("done");
+    expect(items.find((i) => i.legacy_id === "TASK-P1F-02 op ui")!.status).toBe("done");
+
+    // **Depends on:** P1F-01 resolves to the TASK-P1F-01 item's new id
+    const p1f01 = items.find((i) => i.legacy_id === "TASK-P1F-01 cloud store")!;
+    const p1f02 = items.find((i) => i.legacy_id === "TASK-P1F-02 op ui")!;
+    expect(p1f02.depends_on).toEqual([p1f01.suggestedId]);
+
+    // both copies of the duplicate name get unique ids + an ambiguity
+    const dupes = items.filter((i) => i.legacy_id === "TASK-P4F-04 schema");
+    expect(dupes).toHaveLength(2);
+    expect(new Set(dupes.map((d) => d.suggestedId)).size).toBe(2);
+    const ids = new Set(plan.items.map((i) => i.suggestedId));
+    expect(ids.size).toBe(plan.items.length);
+    expect(plan.ambiguities.some((a) => a.kind === "duplicate_legacy")).toBe(true);
+
+    // "**Depends on:** nothing." is not an ambiguity
+    const p4f05 = items.find((i) => i.legacy_id === "TASK-P4F-05 auth")!;
+    expect(p4f05.depends_on).toEqual([]);
+    expect(
+      plan.ambiguities.filter((a) => a.file.includes("P4F-05")).map((a) => a.kind),
+    ).not.toContain("unresolved_dep");
+    rmSync(f2, { recursive: true, force: true });
+  });
+
   it("apply creates items idempotently (legacy_id dedup)", async () => {
     const files = await scanFolder(src);
     const plan = planImport(files, { prefix: "WS", existingIds: [] });
@@ -174,5 +219,37 @@ describe("import planning (IM-0001)", () => {
     expect(idx2.invalidFiles.size).toBe(0);
     expect(idx2.items.size).toBe(plan.items.length);
     rmSync(root2, { recursive: true, force: true });
+  });
+
+  it("dry-run on the real ~/de_code/Tasks/mission_planner tree", async () => {
+    const real = join(process.env.HOME ?? "", "de_code", "Tasks", "mission_planner");
+    if (!existsSync(real)) return; // machine without the corpus — nothing to verify
+    const files = await scanFolder(real);
+    const plan = planImport(files, { prefix: "MP", existingIds: [] });
+
+    // unique ids even where legacy basenames repeat across folders
+    const idSet = new Set(plan.items.map((i) => i.suggestedId));
+    expect(idSet.size).toBe(plan.items.length);
+
+    // status from ANY path segment: files under nested DONE/ dirs are done
+    const nested = plan.items.filter((i) => i.sources.some((s) => /(^|\/)done\//i.test(s)));
+    expect(nested.length).toBeGreaterThan(5);
+    for (const i of nested) expect(i.status).toBe("done");
+
+    // duplicate legacy names imported as separate items AND flagged
+    const dupLegacy = plan.ambiguities.filter((a) => a.kind === "duplicate_legacy");
+    expect(dupLegacy.length).toBeGreaterThan(0);
+    const p4f04 = plan.items.filter((i) => i.legacy_id === "TASK-P4F-04-launch-grant-schema");
+    expect(p4f04.length).toBe(2);
+
+    // **Depends on:** lines resolve short refs like "P1F-01" to new ids
+    const p1f02 = plan.items.find((i) => i.legacy_id === "TASK-P1F-02-operation-cloud-ui")!;
+    expect(p1f02.depends_on).toEqual([
+      plan.items.find((i) => i.legacy_id === "TASK-P1F-01-cloud-mission-store")!.suggestedId,
+    ]);
+
+    // genuinely unresolvable refs are reported, not dropped or invented
+    expect(plan.ambiguities.some((a) => a.kind === "unresolved_dep")).toBe(true);
+    for (const i of plan.items) for (const d of i.depends_on) expect(idSet.has(d)).toBe(true);
   });
 });

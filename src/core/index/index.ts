@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, isAbsolute } from "node:path";
 import { parseItemFile, parseMarkdown } from "../files/markdown.js";
 import { parseClaimFile } from "../claims/claims.js";
 import { DecisionMeta, type ItemMeta, type Section, type Status, type Turn, turnOf } from "../model/index.js";
@@ -71,7 +71,11 @@ export class Index {
           try {
             const doc = parseItemFile(text, file);
             const existing = idx.items.get(doc.meta.id);
-            if (existing && existing.path !== file && !idx.duplicates.includes(doc.meta.id)) {
+            if (
+              existing &&
+              existing.path !== relative(plansDir, file) &&
+              !idx.duplicates.includes(doc.meta.id)
+            ) {
               idx.duplicates.push(doc.meta.id);
             }
             idx.items.set(doc.meta.id, {
@@ -118,28 +122,31 @@ export class Index {
 
   /** Incremental update of one item file (create/modify). */
   async upsertFile(path: string, deferDerive = false): Promise<void> {
-    const text = await readFile(path, "utf8");
-    this.invalidFiles.delete(path);
+    // callers pass absolute or relative paths; entries always store rel
+    const abs = isAbsolute(path) ? path : join(this.plansDir, path);
+    const rel = relative(this.plansDir, abs);
+    const text = await readFile(abs, "utf8");
+    this.invalidFiles.delete(abs);
     let doc;
     try {
-      doc = parseItemFile(text, path);
+      doc = parseItemFile(text, abs);
     } catch (e) {
-      this.invalidFiles.set(path, (e as Error).message);
+      this.invalidFiles.set(abs, (e as Error).message);
       // keep the previous parsed version if we had one, marked invalid
-      const old = [...this.items.values()].find((i) => i.path === path);
+      const old = [...this.items.values()].find((i) => i.path === rel);
       if (old) old.invalid = (e as Error).message;
       if (!deferDerive) this.derive();
       return;
     }
     const id = doc.meta.id;
     const existing = this.items.get(id);
-    if (existing && existing.path !== path) {
+    if (existing && existing.path !== rel) {
       if (!this.duplicates.includes(id)) this.duplicates.push(id);
     }
     this.items.set(id, {
       meta: doc.meta,
       sections: doc.sections,
-      path: relative(this.plansDir, path),
+      path: rel,
       blocked: false,
       blocks: [],
       children: [],

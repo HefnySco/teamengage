@@ -82,6 +82,25 @@ describe("Index", () => {
     expect(before).toContain("GL-0003");
   });
 
+  it("upsertFile on an already-indexed item is not a duplicate", async () => {
+    const idx = await Index.load(plans);
+    expect(idx.duplicates).toEqual([]);
+    // store/watcher callers pass the ABSOLUTE path; entries store rel paths
+    const f = join(plans, idx.get("GL-0001")!.path);
+    await idx.upsertFile(f);
+    expect(idx.duplicates).toEqual([]);
+    // a second file with the same id IS a duplicate
+    mkdirSync(join(plans, "items", "OT"), { recursive: true });
+    const dupe = join(plans, "items", "OT", "GL-0001-copy.md");
+    writeFileSync(
+      dupe,
+      `---\nid: GL-0001\ntype: task\ntitle: copy\nstatus: ready\nversion: 1\n---\n\n## Summary\nx\n`,
+    );
+    await idx.upsertFile(dupe);
+    expect(idx.duplicates).toContain("GL-0001");
+    rmSync(dupe);
+  });
+
   it("removeFile drops the item", async () => {
     const idx = await Index.load(plans);
     const f = join(plans, "items", "GL", "GL-0009.md");

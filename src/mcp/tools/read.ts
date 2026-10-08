@@ -40,11 +40,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         "Register a session; returns session id, machine, workspace summary, claims to resume.",
       inputSchema: { agent: z.string(), workspace: z.string().optional() },
     },
-    ({ agent, workspace }) => {
+    async ({ agent, workspace }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
-        const { session, resume } = ops.hello(agent);
+        const { session, resume } = await ops.hello(agent);
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };

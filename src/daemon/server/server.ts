@@ -76,7 +76,13 @@ export interface StartOpts {
 
 export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
   const token = randomBytes(24).toString("hex");
-  const app = Fastify({ logger: false, bodyLimit: 4 * 1024 * 1024 });
+  // forceCloseConnections: SSE/keep-alive clients would otherwise hold
+  // server.close() open forever — SIGTERM must actually stop the daemon
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 4 * 1024 * 1024,
+    forceCloseConnections: true,
+  });
 
   app.addHook("onRequest", async (req, reply) => {
     if (req.url === "/health") return;

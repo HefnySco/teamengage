@@ -82,7 +82,7 @@ describe("agent swarm (MC-0006)", () => {
       };
 
       const agent = async (n: number) => {
-        const { session } = ops.hello(`agent-${n}`);
+        const { session } = await ops.hello(`agent-${n}`);
         while (done.size < N_ITEMS) {
           const candidates = ops.next(10).filter((i) => !done.has(i.meta.id));
           if (!candidates.length) {

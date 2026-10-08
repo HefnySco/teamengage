@@ -31,9 +31,11 @@ export interface PlansWatcherOpts {
   staleAfterMs?: number;
 }
 
+const DELETED = "#deleted"; // sentinel — never a valid sha256 hex
+
 export class PlansWatcher {
   private watcher!: FSWatcher;
-  private ownWrites = new Map<string, string>(); // path → content hash
+  private ownWrites = new Map<string, string>(); // path → content hash | DELETED
   private pending = new Map<string, NodeJS.Timeout>();
   private closed = false;
 
@@ -42,13 +44,21 @@ export class PlansWatcher {
     private opts: PlansWatcherOpts = {},
   ) {}
 
-  /** Call after the store writes a file so its own change event is ignored. */
-  markOwnWrite(path: string, content: string): void {
-    this.ownWrites.set(path, createHash("sha256").update(content).digest("hex"));
+  /**
+   * Call after the store writes a file so its own change event is ignored.
+   * content=null marks a daemon-side delete (suppresses the unlink event).
+   */
+  markOwnWrite(path: string, content: string | null): void {
+    this.ownWrites.set(
+      path,
+      content === null ? DELETED : createHash("sha256").update(content).digest("hex"),
+    );
   }
 
   async start(): Promise<void> {
     const plans = this.store.ws.plansDir;
+    // the store tells us about its own writes so we never re-detect them
+    this.store.onFileWrite = (p, c) => this.markOwnWrite(p, c);
     this.watcher = watch(plans, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
@@ -63,6 +73,11 @@ export class PlansWatcher {
     this.watcher.on("add", onChange);
     this.watcher.on("change", onChange);
     this.watcher.on("unlink", (path) => {
+      // only a delete mark suppresses unlink — a pending write mark belongs
+      // to a change event, and a stale one is useless once the file's gone
+      const mark = this.ownWrites.get(path);
+      this.ownWrites.delete(path);
+      if (mark === DELETED) return; // the store deleted it
       if (this.isItemFile(path)) {
         this.store.enqueue(async () => {
           this.store.idx.removeFile(path);
@@ -109,12 +124,13 @@ export class PlansWatcher {
   private async handle(path: string): Promise<void> {
     const text = await readFile(path, "utf8").catch(() => null);
     if (text === null) return;
-    // suppress the daemon's own writes (content-identical)
+    // suppress the daemon's own writes (content-identical). A DELETED mark is
+    // stale here — the file exists, so process it; a pending unlink (if any)
+    // is ordered after this change anyway.
+    const mark = this.ownWrites.get(path);
+    if (mark !== undefined) this.ownWrites.delete(path);
     const hash = createHash("sha256").update(text).digest("hex");
-    if (this.ownWrites.get(path) === hash) {
-      this.ownWrites.delete(path);
-      return;
-    }
+    if (mark !== undefined && mark !== DELETED && mark === hash) return;
     if (this.isClaimFile(path)) {
       await this.store.enqueue(async () => {
         try {

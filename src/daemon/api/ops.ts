@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import type { IndexedItem } from "../../core/index/index.js";
@@ -55,9 +56,13 @@ export class WorkspaceOps {
 
   // ---- sessions ---------------------------------------------------------
 
-  hello(agent: string): { session: Session; resume: Claim[] } {
+  async hello(agent: string): Promise<{ session: Session; resume: Claim[] }> {
     const session = this.sessions.hello(agent);
-    const resume = this.sessions.resumeClaims(agent, this.index.claims.values());
+    const prior = this.sessions.resumeClaims(agent, this.index.claims.values());
+    // rebind claims held by this agent's dead sessions onto the new one —
+    // otherwise requireHolder() sees the old id and every log/ask/submit
+    // returns FORBIDDEN after a reconnect
+    const resume = await this.store.rebindClaims(prior, session.id);
     return { session, resume };
   }
 
@@ -488,8 +493,19 @@ export class WorkspaceOps {
 
   async renumber(oldId: string, newId: string) {
     const r = await doRenumber(this.wsr.ws.plansDir, oldId, newId);
+    // daemon writes — mark them so the watcher doesn't re-detect human edits
+    for (const { from, to } of r.renamedFiles) {
+      this.store.onFileWrite?.(from, null);
+      const c = await readFile(to, "utf8").catch(() => null);
+      if (c !== null) this.store.onFileWrite?.(to, c);
+      this.store.idx.removeFile(from);
+    }
     // reload touched files
-    for (const f of r.changedFiles) await this.store.idx.upsertFile(f);
+    for (const f of r.changedFiles) {
+      const c = await readFile(f, "utf8").catch(() => null);
+      if (c !== null) this.store.onFileWrite?.(f, c);
+      await this.store.idx.upsertFile(f);
+    }
     return r;
   }
 }

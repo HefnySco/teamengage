@@ -113,7 +113,7 @@ afterAll(async () => {
 
 describe.skipIf(!dockerOk)("ssh resource over a real sshd container (RS-0006)", () => {
   it("claim snapshots the claimed remote subtree over ssh", async () => {
-    agent = ops.hello("agent").session;
+    agent = (await ops.hello("agent")).session;
     await ops.claim("WS-0001", agent);
     const snap = join(home, ".teamengage", "snapshots", "ws", "WS-0001", "rpi", "cfg", "a.conf");
     expect(existsSync(snap)).toBe(true);
@@ -149,7 +149,7 @@ describe.skipIf(!dockerOk)("ssh resource over a real sshd container (RS-0006)", 
     await st.init();
     const sessions = new SessionRegistry("test");
     const o = new WorkspaceOps({ ws: wsPath, store: st }, sessions, undefined, home);
-    const a = o.hello("meta").session;
+    const a = (await o.hello("meta")).session;
     // $(…)/`…` paths don't exist → recorded missing; we'ird snapshots fine
     await expect(o.claim("WS-0002", a)).resolves.toBeDefined();
     expect(existsSync(join(home, ".teamengage", "snapshots", "ws", "WS-0002", "rpi", "we'ird", "f.txt"))).toBe(true);

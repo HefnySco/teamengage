@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Index } from "../../core/index/index.js";
-import { EventLog } from "../../core/events/log.js";
+import { EventLog, eventFileName } from "../../core/events/log.js";
 import {
   parseItemFile,
   parseMarkdown,
@@ -57,6 +57,12 @@ export class PlansStore {
   private ready = false;
   /** Called for each committed event (SSE fan-out). */
   onEvent?: (ev: Event) => void;
+  /**
+   * Called after every file the store writes or deletes (absolute path;
+   * content=null for deletes) — the watcher subscribes so daemon writes
+   * aren't re-detected as human edits.
+   */
+  onFileWrite?: (absPath: string, content: string | null) => void;
 
   constructor(
     readonly ws: LoadedWorkspace,
@@ -109,6 +115,7 @@ export class PlansStore {
     for (const s of sectionWrites) appendToSection(doc, s.heading, s.text);
     const out = serializeMarkdown(doc);
     await writeFileAtomic(path, out);
+    this.onFileWrite?.(path, out);
     return out;
   }
 
@@ -178,23 +185,30 @@ export class PlansStore {
       const relItem = relative(this.ws.plansDir, absPath);
       await this.writeItemDoc(absPath, doc.raw.text, newMeta, tr.log, tr.sectionWrites);
       for (const w of writes) {
-        await writeFileAtomic(join(this.ws.plansDir, w.rel), w.content);
+        const p = join(this.ws.plansDir, w.rel);
+        await writeFileAtomic(p, w.content);
+        this.onFileWrite?.(p, w.content);
       }
       const { unlink } = await import("node:fs/promises");
       for (const d of deletes) {
         const p = join(this.ws.plansDir, d);
         if (existsSync(p)) await unlink(p);
+        this.onFileWrite?.(p, null);
       }
 
       const events: Event[] = [];
+      const eventFiles = new Set<string>();
       for (const e of tr.events) {
         const full = await this.events.append(e);
+        // the event file is part of the same mutation — commit it too,
+        // else it lingers untracked and never syncs
+        eventFiles.add(join("events", this.machine, eventFileName(full.ts)));
         events.push(full);
         this.onEvent?.(full);
       }
 
       await this.commitPaths(
-        [relItem, ...writes.map((w) => w.rel)],
+        [relItem, ...writes.map((w) => w.rel), ...eventFiles],
         `te: ${id} ${action.type} by ${actor.session}`,
         deletes,
       );
@@ -272,7 +286,9 @@ export class PlansStore {
         ids.push(id);
       }
       for (const w of writes) {
-        await writeFileAtomic(join(this.ws.plansDir, w.rel), w.content);
+        const p = join(this.ws.plansDir, w.rel);
+        await writeFileAtomic(p, w.content);
+        this.onFileWrite?.(p, w.content);
       }
       await this.commitPaths(
         writes.map((w) => w.rel),
@@ -344,7 +360,9 @@ export class PlansStore {
         created.push(d.id);
       }
       for (const w of writes) {
-        await writeFileAtomic(join(this.ws.plansDir, w.rel), w.content);
+        const p = join(this.ws.plansDir, w.rel);
+        await writeFileAtomic(p, w.content);
+        this.onFileWrite?.(p, w.content);
       }
       if (writes.length) {
         await this.commitPaths(
@@ -354,6 +372,40 @@ export class PlansStore {
         for (const w of writes) await this.index.upsertFile(join(this.ws.plansDir, w.rel));
       }
       return { created, skipped };
+    });
+  }
+
+  /**
+   * Re-point live claims held by an agent's old session ids at a new session
+   * (MCP reconnect / daemon restart). Without this, `requireHolder` sees the
+   * dead session id and every log/ask/submit returns FORBIDDEN. Serialized
+   * and committed like any other claim mutation.
+   */
+  rebindClaims(claims: Claim[], holder: string): Promise<Claim[]> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const now = new Date().toISOString();
+      const rebound: Claim[] = [];
+      const touched: string[] = [];
+      for (const c of claims) {
+        if (c.holder === holder) {
+          rebound.push(c);
+          continue;
+        }
+        const next = { ...c, holder, last_seen: now };
+        const rel = join("claims", `${c.item}.yaml`);
+        const abs = join(this.ws.plansDir, rel);
+        const yaml = claimToYaml(next);
+        await writeFileAtomic(abs, yaml);
+        this.onFileWrite?.(abs, yaml);
+        this.index.setClaim(next);
+        rebound.push(next);
+        touched.push(rel);
+      }
+      if (touched.length) {
+        await this.commitPaths(touched, `te: rebind ${touched.length} claim(s) to ${holder}`);
+      }
+      return rebound;
     });
   }
 

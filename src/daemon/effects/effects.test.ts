@@ -64,8 +64,8 @@ beforeAll(async () => {
   wsr = { ws, store };
   sessions = new SessionRegistry("test");
   ops = new WorkspaceOps(wsr, sessions, undefined, home);
-  sClaude = ops.hello("claude").session;
-  sCodex = ops.hello("codex").session;
+  sClaude = (await ops.hello("claude")).session;
+  sCodex = (await ops.hello("codex")).session;
 });
 
 let sClaude: Session;
