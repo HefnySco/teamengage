@@ -88,6 +88,12 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
     const cookie = /(?:^|;\s*)te_token=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
     if (auth !== `Bearer ${token}` && q.token !== token && cookie !== token) {
       await reply.code(401).send({ error: "unauthorized" });
+      return;
+    }
+    // a successful ?token= login plants the cookie so subresource requests
+    // (app.js, SSE, API) authenticate without the query param
+    if (q.token === token && cookie !== token) {
+      void reply.header("set-cookie", `te_token=${token}; path=/; samesite=strict; httponly`);
     }
   });
 

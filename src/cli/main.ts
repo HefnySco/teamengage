@@ -128,7 +128,7 @@ async function main(argv: string[]): Promise<number> {
     case "ui": {
       const { ensureDaemon } = await import("./client.js");
       const { port, token } = await ensureDaemon(home);
-      const url = `http://127.0.0.1:${port}/ui/#t=${token}`;
+      const url = `http://127.0.0.1:${port}/ui?token=${token}`;
       process.stdout.write(`${url}\n`);
       const { spawn } = await import("node:child_process");
       spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();

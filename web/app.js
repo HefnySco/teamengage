@@ -4,12 +4,12 @@ import htm from "htm";
 
 const html = htm.bind(h);
 
-// ---- auth: `#t=<token>` from `te ui` → cookie, then strip from URL ---------
-const hash = location.hash;
-const tm = /[#&]t=([^&]+)/.exec(hash);
-if (tm) {
-  document.cookie = `te_token=${tm[1]}; path=/; samesite=strict`;
-  location.hash = hash.replace(/[#&]t=[^&]+/, "").replace(/^#&/, "#");
+// ---- auth: `?token=` / `#t=<token>` from `te ui` → cookie, then strip ------
+const qTok = new URLSearchParams(location.search).get("token") ??
+  /[#&]t=([^&]+)/.exec(location.hash)?.[1];
+if (qTok) {
+  document.cookie = `te_token=${qTok}; path=/; samesite=strict`;
+  history.replaceState(null, "", location.pathname + location.hash.replace(/[#&]t=[^&]+/, "").replace(/^#&/, "#"));
 }
 
 const api = async (path, init) => {
