@@ -1,0 +1,6 @@
+dist
+node_modules
+coverage
+web/dist
+package-lock.json
+.teamengage/items

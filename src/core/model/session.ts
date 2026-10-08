@@ -1,0 +1,21 @@
+import { z } from "zod";
+
+/** A registered agent instance: `claude-code@laptop#a1f3` (DESIGN §3). */
+export const Session = z
+  .object({
+    id: z.string().min(1),
+    agent: z.string().min(1),
+    machine: z.string().min(1),
+    connected_at: z.string(),
+    last_seen: z.string(),
+  })
+  .passthrough();
+export type Session = z.infer<typeof Session>;
+
+/** A host running a daemon (`desktop`, `laptop`). */
+export const Machine = z
+  .object({
+    name: z.string().min(1),
+  })
+  .passthrough();
+export type Machine = z.infer<typeof Machine>;
