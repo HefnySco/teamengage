@@ -8,6 +8,8 @@ export const Session = z
     machine: z.string().min(1),
     connected_at: z.string(),
     last_seen: z.string(),
+    /** PID of the local client process (the `te mcp` shim) — liveness probe. */
+    pid: z.number().int().positive().optional(),
   })
   .passthrough();
 export type Session = z.infer<typeof Session>;

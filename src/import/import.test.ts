@@ -228,6 +228,28 @@ describe("import planning (IM-0001)", () => {
     ).toBe(true);
   });
 
+  it("'nothing …' lines and trailing prose sentences add no deps (no false cycles)", async () => {
+    const mk = (name: string, dep: string) => ({
+      path: `done/${name}.md`,
+      content: `# ${name}\n\n**Depends on:** ${dep}\n`,
+    });
+    // real lines from mission_planner that produced P4B-02⇄03 and VG-01⇄02 cycles
+    const files = [
+      mk("TASK-P4B-02-expr", "nothing (the geo functions come from P4B-03; stub them until then)."),
+      mk("TASK-P4B-03-geo", "P4B-02 (the expression geo functions call into this core)."),
+      mk("TASK-VG-01-live", "nothing. It is the first B6 task. Do it before VG-02 so"),
+      mk("TASK-VG-02-geom", "VG-01 committed. The owner answers OD-3, OD-4 and OD-5"),
+    ];
+    const plan = planImport(files, { prefix: "WS", existingIds: [] });
+    const by = (l: string) => plan.items.find((i) => i.legacy_id === l)!;
+    expect(by("TASK-P4B-02-expr").depends_on).toEqual([]);
+    expect(by("TASK-VG-01-live").depends_on).toEqual([]);
+    expect(by("TASK-P4B-03-geo").depends_on).toEqual([by("TASK-P4B-02-expr").suggestedId]);
+    expect(by("TASK-VG-02-geom").depends_on).toEqual([by("TASK-VG-01-live").suggestedId]);
+    // OD-3… sit in a prose sentence — not reported as missing deps
+    expect(plan.ambiguities.filter((a) => a.kind === "unresolved_dep")).toEqual([]);
+  });
+
   it("apply creates items idempotently (imported_from dedup)", async () => {
     const files = await scanFolder(src);
     const plan = planImport(files, { prefix: "WS", existingIds: [] });

@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../../daemon/server/context.js";
 import type { Session } from "../../core/model/session.js";
-import { errText, type ToolResult } from "../format.js";
+import { errText, CLIENT_PID_HEADER, type ToolResult } from "../format.js";
 
 /**
  * MCP over Streamable HTTP (DESIGN §6.1, §7). Mounted at `/mcp` on the daemon
@@ -18,6 +18,14 @@ import { errText, type ToolResult } from "../format.js";
 export interface AgentBinding {
   session?: Session;
   wsr?: WorkspaceRuntime;
+  /** Local client pid from the `x-te-client-pid` header (set by the shim). */
+  clientPid?: number;
+}
+
+function clientPidOf(req: FastifyRequest): number | undefined {
+  const raw = req.headers[CLIENT_PID_HEADER];
+  const n = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 export interface McpDeps {
@@ -63,6 +71,7 @@ export function registerMcpRoutes(app: FastifyInstance, deps: McpDeps): void {
       if (!entry) {
         // new connection: only an initialize request may open a session
         const { server, binding } = createMcpServer(deps);
+        binding.clientPid = clientPidOf(req);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
         });

@@ -17,8 +17,12 @@ export class SessionRegistry {
     private claimTouchIntervalMs = 5 * 60_000,
   ) {}
 
-  /** Register a session; returns the session record. */
-  hello(agent: string): Session {
+  /**
+   * Register a session; returns the session record. `pid` is the local
+   * client process (sent by the `te mcp` shim) — agents are local (DESIGN
+   * §6.4), so its liveness tells us whether the session survived a crash.
+   */
+  hello(agent: string, pid?: number): Session {
     const now = new Date().toISOString();
     const session: Session = {
       id: `${agent}@${this.machine}#${randomBytes(2).toString("hex")}`,
@@ -26,6 +30,7 @@ export class SessionRegistry {
       machine: this.machine,
       connected_at: now,
       last_seen: now,
+      ...(pid ? { pid } : {}),
     };
     this.sessions.set(session.id, session);
     return session;
@@ -36,12 +41,20 @@ export class SessionRegistry {
   }
 
   /**
-   * A session is live while it's registered. `disconnect` marks the end of
-   * its MCP transport; a daemon restart empties the registry, so claims held
-   * by anything not in the map are dead and rebindable on `hello`.
+   * A session is live while it's registered AND its client process (when
+   * known) still exists. `disconnect` marks a clean end of its MCP transport;
+   * a crashed or killed IDE never says goodbye, so the pid probe catches it.
+   * A daemon restart empties the registry, so claims held by anything not in
+   * the map are dead and rebindable on `hello`.
    */
   isLive(id: string): boolean {
-    return this.sessions.has(id);
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    if (s.pid !== undefined && !pidAlive(s.pid)) {
+      this.sessions.delete(id);
+      return false;
+    }
+    return true;
   }
 
   /** Mark a session dead — its transport closed (or it was replaced). */
@@ -79,5 +92,16 @@ export class SessionRegistry {
   /** For tests: time source for claimTouchIntervalMs. */
   markClaimTouched(item: string, ts: number): void {
     this.lastClaimWrite.set(item, ts);
+  }
+}
+
+/** Does a local process exist? (signal 0 probes without sending anything) */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: it exists but belongs to someone else — still alive
+    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }

@@ -221,3 +221,33 @@ describe("event ids", () => {
     expect(eventId(e)).toBe("m1|2026-01-01T00:00:00Z|3");
   });
 });
+
+describe("import route (IM-0001)", () => {
+  it("subfolder import, then its parent: same files are not imported twice", async () => {
+    const src = join(home, "tasks");
+    mkdirSync(join(src, "Phase-5", "Done"), { recursive: true });
+    writeFileSync(join(src, "README.md"), "# Roadmap\n\nTop.\n");
+    writeFileSync(join(src, "Phase-5", "README.md"), "# Phase 5 index\n\nIdx.\n");
+    writeFileSync(join(src, "Phase-5", "Done", "TASK-P5-01-x.md"), "# TASK-P5-01: x\n\nDone.\n");
+    const imp = (folder: string, apply: boolean) =>
+      api("/api/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ folder, apply }),
+      }).then((r) => r.json() as Promise<{ count?: number; created?: string[]; preview?: string }>);
+
+    const sub = await imp(join(src, "Phase-5"), true);
+    expect(sub.created).toHaveLength(2);
+    // keys are absolute, so the parent sees the subfolder's files as done
+    const dry = await imp(src, false);
+    expect(dry.count).toBe(1);
+    expect(dry.preview).toContain("Roadmap");
+    expect(dry.preview).not.toContain("Phase 5 index");
+    const parent = await imp(src, true);
+    expect(parent.created).toHaveLength(1);
+    // same-named READMEs in different folders are both kept
+    const titles = [...ctx.workspaces.get("ws")!.store.idx.items.values()].map((i) => i.meta.title);
+    expect(titles).toContain("Roadmap");
+    expect(titles).toContain("Phase 5 index");
+  });
+});

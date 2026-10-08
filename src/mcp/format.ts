@@ -40,3 +40,6 @@ export function itemLine(it: {
   const suffix = flags.length ? `  ${flags.join(" ")}` : "";
   return `${it.meta.id} ${it.meta.status} "${it.meta.title}"${suffix}`;
 }
+
+/** Header the `te mcp` shim sends so the daemon can probe client liveness. */
+export const CLIENT_PID_HEADER = "x-te-client-pid";

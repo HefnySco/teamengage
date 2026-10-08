@@ -154,14 +154,19 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const b = req.body as { folder?: string; project?: string; apply?: boolean };
       if (!b.folder) throw new TeError("USAGE", "import needs {folder}");
       const ops = opsFor(ctx, wsOf(req.query));
-      const { scanFolder } = await import("../../import/scan.js");
+      const { scanFolder, importRoot, sourceKey, sourcesUnder } = await import("../../import/scan.js");
       const { planImport } = await import("../../import/import.js");
       const prefix = b.project
         ? ops.wsr.ws.config.projects[b.project]?.prefix
         : ops.wsr.ws.config.prefix;
       if (!prefix) throw new NotFoundError(`unknown project '${b.project}'`);
       const files = await scanFolder(b.folder);
-      const existingSources = new Set(
+      // imported_from holds absolute (~/…) keys; map the ones under this
+      // folder back to folder-relative paths so subfolder-then-parent imports
+      // recognise files they already brought in
+      const root = importRoot(b.folder);
+      const existingSources = sourcesUnder(
+        root,
         [...ops.index.items.values()]
           .map((i) => (i.meta as { imported_from?: string }).imported_from)
           .filter((x): x is string => Boolean(x)),
@@ -185,7 +190,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           summary: i.summary,
           simple: i.simple,
           project: b.project,
-          source: i.sources[0],
+          source: sourceKey(root, i.sources[0]),
         })),
         { kind: "human", session: "human", machine: ops.wsr.store.machine },
       );

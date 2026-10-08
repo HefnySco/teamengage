@@ -56,11 +56,12 @@ export class WorkspaceOps {
 
   // ---- sessions ---------------------------------------------------------
 
-  async hello(agent: string): Promise<{ session: Session; resume: Claim[] }> {
-    const session = this.sessions.hello(agent);
+  async hello(agent: string, pid?: number): Promise<{ session: Session; resume: Claim[] }> {
+    const session = this.sessions.hello(agent, pid);
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
-    // (Dead = transport closed or minted before a daemon restart.)
+    // (Dead = transport closed, client process gone, or minted before a
+    // daemon restart.)
     const prior = this.sessions
       .resumeClaims(agent, this.index.claims.values())
       .filter((c) => !this.sessions.isLive(c.holder));

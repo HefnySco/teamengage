@@ -221,8 +221,17 @@ export function planImport(
     const depends_on: string[] = [];
     if (depM) {
       // the dep list ends where the next bold LABEL begins (**Unblocks:**…)
-      const depText = depM[1].split(DEP_CUT_RE)[0];
-      for (const raw of depText.split(/[,;]/)) {
+      // parentheticals are commentary ("nothing (geo fns come from P4B-03;
+      // stub them)") — drop them before splitting on `;`/`,`. Only the first
+      // sentence names deps: "VG-01 committed. The owner answers OD-3…"
+      const depText = depM[1]
+        .split(DEP_CUT_RE)[0]
+        .replace(/\([^)]*\)?/g, " ")
+        .split(/\.\s+(?=[A-Z])/)[0];
+      // "nothing. Do it before VG-02" — a leading no-dep word means none,
+      // whatever prose follows
+      const noDeps = /^\s*(nothing|none|n\/a)\b/i.test(depText);
+      for (const raw of noDeps ? [] : depText.split(/[,;]/)) {
         const entry = raw
           .replace(/\([^)]*\)/g, " ")
           .replace(/\s+/g, " ")
