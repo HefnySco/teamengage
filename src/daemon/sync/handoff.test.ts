@@ -86,15 +86,18 @@ describe("handoffStatus", () => {
     g(repoB, "commit", "-m", "claim on laptop");
     g(repoB, "push");
 
-    // and the desktop has an uncommitted plans change (commit: false)
-    writeFileSync(join(plansOf(repoA), "items", "GL-0002.md"), "---\nid: GL-0002\ntype: task\ntitle: B\n---\n");
+    // and the desktop has uncommitted plans changes (commit: false) in a new
+    // directory — git collapses that to one `??` line; each file must count
+    mkdirSync(join(plansOf(repoA), "items", "GL"), { recursive: true });
+    writeFileSync(join(plansOf(repoA), "items", "GL", "GL-0002.md"), "---\nid: GL-0002\ntype: task\ntitle: B\n---\n");
+    writeFileSync(join(plansOf(repoA), "items", "GL", "GL-0003.md"), "---\nid: GL-0003\ntype: task\ntitle: C\n---\n");
 
     const h = await handoffStatus(wsrA);
-    expect(h).toMatchObject({ fetched: true, behind: 1, ahead: 0, uncommitted: 1, upstream: "origin/main" });
+    expect(h).toMatchObject({ fetched: true, behind: 1, ahead: 0, uncommitted: 2, upstream: "origin/main" });
     expect(h.foreign.map((c) => `${c.item}@${c.machine}`)).toEqual(["GL-0001@laptop"]);
     const lines = handoffLines(h).join("\n");
     expect(lines).toContain("plans behind origin/main by 1 — STOP");
-    expect(lines).toContain("1 uncommitted file(s)");
+    expect(lines).toContain("2 uncommitted file(s)");
     expect(lines).toContain("held on laptop: GL-0001 by gemini-cli@laptop#77b0");
   });
 

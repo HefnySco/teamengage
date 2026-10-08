@@ -144,7 +144,7 @@ export async function handoffStatus(wsr: WorkspaceRuntime, opts: { fetchTimeoutM
   const byItem = new Map<string, Claim>();
   for (const c of wsr.store.idx.claims.values()) if (c.machine !== machine) byItem.set(c.item, c);
   if (await isRepo(plansDir)) {
-    out.uncommitted = (await git(plansDir, ["status", "--porcelain", "--", "."]))
+    out.uncommitted = (await git(plansDir, ["status", "--porcelain", "--untracked-files=all", "--", "."]))
       .split("\n")
       .filter(Boolean).length;
     out.fetched = await fetchPlansRepo(plansDir, opts.fetchTimeoutMs ?? 5_000);
