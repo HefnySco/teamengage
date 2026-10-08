@@ -24,6 +24,8 @@ export interface DaemonHandle {
   url: string;
   app: FastifyInstance;
   close: () => Promise<void>;
+  /** true when the preferred port was taken and a random one was used */
+  portFallback: boolean;
 }
 
 export function daemonJsonPath(home?: string): string {
@@ -70,6 +72,8 @@ export interface StartOpts {
   register?: (app: FastifyInstance) => void | Promise<void>;
   /** Called on shutdown — drain write queues, close watchers. */
   onShutdown?: () => Promise<void>;
+  /** Preferred port (agents get a stable URL); 0/undefined = random. */
+  port?: number;
   /** Data for /health. */
   health?: () => Record<string, unknown>;
 }
@@ -86,6 +90,9 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
 
   app.addHook("onRequest", async (req, reply) => {
     if (req.url === "/health") return;
+    // the plain-HTTP agent API guards itself (loopback Host, no browser
+    // Origin, per-agent session tokens) — see src/agent/http.ts
+    if (/^\/agent(\/|\?|$)/.test(req.url)) return;
     const auth = req.headers.authorization;
     // browsers can't set headers on navigation/SSE — accept the same token
     // via ?token= or a te_token cookie (set by the UI once, then dropped from
@@ -107,8 +114,16 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
 
   if (opts.register) await opts.register(app);
 
-  // random port on loopback only
-  await app.listen({ port: 0, host: "127.0.0.1" });
+  // loopback only. A fixed port gives agents a stable URL; when it's taken
+  // (another daemon, e.g. a second HOME) fall back to a random one.
+  let portFallback = false;
+  try {
+    await app.listen({ port: opts.port ?? 0, host: "127.0.0.1" });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || !opts.port) throw e;
+    portFallback = true;
+    await app.listen({ port: 0, host: "127.0.0.1" });
+  }
   const addr = app.server.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
 
@@ -142,5 +157,5 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
   process.once("SIGTERM", onSig);
   process.once("SIGINT", onSig);
 
-  return { port, token, url: `http://127.0.0.1:${port}`, app, close };
+  return { port, token, url: `http://127.0.0.1:${port}`, app, close, portFallback };
 }

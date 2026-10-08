@@ -55,15 +55,21 @@ options:
 
 const AGENTS_SNIPPET = `# TeamEngage agent protocol
 This workspace is coordinated by TeamEngage (plans live in .teamengage/).
-Use the MCP server "teamengage" — do NOT edit plan files directly.
+Read plan files freely, but change state ONLY through TeamEngage — never
+edit plan files directly.
 
-1. hello({agent: "<your-name>"})            — once per session
-2. next()                                  — pick from the returned ids
-3. brief({id})                             — read targets, deps, decisions
-4. claim({id})                             — then do the work
-5. log({id, note}) / ask({id, question})   — progress / blockers
-6. submit({id, commits, tests, notes})     — hand to the human
-You may NOT set ready/done — the human decides. Ask, don't guess.
+Plain HTTP (any agent with a shell): curl http://127.0.0.1:4747/agent
+prints the full protocol with copy-paste curl examples. Or use the MCP
+server "teamengage" if your IDE has it configured — same tools, same rules.
+
+1. hello {agent: "<your-name>"}             — once per session (keep the token)
+2. next                                      — pick from the returned ids
+3. brief <id>                                — read targets, deps, decisions
+4. claim <id>                                — then work only in returned paths
+5. log <id> {note} / ask <id> {question}     — progress / blockers
+6. submit <id> {commits, tests, notes}       — hand to the human
+You may NOT set ready/done and must never git push — the human decides.
+Ask, don't guess.
 `;
 
 async function main(argv: string[]): Promise<number> {
