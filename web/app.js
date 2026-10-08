@@ -156,7 +156,7 @@ const Inbox = ({ onOpen }) => {
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
                 <button class="btn btn-sm btn-outline-success btn-act" onClick=${() => act(id, "complete", { note: "already done" })}>already done</button>
-                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
+                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "drop", "drop reason")}>drop</button>
               </div>
             </div>
           `,
@@ -207,14 +207,58 @@ const Inbox = ({ onOpen }) => {
 };
 
 // ---- Board (UI-0004) ---------------------------------------------------------
+// remembered per browser tab, so coming back from an item keeps the search
+const loadSearch = () => {
+  try {
+    return sessionStorage.getItem("te.board.q") ?? "";
+  } catch {
+    return "";
+  }
+};
+const saveSearch = (q) => {
+  try {
+    sessionStorage.setItem("te.board.q", q);
+  } catch {
+    /* storage blocked — search just isn't remembered */
+  }
+};
+// every word must appear in id, title, project or source path
+const matches = (i, words) => {
+  const hay = [i.id, i.title, i.project, i.legacy_id, i.source].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+};
+
 const Board = ({ onOpen }) => {
   const { data } = useApi("/api/items");
+  const [q, setQ] = useState(loadSearch);
   if (!data) return html`<p class="text-secondary">loading…</p>`;
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = words.length ? data.filter((i) => matches(i, words)) : data;
+  const setSearch = (v) => {
+    setQ(v);
+    saveSearch(v);
+  };
   return html`
-    <h2 class="h4 mb-3">Board</h2>
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Board</h2>
+      <input
+        type="search"
+        class="form-control form-control-sm"
+        style=${{ maxWidth: "24rem" }}
+        placeholder="search id, title, project, file…"
+        value=${q}
+        onInput=${(e) => setSearch(e.target.value)}
+        onKeyDown=${(e) => {
+          if (e.key === "Escape") setSearch("");
+          if (e.key === "Enter" && hits.length === 1) onOpen(hits[0].id);
+        }}
+        autofocus
+      />
+      ${words.length > 0 && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+    </div>
     <div class="d-flex gap-3 overflow-x-auto pb-2">
       ${STATUSES.map((s) => {
-        const items = data.filter((i) => i.status === s);
+        const items = hits.filter((i) => i.status === s);
         return html`
           <div class="board-col flex-shrink-0" key=${s}>
             <h3 class="h6 text-uppercase text-secondary d-flex justify-content-between">
@@ -273,13 +317,47 @@ const Graph = ({ onOpen }) => {
   `;
 };
 
+// `## Log` lines are `- <iso ts> <who> <text>` (daemon-written); anything
+// else (a hand-written line) is kept as plain text
+const LOG_LINE = /^-\s+(\d{4}-\d\d-\d\dT\S+)\s+(\S+)\s+(.*)$/;
+const parseLog = (body) =>
+  body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = LOG_LINE.exec(l);
+      return m ? { ts: m[1], who: m[2], text: m[3] } : { text: l.replace(/^-\s*/, "") };
+    });
+
+const History = ({ entries, onOpen }) => html`
+  <div class="card mt-3">
+    <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
+    <ul class="list-group list-group-flush scroll-list">
+      ${entries.length === 0 && html`<li class="list-group-item text-secondary small">no history yet</li>`}
+      ${[...entries].reverse().map(
+        (e, i) => html`
+          <li class="list-group-item small" key=${i}>
+            ${e.ts && html`<span class="text-secondary me-2" title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span>`}
+            ${e.who && html`<b class="me-1">${e.who}</b>`}
+            <${LinkedText} text=${e.text} onOpen=${onOpen} />
+          </li>
+        `,
+      )}
+    </ul>
+  </div>
+`;
+
 // ---- Item (UI-0005) ------------------------------------------------------------
-const ItemView = ({ id }) => {
-  const { data: b, reload } = useApi(`/api/items/${id}`);
-  const [tab, setTab] = useState("simple");
+const ItemView = ({ id, onOpen }) => {
+  const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
+  const [picked, setTab] = useState(null);
+  useEffect(() => setTab(null), [id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
   const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n)?.body.trim() ?? "";
+  // open on the plain-English tab only when the item has one
+  const tab = picked ?? (b.source?.simple?.text || sec("simple") ? "simple" : "technical");
   const act = async (action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
@@ -289,13 +367,19 @@ const ItemView = ({ id }) => {
     const reason = prompt(label);
     if (reason !== null) act(action, { reason });
   };
-  const TABS = ["simple", "technical", "log", "evidence"];
+  const TABS = ["simple", "technical", "evidence"];
+  const history = parseLog(sec("log"));
+  const last = history.at(-1);
   return html`
     <h2 class="h4"><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
     <div class="d-flex align-items-center gap-2 mb-2">
       <${Badge} s=${it.meta.status} />
       <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
+    ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
+      <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
+    </div>`}
+    ${it.meta.question && html`<div class="alert alert-info py-1 px-2 small mb-2"><b>question:</b> ${it.meta.question.text}</div>`}
     <div class="d-flex gap-2 mb-3 flex-wrap">
       ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("approve")}>approve</button>`}
       ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success btn-act" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
@@ -320,11 +404,11 @@ const ItemView = ({ id }) => {
       ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
       ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}
-    ${tab === "log" && html`<div class="card card-body"><pre class="mb-0">${sec("Log") || "(empty)"}</pre></div>`}
     ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
       ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
     </div>`}
     ${b.decisions.map((d) => html`<div class="card card-body mt-2"><b>${d.meta.id}</b> ${d.meta.title}</div>`)}
+    <${History} entries=${history} onOpen=${onOpen} />
   `;
 };
 
@@ -341,7 +425,7 @@ const Activity = () => {
   }, []);
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight); }, [events]);
   const f = filter.toLowerCase();
-  const shown = f ? events.filter((e) => [e.machine, e.actor, e.item, e.action].join(" ").toLowerCase().includes(f)) : events;
+  const shown = f ? events.filter((e) => [e.machine, e.actor, e.item, e.action, e.note ?? ""].join(" ").toLowerCase().includes(f)) : events;
   return html`
     <h2 class="h4 mb-3">Activity</h2>
     <div class="mb-2">
@@ -352,6 +436,7 @@ const Activity = () => {
         <div class="evt" key=${i}>
           ${e.ts.slice(11, 19)} <span class="text-secondary">${e.machine}</span> ${e.actor}
           <b>${e.action}</b> ${e.item} <span class="text-secondary">${e.from ? `${e.from}→${e.to}` : ""}</span>
+          ${e.note && html` — <i>${e.note}</i>`}
         </div>
       `)}
       ${!shown.length && html`<p class="text-secondary mb-0">waiting for events…</p>`}
