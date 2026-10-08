@@ -336,6 +336,28 @@ guessing, `submit` — never mark done, never push."
 - filename prefix → type (`TASK`→task, `PLAN`/`PHASE`/`MEGAPLAN`→epic, `REVIEW`→review)
 - output: a diff and a list of items needing a human decision.
 
+### 9.1 Overlay mode (track a task folder in place)
+
+`te init --overlay --root ~/de_code/Tasks` makes the task folder itself the
+workspace (`mode: overlay`, `commit: false`). Item files under
+`Tasks/.teamengage/items/` hold only tracking state plus `source:` /
+`simple_source:` — paths relative to the root, identical on every machine.
+Content is never copied: `brief` reads the task file live.
+
+- `te import` tags each task file with one frontmatter line, `te: <ID>`;
+  that tag is how an item survives renames and moves (into `done/` …).
+- The daemon watches the folder and rescans on any `.md` change or pull:
+  moved files update `source` (logged), and the inbox shows untracked task
+  files (`te import <file>` adopts one; `ignore:` globs silence the rest),
+  vanished sources, one id tagged on two files (a copied task), and tags of
+  ids this machine doesn't have (pull first).
+- `commit: false`: the daemon writes plan files and the human commits them
+  with their own Tasks edits. The daemon never commits task files.
+- `hello` / `te status` report the handoff state after a best-effort fetch:
+  plans behind upstream (agents stop and ask the human to pull), uncommitted
+  plan files, and items held on other machines, including claims already
+  pushed but not yet pulled.
+
 ## 10. Technology
 
 - TypeScript, Node ≥ 22, `@modelcontextprotocol/sdk` (consistent with
@@ -372,7 +394,8 @@ guessing, `submit` — never mark done, never push."
 | 8 | SSH snapshots | Yes: snapshot before claim, diff as evidence, `te rollback`. |
 | 9 | Plans repo sync | `manual` by default; daemon only does a read-only `fetch` to detect remote claims before claiming. `auto` stays available per workspace (§6.5). |
 
+| 10 | Existing task folders | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each. |
+
 ## 13. Open questions
 
-1. Should the plans repo be `.teamengage/` inside the workspace, or keep using
-   an existing repo like `~/de_code/Tasks` with items migrated in place?
+None currently.

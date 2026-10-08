@@ -166,5 +166,7 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
       `findings: ${i.findings.length}`,
     ].join("\n") + "\n",
   );
+  const h = (await daemonApi("GET", `/api/handoff?${wsQ(args)}`, undefined, home)) as { lines: string[] };
+  for (const l of h.lines) process.stdout.write(`${l}\n`);
   return 0;
 }

@@ -19,7 +19,12 @@ export type FindingKind =
   | "overlapping_claims"
   | "stale_claim"
   | "unsynced_claim"
-  | "bad_target";
+  | "bad_target"
+  // overlay mode (task-file tracking)
+  | "untracked_task_file"
+  | "missing_source"
+  | "duplicate_tag"
+  | "unknown_tag";
 
 export interface Finding {
   severity: Severity;

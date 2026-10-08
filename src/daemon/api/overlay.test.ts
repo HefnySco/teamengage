@@ -10,6 +10,7 @@ import type { DaemonCtx } from "../server/context.js";
 import { SessionRegistry } from "../sessions/sessions.js";
 import { EventBus } from "./events.js";
 import { registerApiRoutes } from "./api.js";
+import { OverlayTracker } from "../overlay/tracker.js";
 
 /**
  * Overlay mode: an existing Markdown task folder tracked in place. Item files
@@ -153,5 +154,55 @@ describe("overlay import", () => {
       body: JSON.stringify({ folder: outside, apply: false }),
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("overlay tracker (task-folder watcher)", () => {
+  const until = async (cond: () => boolean, ms = 5000) => {
+    const t0 = Date.now();
+    while (!cond()) {
+      if (Date.now() - t0 > ms) throw new Error("timed out");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  it("records moves, reports untracked/foreign files, adopts one file", async () => {
+    const tracker = new OverlayTracker(store(), { debounceMs: 50 });
+    ctx.workspaces.get("tasks")!.overlay = tracker;
+    try {
+      await tracker.start();
+      // TASK-13 was moved into done/ by the previous test — the start scan records it
+      const t13 = byLegacy("TASK-13-rerun");
+      expect(t13.meta.source).toBe("global/done/TASK-13-rerun.md");
+      expect(readFileSync(join(plans, t13.path), "utf8")).toContain("human moved source → global/done/TASK-13-rerun.md");
+      const kinds = () => tracker.findings().map((f) => `${f.kind} ${f.path}`);
+      expect(kinds()).toContain("unknown_tag global/TASK-15-foreign.md");
+      // surfaced through the regular findings endpoint
+      const viaApi = (await (await api("/api/findings")).json()) as Array<{ kind: string }>;
+      expect(viaApi.map((f) => f.kind)).toContain("unknown_tag");
+
+      // a new task file appears → untracked finding
+      writeFileSync(join(root, "global", "TASK-16-later.md"), "# TASK-16: Later\n\nLater.\n");
+      await until(() => kinds().includes("untracked_task_file global/TASK-16-later.md"));
+
+      // adopt just that file
+      const r = await post("/api/import", {
+        folder: join(root, "global", "TASK-16-later.md"),
+        project: "global",
+        apply: true,
+      });
+      expect(r.created).toHaveLength(1);
+      const t16 = byLegacy("TASK-16-later");
+      expect(t16.meta).toMatchObject({ status: "draft", source: "global/TASK-16-later.md" });
+      await until(() => !kinds().some((k) => k.includes("TASK-16")));
+
+      // a file deleted outright → missing_source, item kept
+      rmSync(join(root, "global", "TASK-16-later.md"));
+      await until(() => kinds().includes("missing_source global/TASK-16-later.md"));
+      expect(byLegacy("TASK-16-later")).toBeDefined();
+    } finally {
+      await tracker.close();
+      ctx.workspaces.get("tasks")!.overlay = undefined;
+    }
   });
 });

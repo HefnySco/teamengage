@@ -44,7 +44,7 @@ commands:
   undrop <ID>         restore a dropped item back to draft
   renumber <OLD> <NEW>
   rollback <ID> [--yes]  restore claim snapshots onto live targets
-  import <folder>   import a Markdown task folder
+  import <folder|file>  import a Markdown task folder (or one task file)
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   daemon     run the daemon in the foreground

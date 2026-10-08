@@ -105,3 +105,154 @@ export async function resolveSource(
   const isSimple = (h: ResolvedSource) => /\.simple\.md$/i.test(h.path);
   return hits.find((h) => isSimple(h) === Boolean(opts.simple)) ?? (opts.simple ? undefined : hits[0]);
 }
+
+/** `*` (no `/`), `**` (any depth) and `?` glob → anchored RegExp. */
+export function globToRegExp(glob: string): RegExp {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      // `**/` matches zero or more directories
+      re += glob[i + 2] === "/" ? "(?:.*/)?" : ".*";
+      i += glob[i + 2] === "/" ? 2 : 1;
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+export interface TaskTreeScan {
+  /** te id → workspace-relative paths of files tagged with it */
+  tagged: Map<string, string[]>;
+  /** `.md` files without a `te:` tag (ignore globs applied) */
+  untracked: string[];
+}
+
+/** Every `.md` under the root (dot-dirs skipped), split into tagged / untagged. */
+export async function scanTaskTree(root: string, ignore: string[] = []): Promise<TaskTreeScan> {
+  const ig = ignore.map(globToRegExp);
+  const tagged = new Map<string, string[]>();
+  const untracked: string[] = [];
+  const walk = async (d: string): Promise<void> => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      if (e.name.startsWith(".")) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) await walk(p);
+      else if (e.name.toLowerCase().endsWith(".md")) {
+        const rel = toSourcePath(root, p);
+        const tag = readTeTag(await readFile(p, "utf8"));
+        if (tag) tagged.set(tag, [...(tagged.get(tag) ?? []), rel]);
+        else if (!ig.some((r) => r.test(rel))) untracked.push(rel);
+      }
+    }
+  };
+  if (existsSync(root)) await walk(root);
+  untracked.sort();
+  return { tagged, untracked };
+}
+
+export interface OverlayFinding {
+  kind: "untracked_task_file" | "missing_source" | "duplicate_tag" | "unknown_tag";
+  severity: "error" | "warning" | "info";
+  item?: string;
+  path?: string;
+  message: string;
+}
+
+export interface SourceMove {
+  id: string;
+  source?: string;
+  simple_source?: string;
+}
+
+/**
+ * Compare a task-tree scan with the items' recorded sources: files that
+ * moved (→ new `source`), files that vanished, one id tagged on two files
+ * (a copied task file), tags of unknown ids, and untracked task files.
+ * Pure — the caller applies the moves.
+ */
+export function overlayReport(
+  scan: TaskTreeScan,
+  items: Array<{ id: string; source?: string; simple_source?: string }>,
+): { moves: SourceMove[]; findings: OverlayFinding[] } {
+  const moves: SourceMove[] = [];
+  const findings: OverlayFinding[] = [];
+  const known = new Set(items.map((i) => i.id));
+  const untracked = new Set(scan.untracked);
+  const isSimple = (p: string) => /\.simple\.md$/i.test(p);
+
+  for (const it of items) {
+    if (!it.source) continue;
+    const paths = scan.tagged.get(it.id) ?? [];
+    const move: SourceMove = { id: it.id };
+    const slots: Array<["source" | "simple_source", string | undefined, string[]]> = [
+      ["source", it.source, paths.filter((p) => !isSimple(p))],
+      ["simple_source", it.simple_source, paths.filter(isSimple)],
+    ];
+    // a source that is itself a .simple.md (no main file) lives in `source`
+    if (isSimple(it.source)) {
+      slots[0][2] = paths.filter(isSimple);
+      slots.pop();
+    }
+    for (const [key, recorded, found] of slots) {
+      if (!recorded) continue;
+      if (found.includes(recorded)) {
+        if (found.length > 1) {
+          findings.push({
+            kind: "duplicate_tag",
+            severity: "error",
+            item: it.id,
+            path: found.filter((p) => p !== recorded).join(", "),
+            message: `te: ${it.id} also tagged on ${found.filter((p) => p !== recorded).join(", ")} — copied task file? give the copy its own id (remove the te: line)`,
+          });
+        }
+        continue;
+      }
+      // the tag wins: a new untagged file at the old path is a different task
+      if (found.length === 1) move[key] = found[0];
+      else if (found.length === 0 && untracked.has(recorded)) {
+        // the recorded file still exists, untagged: still tracked by path
+        untracked.delete(recorded);
+      } else if (found.length > 1) {
+        findings.push({
+          kind: "duplicate_tag",
+          severity: "error",
+          item: it.id,
+          path: found.join(", "),
+          message: `${it.id} moved, but te: ${it.id} is on ${found.length} files: ${found.join(", ")}`,
+        });
+      } else {
+        findings.push({
+          kind: "missing_source",
+          severity: key === "source" ? "warning" : "info",
+          item: it.id,
+          path: recorded,
+          message: `${it.id} task file ${recorded} is gone (deleted, or not pulled yet)`,
+        });
+      }
+    }
+    if (move.source !== undefined || move.simple_source !== undefined) moves.push(move);
+  }
+
+  for (const [id, paths] of scan.tagged) {
+    if (known.has(id)) continue;
+    for (const p of paths) {
+      findings.push({
+        kind: "unknown_tag",
+        severity: "warning",
+        path: p,
+        message: `${p} is tagged te: ${id}, which is not in this workspace — pull the plans first?`,
+      });
+    }
+  }
+  for (const p of untracked) {
+    findings.push({
+      kind: "untracked_task_file",
+      severity: "info",
+      path: p,
+      message: `untracked task file ${p} — te import it, or add it to ignore`,
+    });
+  }
+  return { moves, findings };
+}

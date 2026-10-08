@@ -134,6 +134,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  /** Machine handoff: behind/ahead (after a fetch), uncommitted plans, other machines' claims. */
+  app.get("/api/handoff", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { handoffStatus, handoffLines } = await import("../sync/sync.js");
+      const h = await handoffStatus(ops.wsr);
+      return { ...h, lines: handoffLines(h) };
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   /** Sync status (SY-0001, RS-0004): plans repo ahead/behind, unsynced claims,
    * merged-but-not-pushed deliveries, pushes detected on fetch. */
   app.get("/api/sync", async (req, reply) => {

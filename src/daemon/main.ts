@@ -10,6 +10,7 @@ import {
 } from "../core/config/config.js";
 import { PlansStore } from "./store/store.js";
 import { PlansWatcher } from "./watch/watch.js";
+import { OverlayTracker } from "./overlay/tracker.js";
 import { startDaemon, runningDaemon } from "./server/server.js";
 import type { DaemonCtx } from "./server/context.js";
 import { SessionRegistry } from "./sessions/sessions.js";
@@ -80,7 +81,14 @@ async function main(): Promise<number | undefined> {
         },
       });
       await watcher.start();
-      ctx.workspaces.set(name, { ws, store, watcher, links });
+      let overlay: OverlayTracker | undefined;
+      if (ws.config.mode === "overlay") {
+        overlay = new OverlayTracker(store, {
+          onEvent: (e) => ctx.bus.notify("watch", { workspace: name, kind: e.kind, item: e.items?.join(","), message: e.message }),
+        });
+        await overlay.start();
+      }
+      ctx.workspaces.set(name, { ws, store, watcher, overlay, links });
     } catch (e) {
       process.stderr.write(`teamengaged: skipping workspace '${name}': ${(e as Error).message}\n`);
     }
@@ -117,6 +125,7 @@ async function main(): Promise<number | undefined> {
     onShutdown: async () => {
       for (const w of ctx.workspaces.values()) {
         await w.watcher?.close();
+        await w.overlay?.close();
         await w.store.enqueue(async () => {}); // drain queued writes
       }
     },

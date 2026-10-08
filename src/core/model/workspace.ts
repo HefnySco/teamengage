@@ -62,6 +62,8 @@ export const WorkspaceConfig = z
     mode: z.enum(["standard", "overlay"]).default("standard"),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
+    /** overlay mode: globs (relative to the root) of `.md` files that are not tasks */
+    ignore: z.array(z.string()).default([]),
     /** Duration string like `24h`, `30m`, `7d`. */
     stale_after: z.string().default("24h"),
     projects: z.record(z.string(), ProjectConfig).default({}),

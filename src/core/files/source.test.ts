@@ -2,7 +2,15 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTeTag, withTeTag, stripFrontmatter, resolveSource } from "./source.js";
+import {
+  readTeTag,
+  withTeTag,
+  stripFrontmatter,
+  resolveSource,
+  overlayReport,
+  scanTaskTree,
+  globToRegExp,
+} from "./source.js";
 
 describe("overlay task-file tags", () => {
   it("adds a two-line block to a file without frontmatter", () => {
@@ -61,5 +69,81 @@ describe("resolveSource", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("overlayReport", () => {
+  const scan = (tagged: Record<string, string[]>, untracked: string[] = []) => ({
+    tagged: new Map(Object.entries(tagged)),
+    untracked,
+  });
+
+  it("moves a source to where its tag now is; the tag beats a new file at the old path", () => {
+    const r = overlayReport(
+      scan({ "GL-0001": ["g/done/a.md", "g/done/a.simple.md"] }, ["g/a.md"]),
+      [{ id: "GL-0001", source: "g/a.md", simple_source: "g/a.simple.md" }],
+    );
+    expect(r.moves).toEqual([{ id: "GL-0001", source: "g/done/a.md", simple_source: "g/done/a.simple.md" }]);
+    expect(r.findings.map((f) => f.kind)).toEqual(["untracked_task_file"]);
+  });
+
+  it("keeps an untagged file at its recorded path, flags a vanished one", () => {
+    const r = overlayReport(scan({}, ["g/a.md"]), [
+      { id: "GL-0001", source: "g/a.md" },
+      { id: "GL-0002", source: "g/b.md" },
+    ]);
+    expect(r.moves).toEqual([]);
+    expect(r.findings).toEqual([
+      expect.objectContaining({ kind: "missing_source", item: "GL-0002", path: "g/b.md" }),
+    ]);
+  });
+
+  it("flags a copied task file, unknown tags and untracked files", () => {
+    const r = overlayReport(
+      scan({ "GL-0001": ["g/a.md", "g/a-copy.md"], "GL-0999": ["g/x.md"] }, ["g/new.md"]),
+      [{ id: "GL-0001", source: "g/a.md" }],
+    );
+    expect(r.moves).toEqual([]);
+    expect(r.findings.map((f) => [f.kind, f.path])).toEqual([
+      ["duplicate_tag", "g/a-copy.md"],
+      ["unknown_tag", "g/x.md"],
+      ["untracked_task_file", "g/new.md"],
+    ]);
+  });
+
+  it("a .simple.md-only item moves via its source", () => {
+    const r = overlayReport(scan({ "GL-0001": ["g/done/a.simple.md"] }), [
+      { id: "GL-0001", source: "g/a.simple.md" },
+    ]);
+    expect(r.moves).toEqual([{ id: "GL-0001", source: "g/done/a.simple.md" }]);
+  });
+});
+
+describe("scanTaskTree", () => {
+  it("splits tagged/untracked, skips dot-dirs, applies ignore globs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "te-scan-"));
+    try {
+      mkdirSync(join(root, "g", "deep"), { recursive: true });
+      mkdirSync(join(root, ".teamengage", "items"), { recursive: true });
+      writeFileSync(join(root, "g", "a.md"), "---\nte: GL-0001\n---\n# A\n");
+      writeFileSync(join(root, "g", "deep", "b.md"), "# B\n");
+      writeFileSync(join(root, "g", "README.md"), "# readme\n");
+      writeFileSync(join(root, "README.md"), "# readme\n");
+      writeFileSync(join(root, "g", "notes.txt"), "x");
+      writeFileSync(join(root, ".teamengage", "items", "GL-0001.md"), "---\nid: GL-0001\n---\n");
+      const s = await scanTaskTree(root, ["**/README.md"]);
+      expect([...s.tagged]).toEqual([["GL-0001", ["g/a.md"]]]);
+      expect(s.untracked).toEqual(["g/deep/b.md"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("globToRegExp: * stays in one segment, **/ spans zero or more", () => {
+    expect(globToRegExp("*.md").test("a.md")).toBe(true);
+    expect(globToRegExp("*.md").test("g/a.md")).toBe(false);
+    expect(globToRegExp("**/README.md").test("README.md")).toBe(true);
+    expect(globToRegExp("**/README.md").test("a/b/README.md")).toBe(true);
+    expect(globToRegExp("mission_planner/**").test("mission_planner/x/y.md")).toBe(true);
   });
 });

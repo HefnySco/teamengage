@@ -183,10 +183,13 @@ export class WorkspaceOps {
   }
 
   findings(): Finding[] {
-    return validate(this.index, {
-      staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
-      roots: resourceRoots(this.wsr.ws),
-    });
+    return [
+      ...validate(this.index, {
+        staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
+        roots: resourceRoots(this.wsr.ws),
+      }),
+      ...(this.wsr.overlay?.findings() ?? []),
+    ];
   }
 
   // ---- agent writes -----------------------------------------------------

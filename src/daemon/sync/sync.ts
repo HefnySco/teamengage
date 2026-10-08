@@ -68,7 +68,9 @@ export async function remoteClaims(plansDir: string, ref?: string): Promise<Clai
   const out: Claim[] = [];
   for (const path of listing.split("\n").filter((p) => p.endsWith(".yaml"))) {
     try {
-      out.push(parseClaimFile(await showFile(plansDir, at, path), `${at}:${path}`));
+      // `./` = relative to the plans dir, which may sit below the repo root
+      // (overlay: drone_engage/Tasks/.teamengage); ls-tree printed it that way
+      out.push(parseClaimFile(await showFile(plansDir, at, `./${path}`), `${at}:${path}`));
     } catch {
       /* unparseable remote claim — ignore */
     }
@@ -114,6 +116,69 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
       );
     }
   }
+}
+
+/**
+ * What an agent (or the human) must know before working on this machine
+ * (`hello`): is the plans repo behind its upstream, are there plan changes
+ * nobody committed yet (`commit: false`), and which items are held on other
+ * machines — locally known claims plus, after a best-effort fetch, claims
+ * already on the upstream that were not pulled yet.
+ */
+export interface Handoff {
+  /** false when there is no remote or the fetch failed (counts are last-known) */
+  fetched: boolean;
+  ahead: number;
+  behind: number;
+  upstream?: string;
+  /** uncommitted files under the plans dir */
+  uncommitted: number;
+  /** claims held by other machines (deduped by item) */
+  foreign: Claim[];
+}
+
+export async function handoffStatus(wsr: WorkspaceRuntime, opts: { fetchTimeoutMs?: number } = {}): Promise<Handoff> {
+  const plansDir = wsr.ws.plansDir;
+  const machine = wsr.store.machine;
+  const out: Handoff = { fetched: false, ahead: 0, behind: 0, uncommitted: 0, foreign: [] };
+  const byItem = new Map<string, Claim>();
+  for (const c of wsr.store.idx.claims.values()) if (c.machine !== machine) byItem.set(c.item, c);
+  if (await isRepo(plansDir)) {
+    out.uncommitted = (await git(plansDir, ["status", "--porcelain", "--", "."]))
+      .split("\n")
+      .filter(Boolean).length;
+    out.fetched = await fetchPlansRepo(plansDir, opts.fetchTimeoutMs ?? 5_000);
+    out.upstream = await upstreamRef(plansDir);
+    if (out.upstream) {
+      const ab = await aheadBehind(plansDir, out.upstream).catch(() => ({ ahead: 0, behind: 0 }));
+      out.ahead = ab.ahead;
+      out.behind = ab.behind;
+      if (out.behind > 0) {
+        for (const c of await remoteClaims(plansDir, out.upstream)) {
+          if (c.machine !== machine && !byItem.has(c.item)) byItem.set(c.item, c);
+        }
+      }
+    }
+  }
+  out.foreign = [...byItem.values()].sort((a, b) => a.item.localeCompare(b.item));
+  return out;
+}
+
+/** hello's machine-handoff report: only lines that need attention. */
+export function handoffLines(h: Handoff): string[] {
+  const lines: string[] = [];
+  if (h.behind > 0) {
+    lines.push(`plans behind ${h.upstream} by ${h.behind} — STOP: ask the human to pull before claiming`);
+  }
+  if (h.ahead > 0) lines.push(`plans ahead of ${h.upstream} by ${h.ahead} (not pushed)`);
+  if (h.uncommitted > 0) {
+    lines.push(`plans: ${h.uncommitted} uncommitted file(s) — other machines can't see them until the human commits+pushes`);
+  }
+  if (h.upstream && !h.fetched) lines.push("plans remote unreachable — sync state is last-known");
+  for (const c of h.foreign) {
+    lines.push(`held on ${c.machine}: ${c.item} by ${c.holder} since ${c.claimed_at}${c.conflicted ? " (conflicted)" : ""}`);
+  }
+  return lines;
 }
 
 export interface SyncStatus {

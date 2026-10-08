@@ -1,13 +1,17 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative, resolve, isAbsolute, sep } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
+import { join, relative, resolve, isAbsolute, sep, basename, dirname } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { NotFoundError } from "../core/model/errors.js";
 import type { ImportSource } from "./import.js";
 
-/** Read a folder tree of markdown files into ImportSource[] (never modified). */
+/**
+ * Read a folder tree of markdown files into ImportSource[] (never modified).
+ * A single `.md` file is a one-file import (paths relative to its folder).
+ */
 export async function scanFolder(dir: string): Promise<ImportSource[]> {
   if (!existsSync(dir)) throw new NotFoundError(`import folder not found: ${dir}`);
+  if (statSync(dir).isFile()) return [{ path: basename(dir), content: await readFile(dir, "utf8") }];
   const out: ImportSource[] = [];
   const walk = async (d: string) => {
     for (const e of await readdir(d, { withFileTypes: true })) {
@@ -45,7 +49,8 @@ export function sourcesUnder(root: string, keys: Iterable<string>, home = homedi
   return out;
 }
 
-/** Canonical import root (absolute, symlinks resolved). */
+/** Canonical import root (absolute, symlinks resolved); a file's folder for a one-file import. */
 export function importRoot(dir: string): string {
-  return realpathSync(resolve(dir));
+  const abs = realpathSync(resolve(dir));
+  return statSync(abs).isFile() ? dirname(abs) : abs;
 }

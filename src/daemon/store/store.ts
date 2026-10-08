@@ -462,6 +462,44 @@ export class PlansStore {
     });
   }
 
+  /**
+   * Overlay mode: record that an item's task file moved (found by its `te:`
+   * tag). Version bumped and logged like any write; never a state change.
+   */
+  setSources(moves: Array<{ id: string; source?: string; simple_source?: string }>): Promise<string[]> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const done: string[] = [];
+      const touched: string[] = [];
+      const now = new Date().toISOString();
+      for (const m of moves) {
+        const it = this.index.get(m.id);
+        if (!it) continue;
+        const absPath = join(this.ws.plansDir, it.path);
+        const doc = parseItemFile(await readFile(absPath, "utf8"), absPath);
+        const patch: Partial<ItemMeta> = {};
+        if (m.source !== undefined && m.source !== doc.meta.source) patch.source = m.source;
+        if (m.simple_source !== undefined && m.simple_source !== doc.meta.simple_source) {
+          patch.simple_source = m.simple_source;
+        }
+        if (!Object.keys(patch).length) continue;
+        const meta = {
+          ...doc.meta,
+          ...patch,
+          version: doc.meta.version + 1,
+          updated: now.slice(0, 10),
+        } as ItemMeta;
+        const lines = Object.entries(patch).map(([k, v]) => `- ${now} human moved ${k} → ${v as string}`);
+        await this.writeItemDoc(absPath, doc.raw.text, meta, lines);
+        await this.index.upsertFile(absPath);
+        done.push(m.id);
+        touched.push(it.path);
+      }
+      if (touched.length) await this.commitPaths(touched, `te: ${done.join(", ")} task file moved`);
+      return done;
+    });
+  }
+
   /** Overlay mode: write `te: <id>` into a task file's frontmatter. */
   private async tagSource(rel: string, id: string): Promise<void> {
     const abs = join(this.ws.root, rel);

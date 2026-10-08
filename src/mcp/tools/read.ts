@@ -6,6 +6,7 @@ import { pickWorkspace } from "../server/mcp.js";
 import { WorkspaceOps } from "../../daemon/api/ops.js";
 import type { Session } from "../../core/model/session.js";
 import { okText, errText, errFrom, itemLine, type ToolResult } from "../format.js";
+import { handoffStatus, handoffLines } from "../../daemon/sync/sync.js";
 
 /**
  * Read tools (DESIGN §7): hello, next, brief, query, graph.
@@ -58,6 +59,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         if (resume.length) {
           lines.push(`resume: ${resume.map((c) => c.item).join(", ")}`);
         }
+        lines.push(...handoffLines(await handoffStatus(ops.wsr)));
         return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);
