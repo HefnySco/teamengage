@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { rm, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { parseTargetRef } from "../../core/address/refs.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { LoadedWorkspace } from "../../core/config/config.js";
@@ -224,16 +224,76 @@ async function rsyncSnapshot(src: string, dest: string, exclude?: string[]): Pro
   }
 }
 
-/** Diff of the live target vs its snapshot — evidence for ssh/folder claims. */
+/** Live path a snapshot-able resource points at (`host:path/` or local dir). */
+function liveSource(ws: LoadedWorkspace, res: string): string | undefined {
+  const r = ws.resources.get(res);
+  if (!r) return undefined;
+  if (r.config.kind === "ssh") return `${r.config.host}:${r.config.path}/`;
+  if (r.config.kind === "folder" && r.path) return `${r.path}/`;
+  return undefined;
+}
+
+/**
+ * Diff of the live target vs its claim snapshot — evidence for ssh/folder
+ * claims (RS-0006/7). rsync dry-run lists files that differ.
+ */
 export async function snapshotDiff(
   ws: LoadedWorkspace,
   itemId: string,
   resource: string,
   home?: string,
 ): Promise<string> {
-  void ws;
   const dest = join(snapshotsRoot(home), ws.name, itemId, resource);
-  if (!existsSync(dest)) return "";
-  const names = await readdir(dest).catch(() => [] as string[]);
-  return `snapshot of ${resource}: ${names.length} top-level entries (${basename(dest)})`;
+  const src = liveSource(ws, resource);
+  if (!src || !existsSync(dest)) return "";
+  try {
+    const { stdout } = await execFileP(
+      "rsync",
+      ["-arn", "--out-format=%n %l", src, dest + "/"],
+      { timeout: 60_000 },
+    );
+    const lines = stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("./") && !l.startsWith("sending"));
+    return lines.length
+      ? `changed vs snapshot:\n${lines.slice(0, 100).join("\n")}${lines.length > 100 ? `\n… ${lines.length - 100} more` : ""}`
+      : "no changes vs snapshot";
+  } catch (e) {
+    const err = e as { stderr?: string };
+    return `diff failed: ${err.stderr?.trim() ?? (e as Error).message}`;
+  }
+}
+
+/**
+ * `te rollback` (RS-0006/7): restore a claim's snapshots back onto the live
+ * targets, byte-for-byte (`rsync -a --delete` preserves modes). Returns the
+ * resources restored.
+ */
+export async function rollbackWork(
+  ws: LoadedWorkspace,
+  itemId: string,
+  resources: string[],
+  home?: string,
+): Promise<string[]> {
+  const restored: string[] = [];
+  for (const res of resources) {
+    const snap = join(snapshotsRoot(home), ws.name, itemId, res);
+    const dest = liveSource(ws, res);
+    if (!dest || !existsSync(snap)) continue;
+    await rsyncSnapshot(`${snap}/`, dest.endsWith("/") ? dest : `${dest}/`);
+    restored.push(res);
+  }
+  return restored;
+}
+
+/** Snapshot dirs that exist for an item — used to offer rollback. */
+export async function itemSnapshots(
+  ws: LoadedWorkspace,
+  itemId: string,
+  home?: string,
+): Promise<string[]> {
+  const dir = join(snapshotsRoot(home), ws.name, itemId);
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return names.filter((n) => existsSync(join(dir, n)));
 }

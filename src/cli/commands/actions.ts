@@ -88,6 +88,23 @@ export async function releaseCmd(args: string[], home?: string): Promise<number>
   return act("release", [id, ...args.filter((a) => a.startsWith("--"))], { note: rest.join(" ") }, home);
 }
 
+export async function rollbackCmd(args: string[], home?: string): Promise<number> {
+  const [id] = positional(args);
+  if (!id) {
+    process.stderr.write("usage: te rollback <ID> [--yes]\n");
+    return 2;
+  }
+  if (!args.includes("--yes") && process.stdin.isTTY) {
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    const a = await rl.question(`restore snapshots over live targets for ${id.toUpperCase()}? [y/N] `);
+    rl.close();
+    if (!/^y/i.test(a.trim())) return 1;
+  }
+  const r = (await act("rollback", [id, ...args.filter((a) => a.startsWith("--"))], {}, home)) as number;
+  return r;
+}
+
 export async function renumberCmd(args: string[], home?: string): Promise<number> {
   const [oldId, newId] = positional(args);
   if (!oldId || !newId) {

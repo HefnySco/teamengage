@@ -13,6 +13,7 @@ import {
   rejectCmd,
   dropCmd,
   releaseCmd,
+  rollbackCmd,
   renumberCmd,
 } from "./commands/actions.js";
 
@@ -40,6 +41,7 @@ commands:
   answer <ID> <text>
   reject | drop <ID> [reason]
   renumber <OLD> <NEW>
+  rollback <ID> [--yes]  restore claim snapshots onto live targets
   import <folder>   import a Markdown task folder
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
@@ -105,6 +107,8 @@ async function main(argv: string[]): Promise<number> {
       return humanClaimCmd(rest, home);
     case "release":
       return releaseCmd(rest, home);
+    case "rollback":
+      return rollbackCmd(rest, home);
     case "renumber":
       return renumberCmd(rest, home);
     case "import":

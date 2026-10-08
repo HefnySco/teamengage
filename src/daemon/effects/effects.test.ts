@@ -9,7 +9,7 @@ import { SessionRegistry } from "../sessions/sessions.js";
 import { WorkspaceOps } from "../api/ops.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import type { Session } from "../../core/model/session.js";
-import { worktreePath, claimBranch } from "./effects.js";
+import { worktreePath, claimBranch, snapshotDiff } from "./effects.js";
 import { git } from "../../resources/git/git.js";
 
 /**
@@ -142,7 +142,7 @@ describe("worktree per claim (RS-0002)", () => {
     expect(branches).toContain(claimBranch("WS-0003", claim.holder));
   });
 
-  it("folder resources snapshot locally; url resources clone at claim (RS-0005)", async () => {
+  it("folder resources snapshot locally; url resources clone at claim (RS-0005/7)", async () => {
     const folderSrc = mkdtempSync(join(tmpdir(), "te-fsrc-"));
     writeFileSync(join(folderSrc, "data.txt"), "payload");
     const urlSrc = mkdtempSync(join(tmpdir(), "te-usrc-"));
@@ -168,8 +168,23 @@ describe("worktree per claim (RS-0002)", () => {
     await store2.init();
     const ops2 = new WorkspaceOps({ ws: wsr.ws, store: store2 }, sessions, undefined, home);
     await ops2.claim("WS-0004", sClaude);
-    expect(existsSync(join(home, ".teamengage", "snapshots", "ws", "WS-0004", "docs", "data.txt"))).toBe(true);
+    const snap = join(home, ".teamengage", "snapshots", "ws", "WS-0004", "docs", "data.txt");
+    expect(existsSync(snap)).toBe(true);
     expect(existsSync(join(plans, "worktrees", "WS-0004", "lib", "f"))).toBe(true);
+
+    // live change shows up in the submit evidence diff (RS-0007)
+    writeFileSync(join(folderSrc, "data.txt"), "edited live");
+    writeFileSync(join(folderSrc, "new.txt"), "new file");
+    const diff = await snapshotDiff(wsr.ws, "WS-0004", "docs", home);
+    expect(diff).toContain("data.txt");
+    expect(diff).toContain("new.txt");
+
+    // rollback restores exact bytes (RS-0006/7)
+    const r = (await ops2.rollback("WS-0004")) as { restored: string[] };
+    expect(r.restored).toContain("docs");
+    expect(readFileSync(join(folderSrc, "data.txt"), "utf8")).toBe("payload");
+    expect(existsSync(join(folderSrc, "new.txt"))).toBe(false);
+
     await ops2.release("WS-0004", sClaude, "done");
     rmSync(folderSrc, { recursive: true, force: true });
     rmSync(urlSrc, { recursive: true, force: true });

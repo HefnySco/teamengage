@@ -14,6 +14,9 @@ import {
   setupWork,
   cleanupWork,
   mergeWork,
+  snapshotDiff,
+  rollbackWork,
+  itemSnapshots,
 } from "../effects/effects.js";
 import { checkRemoteClaims } from "../sync/sync.js";
 import type { WorkspaceRuntime } from "../server/context.js";
@@ -270,10 +273,44 @@ export class WorkspaceOps {
   ) {
     const it = this.item(id);
     this.assertLiveClaim(it);
+    // RS-0006/7: attach the live-vs-snapshot diff for ssh/folder targets
+    const diffs: string[] = [];
+    const seen = new Set<string>();
+    for (const t of it.claim?.targets ?? []) {
+      const { resource } = parseTargetRef(t);
+      if (seen.has(resource)) continue;
+      seen.add(resource);
+      const r = this.wsr.ws.resources.get(resource);
+      if (!r || (r.config.kind !== "ssh" && r.config.kind !== "folder")) continue;
+      const d = await snapshotDiff(this.wsr.ws, id, resource, this.home);
+      if (d) diffs.push(`@${resource}: ${d}`);
+    }
+    const ev = diffs.length
+      ? { ...evidence, notes: [evidence?.notes, diffs.join("\n")].filter(Boolean).join("\n") }
+      : evidence;
     return this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "submit",
-      evidence,
+      evidence: ev,
     });
+  }
+
+  /** `te rollback` — restore claim snapshots back onto live targets (RS-0006/7). */
+  async rollback(id: string) {
+    const it = this.item(id);
+    const claimRes = new Set(
+      (it.claim?.targets ?? []).map((t) => parseTargetRef(t).resource),
+    );
+    const snaps = await itemSnapshots(this.wsr.ws, id, this.home);
+    const resources = [...new Set([...claimRes, ...snaps])];
+    const restored = await rollbackWork(this.wsr.ws, id, resources, this.home);
+    if (!restored.length) {
+      throw new NotFoundError(`no snapshots for ${id}`);
+    }
+    await this.store.annotate(id, {
+      heading: "Log",
+      lines: [`- rollback: restored snapshot for ${restored.map((r) => `@${r}`).join(", ")}`],
+    });
+    return { restored };
   }
 
   async propose(
