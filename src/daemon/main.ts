@@ -18,11 +18,15 @@ import { registerApiRoutes } from "./api/api.js";
 import { LinkedWorkspaces } from "./links/links.js";
 import { registerUiRoutes } from "./api/ui.js";
 import { registerMcpRoutes } from "../mcp/server/mcp.js";
+import { registerAgentRoutes } from "../agent/http.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
 import { parseDuration } from "../core/model/workspace.js";
 import { reconcile } from "./sync/sync.js";
 
+
+/** Default agent-facing port — a stable URL for `GET /agent`. */
+const DEFAULT_PORT = 4747;
 /**
  * teamengaged — one instance per machine (DESIGN §6.1).
  * Loads every registered workspace, serializes all plan writes through each
@@ -91,6 +95,8 @@ async function main(): Promise<number | undefined> {
 
   const handle = await startDaemon({
     home,
+    // stable agent URL http://127.0.0.1:4747/agent (TE_PORT overrides)
+    port: Number(process.env.TE_PORT) || DEFAULT_PORT,
     health: () => ({
       machine,
       workspaces: [...ctx.workspaces.keys()],
@@ -99,6 +105,7 @@ async function main(): Promise<number | undefined> {
       registerApiRoutes(app, ctx);
       registerEventRoutes(app, ctx.bus);
       registerUiRoutes(app);
+      registerAgentRoutes(app, ctx);
       registerMcpRoutes(app, {
         ctx,
         tools: (server, binding, c) => {
@@ -115,7 +122,9 @@ async function main(): Promise<number | undefined> {
     },
   });
   process.stdout.write(
-    `teamengaged ${machine} listening at ${handle.url} (${ctx.workspaces.size} workspace(s))\n`,
+    `teamengaged ${machine} listening at ${handle.url} (${ctx.workspaces.size} workspace(s))\n` +
+      `agents: ${handle.url}/agent\n` +
+      (handle.portFallback ? `note: port ${Number(process.env.TE_PORT) || DEFAULT_PORT} was busy — using a random port\n` : ""),
   );
   return undefined; // keep process alive via server
 }

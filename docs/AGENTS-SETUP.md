@@ -1,9 +1,30 @@
 # Agent setup (MC-0005)
 
-TeamEngage exposes one MCP server named `teamengage`. It runs over stdio via
-`te mcp` — the shim auto-starts the local daemon if needed. Register it with
-your agent tool, then drop the protocol snippet (`te agents-md`) into the
-project's agent instructions file.
+TeamEngage has two agent interfaces with the same tools and rules:
+
+- **Plain HTTP (no setup):** `http://127.0.0.1:4747/agent`. Any local agent
+  that can run `curl` uses it directly; `GET /agent` prints the protocol and
+  copy-paste examples. Sessions: `POST /agent/hello` returns a token, sent as
+  `X-TE-Session` afterwards. Browsers are refused (Origin / Host checks), the
+  port is loopback-only, and `TE_PORT` changes it (a busy port falls back to a
+  random one — the daemon prints the URL).
+- **MCP:** server `teamengage`, run over stdio via `te mcp` — the shim
+  auto-starts the local daemon if needed.
+
+Register MCP if your IDE prefers it (optional), then drop the protocol
+snippet (`te agents-md`) into the project's agent instructions file.
+
+## Plain HTTP quick start
+
+```bash
+curl -s http://127.0.0.1:4747/agent
+T=$(curl -s -X POST http://127.0.0.1:4747/agent/hello -d '{"agent":"gemini-cli"}' | sed -n 's/^token //p')
+curl -s http://127.0.0.1:4747/agent/next -H "X-TE-Session: $T"
+curl -s -X POST http://127.0.0.1:4747/agent/claim/MP-0002 -H "X-TE-Session: $T"
+```
+
+Keep the token for the whole task. `POST /agent/bye` ends the session (claims
+stay); after a daemon restart, `hello` again and held claims are rebound.
 
 ## MCP server registration
 
