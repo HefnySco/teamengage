@@ -376,3 +376,157 @@ describe("snapshot scoping + rollback safety (RS-0006/7)", () => {
     expect(existsSync(claimFile)).toBe(false); // the old out-of-queue write resurrected it
   });
 });
+
+describe("snapshot target shapes + claim safety", () => {
+  function docsResource(folderSrc: string) {
+    wsr.ws.config.resources = {
+      ...wsr.ws.config.resources,
+      docs: { kind: "folder", path: folderSrc, snapshot: true },
+    };
+    wsr.ws.resources.set("docs", { name: "docs", config: wsr.ws.config.resources.docs, path: folderSrc });
+  }
+
+  it("single-file targets snapshot and restore the file", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-ffile-"));
+    mkdirSync(join(folderSrc, "cfg"), { recursive: true });
+    writeFileSync(join(folderSrc, "cfg", "app.yaml"), "v1\n");
+    docsResource(folderSrc);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0011.md"),
+      item("WS-0011", "ready", 'targets: ["@docs:cfg/app.yaml"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await expect(o.claim("WS-0011", sClaude)).resolves.toBeDefined();
+    const snap = join(home, ".teamengage", "snapshots", "ws", "WS-0011", "docs", "cfg", "app.yaml");
+    expect(existsSync(snap)).toBe(true);
+    writeFileSync(join(folderSrc, "cfg", "app.yaml"), "v2\n");
+    await o.rollback("WS-0011");
+    expect(readFileSync(join(folderSrc, "cfg", "app.yaml"), "utf8")).toBe("v1\n");
+    await o.release("WS-0011", sClaude, "done");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("absolute-path targets resolve against the resource root", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-fabs-"));
+    mkdirSync(join(folderSrc, "cfg"), { recursive: true });
+    writeFileSync(join(folderSrc, "cfg", "a.conf"), "base\n");
+    docsResource(folderSrc);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0012.md"),
+      item("WS-0012", "ready", `targets: ["@docs:${join(folderSrc, "cfg")}/**"]\n`),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await expect(o.claim("WS-0012", sClaude)).resolves.toBeDefined();
+    const snap = join(home, ".teamengage", "snapshots", "ws", "WS-0012", "docs", "cfg", "a.conf");
+    expect(existsSync(snap)).toBe(true);
+    await o.release("WS-0012", sClaude, "done");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("missing target paths are claimed, recorded, and deleted by rollback", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-fmiss-"));
+    docsResource(folderSrc);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0013.md"),
+      item("WS-0013", "ready", 'targets: ["@docs:feature/**"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    // the dir doesn't exist yet — claim must not fail
+    await expect(o.claim("WS-0013", sClaude)).resolves.toBeDefined();
+    // the agent creates the feature dir; rollback must remove it
+    mkdirSync(join(folderSrc, "feature"), { recursive: true });
+    writeFileSync(join(folderSrc, "feature", "new.ts"), "new work\n");
+    await o.rollback("WS-0013");
+    expect(existsSync(join(folderSrc, "feature"))).toBe(false);
+    await o.release("WS-0013", sClaude, "done");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("merge conflict reports the conflicting file names", async () => {
+    writeFileSync(join(codeRepo, "g.ts"), "export const g = 1;\n");
+    execFileSync("git", ["add", "g.ts"], { cwd: codeRepo });
+    execFileSync("git", ["commit", "-m", "g1"], { cwd: codeRepo });
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0018.md"),
+      item("WS-0018", "ready", 'targets: ["@code:g.ts"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0018", sCodex);
+    const wt = worktreePath(wsr.ws, "WS-0018", "code");
+    writeFileSync(join(wt, "g.ts"), "export const g = 999;\n");
+    execFileSync("git", ["add", "g.ts"], { cwd: wt });
+    execFileSync("git", ["commit", "-m", "g999"], { cwd: wt });
+    // main moves the same file after the branch point
+    writeFileSync(join(codeRepo, "g.ts"), "export const g = 2;\n");
+    execFileSync("git", ["add", "g.ts"], { cwd: codeRepo });
+    execFileSync("git", ["commit", "-m", "g2"], { cwd: codeRepo });
+    await o.submit("WS-0018", sCodex, {});
+    const r = (await o.accept("WS-0018")) as { bounced?: string[] };
+    expect(r.bounced?.join(" ")).toContain("g.ts");
+  });
+
+  it("merge preflight failures that aren't conflicts propagate as errors", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0014.md"),
+      item("WS-0014", "ready", 'targets: ["@code:h.ts"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0014", sClaude);
+    // claim branch disappears before accept — a real error, not a "conflict"
+    const wt = worktreePath(wsr.ws, "WS-0014", "code");
+    execFileSync("git", ["worktree", "remove", "--force", wt], { cwd: codeRepo });
+    execFileSync("git", ["branch", "-D", claimBranch("WS-0014", sClaude.id)], { cwd: codeRepo });
+    await o.submit("WS-0014", sClaude, {});
+    await expect(o.accept("WS-0014")).rejects.toThrow(/h.ts|reference|branch|rev|GIT|fatal/i);
+    await o.reject("WS-0014", "broken");
+    await o.release("WS-0014", sClaude, "cleanup");
+  });
+
+  it("human claim is refused when it overlaps a live agent claim", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0015.md"),
+      item("WS-0015", "ready", 'targets: ["@code:d.ts"]\n'),
+    );
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0016.md"),
+      item("WS-0016", "ready", 'targets: ["@code:d.ts", "@code:e.ts"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0015", sClaude);
+    await expect(o.humanClaim("WS-0016")).rejects.toThrow(/overlap|claim/i);
+    await o.release("WS-0015", sClaude, "done");
+  });
+
+  it("a different agent resumes the released claim branch", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0017.md"),
+      item("WS-0017", "ready", 'targets: ["@code:f.ts"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0017", sClaude);
+    const wt = worktreePath(wsr.ws, "WS-0017", "code");
+    writeFileSync(join(wt, "wip.ts"), "half-done work\n");
+    execFileSync("git", ["add", "wip.ts"], { cwd: wt });
+    execFileSync("git", ["commit", "-m", "wip"], { cwd: wt });
+    await o.release("WS-0017", sClaude, "pausing");
+    // a different agent re-claims: should land on the retained branch
+    await o.claim("WS-0017", sCodex);
+    const wt2 = worktreePath(wsr.ws, "WS-0017", "code");
+    expect(existsSync(join(wt2, "wip.ts"))).toBe(true);
+    await o.release("WS-0017", sCodex, "done");
+  });
+});

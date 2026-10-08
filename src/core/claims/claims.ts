@@ -37,7 +37,7 @@ function underPrefix(p: string, b: string): boolean {
 }
 
 /** Canonicalize a target pattern: collapse `.`, `..`, empty segments. */
-function normPath(s: string): string {
+export function normPath(s: string): string {
   const out: string[] = [];
   for (const seg of s.split("/")) {
     if (seg === "" || seg === ".") continue;

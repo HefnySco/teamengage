@@ -10,6 +10,9 @@ export class GitError extends TeError {
     readonly repo: string,
     readonly args: string[],
     readonly stderr?: string,
+    readonly stdout?: string,
+    /** process exit code — e.g. 1 for merge-tree conflicts, 128 for fatal */
+    readonly exitCode?: number,
   ) {
     super("GIT", `${message}: ${stderr?.trim() ?? ""}`.trim(), { repo, args, stderr });
   }
@@ -41,9 +44,15 @@ export async function git(repo: string, args: string[], opts: RunOpts = {}): Pro
     });
     return stdout;
   } catch (e) {
-    const err = e as { stderr?: string; message?: string; killed?: boolean };
+    const err = e as {
+      stderr?: string;
+      stdout?: string;
+      message?: string;
+      killed?: boolean;
+      code?: number;
+    };
     if (err.killed) throw new GitError("git timed out", repo, args);
-    throw new GitError(err.message ?? "git failed", repo, args, err.stderr);
+    throw new GitError(err.message ?? "git failed", repo, args, err.stderr, err.stdout, err.code);
   }
 }
 

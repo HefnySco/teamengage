@@ -155,7 +155,10 @@ export class WorkspaceOps {
 
   // ---- agent writes -----------------------------------------------------
 
-  async claim(id: string, session: Session): Promise<{ claim: Claim; version: number }> {
+  async claim(
+    id: string,
+    session: Session,
+  ): Promise<{ claim: Claim; version: number; resumed: Array<{ resource: string; branch: string }> }> {
     const it = this.item(id);
     const mine = it.claim;
     if (mine) {
@@ -189,30 +192,42 @@ export class WorkspaceOps {
       { type: "claim", claim },
       {
         depsDone: this.depsDone(it),
-        guard: () => {
-          for (const c of this.index.claims.values()) {
-            if (c.conflicted) continue;
-            const o = targetsOverlap(it.meta.targets, c.targets, roots);
-            if (o.overlap) {
-              throw new ClaimRefusedError(
-                `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine}`,
-                c.holder,
-                c.machine,
-                o.via?.[0],
-              );
-            }
-          }
-        },
+        guard: this.overlapGuard(it.meta.targets, roots),
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release
+    let resumed: Array<{ resource: string; branch: string }> = [];
     try {
-      await setupWork(this.wsr.ws, id, claim, this.home);
+      resumed = (await setupWork(this.wsr.ws, id, claim, this.home)).resumed;
     } catch (e) {
       await this.release(id, session, `setup failed: ${(e as Error).message}`).catch(() => {});
       throw e;
     }
-    return { claim, version: r.meta.version };
+    for (const res of resumed) {
+      await this.store.annotate(id, {
+        heading: "Log",
+        lines: [`- resumed prior work on branch ${res.branch} (@${res.resource})`],
+      });
+    }
+    return { claim, version: r.meta.version, resumed };
+  }
+
+  /** Overlap check that runs inside the store's serialized write queue. */
+  private overlapGuard(targets: string[], roots = resourceRoots(this.wsr.ws)) {
+    return () => {
+      for (const c of this.index.claims.values()) {
+        if (c.conflicted) continue;
+        const o = targetsOverlap(targets, c.targets, roots);
+        if (o.overlap) {
+          throw new ClaimRefusedError(
+            `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine}`,
+            c.holder,
+            c.machine,
+            o.via?.[0],
+          );
+        }
+      }
+    };
   }
 
   async release(id: string, actor: Session | "human", note?: string) {
@@ -446,12 +461,23 @@ export class WorkspaceOps {
       last_seen: now,
       paths: await plannedPaths(this.wsr.ws, id, it.meta.targets),
     };
-    const r = await this.store.perform(id, it.meta.version, this.actorFor("human"), {
-      type: "claim",
-      claim,
-    });
+    const r = await this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor("human"),
+      { type: "claim", claim },
+      // a human claim locks paths against agents — it must not trample a
+      // live agent claim either
+      { guard: this.overlapGuard(it.meta.targets) },
+    );
     try {
-      await setupWork(this.wsr.ws, id, claim, this.home);
+      const { resumed } = await setupWork(this.wsr.ws, id, claim, this.home);
+      for (const res of resumed) {
+        await this.store.annotate(id, {
+          heading: "Log",
+          lines: [`- resumed prior work on branch ${res.branch} (@${res.resource})`],
+        });
+      }
     } catch (e) {
       await this.release(id, "human", `setup failed: ${(e as Error).message}`).catch(() => {});
       throw e;

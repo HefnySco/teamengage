@@ -2,14 +2,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { rm, readdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { parseTargetRef } from "../../core/address/refs.js";
-import { staticBase } from "../../core/claims/claims.js";
+import { staticBase, normPath } from "../../core/claims/claims.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { LoadedWorkspace } from "../../core/config/config.js";
 import { TeError } from "../../core/model/errors.js";
 import {
   git,
+  GitError,
   isRepo,
   isDirty,
   worktreeAdd,
@@ -110,7 +111,8 @@ export async function setupWork(
   itemId: string,
   claim: Claim,
   home?: string,
-): Promise<void> {
+): Promise<{ resumed: Array<{ resource: string; branch: string }> }> {
+  const resumed: Array<{ resource: string; branch: string }> = [];
   for (const t of claim.targets) {
     const { resource } = parseTargetRef(t);
     const r = ws.resources.get(resource);
@@ -122,38 +124,81 @@ export async function setupWork(
       if (existsSync(wt)) continue; // resume after restart
       mkdirSync(join(ws.plansDir, "worktrees", itemId), { recursive: true });
       const branch = claimBranch(itemId, claim.holder);
-      // a branch may survive from a released claim — resume on it
-      const branchExists = (await git(repo, ["branch", "--list", branch])).trim() !== "";
-      if (branchExists) {
-        await git(repo, ["worktree", "add", wt, branch]);
+      // a branch may survive from a released claim — resume on it. Any
+      // holder's branch counts: work released by one agent is continued by
+      // the next, not restarted from base.
+      let resume = (await git(repo, ["branch", "--list", branch])).trim() ? branch : "";
+      if (!resume) {
+        resume = (
+          await git(repo, [
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            `refs/heads/te/${itemId}-*`,
+          ])
+        )
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean)[0] ?? "";
+      }
+      if (resume) {
+        await git(repo, ["worktree", "add", wt, resume]);
+        resumed.push({ resource, branch: resume });
       } else {
         await worktreeAdd(repo, wt, branch, r.config.base ?? "main");
       }
     } else if (r.config.kind === "ssh" && r.config.snapshot !== false) {
-      const bases = snapshotBases(claim.targets, resource);
       const root = join(snapshotsRoot(home), ws.name, itemId);
+      const bases = snapshotBases(claim.targets, resource, r.config.path);
+      for (const e of bases) {
+        if (e.b) e.missing = !(await existsOn(ws, resource, e.b));
+      }
       await writeBases(root, resource, bases);
-      for (const base of bases) {
-        const dest = join(root, resource, base);
-        mkdirSync(dest, { recursive: true });
-        await rsyncSnapshot(
-          `${r.config.host}:${join(r.config.path, base)}/`,
-          dest,
-          r.config.exclude,
-          r.config.ssh_opts,
-        );
+      for (const e of bases) {
+        if (e.missing) continue;
+        if (e.file) {
+          const dest = join(root, resource, dirname(e.b));
+          mkdirSync(dest, { recursive: true });
+          await rsyncSnapshot(
+            `${r.config.host}:${join(r.config.path, e.b)}`,
+            `${dest}/`,
+            r.config.exclude,
+            r.config.ssh_opts,
+            false,
+          );
+        } else {
+          const dest = join(root, resource, e.b);
+          mkdirSync(dest, { recursive: true });
+          await rsyncSnapshot(
+            `${r.config.host}:${join(r.config.path, e.b)}/`,
+            dest,
+            r.config.exclude,
+            r.config.ssh_opts,
+          );
+        }
       }
     } else if (r.config.kind === "folder" && r.config.snapshot && r.path) {
-      const bases = snapshotBases(claim.targets, resource);
       const root = join(snapshotsRoot(home), ws.name, itemId);
+      const bases = snapshotBases(claim.targets, resource, r.path);
+      for (const e of bases) {
+        if (e.b) e.missing = !(await existsOn(ws, resource, e.b));
+      }
       await writeBases(root, resource, bases);
-      for (const base of bases) {
-        const dest = join(root, resource, base);
-        mkdirSync(dest, { recursive: true });
-        await rsyncSnapshot(`${join(r.path, base)}/`, dest);
+      for (const e of bases) {
+        if (e.missing) continue;
+        if (e.file) {
+          const dest = join(root, resource, dirname(e.b));
+          mkdirSync(dest, { recursive: true });
+          await rsyncSnapshot(join(r.path, e.b), `${dest}/`, undefined, undefined, false);
+        } else {
+          const dest = join(root, resource, e.b);
+          mkdirSync(dest, { recursive: true });
+          await rsyncSnapshot(`${join(r.path, e.b)}/`, dest);
+        }
       }
     }
   }
+  return { resumed };
 }
 
 /**
@@ -212,9 +257,14 @@ async function mergeTreeCheck(
     await git(repo, ["merge-tree", "--write-tree", "--name-only", base, branch]);
     return { ok: true, files: [] };
   } catch (e) {
-    const out = ((e as { stdout?: string }).stdout ?? "").split("\n").slice(1);
-    const files = out.map((l) => l.trim()).filter((l) => l && !l.startsWith("CONFLICT"));
-    return { ok: false, files };
+    // a conflict exits 1 with the merged tree OID on stdout line 1 and the
+    // conflicted paths after it. Other failures (missing ref, corrupt repo)
+    // have no OID — those are real errors, not conflicts.
+    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
+    const lines = (e.stdout ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!/^[0-9a-f]{40,64}$/.test(lines[0] ?? "")) throw e;
+    const files = lines.slice(1);
+    return { ok: false, files: files.length ? files : ["(conflicted — no file list)"] };
   }
 }
 
@@ -274,28 +324,100 @@ export async function mergeWork(
   return out;
 }
 
+interface SnapshotBase {
+  /** path under the resource root ("" = whole resource) */
+  b: string;
+  /** target was an exact file path, not a subtree */
+  file?: boolean;
+  /** path didn't exist at claim time — rollback deletes it */
+  missing?: boolean;
+}
+
 /** Static path prefixes a claim covers for one resource — scopes snapshots/rollback. */
-function snapshotBases(targets: string[] | undefined, resource: string): string[] {
-  const bases = new Set<string>();
+function snapshotBases(targets: string[] | undefined, resource: string, root: string): SnapshotBase[] {
+  const bases = new Map<string, SnapshotBase>();
   for (const raw of targets ?? []) {
     const t = parseTargetRef(raw);
     if (t.resource !== resource) continue;
-    bases.add(t.pattern === undefined ? "" : staticBase(t));
+    if (t.pattern === undefined) return [{ b: "" }];
+    let pat = t.pattern;
+    if (t.absolute) {
+      // absolute targets are resolved against the resource root — the same
+      // normalization the overlap check uses
+      const rr = normPath(root.replace(/\/+$/, ""));
+      const abs = normPath(pat);
+      if (abs === rr) return [{ b: "" }];
+      if (!abs.startsWith(`${rr}/`)) return [{ b: "" }]; // outside root: conservative
+      pat = abs.slice(rr.length + 1);
+    }
+    const base = staticBase({ ...t, pattern: pat });
+    if (base === "") return [{ b: "" }];
+    bases.set(base, { b: base, file: !/[*?[\]{}]/.test(pat) });
   }
-  return bases.has("") ? [""] : [...bases];
+  return bases.size ? [...bases.values()] : [{ b: "" }];
 }
 
 /** Record which subtrees were snapshotted — sibling marker so it never restores. */
-async function writeBases(dir: string, res: string, bases: string[]): Promise<void> {
+async function writeBases(dir: string, res: string, bases: SnapshotBase[]): Promise<void> {
   mkdirSync(dir, { recursive: true });
   await writeFile(join(dir, `${res}.bases`), JSON.stringify(bases));
 }
 
-async function readBases(dir: string, res: string): Promise<string[]> {
+async function readBases(dir: string, res: string): Promise<SnapshotBase[]> {
   try {
-    return JSON.parse(await readFile(join(dir, `${res}.bases`), "utf8")) as string[];
+    const raw = JSON.parse(await readFile(join(dir, `${res}.bases`), "utf8")) as unknown[];
+    return raw.map((e) => (typeof e === "string" ? { b: e } : (e as SnapshotBase)));
   } catch {
-    return [""]; // legacy whole-resource snapshot
+    return [{ b: "" }]; // legacy whole-resource snapshot
+  }
+}
+
+/** Does `base` exist on a snapshot-able resource? */
+async function existsOn(ws: LoadedWorkspace, res: string, base: string): Promise<boolean> {
+  const r = ws.resources.get(res);
+  if (!r) return false;
+  if (r.config.kind === "folder" && r.path) return existsSync(join(r.path, base));
+  if (r.config.kind === "ssh") {
+    try {
+      const p = join(r.config.path, base).replace(/"/g, '\\"');
+      await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `test -e "${p}"`], {
+        timeout: 30_000,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Delete `base` on the resource — rollback of a path that didn't exist at claim. */
+async function deleteOn(ws: LoadedWorkspace, res: string, base: string): Promise<void> {
+  const r = ws.resources.get(res);
+  if (!r) return;
+  if (r.config.kind === "folder" && r.path) {
+    await rm(join(r.path, base), { recursive: true, force: true });
+  } else if (r.config.kind === "ssh") {
+    const p = join(r.config.path, base).replace(/"/g, '\\"');
+    await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `rm -rf -- "${p}"`], {
+      timeout: 60_000,
+    });
+  }
+}
+
+/** Ensure the parent directory of `base` exists on the resource (file restores). */
+async function ensureParentOn(ws: LoadedWorkspace, res: string, base: string): Promise<void> {
+  const parent = dirname(base);
+  if (parent === "." || parent === "") return;
+  const r = ws.resources.get(res);
+  if (!r) return;
+  if (r.config.kind === "folder" && r.path) {
+    mkdirSync(join(r.path, parent), { recursive: true });
+  } else if (r.config.kind === "ssh") {
+    const p = join(r.config.path, parent).replace(/"/g, '\\"');
+    await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `mkdir -p "${p}"`], {
+      timeout: 30_000,
+    }).catch(() => {});
   }
 }
 
@@ -305,11 +427,13 @@ async function rsyncSnapshot(
   dest: string,
   exclude?: string[],
   sshOpts?: string[],
+  /** --delete mirrors a dir; file copies must not delete siblings */
+  del = true,
 ): Promise<void> {
   const args = [
     "-a",
     "--checksum", // quick-check misses same-size same-mtime edits → wrong bytes restored
-    "--delete",
+    ...(del ? ["--delete"] : []),
     ...(exclude ?? []).flatMap((e) => ["--exclude", e]),
     ...(sshOpts?.length ? ["-e", `ssh ${sshOpts.join(" ")}`] : []),
     src,
@@ -349,13 +473,17 @@ export async function snapshotDiff(
   const parts: string[] = [];
   const resCfg = ws.resources.get(resource)?.config;
   const sshOpts = resCfg?.kind === "ssh" ? resCfg.ssh_opts : undefined;
-  for (const base of await readBases(root, resource)) {
-    const d = await rsyncDryDiff(
-      join(src.replace(/\/$/, ""), base) + "/",
-      join(dest, base) + "/",
-      sshOpts,
-    );
-    if (d) parts.push(base ? `# ${base}\n${d}` : d);
+  const srcRoot = src.replace(/\/+$/, "");
+  for (const e of await readBases(root, resource)) {
+    if (e.missing) {
+      // didn't exist at claim — noteworthy only if it exists now
+      if (await existsOn(ws, resource, e.b)) parts.push(`# ${e.b}\n+ created since claim`);
+      continue;
+    }
+    const src = e.file ? join(srcRoot, e.b) : `${join(srcRoot, e.b)}/`;
+    const dst = e.file ? `${join(dest, dirname(e.b))}/` : `${join(dest, e.b)}/`;
+    const d = await rsyncDryDiff(src, dst, sshOpts);
+    if (d) parts.push(e.b ? `# ${e.b}\n${d}` : d);
   }
   return formatDiff(parts);
 }
@@ -408,19 +536,35 @@ export async function rollbackWork(
   for (const res of resources) {
     const snap = join(root, res);
     const dest = liveSource(ws, res);
-    if (!dest || !existsSync(snap)) continue;
+    if (!dest) continue;
+    const bases = await readBases(root, res);
+    // a snap dir that was never written (all targets missing at claim) still
+    // has a .bases marker — deletions count as restoration
+    if (!existsSync(snap) && !bases.some((b) => b.missing)) continue;
     const rc = ws.resources.get(res)?.config;
     const sshOpts = rc?.kind === "ssh" ? rc.ssh_opts : undefined;
-    // restore only the subtrees that were claimed — never the whole resource
-    for (const base of await readBases(root, res)) {
-      await rsyncSnapshot(
-        `${join(snap, base)}/`,
-        `${join(dest.replace(/\/$/, ""), base)}/`,
-        rc?.kind === "ssh" ? rc.exclude : undefined,
-        sshOpts,
-      );
+    const destRoot = dest.replace(/\/+$/, "");
+    let touched = false;
+    for (const e of bases) {
+      if (e.missing) {
+        await deleteOn(ws, res, e.b);
+        touched = true;
+        continue;
+      }
+      if (e.file) {
+        await ensureParentOn(ws, res, e.b);
+        await rsyncSnapshot(join(snap, e.b), `${join(destRoot, dirname(e.b))}/`, undefined, sshOpts, false);
+      } else {
+        await rsyncSnapshot(
+          `${join(snap, e.b)}/`,
+          `${join(destRoot, e.b)}/`,
+          rc?.kind === "ssh" ? rc.exclude : undefined,
+          sshOpts,
+        );
+      }
+      touched = true;
     }
-    restored.push(res);
+    if (touched) restored.push(res);
   }
   return restored;
 }
