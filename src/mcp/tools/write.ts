@@ -132,7 +132,11 @@ export function registerWriteTools(
   server.registerTool(
     "propose",
     {
-      description: "Create draft items for the human to approve (agents cannot set other statuses).",
+      description:
+        "Create draft items for the human to approve (agents cannot set other statuses). " +
+        "In a task-folder workspace each item becomes <project>/TASK-NN-<slug>.md (epics: PHASE-NN-…) " +
+        "from the standard template — give acceptance criteria an agent can check and the repos/paths it touches. " +
+        "depends_on/parent may use #N for the N-th (0-based) earlier item of the same call.",
       inputSchema: {
         items: z.array(
           z.object({
@@ -143,6 +147,9 @@ export function registerWriteTools(
             depends_on: z.array(z.string()).optional(),
             parent: z.string().optional(),
             summary: z.string().optional(),
+            acceptance: z.array(z.string()).optional(),
+            touches: z.array(z.string()).optional(),
+            simple: z.string().optional(),
           }),
         ),
       },
@@ -153,8 +160,12 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const { ids } = await o.propose(items, s);
-        return okText(`proposed ${ids.join(", ")}`);
+        const { ids, files } = await o.propose(items, s);
+        return okText(
+          files.length
+            ? ids.map((id, i) => `proposed ${id} → ${files[i]}`).join("\n")
+            : `proposed ${ids.join(", ")}`,
+        );
       } catch (e) {
         return errFrom(e);
       }

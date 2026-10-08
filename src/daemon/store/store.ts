@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { Index } from "../../core/index/index.js";
 import { EventLog, eventFileName } from "../../core/events/log.js";
 import {
@@ -11,12 +11,19 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag } from "../../core/files/source.js";
+import { withTeTag, toSourcePath } from "../../core/files/source.js";
+import {
+  filePrefix,
+  nextTaskNumber,
+  renderSimpleFile,
+  renderTaskFile,
+  taskFileName,
+} from "../../core/files/template.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
 import { DecisionMeta, type Event, type ItemMeta } from "../../core/model/index.js";
 import type { Claim } from "../../core/model/claim.js";
-import { ConflictError, NotFoundError } from "../../core/model/errors.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
 import { writeFileAtomic } from "./atomic.js";
 import type { LoadedWorkspace } from "../../core/config/config.js";
@@ -237,6 +244,12 @@ export class PlansStore {
   /**
    * Create new draft items (propose). Agents and humans may create items but
    * only as `draft` (DESIGN §5). Ids are allocated per prefix as max+1.
+   *
+   * Overlay mode: each item also gets a real task file rendered from the
+   * template (core/files/template.ts) at `<project folder>/TASK-NN-<slug>.md`
+   * (epics: `PHASE-NN-…`), tagged `te: <id>`, plus an optional `.simple.md`
+   * companion; the item records it as `source` and holds no copied content.
+   * Task files are the human's to commit, like every task file.
    */
   createItems(
     drafts: Array<{
@@ -247,24 +260,79 @@ export class PlansStore {
       depends_on?: string[];
       parent?: string;
       summary?: string;
+      acceptance?: string[];
+      touches?: string[];
+      simple?: string;
     }>,
     actor: Actor,
-  ): Promise<{ ids: string[] }> {
+  ): Promise<{ ids: string[]; files: string[] }> {
     return this.enqueue(async () => {
       await this.assertReady();
       await this.plansRepoHealthy();
       const { ItemMeta } = await import("../../core/model/item.js");
       const { allocateId, idPrefix } = await import("../../core/address/refs.js");
+      const overlay = this.ws.config.mode === "overlay";
       const ids: string[] = [];
+      const files: string[] = [];
       const writes: Array<{ rel: string; content: string }> = [];
+      const taskWrites: Array<{ abs: string; content: string }> = [];
+      const taken = new Map<string, number[]>(); // folder+prefix → numbers used in this batch
       const now = new Date().toISOString().slice(0, 10);
-      for (const d of drafts) {
+      // `#N` in depends_on / parent = the N-th item of this batch (0-based),
+      // so one propose call can carry a whole plan; only earlier items
+      const local = (ref: string, at: number): string => {
+        const m = /^#(\d+)$/.exec(ref.trim());
+        if (!m) return ref;
+        const n = Number(m[1]);
+        if (n >= at) throw new ValidationError(`item ${at}: '${ref}' must point to an earlier item of the batch`);
+        return ids[n];
+      };
+      for (const [at, raw] of drafts.entries()) {
+        const d = {
+          ...raw,
+          depends_on: raw.depends_on?.map((r) => local(r, at)),
+          parent: raw.parent === undefined ? undefined : local(raw.parent, at),
+        };
         const project = d.project;
         const prefix = project
           ? this.ws.config.projects[project]?.prefix
           : this.ws.config.prefix;
         if (!prefix) throw new NotFoundError(`unknown project '${project}'`);
         const id = allocateId(prefix, [...this.items().metaIds(), ...ids]);
+        let source: string | undefined;
+        let simpleSource: string | undefined;
+        if (overlay) {
+          const folder = this.projectFolder(project);
+          const fp = filePrefix(d.type);
+          const key = `${folder}\0${fp}`;
+          const abs = join(this.ws.root, folder);
+          // numbers still recorded by items (a deleted or not-yet-pulled file)
+          // are never reused either
+          const recorded = [...this.index.items.values()]
+            .flatMap((i) => [i.meta.source, i.meta.simple_source])
+            .filter((p): p is string => !!p && (folder === "" ? !p.includes("/") : p.startsWith(`${folder}/`)))
+            .map((p) => new RegExp(`^${fp}-(\\d+)`, "i").exec(p.split("/").pop()!)?.[1])
+            .filter((x): x is string => x !== undefined)
+            .map(Number);
+          let n = nextTaskNumber(abs, fp, [...(taken.get(key) ?? []), ...recorded]);
+          let name = taskFileName(fp, n, d.title);
+          // a file of the same name (another slug's number) never gets overwritten
+          while (existsSync(join(abs, name)) || existsSync(join(abs, name.replace(/\.md$/, ".simple.md")))) {
+            name = taskFileName(fp, ++n, d.title);
+          }
+          taken.set(key, [...(taken.get(key) ?? []), n]);
+          source = toSourcePath(this.ws.root, join(abs, name));
+          taskWrites.push({
+            abs: join(abs, name),
+            content: renderTaskFile({ id, ...d }),
+          });
+          if (d.simple?.trim()) {
+            const simpleName = name.replace(/\.md$/, ".simple.md");
+            simpleSource = toSourcePath(this.ws.root, join(abs, simpleName));
+            taskWrites.push({ abs: join(abs, simpleName), content: renderSimpleFile(id, d.title, d.simple) });
+          }
+          files.push(source);
+        }
         const meta = ItemMeta.parse({
           id,
           type: d.type,
@@ -278,8 +346,16 @@ export class PlansStore {
           version: 1,
           created: now,
           updated: now,
+          ...(source ? { source, simple_source: simpleSource } : {}),
         });
-        const body = `\n## Summary\n${d.summary ?? d.title}\n`;
+        let body = "";
+        if (!overlay) {
+          body = `\n## Summary\n${d.summary ?? d.title}\n`;
+          if (d.acceptance?.length) {
+            body += `\n## Acceptance\n${d.acceptance.map((a) => `- [ ] ${a}`).join("\n")}\n`;
+          }
+          if (d.simple?.trim()) body += `\n## Simple\n${d.simple.trim()}\n`;
+        }
         writes.push({
           rel: join("items", idPrefix(id), `${id}.md`),
           content: `${emitFrontmatter(meta)}${body}`,
@@ -291,13 +367,32 @@ export class PlansStore {
         await writeFileAtomic(p, w.content);
         this.onFileWrite?.(p, w.content);
       }
+      for (const t of taskWrites) {
+        await writeFileAtomic(t.abs, t.content);
+        this.onFileWrite?.(t.abs, t.content);
+      }
       await this.commitPaths(
         writes.map((w) => w.rel),
         `te: propose ${ids.join(", ")} by ${actor.session}`,
       );
       for (const w of writes) await this.index.upsertFile(join(this.ws.plansDir, w.rel));
-      return { ids };
+      return { ids, files };
     });
+  }
+
+  /**
+   * Overlay: the folder (relative to the root) a project's task files live
+   * in — `projects.<p>.path`, else the project name; workspace-level items go
+   * in the root. Never outside the root.
+   */
+  private projectFolder(project: string | undefined): string {
+    const cfg = project ? (this.ws.config.projects[project] as { path?: string } | undefined) : undefined;
+    const folder = project ? (cfg?.path ?? project) : ".";
+    const abs = resolve(this.ws.root, folder);
+    if (abs !== this.ws.root && !abs.startsWith(this.ws.root + sep)) {
+      throw new ValidationError(`project folder '${folder}' is outside the workspace root`);
+    }
+    return relative(this.ws.root, abs);
   }
 
   /**

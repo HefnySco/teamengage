@@ -56,3 +56,15 @@ human decides.
 
 The MCP server talks only to the local daemon (`127.0.0.1`). Each machine runs
 its own daemon; workspaces converge through the plans repo's git remote.
+
+## Writing tasks (overlay workspaces)
+
+Agents create tasks with `propose`; in a task-folder workspace it writes
+`<project>/TASK-NN-<slug>.md` from the standard template
+([TASK-FORMAT.md](TASK-FORMAT.md), `te template`). The `te-plan` Claude Code
+skill (`skills/te-plan/`) is the recipe for breaking a goal into tasks.
+Install it for Claude Code with:
+
+```bash
+ln -s "$PWD/skills/te-plan" ~/.claude/skills/te-plan
+```

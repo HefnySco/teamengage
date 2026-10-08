@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initCmd } from "./commands/init.js";
+import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
 import {
@@ -49,6 +50,7 @@ commands:
   import <folder|file>  import a Markdown task folder (or one task file)
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
+  template   print the standard task-file template
   daemon     run the daemon in the foreground
 
 options:
@@ -58,9 +60,9 @@ options:
 `;
 
 const AGENTS_SNIPPET = `# TeamEngage agent protocol
-This workspace is coordinated by TeamEngage (plans live in .teamengage/).
-Read plan files freely, but change state ONLY through TeamEngage — never
-edit plan files directly.
+This workspace is coordinated by TeamEngage (tracking state lives in
+.teamengage/). Read everything freely, but change state ONLY through
+TeamEngage — never edit files under .teamengage/.
 
 Plain HTTP (any agent with a shell): curl http://127.0.0.1:4747/agent
 prints the full protocol with copy-paste curl examples. Or use the MCP
@@ -74,7 +76,8 @@ server "teamengage" if your IDE has it configured — same tools, same rules.
 6. submit <id> {commits, tests, notes}       — hand to the human
 You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
-`;
+
+## ${AUTHORING_RULES}`;
 
 async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2);
@@ -140,6 +143,9 @@ async function main(argv: string[]): Promise<number> {
       });
       return r.status ?? 1;
     }
+    case "template":
+      process.stdout.write(TEMPLATE_EXAMPLE);
+      return 0;
     case "agents-md":
       process.stdout.write(AGENTS_SNIPPET);
       return 0;

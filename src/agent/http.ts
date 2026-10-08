@@ -6,6 +6,7 @@ import type { DaemonCtx } from "../daemon/server/context.js";
 import type { AgentBinding } from "../mcp/server/mcp.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
+import { AUTHORING_RULES } from "../core/files/template.js";
 import type { ToolResult } from "../mcp/format.js";
 
 /**
@@ -111,11 +112,13 @@ Base URL: ${base}/agent        (loopback only; no MCP needed — use curl)
 
 RULES
   1. Read freely: GET endpoints, or the plan files themselves.
-  2. Change state ONLY through these endpoints — never edit plan files.
+  2. Change state ONLY through these endpoints — never edit .teamengage/ files.
   3. claim before touching code; work only in the paths brief/claim return.
   4. ask instead of guessing; submit with evidence. Never mark work done.
      Never git push. The human approves, answers, and accepts.
 
+AUTHORING
+${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
 SESSION
   curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
     → first line: "token <TOKEN>"; send it on every later call:

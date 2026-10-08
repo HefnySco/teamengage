@@ -11,6 +11,7 @@ import { SessionRegistry } from "../sessions/sessions.js";
 import { EventBus } from "./events.js";
 import { registerApiRoutes } from "./api.js";
 import { OverlayTracker } from "../overlay/tracker.js";
+import { registerAgentRoutes, SESSION_HEADER } from "../../agent/http.js";
 
 /**
  * Overlay mode: an existing Markdown task folder tracked in place. Item files
@@ -66,7 +67,13 @@ beforeAll(async () => {
     sessions: new SessionRegistry("test"),
     bus: new EventBus(),
   };
-  daemon = await startDaemon({ home, register: (app) => registerApiRoutes(app, ctx) });
+  daemon = await startDaemon({
+    home,
+    register: (app) => {
+      registerApiRoutes(app, ctx);
+      registerAgentRoutes(app, ctx);
+    },
+  });
   api = (path, init = {}) =>
     fetch(`${daemon.url}${path}`, {
       ...init,
@@ -204,5 +211,141 @@ describe("overlay tracker (task-folder watcher)", () => {
       await tracker.close();
       ctx.workspaces.get("tasks")!.overlay = undefined;
     }
+  });
+});
+
+describe("overlay propose writes real task files", () => {
+  const agent = async (path: string, body: unknown, token?: string) => {
+    const r = await fetch(`${daemon.url}${path}`, {
+      method: "POST",
+      headers: token ? { [SESSION_HEADER]: token } : {},
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, text: await r.text() };
+  };
+
+  it("renders TASK-NN / PHASE-NN files from the template, tagged and tracked", async () => {
+    const token = /^token (\S+)/.exec((await agent("/agent/hello", { agent: "planner" })).text)![1];
+    const t13 = byLegacy("TASK-13-rerun").meta.id;
+    const r = await agent(
+      "/agent/propose",
+      {
+        items: [
+          {
+            title: "Clear latched events on restart",
+            project: "global",
+            depends_on: [t13],
+            touches: ["droneengage_mavlink: src/mission/**"],
+            acceptance: ["second AUTO run fires module events", "ctest -R mission_restart passes"],
+            summary: "Reset latched events when a restart is detected.",
+            simple: "Events fire again on a second flight.",
+          },
+          { title: "Follow-up cleanup", project: "global" },
+          { type: "epic", title: "Protocol v3", project: "global" },
+        ],
+      },
+      token,
+    );
+    expect(r.status).toBe(200);
+    // global/ holds TASK-12, 14, 15 and done/TASK-01, 13; GL item TASK-16's
+    // file was deleted but the item still records it → 16 is not reused
+    const lines = r.text.trim().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(/^proposed GL-\d{4} → global\/TASK-17-clear-latched-events-on-restart\.md$/);
+    expect(lines[1]).toMatch(/→ global\/TASK-18-follow-up-cleanup\.md$/);
+    expect(lines[2]).toMatch(/→ global\/PHASE-01-protocol-v3\.md$/);
+
+    const id = /^proposed (\S+)/.exec(lines[0])![1];
+    const it = store().idx.get(id)!;
+    expect(it.meta).toMatchObject({
+      status: "draft",
+      source: "global/TASK-17-clear-latched-events-on-restart.md",
+      simple_source: "global/TASK-17-clear-latched-events-on-restart.simple.md",
+      depends_on: [t13],
+    });
+    // the tracking file holds state only — the content is in the task file
+    expect(it.sections.find((s) => s.heading === "Summary")).toBeUndefined();
+    expect(readFileSync(join(plans, it.path), "utf8")).not.toContain("Reset latched events");
+
+    const task = readFileSync(join(root, "global", "TASK-17-clear-latched-events-on-restart.md"), "utf8");
+    expect(task).toBe(
+      [
+        "---",
+        `te: ${id}`,
+        "---",
+        "# Clear latched events on restart",
+        "",
+        `**Depends on:** ${t13}`,
+        "**Touches:** droneengage_mavlink: src/mission/**",
+        "",
+        "## Summary",
+        "Reset latched events when a restart is detected.",
+        "",
+        "## Acceptance",
+        "- [ ] second AUTO run fires module events",
+        "- [ ] ctest -R mission_restart passes",
+        "",
+        "## Notes",
+        "",
+      ].join("\n"),
+    );
+    expect(readFileSync(join(root, "global", "TASK-17-clear-latched-events-on-restart.simple.md"), "utf8")).toBe(
+      `---\nte: ${id}\n---\n# Clear latched events on restart (simple)\n\nEvents fire again on a second flight.\n`,
+    );
+
+    // brief serves the new file; the epic is an epic
+    const b = (await (await api(`/api/items/${id}`)).json()) as { source: { text: string } };
+    expect(b.source.text).toContain("## Acceptance");
+    const epicId = /^proposed (\S+)/.exec(lines[2])![1];
+    expect(store().idx.get(epicId)!.meta.type).toBe("epic");
+
+    // the tracker sees the new files as tracked, not untracked
+    const tracker = new OverlayTracker(store(), { debounceMs: 50 });
+    await tracker.rescan();
+    expect(tracker.findings().filter((f) => f.path?.includes("TASK-17") || f.path?.includes("PHASE-01"))).toEqual([]);
+  });
+
+  it("refuses a project folder outside the workspace root", async () => {
+    const ws = ctx.workspaces.get("tasks")!.ws;
+    ws.config.projects.escape = { prefix: "ES", path: "../outside" };
+    try {
+      await expect(
+        store().createItems([{ type: "task", title: "x", project: "escape" }], {
+          kind: "human",
+          session: "human",
+          machine: "test",
+        }),
+      ).rejects.toThrow(/outside the workspace root/);
+    } finally {
+      delete ws.config.projects.escape;
+    }
+  });
+});
+
+describe("propose: #N batch-local refs", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+
+  it("resolves #N to earlier items of the same call, in the file and the item", async () => {
+    const { ids, files } = await store().createItems(
+      [
+        { type: "epic", title: "Batch epic", project: "global" },
+        { type: "task", title: "Batch first", project: "global", parent: "#0" },
+        { type: "task", title: "Batch second", project: "global", parent: "#0", depends_on: ["#1"] },
+      ],
+      human,
+    );
+    const second = store().idx.get(ids[2])!.meta;
+    expect(second).toMatchObject({ parent: ids[0], depends_on: [ids[1]] });
+    const text = readFileSync(join(root, files[2]), "utf8");
+    expect(text).toContain(`**Depends on:** ${ids[1]}\n**Parent:** ${ids[0]}\n`);
+  });
+
+  it("refuses forward or self references", async () => {
+    await expect(
+      store().createItems(
+        [{ type: "task", title: "Points ahead", project: "global", depends_on: ["#1"] }, { type: "task", title: "Later", project: "global" }],
+        human,
+      ),
+    ).rejects.toThrow(/earlier item/);
   });
 });

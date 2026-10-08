@@ -43,6 +43,8 @@ export type ResourceConfig = z.infer<typeof ResourceConfig>;
 export const ProjectConfig = z
   .object({
     prefix: Prefix,
+    /** overlay mode: task folder relative to the root (default: the project name) */
+    path: z.string().optional(),
   })
   .passthrough();
 export type ProjectConfig = z.infer<typeof ProjectConfig>;

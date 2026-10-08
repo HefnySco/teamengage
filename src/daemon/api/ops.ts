@@ -379,6 +379,9 @@ export class WorkspaceOps {
       depends_on?: string[];
       parent?: string;
       summary?: string;
+      acceptance?: string[];
+      touches?: string[];
+      simple?: string;
     }>,
     actor: Session | "human",
   ) {
