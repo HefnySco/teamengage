@@ -30,12 +30,35 @@ export interface ParsedTarget {
   absolute?: boolean;
 }
 
+/** Canonicalize a path: collapse `.`, `..`, empty segments (leading `..` kept). */
+export function normPath(s: string): string {
+  const out: string[] = [];
+  for (const seg of s.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length && out[out.length - 1] !== "..") out.pop();
+      else out.push(seg);
+    } else {
+      out.push(seg);
+    }
+  }
+  return out.join("/");
+}
+
+/** True when `pattern` normalizes to a path that escapes its root via `..`. */
+export function escapesRoot(pattern: string): boolean {
+  return normPath(pattern).split("/")[0] === "..";
+}
+
 export function parseTargetRef(ref: string): ParsedTarget {
   if (!TARGET_RE.test(ref)) throw new ValidationError(`bad target reference '${ref}'`);
   const body = ref.slice(1);
   const i = body.indexOf(":");
   if (i === -1) return { resource: body };
   const pattern = body.slice(i + 1);
+  if (escapesRoot(pattern)) {
+    throw new ValidationError(`target '${ref}' escapes the resource root`);
+  }
   return { resource: body.slice(0, i), pattern, absolute: pattern.startsWith("/") };
 }
 

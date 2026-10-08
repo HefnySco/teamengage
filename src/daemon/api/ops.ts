@@ -150,6 +150,7 @@ export class WorkspaceOps {
   findings(): Finding[] {
     return validate(this.index, {
       staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
+      roots: resourceRoots(this.wsr.ws),
     });
   }
 

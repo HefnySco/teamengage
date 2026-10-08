@@ -527,6 +527,74 @@ describe("snapshot target shapes + claim safety", () => {
     await o.claim("WS-0017", sCodex);
     const wt2 = worktreePath(wsr.ws, "WS-0017", "code");
     expect(existsSync(join(wt2, "wip.ts"))).toBe(true);
-    await o.release("WS-0017", sCodex, "done");
+    // codex's resumed work must be mergeable — accept merges the ACTUAL
+    // worktree branch (claude's), not a synthesized codex branch name
+    writeFileSync(join(wt2, "more.ts"), "codex continuation\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt2 });
+    execFileSync("git", ["commit", "-m", "codex part"], { cwd: wt2 });
+    await o.submit("WS-0017", sCodex, {});
+    const r = (await o.accept("WS-0017")) as { merged?: Array<{ mergeCommit: string }> };
+    expect(r.merged?.length).toBe(1);
+    expect(execFileSync("git", ["show", "main:wip.ts"], { cwd: codeRepo, encoding: "utf8" })).toContain("half-done");
+    expect(execFileSync("git", ["show", "main:more.ts"], { cwd: codeRepo, encoding: "utf8" })).toContain("codex");
+    rmSync(join(codeRepo, "wip.ts"), { force: true });
+    rmSync(join(codeRepo, "more.ts"), { force: true });
+    execFileSync("git", ["add", "-A"], { cwd: codeRepo });
+    execFileSync("git", ["commit", "-m", "revert"], { cwd: codeRepo });
+  });
+
+  it("targets that escape the resource root via .. are rejected", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0019.md"),
+      item("WS-0019", "ready", 'targets: ["@docs:../victim/**"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await expect(o.claim("WS-0019", sClaude)).rejects.toThrow(/target|escap|\.\./i);
+  });
+
+  it("a directory target written without a glob still rolls back deletes", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-fdir-"));
+    mkdirSync(join(folderSrc, "cfg"), { recursive: true });
+    writeFileSync(join(folderSrc, "cfg", "a.conf"), "base\n");
+    docsResource(folderSrc);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0020.md"),
+      item("WS-0020", "ready", `targets: ["@docs:cfg"]\n`), // dir, no glob
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0020", sClaude);
+    // a dir without a glob must behave like a dir: files created since are removed
+    writeFileSync(join(folderSrc, "cfg", "created-since.conf"), "new\n");
+    await o.rollback("WS-0020");
+    expect(existsSync(join(folderSrc, "cfg", "created-since.conf"))).toBe(false);
+    expect(readFileSync(join(folderSrc, "cfg", "a.conf"), "utf8")).toBe("base\n");
+    await o.release("WS-0020", sClaude, "done");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("release preserves the worktree when the WIP safety commit fails", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0021.md"),
+      item("WS-0021", "ready", 'targets: ["@code:i.ts"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await o.claim("WS-0021", sClaude);
+    const wt = worktreePath(wsr.ws, "WS-0021", "code");
+    writeFileSync(join(wt, "uncommitted.ts"), "work\n");
+    // force the safety commit to fail
+    const hook = join(codeRepo, ".git", "hooks", "pre-commit");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    execFileSync("chmod", ["+x", hook]);
+    await o.release("WS-0021", sClaude, "pausing");
+    execFileSync("rm", [hook]);
+    // worktree must still be there with the uncommitted file intact
+    expect(existsSync(join(wt, "uncommitted.ts"))).toBe(true);
+    execFileSync("git", ["worktree", "remove", "--force", wt], { cwd: codeRepo });
   });
 });

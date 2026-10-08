@@ -187,35 +187,40 @@ export async function reconcile(
   wsr: WorkspaceRuntime,
   notify?: (msg: string) => void,
 ): Promise<string[]> {
-  const claims = [...wsr.store.idx.claims.values()].filter((c) => !c.conflicted);
-  const roots = resourceRoots(wsr.ws);
-  const marked = new Set<string>();
-  const touched: string[] = [];
-  for (let i = 0; i < claims.length; i++) {
-    for (let j = i + 1; j < claims.length; j++) {
-      const a = claims[i];
-      const b = claims[j];
-      const o = targetsOverlap(a.targets, b.targets, roots);
-      if (!o.overlap) continue;
-      // deterministic on every machine: same rule as resolveDoubleClaim
-      const { winner: keep, losers } = resolveDoubleClaim([a, b]);
-      const lose = losers[0];
-      if (marked.has(lose.item)) continue;
-      marked.add(lose.item);
-      const rel = join("claims", `${lose.item}.yaml`);
-      const path = join(wsr.ws.plansDir, rel);
-      await writeFileAtomic(path, claimToYaml({ ...lose, conflicted: true }));
-      wsr.store.idx.setClaim({ ...lose, conflicted: true });
-      touched.push(rel);
-      notify?.(
-        `claim conflict: ${lose.item} held by ${lose.holder}@${lose.machine} loses to ${keep.holder}@${keep.machine} (earlier claim) — worktree kept`,
-      );
+  // claim-file writes + commit run inside the store's write queue —
+  // reconciling outside it can collide with a mutation's git commands
+  // (index.lock) or interleave with a release
+  return wsr.store.enqueue(async () => {
+    const claims = [...wsr.store.idx.claims.values()].filter((c) => !c.conflicted);
+    const roots = resourceRoots(wsr.ws);
+    const marked = new Set<string>();
+    const touched: string[] = [];
+    for (let i = 0; i < claims.length; i++) {
+      for (let j = i + 1; j < claims.length; j++) {
+        const a = claims[i];
+        const b = claims[j];
+        const o = targetsOverlap(a.targets, b.targets, roots);
+        if (!o.overlap) continue;
+        // deterministic on every machine: same rule as resolveDoubleClaim
+        const { winner: keep, losers } = resolveDoubleClaim([a, b]);
+        const lose = losers[0];
+        if (marked.has(lose.item)) continue;
+        marked.add(lose.item);
+        const rel = join("claims", `${lose.item}.yaml`);
+        const path = join(wsr.ws.plansDir, rel);
+        await writeFileAtomic(path, claimToYaml({ ...lose, conflicted: true }));
+        wsr.store.idx.setClaim({ ...lose, conflicted: true });
+        touched.push(rel);
+        notify?.(
+          `claim conflict: ${lose.item} held by ${lose.holder}@${lose.machine} loses to ${keep.holder}@${keep.machine} (earlier claim) — worktree kept`,
+        );
+      }
     }
-  }
-  // claim-file writes are plans mutations too — commit them so they sync
-  if (touched.length && (await isRepo(wsr.ws.plansDir))) {
-    await git(wsr.ws.plansDir, ["add", "--", ...touched]);
-    await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
-  }
-  return [...marked];
+    // claim-file writes are plans mutations too — commit them so they sync
+    if (touched.length && (await isRepo(wsr.ws.plansDir))) {
+      await git(wsr.ws.plansDir, ["add", "--", ...touched]);
+      await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
+    }
+    return [...marked];
+  });
 }

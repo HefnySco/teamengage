@@ -6,6 +6,7 @@ import { parseItemFile, serializeMarkdown } from "../../core/files/markdown.js";
 import { ConflictMarkersError, TeError } from "../../core/model/errors.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { writeFileAtomic } from "../store/atomic.js";
+import { resourceRoots } from "../../core/config/config.js";
 import type { PlansStore } from "../store/store.js";
 
 /**
@@ -155,7 +156,10 @@ export class PlansWatcher {
 
   /** Current findings for the inbox (validator + invalid files). */
   findings(): Finding[] {
-    return validate(this.store.idx, { staleAfterMs: this.opts.staleAfterMs });
+    return validate(this.store.idx, {
+      staleAfterMs: this.opts.staleAfterMs,
+      roots: resourceRoots(this.store.ws),
+    });
   }
 
   private emit(e: WatchEvent): void {

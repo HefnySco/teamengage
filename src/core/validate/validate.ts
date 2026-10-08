@@ -1,6 +1,6 @@
 import { isStale } from "../model/claim.js";
-import { parseItemRef } from "../address/refs.js";
-import { targetsOverlap } from "../claims/claims.js";
+import { parseItemRef, parseTargetRef } from "../address/refs.js";
+import { targetsOverlap, type Roots } from "../claims/claims.js";
 import type { Index } from "../index/index.js";
 
 /** Plan-graph health check (DESIGN CR-0009). Feeds the human inbox + `te validate`. */
@@ -18,7 +18,8 @@ export type FindingKind =
   | "claim_on_done"
   | "overlapping_claims"
   | "stale_claim"
-  | "unsynced_claim";
+  | "unsynced_claim"
+  | "bad_target";
 
 export interface Finding {
   severity: Severity;
@@ -31,6 +32,8 @@ export interface Finding {
 export interface ValidateOpts {
   now?: number;
   staleAfterMs?: number;
+  /** resource name → root, for absolute-path overlap checks */
+  roots?: Roots;
 }
 
 export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
@@ -121,10 +124,23 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
     }
   }
 
+  // targets that escape their resource root are dangerous — a rollback on
+  // ssh would run rm -rf outside the declared path
+  for (const it of index.items.values()) {
+    for (const t of it.meta.targets ?? []) {
+      try {
+        parseTargetRef(t);
+      } catch {
+        f({ severity: "error", kind: "bad_target", item: it.meta.id, path: it.path, message: `${it.meta.id} target '${t}' is invalid or escapes the resource root` });
+        continue;
+      }
+    }
+  }
+
   const claims = [...index.claims.values()].filter((c) => !c.conflicted);
   for (let i = 0; i < claims.length; i++) {
     for (let j = i + 1; j < claims.length; j++) {
-      const o = targetsOverlap(claims[i].targets, claims[j].targets);
+      const o = targetsOverlap(claims[i].targets, claims[j].targets, opts.roots);
       if (o.overlap) {
         f({
           severity: "error",

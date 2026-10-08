@@ -1,7 +1,9 @@
 import YAML from "yaml";
 import { Claim } from "../model/claim.js";
 import { ParseError } from "../model/errors.js";
-import { parseTargetRef, type ParsedTarget } from "../address/refs.js";
+import { parseTargetRef, normPath, type ParsedTarget } from "../address/refs.js";
+
+export { normPath };
 
 /**
  * Claims model (DESIGN §6.2, §6.3, §6.5): claim files, target overlap,
@@ -34,21 +36,6 @@ export function staticBase(t: ParsedTarget): string {
 function underPrefix(p: string, b: string): boolean {
   if (b === "") return true;
   return p === b.replace(/\/$/, "") || p.startsWith(b.endsWith("/") ? b : `${b}/`);
-}
-
-/** Canonicalize a target pattern: collapse `.`, `..`, empty segments. */
-export function normPath(s: string): string {
-  const out: string[] = [];
-  for (const seg of s.split("/")) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") {
-      if (out.length && out[out.length - 1] !== "..") out.pop();
-      else out.push(seg);
-    } else {
-      out.push(seg);
-    }
-  }
-  return out.join("/");
 }
 
 /**

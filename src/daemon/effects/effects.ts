@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { rm, readdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parseTargetRef } from "../../core/address/refs.js";
 import { staticBase, normPath } from "../../core/claims/claims.js";
@@ -151,7 +151,11 @@ export async function setupWork(
       const root = join(snapshotsRoot(home), ws.name, itemId);
       const bases = snapshotBases(claim.targets, resource, r.config.path);
       for (const e of bases) {
-        if (e.b) e.missing = !(await existsOn(ws, resource, e.b));
+        if (e.b) {
+          e.missing = !(await existsOn(ws, resource, e.b));
+          // a bare path can be a file or a dir — the pattern can't tell
+          if (!e.missing && e.file) e.file = !(await isDirOn(ws, resource, e.b));
+        }
       }
       await writeBases(root, resource, bases);
       for (const e of bases) {
@@ -181,7 +185,10 @@ export async function setupWork(
       const root = join(snapshotsRoot(home), ws.name, itemId);
       const bases = snapshotBases(claim.targets, resource, r.path);
       for (const e of bases) {
-        if (e.b) e.missing = !(await existsOn(ws, resource, e.b));
+        if (e.b) {
+          e.missing = !(await existsOn(ws, resource, e.b));
+          if (!e.missing && e.file) e.file = !(await isDirOn(ws, resource, e.b));
+        }
       }
       await writeBases(root, resource, bases);
       for (const e of bases) {
@@ -202,9 +209,38 @@ export async function setupWork(
 }
 
 /**
+ * The branch the claim's work is actually on — a resumed claim may sit on a
+ * previous holder's `te/<id>-*` branch. Look at the worktree first, then the
+ * newest `te/<id>-*` ref, then the synthesized holder branch.
+ */
+async function resolveClaimBranch(
+  repo: string,
+  itemId: string,
+  holder: string,
+  wt: string,
+): Promise<string> {
+  if (existsSync(wt)) {
+    const cur = (await git(wt, ["branch", "--show-current"]).catch(() => "")).trim();
+    if (cur) return cur;
+  }
+  const prior = (
+    await git(repo, [
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      `refs/heads/te/${itemId}-*`,
+    ])
+  )
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
+  return prior || claimBranch(itemId, holder);
+}
+
+/**
  * `cleanup_work`: remove worktrees; delete claim branches unless keepBranches.
  * A dirty worktree is never destroyed — uncommitted work is WIP-committed
- * onto the claim branch first, and that branch is kept regardless.
+ * onto the claim branch first; if that commit fails the worktree is kept.
  */
 export async function cleanupWork(
   ws: LoadedWorkspace,
@@ -212,7 +248,6 @@ export async function cleanupWork(
   claim: Claim,
   opts: { keepBranches?: boolean; home?: string } = {},
 ): Promise<void> {
-  const branch = claimBranch(itemId, claim.holder);
   const seen = new Set<string>();
   for (const t of claim.targets) {
     const { resource } = parseTargetRef(t);
@@ -223,11 +258,18 @@ export async function cleanupWork(
     const repo = await repoForResource(ws, resource, opts.home);
     if (!repo || !(await isRepo(repo))) continue;
     const wt = worktreePath(ws, itemId, resource);
+    const branch = await resolveClaimBranch(repo, itemId, claim.holder, wt);
     let keepBranch = opts.keepBranches ?? false;
     if (existsSync(wt) && (await isDirty(wt))) {
-      await git(wt, ["add", "-A"]).catch(() => {});
-      await git(wt, ["commit", "-q", "-m", `wip: uncommitted work on ${itemId}`]).catch(() => {});
-      keepBranch = true;
+      try {
+        await git(wt, ["add", "-A"]);
+        await git(wt, ["commit", "-q", "-m", `wip: uncommitted work on ${itemId}`]);
+        keepBranch = true;
+      } catch {
+        // the safety commit failed (hook, identity) — keep the whole
+        // worktree rather than force-removing uncommitted work
+        continue;
+      }
     }
     try {
       if (existsSync(wt)) await worktreeRemove(repo, wt, true);
@@ -263,7 +305,11 @@ async function mergeTreeCheck(
     if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
     const lines = (e.stdout ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
     if (!/^[0-9a-f]{40,64}$/.test(lines[0] ?? "")) throw e;
-    const files = lines.slice(1);
+    // after the tree OID come conflicted paths; git may also print
+    // informational messages ("CONFLICT (content)…", "Auto-merging …")
+    const files = lines
+      .slice(1)
+      .filter((l) => !l.startsWith("CONFLICT") && !l.startsWith("Auto-merging"));
     return { ok: false, files: files.length ? files : ["(conflicted — no file list)"] };
   }
 }
@@ -281,9 +327,8 @@ export async function mergeWork(
   home?: string,
 ): Promise<MergeOutcome> {
   const out: MergeOutcome = { merged: [], conflicts: [], dirty: [] };
-  const branch = claimBranch(itemId, claim.holder);
   const seen = new Set<string>();
-  const jobs: Array<{ resource: string; repo: string; base: string; prev: string }> = [];
+  const jobs: Array<{ resource: string; repo: string; base: string; prev: string; branch: string }> = [];
   for (const t of claim.targets) {
     const { resource } = parseTargetRef(t);
     if (seen.has(resource)) continue;
@@ -297,24 +342,30 @@ export async function mergeWork(
       out.dirty.push(resource);
       continue;
     }
+    // merge the branch the work actually landed on — a resumed claim may
+    // be on a previous holder's branch
+    const branch = await resolveClaimBranch(repo, itemId, claim.holder, worktreePath(ws, itemId, resource));
     const pre = await mergeTreeCheck(repo, base, branch);
     if (!pre.ok) {
       out.conflicts.push({ resource, files: pre.files });
       continue;
     }
-    jobs.push({ resource, repo, base, prev: (await git(repo, ["branch", "--show-current"])).trim() });
+    // current ref: branch name, or the HEAD sha when detached
+    const cur = (await git(repo, ["branch", "--show-current"])).trim();
+    const prev = cur || (await git(repo, ["rev-parse", "HEAD"])).trim();
+    jobs.push({ resource, repo, base, prev, branch });
   }
   if (out.conflicts.length || out.dirty.length) return out; // atomic: nothing merged
   for (const j of jobs) {
     try {
       if (j.prev !== j.base) await git(j.repo, ["checkout", j.base]);
-      const m = await mergeNoFF(j.repo, branch, `te: ${itemId} merge ${branch}`);
+      const m = await mergeNoFF(j.repo, j.branch, `te: ${itemId} merge ${j.branch}`);
       if (!m.ok) {
         await mergeAbort(j.repo).catch(() => {});
         out.conflicts.push({ resource: j.resource, files: m.conflicts });
         continue;
       }
-      out.merged.push({ resource: j.resource, repo: j.repo, mergeCommit: m.mergeCommit!, branch });
+      out.merged.push({ resource: j.resource, repo: j.repo, mergeCommit: m.mergeCommit!, branch: j.branch });
     } finally {
       if (j.prev && j.prev !== j.base) {
         await git(j.repo, ["checkout", j.prev]).catch(() => {});
@@ -372,6 +423,11 @@ async function readBases(dir: string, res: string): Promise<SnapshotBase[]> {
   }
 }
 
+/** POSIX shell-quote: 'a'b' → 'a'\''b' — safe for remote command strings. */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Does `base` exist on a snapshot-able resource? */
 async function existsOn(ws: LoadedWorkspace, res: string, base: string): Promise<boolean> {
   const r = ws.resources.get(res);
@@ -379,10 +435,40 @@ async function existsOn(ws: LoadedWorkspace, res: string, base: string): Promise
   if (r.config.kind === "folder" && r.path) return existsSync(join(r.path, base));
   if (r.config.kind === "ssh") {
     try {
-      const p = join(r.config.path, base).replace(/"/g, '\\"');
-      await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `test -e "${p}"`], {
-        timeout: 30_000,
-      });
+      await execFileP(
+        "ssh",
+        [...(r.config.ssh_opts ?? []), r.config.host, `test -e ${shq(join(r.config.path, base))}`],
+        { timeout: 30_000 },
+      );
+      return true;
+    } catch (e) {
+      // exit 1 = "does not exist"; 255 unreachable / 2 error → the claim must
+      // fail, not record a real path as "missing" for a later rm -rf
+      if ((e as { code?: number }).code === 1) return false;
+      throw new TeError("INTERNAL", `probe failed on ${r.config.host}: ${(e as Error).message}`);
+    }
+  }
+  return false;
+}
+
+/** Is `base` a directory on the resource? (decides file-vs-dir snapshot kind) */
+async function isDirOn(ws: LoadedWorkspace, res: string, base: string): Promise<boolean> {
+  const r = ws.resources.get(res);
+  if (!r) return false;
+  if (r.config.kind === "folder" && r.path) {
+    try {
+      return statSync(join(r.path, base)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+  if (r.config.kind === "ssh") {
+    try {
+      await execFileP(
+        "ssh",
+        [...(r.config.ssh_opts ?? []), r.config.host, `test -d ${shq(join(r.config.path, base))}`],
+        { timeout: 30_000 },
+      );
       return true;
     } catch {
       return false;
@@ -398,10 +484,11 @@ async function deleteOn(ws: LoadedWorkspace, res: string, base: string): Promise
   if (r.config.kind === "folder" && r.path) {
     await rm(join(r.path, base), { recursive: true, force: true });
   } else if (r.config.kind === "ssh") {
-    const p = join(r.config.path, base).replace(/"/g, '\\"');
-    await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `rm -rf -- "${p}"`], {
-      timeout: 60_000,
-    });
+    await execFileP(
+      "ssh",
+      [...(r.config.ssh_opts ?? []), r.config.host, `rm -rf -- ${shq(join(r.config.path, base))}`],
+      { timeout: 60_000 },
+    );
   }
 }
 
@@ -414,10 +501,11 @@ async function ensureParentOn(ws: LoadedWorkspace, res: string, base: string): P
   if (r.config.kind === "folder" && r.path) {
     mkdirSync(join(r.path, parent), { recursive: true });
   } else if (r.config.kind === "ssh") {
-    const p = join(r.config.path, parent).replace(/"/g, '\\"');
-    await execFileP("ssh", [...(r.config.ssh_opts ?? []), r.config.host, `mkdir -p "${p}"`], {
-      timeout: 30_000,
-    }).catch(() => {});
+    await execFileP(
+      "ssh",
+      [...(r.config.ssh_opts ?? []), r.config.host, `mkdir -p ${shq(join(r.config.path, parent))}`],
+      { timeout: 30_000 },
+    ).catch(() => {});
   }
 }
 
@@ -433,6 +521,7 @@ async function rsyncSnapshot(
   const args = [
     "-a",
     "--checksum", // quick-check misses same-size same-mtime edits → wrong bytes restored
+    "-s", // --protect-args: remote path isn't re-evaluated by a remote shell
     ...(del ? ["--delete"] : []),
     ...(exclude ?? []).flatMap((e) => ["--exclude", e]),
     ...(sshOpts?.length ? ["-e", `ssh ${sshOpts.join(" ")}`] : []),
@@ -495,6 +584,7 @@ async function rsyncDryDiff(src: string, dest: string, sshOpts?: string[]): Prom
       "rsync",
       [
         "-arcn",
+        "-s", // --protect-args
         "--out-format=%n %l",
         ...(sshOpts?.length ? ["-e", `ssh ${sshOpts.join(" ")}`] : []),
         src,

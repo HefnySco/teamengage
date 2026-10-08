@@ -86,6 +86,37 @@ describe("validate", () => {
     }
   });
 
+  it("overlap check honours resource roots + escaped targets are findings", async () => {
+    const d = mkdtempSync(join(tmpdir(), "te-valr-"));
+    const p = join(d, ".teamengage");
+    mkdirSync(join(p, "items", "GL"), { recursive: true });
+    mkdirSync(join(p, "claims"), { recursive: true });
+    const mk = (id: string, extra = "") =>
+      writeFileSync(
+        join(p, "items", "GL", `${id}.md`),
+        `---\nid: ${id}\ntype: task\ntitle: x\nstatus: ready\nversion: 1\n${extra}---\n`,
+      );
+    mk("GL-0001");
+    mk("GL-0002");
+    mk("GL-0003", 'targets: ["@docs:../victim/**"]\n'); // escapes the root
+    const claim = (item: string, targets: string) =>
+      writeFileSync(
+        join(p, "claims", `${item}.yaml`),
+        `item: ${item}\nholder: a@m#1\nactor: agent\nmachine: m\nclaimed_at: now\nlast_seen: 2099-01-01T00:00:00Z\ntargets: [${targets}]\n`,
+      );
+    claim("GL-0001", "'@r:sub/**'");
+    claim("GL-0002", "'@r:/abs/root/sub/x'");
+    const idx = await Index.load(p);
+    // without roots the two claims don't textually overlap
+    expect(validate(idx, { now: Date.now() }).filter((f) => f.kind === "overlapping_claims")).toHaveLength(0);
+    // with roots they do
+    const withRoots = validate(idx, { now: Date.now(), roots: { r: "/abs/root" } });
+    expect(withRoots.some((f) => f.kind === "overlapping_claims")).toBe(true);
+    // and the escaping target is flagged
+    expect(withRoots.some((f) => f.kind === "bad_target" && f.item === "GL-0003")).toBe(true);
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it("runs on 500 items in < 200ms", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-bigv-"));
     const bp = join(big, ".teamengage", "items", "GL");
