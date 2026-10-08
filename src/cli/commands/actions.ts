@@ -101,7 +101,7 @@ export async function rollbackCmd(args: string[], home?: string): Promise<number
     rl.close();
     if (!/^y/i.test(a.trim())) return 1;
   }
-  const r = (await act("rollback", [id, ...args.filter((a) => a.startsWith("--"))], {}, home)) as number;
+  const r = (await act("rollback", [id, ...args.filter((a) => a.startsWith("--"))], { force: args.includes("--force") }, home)) as number;
   return r;
 }
 

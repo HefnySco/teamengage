@@ -17,9 +17,24 @@ describe("targetsOverlap", () => {
     [T(["@rpi:/home/pi/de/config"]), T(["@rpi:/home/pi/de/**"]), true, "absolute ssh paths"],
     [T(["@rpi:/home/pi/a"]), T(["@rpi:/home/pi/b"]), false, "disjoint abs paths"],
     [T(["@m:src/*.ts"]), T(["@m:lib/**"]), false, "different subtrees"],
+    // CR-0008 regression: equivalent spellings must compare equal
+    [T(["@m:./src/x/**"]), T(["@m:src/x/a.cpp"]), true, "./ prefix"],
+    [T(["@m:src//x"]), T(["@m:src/x"]), true, "double slash"],
+    [T(["@m:src/../lib/a"]), T(["@m:lib/**"]), true, ".. segment"],
+    [T(["@m:src/x/"]), T(["@m:src/x"]), true, "trailing slash"],
   ];
   it.each(cases)("%j vs %j → %s (%s)", (a, b, want) => {
     expect(targetsOverlap(a, b).overlap).toBe(want);
+  });
+
+  it("absolute targets relativize against the resource root", () => {
+    const roots = { rpi: "/home/pi/drone_engage" };
+    expect(
+      targetsOverlap(T(["@rpi:config/**"]), T(["@rpi:/home/pi/drone_engage/config"]), roots).overlap,
+    ).toBe(true);
+    expect(
+      targetsOverlap(T(["@rpi:other/**"]), T(["@rpi:/home/pi/drone_engage/config"]), roots).overlap,
+    ).toBe(false);
   });
 
   it("unparseable targets are treated as overlap (no false negatives)", () => {

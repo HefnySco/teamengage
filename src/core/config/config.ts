@@ -119,6 +119,19 @@ export function resolveWorkspace(
 }
 
 /**
+ * Resource name → path root for target-overlap comparisons (CR-0008):
+ * local path for git/folder resources, remote path for ssh.
+ */
+export function resourceRoots(ws: LoadedWorkspace): Record<string, string> {
+  const roots: Record<string, string> = {};
+  for (const [name, r] of ws.resources) {
+    if (r.config.kind === "ssh") roots[name] = r.config.path;
+    else if (r.path) roots[name] = r.path;
+  }
+  return roots;
+}
+
+/**
  * Locate the plans repo under a workspace root: `.teamengage/` when present,
  * otherwise the single immediate child directory containing `workspace.yaml`.
  */

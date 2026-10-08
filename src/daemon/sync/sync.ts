@@ -10,7 +10,8 @@ import {
   remoteBranchesContaining,
   revParse,
 } from "../../resources/git/git.js";
-import { parseClaimFile, claimToYaml, targetsOverlap } from "../../core/claims/claims.js";
+import { parseClaimFile, claimToYaml, targetsOverlap, resolveDoubleClaim } from "../../core/claims/claims.js";
+import { resourceRoots } from "../../core/config/config.js";
 import { ClaimRefusedError } from "../../core/model/errors.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { WorkspaceRuntime } from "../server/context.js";
@@ -22,30 +23,52 @@ import type { WorkspaceRuntime } from "../server/context.js";
  * conflicted rather than letting two agents collide.
  */
 
+/** Current upstream tracking ref (`origin/main`), undefined when unset. */
+async function upstreamRef(plansDir: string): Promise<string | undefined> {
+  try {
+    const u = (
+      await git(plansDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    ).trim();
+    return u || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Best-effort fetch of the plans repo. Returns true when a fetch happened. */
 export async function fetchPlansRepo(plansDir: string, timeoutMs = 10_000): Promise<boolean> {
   if (!(await isRepo(plansDir))) return false;
   if ((await remotes(plansDir)).length === 0) return false;
   try {
-    await gitFetch(plansDir, undefined, timeoutMs);
+    // fetch the upstream branch explicitly so the tracking ref we read next
+    // is the branch this machine actually syncs, not whatever FETCH_HEAD
+    // happens to point at
+    const upstream = await upstreamRef(plansDir);
+    if (upstream) {
+      const i = upstream.indexOf("/");
+      await git(plansDir, ["fetch", upstream.slice(0, i), upstream.slice(i + 1)], { timeoutMs });
+    } else {
+      await gitFetch(plansDir, undefined, timeoutMs);
+    }
     return true;
   } catch {
     return false; // offline — proceed, mark unsynced
   }
 }
 
-/** claims/ files at a ref (FETCH_HEAD after fetch). */
-export async function remoteClaims(plansDir: string, ref = "FETCH_HEAD"): Promise<Claim[]> {
+/** claims/ files at a ref (upstream tracking ref by default, not FETCH_HEAD). */
+export async function remoteClaims(plansDir: string, ref?: string): Promise<Claim[]> {
+  const at = ref ?? (await upstreamRef(plansDir)) ?? "FETCH_HEAD";
   let listing: string;
   try {
-    listing = await git(plansDir, ["ls-tree", "-r", "--name-only", ref, "claims/"]);
+    listing = await git(plansDir, ["ls-tree", "-r", "--name-only", at, "claims/"]);
   } catch {
     return [];
   }
   const out: Claim[] = [];
   for (const path of listing.split("\n").filter((p) => p.endsWith(".yaml"))) {
     try {
-      out.push(parseClaimFile(await showFile(plansDir, ref, path), `${ref}:${path}`));
+      out.push(parseClaimFile(await showFile(plansDir, at, path), `${at}:${path}`));
     } catch {
       /* unparseable remote claim — ignore */
     }
@@ -68,8 +91,12 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
     return;
   }
   const remote = await remoteClaims(wsr.ws.plansDir);
+  const roots = resourceRoots(wsr.ws);
   for (const rc of remote) {
     if (rc.conflicted) continue;
+    // our own released-but-unpushed claim: deleted locally, still on remote —
+    // it must not refuse a fresh claim (the deletion just isn't pushed yet)
+    if (rc.machine === wsr.store.machine && !wsr.store.idx.claims.has(rc.item)) continue;
     if (rc.item === claim.item) {
       throw new ClaimRefusedError(
         `claimed on ${rc.machine} by ${rc.holder} — pull first`,
@@ -77,7 +104,7 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
         rc.machine,
       );
     }
-    const o = targetsOverlap(claim.targets, rc.targets);
+    const o = targetsOverlap(claim.targets, rc.targets, roots);
     if (o.overlap) {
       throw new ClaimRefusedError(
         `target ${o.via?.[0]} claimed on ${rc.machine} by ${rc.holder} — pull first`,
@@ -161,23 +188,34 @@ export async function reconcile(
   notify?: (msg: string) => void,
 ): Promise<string[]> {
   const claims = [...wsr.store.idx.claims.values()].filter((c) => !c.conflicted);
+  const roots = resourceRoots(wsr.ws);
   const marked = new Set<string>();
+  const touched: string[] = [];
   for (let i = 0; i < claims.length; i++) {
     for (let j = i + 1; j < claims.length; j++) {
       const a = claims[i];
       const b = claims[j];
-      const o = targetsOverlap(a.targets, b.targets);
+      const o = targetsOverlap(a.targets, b.targets, roots);
       if (!o.overlap) continue;
-      const [keep, lose] = a.claimed_at <= b.claimed_at ? [a, b] : [b, a];
+      // deterministic on every machine: same rule as resolveDoubleClaim
+      const { winner: keep, losers } = resolveDoubleClaim([a, b]);
+      const lose = losers[0];
       if (marked.has(lose.item)) continue;
       marked.add(lose.item);
-      const path = join(wsr.ws.plansDir, "claims", `${lose.item}.yaml`);
+      const rel = join("claims", `${lose.item}.yaml`);
+      const path = join(wsr.ws.plansDir, rel);
       await writeFileAtomic(path, claimToYaml({ ...lose, conflicted: true }));
       wsr.store.idx.setClaim({ ...lose, conflicted: true });
+      touched.push(rel);
       notify?.(
         `claim conflict: ${lose.item} held by ${lose.holder}@${lose.machine} loses to ${keep.holder}@${keep.machine} (earlier claim) — worktree kept`,
       );
     }
+  }
+  // claim-file writes are plans mutations too — commit them so they sync
+  if (touched.length && (await isRepo(wsr.ws.plansDir))) {
+    await git(wsr.ws.plansDir, ["add", "--", ...touched]);
+    await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
   }
   return [...marked];
 }

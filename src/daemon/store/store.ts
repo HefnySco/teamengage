@@ -14,6 +14,7 @@ import {
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
 import { DecisionMeta, type Event, type ItemMeta } from "../../core/model/index.js";
+import type { Claim } from "../../core/model/claim.js";
 import { ConflictError, NotFoundError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
 import { writeFileAtomic } from "./atomic.js";
@@ -111,13 +112,22 @@ export class PlansStore {
     return out;
   }
 
-  /** Apply a state-machine action to an item (CAS-checked). */
+  /**
+   * Apply a state-machine action to an item (CAS-checked). `ctx.guard` runs
+   * inside the write queue, after the version check and before the transition
+   * — use it for cross-item invariants like claim target overlap.
+   */
   perform(
     id: string,
     expectedVersion: number,
     actor: Actor,
     action: Action,
-    ctx: { depsDone?: boolean } = {},
+    ctx: {
+      depsDone?: boolean;
+      guard?: () => void | Promise<void>;
+      /** bump claim.last_seen in the same write+commit (used by log). */
+      touchClaim?: boolean;
+    } = {},
   ): Promise<PerformResult> {
     return this.enqueue(async () => {
       await this.assertReady();
@@ -129,6 +139,7 @@ export class PlansStore {
           item: it.meta,
         });
       }
+      await ctx.guard?.();
       const absPath = join(this.ws.plansDir, it.path);
       const doc = parseItemFile(await readFile(absPath, "utf8"), absPath);
       const claim = this.index.claims.get(id) ?? null;
@@ -158,6 +169,12 @@ export class PlansStore {
         }
       }
 
+      let touchedClaim: Claim | undefined;
+      if (ctx.touchClaim && claim) {
+        touchedClaim = { ...claim, last_seen: now };
+        writes.push({ rel: join("claims", `${id}.yaml`), content: claimToYaml(touchedClaim) });
+      }
+
       const relItem = relative(this.ws.plansDir, absPath);
       await this.writeItemDoc(absPath, doc.raw.text, newMeta, tr.log, tr.sectionWrites);
       for (const w of writes) {
@@ -184,6 +201,7 @@ export class PlansStore {
 
       // reindex
       await this.index.upsertFile(absPath);
+      if (touchedClaim) this.index.setClaim(touchedClaim);
       for (const e of tr.effects) {
         if (e.type === "write_claim") this.index.setClaim(e.claim);
         if (e.type === "delete_claim") this.index.setClaim(null, id);
@@ -388,7 +406,8 @@ export class PlansStore {
     }
     const staged = await git(this.ws.plansDir, ["diff", "--cached", "--name-only"]);
     if (!staged.trim()) return;
-    await git(this.ws.plansDir, ["commit", "-m", message]);
+    // pathspec: never sweep unrelated staged files into a te: commit
+    await git(this.ws.plansDir, ["commit", "-m", message, "--", ...rel, ...deletes]);
   }
 }
 

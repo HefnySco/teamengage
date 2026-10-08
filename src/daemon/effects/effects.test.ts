@@ -172,6 +172,7 @@ describe("worktree per claim (RS-0002)", () => {
     expect(existsSync(snap)).toBe(true);
     expect(existsSync(join(plans, "worktrees", "WS-0004", "lib", "f"))).toBe(true);
 
+
     // live change shows up in the submit evidence diff (RS-0007)
     writeFileSync(join(folderSrc, "data.txt"), "edited live");
     writeFileSync(join(folderSrc, "new.txt"), "new file");
@@ -188,5 +189,190 @@ describe("worktree per claim (RS-0002)", () => {
     await ops2.release("WS-0004", sClaude, "done");
     rmSync(folderSrc, { recursive: true, force: true });
     rmSync(urlSrc, { recursive: true, force: true });
+  });
+});
+
+describe("merge + cleanup safety (RS-0002/3)", () => {
+  it("release on a dirty worktree preserves uncommitted work on the claim branch", async () => {
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0005.md"),
+      item("WS-0005", "ready", 'targets: ["@code:a.ts"]\n'),
+    );
+    const store3 = new PlansStore(wsr.ws, "test");
+    await store3.init();
+    const ops3 = new WorkspaceOps({ ws: wsr.ws, store: store3 }, sessions, undefined, home);
+    await ops3.claim("WS-0005", sClaude);
+    const wt = worktreePath(wsr.ws, "WS-0005", "code");
+    writeFileSync(join(wt, "wip.ts"), "uncommitted work\n"); // never committed
+    await ops3.release("WS-0005", sClaude, "abandoning");
+    // work survives: either the worktree is kept or a WIP commit is on the branch
+    if (!existsSync(join(wt, "wip.ts"))) {
+      const content = execFileSync(
+        "git",
+        ["show", `${claimBranch("WS-0005", sClaude.id)}:wip.ts`],
+        { cwd: codeRepo, encoding: "utf8" },
+      );
+      expect(content).toContain("uncommitted work");
+    }
+  });
+
+  it("accept refuses non-in_review items BEFORE merging anything", async () => {
+    // re-claim WS-0005 → in_progress; accept must refuse without merging
+    const store3b = new PlansStore(wsr.ws, "test");
+    await store3b.init();
+    const ops3b = new WorkspaceOps({ ws: wsr.ws, store: store3b }, sessions, undefined, home);
+    await ops3b.claim("WS-0005", sClaude);
+    const wt = worktreePath(wsr.ws, "WS-0005", "code");
+    writeFileSync(join(wt, "a.ts"), "export const a = 777;\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt });
+    execFileSync("git", ["commit", "-m", "wip"], { cwd: wt });
+    const before = execFileSync("git", ["rev-parse", "main"], { cwd: codeRepo, encoding: "utf8" });
+    await expect(ops3b.accept("WS-0005")).rejects.toThrow();
+    const after = execFileSync("git", ["rev-parse", "main"], { cwd: codeRepo, encoding: "utf8" });
+    expect(after).toBe(before);
+    expect(readFileSync(join(codeRepo, "a.ts"), "utf8")).not.toContain("777");
+    await ops3b.release("WS-0005", sClaude, "cleanup");
+  });
+
+  it("multi-resource merge is all-or-nothing: a conflict anywhere merges nothing", async () => {
+    const code2 = join(root, "code2");
+    mkdirSync(code2, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: code2 });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: code2 });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: code2 });
+    writeFileSync(join(code2, "shared"), "v1\n");
+    execFileSync("git", ["add", "-A"], { cwd: code2 });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: code2 });
+    wsr.ws.resources.set("code2", {
+      name: "code2",
+      config: { kind: "git", path: code2, base: "main", worktree: true },
+      path: code2,
+    });
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0006.md"),
+      item("WS-0006", "ready", 'targets: ["@code:c.ts", "@code2:shared"]\n'),
+    );
+    const store4 = new PlansStore(wsr.ws, "test");
+    await store4.init();
+    const ops4 = new WorkspaceOps({ ws: wsr.ws, store: store4 }, sessions, undefined, home);
+    await ops4.claim("WS-0006", sCodex);
+    // agent commits non-conflicting work in code, conflicting work in code2
+    const wt1 = worktreePath(wsr.ws, "WS-0006", "code");
+    writeFileSync(join(wt1, "b.ts"), "export const b = 2;\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt1 });
+    execFileSync("git", ["commit", "-m", "ok work"], { cwd: wt1 });
+    const wt2 = worktreePath(wsr.ws, "WS-0006", "code2");
+    writeFileSync(join(wt2, "shared"), "agent\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt2 });
+    execFileSync("git", ["commit", "-m", "conflicting"], { cwd: wt2 });
+    // code2 main moves after the branch point → merge will conflict
+    writeFileSync(join(code2, "shared"), "main\n");
+    execFileSync("git", ["add", "-A"], { cwd: code2 });
+    execFileSync("git", ["commit", "-m", "concurrent"], { cwd: code2 });
+
+    const codeBefore = execFileSync("git", ["rev-parse", "main"], { cwd: codeRepo, encoding: "utf8" }).trim();
+    await ops4.submit("WS-0006", sCodex, {});
+    const r = (await ops4.accept("WS-0006")) as { bounced?: string[] };
+    expect(r.bounced).toBeDefined();
+    // nothing merged — code's b.ts change must NOT have landed on main
+    const codeAfter = execFileSync("git", ["rev-parse", "main"], { cwd: codeRepo, encoding: "utf8" }).trim();
+    expect(codeAfter).toBe(codeBefore);
+    expect(readFileSync(join(codeRepo, "b.ts"), "utf8")).toBe("export const b = 1;\n");
+  });
+
+  it("merge leaves the main checkout on its original branch", async () => {
+    execFileSync("git", ["checkout", "-b", "feature-x"], { cwd: codeRepo });
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0007.md"),
+      item("WS-0007", "ready", 'targets: ["@code:other.ts"]\n'),
+    );
+    const store5 = new PlansStore(wsr.ws, "test");
+    await store5.init();
+    const ops5 = new WorkspaceOps({ ws: wsr.ws, store: store5 }, sessions, undefined, home);
+    await ops5.claim("WS-0007", sClaude);
+    const wt = worktreePath(wsr.ws, "WS-0007", "code");
+    writeFileSync(join(wt, "other.ts"), "x\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt });
+    execFileSync("git", ["commit", "-m", "work"], { cwd: wt });
+    await ops5.submit("WS-0007", sClaude, {});
+    await ops5.accept("WS-0007");
+    const cur = execFileSync("git", ["branch", "--show-current"], { cwd: codeRepo, encoding: "utf8" }).trim();
+    expect(cur).toBe("feature-x");
+    execFileSync("git", ["checkout", "main"], { cwd: codeRepo });
+  });
+});
+
+describe("snapshot scoping + rollback safety (RS-0006/7)", () => {
+  it("snapshot and rollback cover only the claimed subtrees", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-fscope-"));
+    mkdirSync(join(folderSrc, "sub"), { recursive: true });
+    writeFileSync(join(folderSrc, "sub", "x.txt"), "sub-payload");
+    writeFileSync(join(folderSrc, "other.txt"), "other-payload");
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0008.md"),
+      item("WS-0008", "ready", 'targets: ["@docs:sub/**"]\n'),
+    );
+    wsr.ws.config.resources = {
+      ...wsr.ws.config.resources,
+      docs: { kind: "folder", path: folderSrc, snapshot: true },
+    };
+    wsr.ws.resources.set("docs", { name: "docs", config: wsr.ws.config.resources.docs, path: folderSrc });
+    const store6 = new PlansStore(wsr.ws, "test");
+    await store6.init();
+    const ops6 = new WorkspaceOps({ ws: wsr.ws, store: store6 }, sessions, undefined, home);
+    await ops6.claim("WS-0008", sClaude);
+
+    const snapRoot = join(home, ".teamengage", "snapshots", "ws", "WS-0008", "docs");
+    expect(existsSync(join(snapRoot, "sub", "x.txt"))).toBe(true);
+    expect(existsSync(join(snapRoot, "other.txt"))).toBe(false); // unclaimed subtree not snapshotted
+
+    // concurrent work in a sibling path + the claimed subtree
+    writeFileSync(join(folderSrc, "sub", "x.txt"), "edited by claim");
+    writeFileSync(join(folderSrc, "other.txt"), "edited by someone else");
+    writeFileSync(join(folderSrc, "new.txt"), "created since");
+
+    const r = (await ops6.rollback("WS-0008")) as { restored: string[] };
+    expect(r.restored).toContain("docs");
+    expect(readFileSync(join(folderSrc, "sub", "x.txt"), "utf8")).toBe("sub-payload");
+    // the old whole-dir --delete restore would have wiped these:
+    expect(readFileSync(join(folderSrc, "other.txt"), "utf8")).toBe("edited by someone else");
+    expect(existsSync(join(folderSrc, "new.txt"))).toBe(true);
+
+    await ops6.release("WS-0008", sClaude, "done");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("rollback on a done item is refused without --force", async () => {
+    const folderSrc = mkdtempSync(join(tmpdir(), "te-fdone-"));
+    writeFileSync(join(folderSrc, "d.txt"), "live");
+    wsr.ws.resources.set("docs", { name: "docs", config: wsr.ws.config.resources.docs, path: folderSrc });
+    const snapDir = join(home, ".teamengage", "snapshots", "ws", "WS-0009", "docs");
+    mkdirSync(snapDir, { recursive: true });
+    writeFileSync(join(snapDir, "d.txt"), "old-bytes");
+    writeFileSync(join(plans, "items", "WS", "WS-0009.md"), item("WS-0009", "done"));
+    const store7 = new PlansStore(wsr.ws, "test");
+    await store7.init();
+    const ops7 = new WorkspaceOps({ ws: wsr.ws, store: store7 }, sessions, undefined, home);
+
+    await expect(ops7.rollback("WS-0009")).rejects.toThrow(/done/);
+    expect(readFileSync(join(folderSrc, "d.txt"), "utf8")).toBe("live");
+
+    const r = (await ops7.rollback("WS-0009", true)) as { restored: string[] };
+    expect(r.restored).toContain("docs");
+    expect(readFileSync(join(folderSrc, "d.txt"), "utf8")).toBe("old-bytes");
+    rmSync(folderSrc, { recursive: true, force: true });
+  });
+
+  it("log() on a released item cannot recreate its claim file", async () => {
+    writeFileSync(join(plans, "items", "WS", "WS-0010.md"), item("WS-0010", "ready"));
+    const store8 = new PlansStore(wsr.ws, "test");
+    await store8.init();
+    const ops8 = new WorkspaceOps({ ws: wsr.ws, store: store8 }, sessions, undefined, home);
+    await ops8.claim("WS-0010", sClaude);
+    await ops8.release("WS-0010", sClaude, "off");
+    const claimFile = join(plans, "claims", "WS-0010.yaml");
+    expect(existsSync(claimFile)).toBe(false);
+    await expect(ops8.log("WS-0010", sClaude, "stale")).rejects.toThrow();
+    expect(existsSync(claimFile)).toBe(false); // the old out-of-queue write resurrected it
   });
 });

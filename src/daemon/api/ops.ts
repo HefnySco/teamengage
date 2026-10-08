@@ -5,7 +5,7 @@ import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { Status } from "../../core/model/item.js";
-import { ClaimRefusedError, NotFoundError } from "../../core/model/errors.js";
+import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
@@ -17,8 +17,10 @@ import {
   snapshotDiff,
   rollbackWork,
   itemSnapshots,
+  cleanupSnapshots,
 } from "../effects/effects.js";
 import { checkRemoteClaims } from "../sync/sync.js";
+import { resourceRoots } from "../../core/config/config.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import type { SessionRegistry } from "../sessions/sessions.js";
 import type { Session } from "../../core/model/session.js";
@@ -90,7 +92,7 @@ export class WorkspaceOps {
       .flatMap((c) => c.targets);
     return this.index
       .readyItems(50)
-      .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets).overlap)
+      .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
       .slice(0, limit);
   }
 
@@ -163,18 +165,6 @@ export class WorkspaceOps {
         mine.machine,
       );
     }
-    for (const c of this.index.claims.values()) {
-      if (c.conflicted) continue;
-      const o = targetsOverlap(it.meta.targets, c.targets);
-      if (o.overlap) {
-        throw new ClaimRefusedError(
-          `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine}`,
-          c.holder,
-          c.machine,
-          o.via?.[0],
-        );
-      }
-    }
     const now = new Date().toISOString();
     const claim: Claim = {
       item: id,
@@ -187,14 +177,33 @@ export class WorkspaceOps {
       paths: await plannedPaths(this.wsr.ws, id, it.meta.targets),
     };
     // SY-0001: shrink the double-claim race — fetch plans repo and check
-    // remote claims before writing ours (manual sync mode).
+    // remote claims before writing ours (manual sync mode). The local
+    // overlap check runs inside the store's write queue via `guard` —
+    // checking it here raced with other claims mid-flight.
     await checkRemoteClaims(this.wsr, claim);
+    const roots = resourceRoots(this.wsr.ws);
     const r = await this.store.perform(
       id,
       it.meta.version,
       this.actorFor(session),
       { type: "claim", claim },
-      { depsDone: this.depsDone(it) },
+      {
+        depsDone: this.depsDone(it),
+        guard: () => {
+          for (const c of this.index.claims.values()) {
+            if (c.conflicted) continue;
+            const o = targetsOverlap(it.meta.targets, c.targets, roots);
+            if (o.overlap) {
+              throw new ClaimRefusedError(
+                `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine}`,
+                c.holder,
+                c.machine,
+                o.via?.[0],
+              );
+            }
+          }
+        },
+      },
     );
     // worktrees/snapshots come after the committed claim; failure → release
     try {
@@ -232,22 +241,12 @@ export class WorkspaceOps {
   async log(id: string, session: Session, note: string) {
     const it = this.item(id);
     this.assertLiveClaim(it);
-    if (this.sessions.shouldTouchClaim(id)) {
-      // persist last_seen in the claim file (throttled)
-      const claim = this.index.claims.get(id);
-      if (claim) {
-        const { writeFileAtomic } = await import("../store/atomic.js");
-        const { claimToYaml } = await import("../../core/claims/claims.js");
-        const { join } = await import("node:path");
-        await writeFileAtomic(
-          join(this.wsr.ws.plansDir, "claims", `${id}.yaml`),
-          claimToYaml({ ...claim, last_seen: new Date().toISOString() }),
-        ).catch(() => {});
-      }
-    }
     return this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "log",
       note,
+    }, {
+      // persist last_seen inside the write queue + the same commit
+      touchClaim: this.sessions.shouldTouchClaim(id),
     });
   }
 
@@ -295,8 +294,12 @@ export class WorkspaceOps {
   }
 
   /** `te rollback` — restore claim snapshots back onto live targets (RS-0006/7). */
-  async rollback(id: string) {
+  async rollback(id: string, force = false) {
     const it = this.item(id);
+    // a stale snapshot must not silently revert live state long after the fact
+    if (it.meta.status === "done" && !force) {
+      throw new TeError("INVALID_TRANSITION", `${id} is done — rollback refused (use --force to override)`);
+    }
     const claimRes = new Set(
       (it.claim?.targets ?? []).map((t) => parseTargetRef(t).resource),
     );
@@ -353,6 +356,14 @@ export class WorkspaceOps {
 
   async accept(id: string) {
     const it = this.item(id);
+    // refuse early — never merge work for an item that isn't in_review
+    if (it.meta.status !== "in_review") {
+      throw new InvalidTransitionError(
+        `cannot accept from ${it.meta.status}`,
+        it.meta.status,
+        "accept",
+      );
+    }
     const claim = it.claim;
     // RS-0003: merge the claim branch(es) into base BEFORE marking done —
     // a conflict bounces the item back to in_progress while it's still
@@ -398,6 +409,8 @@ export class WorkspaceOps {
       });
     }
     if (claim) await cleanupWork(this.wsr.ws, id, claim, { home: this.home });
+    // snapshots are evidence for review only — expire them once accepted
+    await cleanupSnapshots(this.wsr.ws, id, this.home).catch(() => {});
     return { ...r, merged };
   }
 

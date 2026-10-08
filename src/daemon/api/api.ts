@@ -216,7 +216,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("drop", (ops, id, b) => ops.drop(id, b.reason ? String(b.reason) : undefined));
   act("claim", (ops, id) => ops.humanClaim(id));
   act("release", (ops, id, b) => ops.release(id, "human", b.note ? String(b.note) : undefined));
-  act("rollback", (ops, id) => ops.rollback(id));
+  act("rollback", (ops, id, b) => ops.rollback(id, b.force === true));
 
   app.post("/api/renumber", async (req, reply) => {
     try {
