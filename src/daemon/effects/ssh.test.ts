@@ -135,4 +135,29 @@ describe.skipIf(!dockerOk)("ssh resource over a real sshd container (RS-0006)", 
     expect(ssh(`cat ${REMOTE_DIR}/b.conf`)).toBe("touched");
     await ops.release("WS-0001", agent, "done");
   });
+
+  it("targets with $(...), backticks and ' cannot execute on the remote", async () => {
+    // a real remote dir whose name contains a single quote
+    ssh(`mkdir -p ${REMOTE_DIR}/we\\'ird && echo q > ${REMOTE_DIR}/we\\'ird/f.txt`);
+    // under the old "…" quoting, $(…) and `…` inside the pattern would run
+    // on the remote. With single-quoting they're literal filenames.
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0002.md"),
+      `---\nid: WS-0002\ntype: task\ntitle: metachar\nstatus: ready\nversion: 1\ntargets: ["@rpi:$(touch\${IFS}pwned-sub)/**", "@rpi:\`touch\${IFS}pwned-bt\`/**", "@rpi:we'ird/**"]\n---\n\n## Summary\nx\n`,
+    );
+    const st = new PlansStore(wsPath, "test");
+    await st.init();
+    const sessions = new SessionRegistry("test");
+    const o = new WorkspaceOps({ ws: wsPath, store: st }, sessions, undefined, home);
+    const a = o.hello("meta").session;
+    // $(…)/`…` paths don't exist → recorded missing; we'ird snapshots fine
+    await expect(o.claim("WS-0002", a)).resolves.toBeDefined();
+    expect(existsSync(join(home, ".teamengage", "snapshots", "ws", "WS-0002", "rpi", "we'ird", "f.txt"))).toBe(true);
+    // nothing was executed on the remote — no files created in the login dir
+    await o.rollback("WS-0002");
+    await o.release("WS-0002", a, "done");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(ssh(`ls /home/te`)).not.toMatch(/pwned/);
+    expect(ssh(`ls ${REMOTE_DIR}`)).not.toMatch(/pwned/);
+  });
 });

@@ -576,6 +576,42 @@ describe("snapshot target shapes + claim safety", () => {
     rmSync(folderSrc, { recursive: true, force: true });
   });
 
+  it("an unreachable ssh host fails the claim — never recorded as 'missing'", async () => {
+    // port 1 refuses instantly → ssh exits 255, not test -e's exit 1.
+    // Any probe failure must abort the claim: treating it as "missing" would
+    // let a later rollback rm -rf a real remote path.
+    wsr.ws.config.resources = {
+      ...wsr.ws.config.resources,
+      dead: {
+        kind: "ssh",
+        host: "nobody@127.0.0.1",
+        path: "/tmp/te-dead",
+        snapshot: true,
+        ssh_opts: [
+          "-o", "ConnectTimeout=2",
+          "-o", "StrictHostKeyChecking=no",
+          "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "LogLevel=ERROR",
+          "-p", "1",
+        ],
+      },
+    };
+    wsr.ws.resources.set("dead", {
+      name: "dead",
+      config: wsr.ws.config.resources.dead,
+      path: undefined,
+    });
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0022.md"),
+      item("WS-0022", "ready", 'targets: ["@dead:cfg/**"]\n'),
+    );
+    const st = new PlansStore(wsr.ws, "test");
+    await st.init();
+    const o = new WorkspaceOps({ ws: wsr.ws, store: st }, sessions, undefined, home);
+    await expect(o.claim("WS-0022", sClaude)).rejects.toThrow(/probe|ssh|fail/i);
+    expect(st.idx.claims.get("WS-0022")).toBeUndefined();
+  });
+
   it("release preserves the worktree when the WIP safety commit fails", async () => {
     writeFileSync(
       join(plans, "items", "WS", "WS-0021.md"),

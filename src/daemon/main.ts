@@ -62,8 +62,14 @@ async function main(): Promise<number | undefined> {
           if (e.kind === "claim_change") {
             const wsr = ctx.workspaces.get(name);
             if (wsr) {
-              void reconcile(wsr, (msg) =>
+              reconcile(wsr, (msg) =>
                 ctx.bus.notify("reconcile", { workspace: name, message: msg }),
+              ).catch((err: Error) =>
+                // an unhandled rejection here would kill the daemon
+                ctx.bus.notify("reconcile", {
+                  workspace: name,
+                  message: `reconcile failed: ${err.message}`,
+                }),
               );
             }
           }
