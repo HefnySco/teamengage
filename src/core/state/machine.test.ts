@@ -42,6 +42,7 @@ describe("every arrow in DESIGN §5", () => {
     ["in_progress →release→ ready", "in_progress", agent, { type: "release" }, "ready", { claim: claimOf() }],
     ["ready →reject→ draft", "ready", human, { type: "reject" }, "draft", {}],
     ["in_progress →drop→ dropped", "in_progress", human, { type: "drop" }, "dropped", { claim: claimOf() }],
+    ["dropped →undrop→ draft", "dropped", human, { type: "undrop" }, "draft", {}],
     ["in_review →merge_conflict→ in_progress", "in_review", daemon, { type: "merge_conflict", conflicts: ["a.ts"] }, "in_progress", {}],
   ];
   it.each(cases)("%s", (_name, from, actor, action, to, extra) => {
@@ -59,6 +60,9 @@ describe("every non-arrow is rejected", () => {
     ["ready", agent, { type: "accept" }, {}],
     ["done", human, { type: "drop" }, {}], // terminal
     ["done", human, { type: "reject" }, {}],
+    ["done", human, { type: "undrop" }, {}], // only dropped items restore
+    ["ready", human, { type: "undrop" }, {}],
+    ["dropped", agent, { type: "undrop" }, {}], // human-only
     ["dropped", agent, { type: "claim", claim: claimOf() }, {}],
     ["waiting", agent, { type: "submit" }, { claim: claimOf() }],
     ["in_review", agent, { type: "accept" }, {}], // human-only

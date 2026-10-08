@@ -457,6 +457,11 @@ export class WorkspaceOps {
     return r;
   }
 
+  async undrop(id: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });
+  }
+
   async humanClaim(id: string) {
     const it = this.item(id);
     const now = new Date().toISOString();

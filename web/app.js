@@ -1,3 +1,4 @@
+import "bootstrap/dist/css/bootstrap.min.css";
 import { h, render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -33,6 +34,15 @@ for (const kind of ["watch", "reconcile"]) {
 }
 
 const STATUSES = ["draft", "ready", "in_progress", "waiting", "in_review", "done", "dropped"];
+const ST_BADGE = {
+  draft: "text-bg-secondary",
+  ready: "text-bg-primary",
+  in_progress: "text-bg-warning",
+  waiting: "text-bg-info",
+  in_review: "badge-review",
+  done: "text-bg-success",
+  dropped: "text-bg-danger",
+};
 const ago = (ts) => {
   const s = Math.max(0, (Date.now() - Date.parse(ts)) / 1000);
   if (s < 60) return `${s | 0}s`;
@@ -48,21 +58,32 @@ const route = () => location.hash.replace(/^#\/?/, "") || "inbox";
 const STALE_MS = 24 * 3600 * 1000;
 const staleClaim = (c) => !c.conflicted && Date.now() - Date.parse(c.last_seen ?? c.claimed_at) > STALE_MS;
 const ClaimBadges = ({ c }) => html`
-  ${c.conflicted && html`<span class="err badge">conflicted</span>`}
-  ${c.unsynced && html`<span class="warn badge">unsynced</span>`}
-  ${staleClaim(c) && html`<span class="warn badge">stale</span>`}
+  ${c.conflicted && html`<span class="badge text-bg-danger ms-1">conflicted</span>`}
+  ${c.unsynced && html`<span class="badge text-bg-warning ms-1">unsynced</span>`}
+  ${staleClaim(c) && html`<span class="badge text-bg-warning ms-1">stale</span>`}
 `;
 const ItemLine = ({ i, onOpen }) => html`
-  <div class="row">
+  <div class="d-flex align-items-baseline gap-2 flex-wrap">
     <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
-    <span class="st st-${i.status}">${i.status}</span>
+    <span class="badge ${ST_BADGE[i.status] ?? "text-bg-secondary"}">${i.status}</span>
     <span>${i.title}</span>
     ${i.claim && html`<span class="claim-note">held by ${i.claim.holder}@${i.claim.machine}</span> <${ClaimBadges} c=${i.claim} />`}
-    ${i.blocked && html`<span class="muted">blocked</span>`}
+    ${i.blocked && html`<span class="text-secondary">blocked</span>`}
   </div>
 `;
 
-const Badge = ({ s }) => html`<span class="st st-${s}">${s}</span>`;
+const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
+
+// IDs (XX-0000) inside free text become item links
+const ID_TOKEN = /\b([A-Z][A-Z0-9]*-\d+)\b/;
+const LinkedText = ({ text, onOpen }) =>
+  html`${text
+    .split(ID_TOKEN)
+    .map((p, i) =>
+      i % 2
+        ? html`<a class="item id" key=${i} onClick=${() => onOpen(p)}>${p}</a>`
+        : p,
+    )}`;
 
 function useApi(path, deps = []) {
   const [data, setData] = useState(null);
@@ -78,101 +99,140 @@ function useApi(path, deps = []) {
 // ---- Inbox (UI-0002) --------------------------------------------------------
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
-  if (!data) return html`<p class="muted">loading…</p>`;
+  if (!data) return html`<p class="text-secondary">loading…</p>`;
   const act = async (id, action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
+  };
+  // a cancelled prompt (null) aborts the action — only OK fires it
+  const askThen = (id, action, label) => {
+    const reason = prompt(label);
+    if (reason !== null) act(id, action, { reason });
   };
   const AnswerBox = ({ q }) => {
     const [text, setText] = useState("");
     const opts = q.question?.options ?? [];
     return html`
-      <div class="row">
-        <input value=${text} onInput=${(e) => setText(e.target.value)} placeholder="answer…" />
-        ${opts.map((o, i) => html`<button onClick=${() => act(q.id, "answer", { text: o })}>opt ${i + 1}: ${o}</button>`)}
-        <button class="primary" onClick=${() => text && act(q.id, "answer", { text })}>answer</button>
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        <input class="form-control form-control-sm w-auto" value=${text} onInput=${(e) => setText(e.target.value)} placeholder="answer…" />
+        ${opts.map((o, i) => html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => act(q.id, "answer", { text: o })}>opt ${i + 1}: ${o}</button>`)}
+        <button class="btn btn-sm btn-primary btn-act" onClick=${() => text && act(q.id, "answer", { text })}>answer</button>
       </div>
     `;
   };
+  const Section = ({ title, tone, items, children }) =>
+    items.length === 0 ? null : html`
+      <div class="col-lg-6 col-xl-4">
+        <div class="card">
+          <div class="card-header py-2 d-flex justify-content-between">
+            <b>${title}</b><span class="badge text-bg-${tone}">${items.length}</span>
+          </div>
+          <div class="list-group list-group-flush scroll-list">${children}</div>
+        </div>
+      </div>
+    `;
+  const empty =
+    !data.questions.length && !data.drafts.length && !data.reviews.length &&
+    !data.claims.length && !data.findings.length;
   return html`
-    <h2>Inbox</h2>
-    ${data.questions.map(
-      (q) => html`
-        <div class="card" key=${q.id}>
-          <${ItemLine} i=${{ id: q.id, status: "waiting", title: "" }} onOpen=${onOpen} />
-          <p>${q.question?.text}</p>
-          <${AnswerBox} q=${q} />
-        </div>
-      `,
-    )}
-    ${data.drafts.map(
-      (id) => html`
-        <div class="card" key=${id}>
-          <${ItemLine} i=${{ id, status: "draft", title: "" }} onOpen=${onOpen} />
-          <div class="row">
-            <button class="primary" onClick=${() => act(id, "approve")}>approve</button>
-            <button onClick=${() => act(id, "reject", { reason: "no" })}>reject</button>
-          </div>
-        </div>
-      `,
-    )}
-    ${data.reviews.map(
-      (id) => html`
-        <div class="card" key=${id}>
-          <${ItemLine} i=${{ id, status: "in_review", title: "" }} onOpen=${onOpen} />
-          <div class="row">
-            <button class="primary" onClick=${() => act(id, "accept")}>accept (merge)</button>
-            <button onClick=${() => {
-              const reason = prompt("reject reason");
-              if (reason !== null) act(id, "reject", { reason });
-            }}>reject</button>
-          </div>
-        </div>
-      `,
-    )}
-    ${data.claims.map(
-      (c) => html`
-        <div class="card" key=${c.item}>
-          <span class="id">${c.item}</span> <span class="err">conflicted claim</span>
-          <span class="muted"> ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
-          <div class="row"><button onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></div>
-        </div>
-      `,
-    )}
-    ${data.findings.map(
-      (f, i) => html`
-        <div class="card" key=${i}>
-          <span class="${f.severity === "error" ? "err" : "warn"}">${f.severity}</span>
-          <span class="id"> ${f.item ?? f.path ?? ""}</span> ${f.message}
-        </div>
-      `,
-    )}
-    ${!data.questions.length && !data.drafts.length && !data.reviews.length && !data.claims.length && !data.findings.length &&
-      html`<p class="ok">inbox zero — nothing needs you</p>`}
+    <h2 class="h4 mb-3">Inbox</h2>
+    <div class="row g-3">
+      <${Section} title="Questions" tone="info" items=${data.questions}>
+        ${data.questions.map(
+          (q) => html`
+            <div class="list-group-item" key=${q.id}>
+              <${ItemLine} i=${{ id: q.id, status: "waiting", title: "" }} onOpen=${onOpen} />
+              <p class="my-2">${q.question?.text}</p>
+              <${AnswerBox} q=${q} />
+            </div>
+          `,
+        )}
+      <//>
+      <${Section} title="Drafts to approve" tone="secondary" items=${data.drafts}>
+        ${data.drafts.map(
+          (id) => html`
+            <div class="list-group-item" key=${id}>
+              <${ItemLine} i=${{ id, status: "draft", title: "" }} onOpen=${onOpen} />
+              <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
+                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
+              </div>
+            </div>
+          `,
+        )}
+      <//>
+      <${Section} title="Submissions to review" tone="success" items=${data.reviews}>
+        ${data.reviews.map(
+          (id) => html`
+            <div class="list-group-item" key=${id}>
+              <${ItemLine} i=${{ id, status: "in_review", title: "" }} onOpen=${onOpen} />
+              <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-sm btn-success btn-act" onClick=${() => act(id, "accept")}>accept (merge)</button>
+                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
+              </div>
+            </div>
+          `,
+        )}
+      <//>
+      <${Section} title="Conflicted claims" tone="danger" items=${data.claims}>
+        ${data.claims.map(
+          (c) => html`
+            <div class="list-group-item" key=${c.item}>
+              <span class="id">${c.item}</span> <span class="text-danger">conflicted claim</span>
+              <span class="text-secondary"> ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
+              <div class="mt-2"><button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></div>
+            </div>
+          `,
+        )}
+      <//>
+      <${Section} title="Findings" tone="warning" items=${data.findings}>
+        ${data.findings.map(
+          (f, i) => html`
+            <div class="list-group-item" key=${i}>
+              <span class="badge text-bg-${f.severity === "error" ? "danger" : "warning"}">${f.severity}</span>
+              ${" "}
+              ${f.item
+                ? html`<a class="item id" onClick=${() => onOpen(f.item)}>${f.item}</a>`
+                : html`<span class="id">${f.path ?? ""}</span>`}
+              ${" "}
+              <${LinkedText} text=${f.message} onOpen=${onOpen} />
+            </div>
+          `,
+        )}
+      <//>
+    </div>
+    ${empty && html`<p class="text-success mt-3">inbox zero — nothing needs you</p>`}
   `;
 };
 
 // ---- Board (UI-0004) ---------------------------------------------------------
 const Board = ({ onOpen }) => {
   const { data } = useApi("/api/items");
-  if (!data) return html`<p class="muted">loading…</p>`;
+  if (!data) return html`<p class="text-secondary">loading…</p>`;
   return html`
-    <h2>Board</h2>
-    <div class="board">
+    <h2 class="h4 mb-3">Board</h2>
+    <div class="d-flex gap-3 overflow-x-auto pb-2">
       ${STATUSES.map((s) => {
         const items = data.filter((i) => i.status === s);
         return html`
-          <div class="col" key=${s}>
-            <h3>${s} (${items.length})</h3>
-            ${items.map(
-              (i) => html`
-                <div class="card mini" key=${i.id} onClick=${() => onOpen(i.id)}>
-                  <span class="id">${i.id}</span>
-                  <div>${i.title}</div>
-                  ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
-                </div>
-              `,
-            )}
+          <div class="board-col flex-shrink-0" key=${s}>
+            <h3 class="h6 text-uppercase text-secondary d-flex justify-content-between">
+              <span>${s.replace("_", " ")}</span><span class="badge ${ST_BADGE[s]}">${items.length}</span>
+            </h3>
+            <div class="board-list">
+              ${items.map(
+                (i) => html`
+                  <div class="card card-body mini p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
+                    <div class="d-flex justify-content-between">
+                      <span class="id">${i.id}</span>
+                      ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
+                    </div>
+                    <div class="small">${i.title}</div>
+                    ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
+                  </div>
+                `,
+              )}
+            </div>
           </div>
         `;
       })}
@@ -196,19 +256,19 @@ const Graph = ({ onOpen }) => {
     });
   }, [filter]);
   return html`
-    <h2>Graph</h2>
-    <div class="toolbar">
-      <select onChange=${(e) => setFilter({ ...filter, status: e.target.value })}>
+    <h2 class="h4 mb-3">Graph</h2>
+    <div class="d-flex gap-2 mb-3">
+      <select class="form-select form-select-sm w-auto" onChange=${(e) => setFilter({ ...filter, status: e.target.value })}>
         <option value="">all statuses</option>
         ${STATUSES.map((s) => html`<option>${s}</option>`)}
       </select>
-      <input placeholder="project" value=${filter.project} onInput=${(e) => setFilter({ ...filter, project: e.target.value })} />
+      <input class="form-control form-control-sm w-auto" placeholder="project" value=${filter.project} onInput=${(e) => setFilter({ ...filter, project: e.target.value })} />
     </div>
-    <div class="card" dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
-      const id = e.target.closest?.("[id]")?.id?.match(/(WS|CR|DM|MC|CL|IM|UI|RS|SY|TE|GL)-\d+/);
+    <div class="card card-body" dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
+      const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}-\d+/);
       if (id) onOpen(id[0]);
     }} />
-    <details><summary class="muted">mermaid source</summary><pre>${src}</pre></details>
+    <details class="mt-2"><summary class="text-secondary">mermaid source</summary><pre class="card card-body small">${src}</pre></details>
   `;
 };
 
@@ -216,39 +276,52 @@ const Graph = ({ onOpen }) => {
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`);
   const [tab, setTab] = useState("simple");
-  if (!b) return html`<p class="muted">loading…</p>`;
+  if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
   const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n)?.body.trim() ?? "";
   const act = async (action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
   };
+  // a cancelled prompt (null) aborts the action — only OK fires it
+  const askThen = (action, label) => {
+    const reason = prompt(label);
+    if (reason !== null) act(action, { reason });
+  };
+  const TABS = ["simple", "technical", "log", "evidence"];
   return html`
-    <h2><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
-    <div class="row"><${Badge} s=${it.meta.status} /><span class="muted">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span></div>
-    <div class="toolbar">
-      ${it.meta.status === "draft" && html`<button class="primary" onClick=${() => act("approve")}>approve</button>`}
-      ${it.meta.status === "in_review" && html`<button class="primary" onClick=${() => act("accept")}>accept</button><button onClick=${() => act("reject", { reason: prompt("reason") ?? "" })}>reject</button>`}
-      ${it.claim && html`<button onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
-      <button onClick=${() => act("drop", { reason: prompt("drop reason") ?? "" })}>drop</button>
+    <h2 class="h4"><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <${Badge} s=${it.meta.status} />
+      <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
-    <div class="toolbar">
-      <button class=${tab === "simple" ? "primary" : ""} onClick=${() => setTab("simple")}>simple</button>
-      <button class=${tab === "technical" ? "primary" : ""} onClick=${() => setTab("technical")}>technical</button>
-      <button class=${tab === "log" ? "primary" : ""} onClick=${() => setTab("log")}>log</button>
-      <button class=${tab === "evidence" ? "primary" : ""} onClick=${() => setTab("evidence")}>evidence</button>
+    <div class="d-flex gap-2 mb-3 flex-wrap">
+      ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("approve")}>approve</button>`}
+      ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success btn-act" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
+      ${it.claim && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
+      ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}
+      ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
     </div>
-    ${tab === "simple" && html`<div class="card"><pre>${sec("Simple") || "(no Simple section)"}</pre></div>`}
+    <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
+      ${TABS.map(
+        (t) => html`
+          <li class="nav-item">
+            <a class="nav-link py-1 ${tab === t ? "active" : ""}" style=${{ cursor: "pointer" }} onClick=${() => setTab(t)}>${t}</a>
+          </li>
+        `,
+      )}
+    </ul>
+    ${tab === "simple" && html`<div class="card card-body"><pre class="mb-0">${sec("Simple") || "(no Simple section)"}</pre></div>`}
     ${tab === "technical" && html`
-      <div class="card"><pre>${sec("Summary")}\n${sec("Acceptance")}</pre></div>
-      ${b.targets.map((t) => html`<div class="muted">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
-      ${b.deps.map((d) => html`<div class="muted">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
+      <div class="card card-body"><pre class="mb-0">${sec("Summary")}\n${sec("Acceptance")}</pre></div>
+      ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
+      ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}
-    ${tab === "log" && html`<div class="card"><pre>${sec("Log") || "(empty)"}</pre></div>`}
-    ${tab === "evidence" && html`<div class="card"><pre>${sec("Evidence") || "(none)"}</pre>
-      ${(it.meta.deliveries ?? []).map((d) => html`<div class="muted">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
+    ${tab === "log" && html`<div class="card card-body"><pre class="mb-0">${sec("Log") || "(empty)"}</pre></div>`}
+    ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
+      ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
     </div>`}
-    ${b.decisions.map((d) => html`<div class="card"><b>${d.meta.id}</b> ${d.meta.title}</div>`)}
+    ${b.decisions.map((d) => html`<div class="card card-body mt-2"><b>${d.meta.id}</b> ${d.meta.title}</div>`)}
   `;
 };
 
@@ -267,18 +340,18 @@ const Activity = () => {
   const f = filter.toLowerCase();
   const shown = f ? events.filter((e) => [e.machine, e.actor, e.item, e.action].join(" ").toLowerCase().includes(f)) : events;
   return html`
-    <h2>Activity</h2>
-    <div class="toolbar">
-      <input placeholder="filter machine / agent / item / action" value=${filter} onInput=${(e) => setFilter(e.target.value)} />
+    <h2 class="h4 mb-3">Activity</h2>
+    <div class="mb-2">
+      <input class="form-control form-control-sm w-auto" placeholder="filter machine / agent / item / action" value=${filter} onInput=${(e) => setFilter(e.target.value)} />
     </div>
-    <div class="card" ref=${listRef} style=${{ maxHeight: "70vh", overflowY: "auto" }}>
+    <div class="card card-body act-log" ref=${listRef}>
       ${shown.map((e, i) => html`
         <div class="evt" key=${i}>
-          ${e.ts.slice(11, 19)} <span class="muted">${e.machine}</span> ${e.actor}
-          <b>${e.action}</b> ${e.item} <span class="muted">${e.from ? `${e.from}→${e.to}` : ""}</span>
+          ${e.ts.slice(11, 19)} <span class="text-secondary">${e.machine}</span> ${e.actor}
+          <b>${e.action}</b> ${e.item} <span class="text-secondary">${e.from ? `${e.from}→${e.to}` : ""}</span>
         </div>
       `)}
-      ${!shown.length && html`<p class="muted">waiting for events…</p>`}
+      ${!shown.length && html`<p class="text-secondary mb-0">waiting for events…</p>`}
     </div>
   `;
 };
@@ -286,18 +359,23 @@ const Activity = () => {
 // ---- Sync (UI-0007) ----------------------------------------------------------------
 const Sync = () => {
   const { data: s } = useApi("/api/sync");
-  if (!s) return html`<p class="muted">loading…</p>`;
+  if (!s) return html`<p class="text-secondary">loading…</p>`;
   return html`
-    <h2>Sync</h2>
-    <div class="card">
-      plans repo: ${s.repo.remote ? html`${s.repo.ahead} ahead / ${s.repo.behind} behind <span class="muted">${s.repo.upstream ?? ""}</span>` : "no remote"}
+    <h2 class="h4 mb-3">Sync</h2>
+    <div class="card card-body mb-2">
+      plans repo: ${s.repo.remote ? html`${s.repo.ahead} ahead / ${s.repo.behind} behind <span class="text-secondary">${s.repo.upstream ?? ""}</span>` : "no remote"}
     </div>
-    ${s.unsyncedClaims.length > 0 && html`<div class="card warn">unsynced claims: ${s.unsyncedClaims.join(", ")}</div>`}
-    <h3>Merged, not pushed</h3>
-    ${s.notPushed.map((d) => html`<div class="card"><span class="id">${d.item}</span> ${d.resource} <span class="muted">${d.merge_commit.slice(0, 12)}</span></div>`)}
-    ${!s.notPushed.length && html`<p class="muted">nothing pending</p>`}
-    <h3>Detected pushes</h3>
-    ${s.pushed.map((d) => html`<div class="card"><span class="id">${d.item}</span> ${d.resource} → ${d.remotes.join(", ")}</div>`)}
+    ${s.unsyncedClaims.length > 0 && html`<div class="alert alert-warning py-2">unsynced claims: ${s.unsyncedClaims.join(", ")}</div>`}
+    <h3 class="h6 mt-3">Merged, not pushed</h3>
+    <div class="list-group scroll-list">
+      ${s.notPushed.map((d) => html`<div class="list-group-item"><span class="id">${d.item}</span> ${d.resource} <span class="text-secondary">${d.merge_commit.slice(0, 12)}</span></div>`)}
+      ${!s.notPushed.length && html`<div class="list-group-item text-secondary">nothing pending</div>`}
+    </div>
+    <h3 class="h6 mt-3">Detected pushes</h3>
+    <div class="list-group scroll-list">
+      ${s.pushed.map((d) => html`<div class="list-group-item"><span class="id">${d.item}</span> ${d.resource} → ${d.remotes.join(", ")}</div>`)}
+      ${!s.pushed.length && html`<div class="list-group-item text-secondary">none seen yet</div>`}
+    </div>
   `;
 };
 
@@ -321,12 +399,15 @@ const App = () => {
 };
 
 document.getElementById("nav").innerHTML = Object.keys(routes)
-  .map((r) => `<a href="#/${r}" data-r="${r}">${r}</a>`)
+  .map((r) => `<a class="nav-link py-1 px-3" href="#/${r}" data-r="${r}">${r}</a>`)
   .join("");
 document.getElementById("theme-toggle").onclick = () => {
   const el = document.documentElement;
-  el.dataset.theme = el.dataset.theme === "dark" ? "light" : "dark";
-  localStorage.teTheme = el.dataset.theme;
+  const next = el.dataset.theme === "dark" ? "light" : "dark";
+  el.dataset.theme = next;
+  el.dataset.bsTheme = next; // bootstrap dark/light mode
+  localStorage.teTheme = next;
 };
 document.documentElement.dataset.theme = localStorage.teTheme ?? "light";
+document.documentElement.dataset.bsTheme = localStorage.teTheme ?? "light";
 render(html`<${App} />`, document.getElementById("app"));

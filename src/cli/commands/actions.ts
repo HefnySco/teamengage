@@ -78,6 +78,8 @@ export async function dropCmd(args: string[], home?: string): Promise<number> {
   return act("drop", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
 }
 
+export const undropCmd = (args: string[], home?: string) => act("undrop", args, {}, home);
+
 export async function releaseCmd(args: string[], home?: string): Promise<number> {
   const pos = positional(args);
   const [id, ...rest] = pos;

@@ -118,6 +118,30 @@ describe("PlansStore", () => {
     expect(tmpFiles).toHaveLength(0);
   });
 
+  it("a mutation deleting a never-committed claim file still commits cleanly", async () => {
+    writeFileSync(
+      join(plans, "items", "GL", "GL-0004.md"),
+      "---\nid: GL-0004\ntype: task\ntitle: t\nstatus: in_review\nversion: 1\n---\n",
+    );
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-m", "add GL-0004"], { cwd: plans });
+    await store.idx.upsertFile(join(plans, "items", "GL", "GL-0004.md"));
+    // claim exists on disk but was never committed — e.g. a writer that
+    // crashed between add and commit left it staged-or-untracked
+    mkdirSync(join(plans, "claims"), { recursive: true });
+    writeFileSync(
+      join(plans, "claims", "GL-0004.yaml"),
+      "item: GL-0004\nholder: claude-code@test#aa01\nactor: agent\nmachine: test\nclaimed_at: '2026-01-01T00:00:00Z'\nlast_seen: '2026-01-01T00:00:00Z'\n",
+    );
+    store.idx.setClaim(claimFor("GL-0004"));
+    const r = await store.perform("GL-0004", 1, human, { type: "accept" });
+    expect(r.meta.status).toBe("done");
+    // nothing half-staged, nothing left dirty
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: plans, encoding: "utf8" }).trim(),
+    ).toBe("");
+  });
+
   it("refuses to write while the plans repo has a merge in progress", async () => {
     mkdirSync(join(plans, ".git"), { recursive: true });
     writeFileSync(join(plans, ".git", "MERGE_HEAD"), "deadbeef\n");

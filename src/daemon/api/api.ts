@@ -220,6 +220,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("accept", (ops, id) => ops.accept(id));
   act("reject", (ops, id, b) => ops.reject(id, b.reason ? String(b.reason) : undefined));
   act("drop", (ops, id, b) => ops.drop(id, b.reason ? String(b.reason) : undefined));
+  act("undrop", (ops, id) => ops.undrop(id));
   act("claim", (ops, id) => ops.humanClaim(id));
   act("release", (ops, id, b) => ops.release(id, "human", b.note ? String(b.note) : undefined));
   act("rollback", (ops, id, b) => ops.rollback(id, b.force === true));

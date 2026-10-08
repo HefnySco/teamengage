@@ -37,6 +37,8 @@ export type Action =
   | { type: "accept" }
   | { type: "reject"; reason?: string }
   | { type: "drop"; reason?: string }
+  /** Restore a dropped item to draft (re-approval required before claim). */
+  | { type: "undrop" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -277,6 +279,16 @@ export function transition(
         out.effects.push({ type: "delete_claim" });
         out.effects.push({ type: "cleanup_work" });
       }
+      return out;
+    }
+
+    case "undrop": {
+      requireHuman(actor, action.type);
+      // back to draft: drop already deleted the claim and tore the work
+      // down, so the item needs a fresh approve_plan before it can be claimed
+      if (from !== "dropped") fail(from, action.type);
+      set("draft");
+      out.log.push(`- ${stamp} ${who} restored from dropped`);
       return out;
     }
   }

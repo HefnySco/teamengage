@@ -452,19 +452,26 @@ export class PlansStore {
   private async commitPaths(paths: string[], message: string, deletes: string[] = []): Promise<void> {
     if (!(await isRepo(this.ws.plansDir))) return;
     const rel = paths.map((p) => relative(this.ws.plansDir, join(this.ws.plansDir, p)));
-    const args = ["add", "--", ...rel];
-    await git(this.ws.plansDir, args);
+    const onDisk = rel.filter((p) => existsSync(join(this.ws.plansDir, p)));
+    if (onDisk.length) await git(this.ws.plansDir, ["add", "--", ...onDisk]);
     for (const d of deletes) {
       try {
         await git(this.ws.plansDir, ["rm", "-q", "--", d]);
       } catch {
-        /* already gone */
+        /* already gone or never tracked */
       }
     }
-    const staged = await git(this.ws.plansDir, ["diff", "--cached", "--name-only"]);
-    if (!staged.trim()) return;
+    const staged = new Set(
+      (await git(this.ws.plansDir, ["diff", "--cached", "--name-only"]))
+        .split("\n")
+        .filter(Boolean),
+    );
+    // commit only intended paths that were actually staged: a never-tracked
+    // deleted path is not "known to git" and would fail the pathspec
+    const ours = [...new Set([...rel, ...deletes])].filter((p) => staged.has(p));
+    if (!ours.length) return;
     // pathspec: never sweep unrelated staged files into a te: commit
-    await git(this.ws.plansDir, ["commit", "-m", message, "--", ...rel, ...deletes]);
+    await git(this.ws.plansDir, ["commit", "-m", message, "--", ...ours]);
   }
 }
 

@@ -176,12 +176,13 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
   │                       │                │    └─ask──▶ waiting ────┘ (answer → in_progress)
   └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
 blocked  = derived: any depends_on not done
-dropped  = terminal, human only
+dropped  = human only; ──undrop──▶ draft (re-approval required)
+done     = terminal
 ```
 
 - `turn`: `draft`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.
-- Only the human performs `approve_plan`, `accept`, `reject`, `drop`, and
-  `release` of someone else's claim.
+- Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
+  `undrop`, and `release` of someone else's claim.
 - `accept` **auto-merges** the item's branches locally (§6.3) — never pushes.
   A merge conflict sends the item back to `in_progress`, turn → agent, with the
   conflict as a log note.

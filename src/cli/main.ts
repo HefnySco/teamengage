@@ -12,6 +12,7 @@ import {
   answerCmd,
   rejectCmd,
   dropCmd,
+  undropCmd,
   releaseCmd,
   rollbackCmd,
   renumberCmd,
@@ -40,6 +41,7 @@ commands:
   approve | accept | claim | release <ID> [note]
   answer <ID> <text>
   reject | drop <ID> [reason]
+  undrop <ID>         restore a dropped item back to draft
   renumber <OLD> <NEW>
   rollback <ID> [--yes]  restore claim snapshots onto live targets
   import <folder>   import a Markdown task folder
@@ -103,6 +105,8 @@ async function main(argv: string[]): Promise<number> {
       return rejectCmd(rest, home);
     case "drop":
       return dropCmd(rest, home);
+    case "undrop":
+      return undropCmd(rest, home);
     case "claim":
       return humanClaimCmd(rest, home);
     case "release":
