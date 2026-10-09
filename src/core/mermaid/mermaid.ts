@@ -27,15 +27,16 @@ const CLASS_FOR: Record<string, string> = {
   dropped: "dropped",
 };
 
-const CLASS_DEFS = `  classDef draft fill:#9e9e9e,color:#fff
-  classDef ready fill:#f9a825,color:#000
+// same palette as the web UI status colours (web/index.html .st-* / ST_BADGE)
+const CLASS_DEFS = `  classDef draft fill:#6c757d,color:#fff
+  classDef ready fill:#0d6efd,color:#fff
   classDef hold fill:#6d4c41,color:#fff
-  classDef active fill:#1e88e5,color:#fff
-  classDef review fill:#8e24aa,color:#fff
-  classDef waiting fill:#fb8c00,color:#000
-  classDef done fill:#43a047,color:#fff
-  classDef dropped fill:#e53935,color:#fff
-  classDef blocked stroke:#e53935,stroke-width:2px`;
+  classDef active fill:#ffc107,color:#000
+  classDef review fill:#6f42c1,color:#fff
+  classDef waiting fill:#0dcaf0,color:#000
+  classDef done fill:#198754,color:#fff
+  classDef dropped fill:#dc3545,color:#fff
+  classDef blocked stroke:#dc3545,stroke-width:2px`;
 
 function nodeId(id: string): string {
   return id.replace(/-/g, "_");
