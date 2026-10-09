@@ -1,4 +1,4 @@
-import type { Index, IndexedItem, QueryFilter } from "../index/index.js";
+import { matchesSearch, type Index, type IndexedItem, type QueryFilter } from "../index/index.js";
 import { parseItemRef } from "../address/refs.js";
 
 /**
@@ -58,6 +58,7 @@ function passesFilter(it: IndexedItem, f?: QueryFilter): boolean {
   if (statuses && !statuses.includes(it.meta.status)) return false;
   if (f.type && it.meta.type !== f.type) return false;
   if (f.domain && !it.meta.domains.includes(f.domain)) return false;
+  if (!matchesSearch(it.meta, f.q)) return false;
   if (f.project && it.meta.project !== f.project) return false;
   if (f.resource && !it.meta.targets.some((t) => t.startsWith(`@${f.resource}`))) return false;
   if (f.text && !`${it.meta.title}\n${it.sections.map((s) => s.body).join("\n")}`.toLowerCase().includes(f.text.toLowerCase())) return false;

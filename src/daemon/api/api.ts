@@ -53,6 +53,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         claimed: q.claimed === undefined ? undefined : q.claimed === "true",
         archived: q.archived === "all" ? "all" : q.archived === "true",
         domain: q.domain || undefined,
+        q: q.q || undefined,
       });
       return items.map((i) => ({
         ...i.meta,
@@ -90,11 +91,29 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const q = req.query as Record<string, string>;
       const ops = opsFor(ctx, q.ws);
+      const filter = {
+        status: (q.status || undefined) as never,
+        project: q.project || undefined,
+        domain: q.domain || undefined,
+        q: q.q || undefined,
+      };
+      // linked=1: the matches plus everything one step away (deps, dependents,
+      // parent/children), whatever their status or text
+      if (q.linked === "1" && (filter.q || filter.domain || filter.status || filter.project)) {
+        const hits = ops.query(filter).map((i) => i.meta.id);
+        return {
+          count: hits.length,
+          mermaid: hits.length ? ops.graph({ roots: hits, depth: 1, maxNodes: 80 }) : "flowchart LR\n  none[\"no matches\"]",
+        };
+      }
+      const count = ops.query(filter).length;
       return {
+        count,
         mermaid: ops.graph({
           roots: q.root ? [q.root] : undefined,
           depth: q.depth ? Number(q.depth) : undefined,
-          filter: { status: q.status as never, project: q.project },
+          filter,
+          maxNodes: 80,
         }),
       };
     } catch (e) {

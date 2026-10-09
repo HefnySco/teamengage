@@ -490,3 +490,32 @@ describe("per-task unblocks_on (key tasks)", () => {
     }
   });
 });
+
+describe("graph search", () => {
+  it("q matches like the board; linked adds one step of neighbours", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "Zebra base" },
+        { type: "task", title: "Zebra top", depends_on: ["#0"], domains: ["stripes"] },
+        { type: "task", title: "Lion after", depends_on: ["#1"] },
+      ],
+      human,
+    );
+    const node = (id: string) => id.replace("-", "_");
+    const g = async (qs: string) => (await (await api(`/api/graph?${qs}`)).json()) as { mermaid: string; count: number };
+
+    const r = await g("q=zebra");
+    expect(r.count).toBe(2);
+    expect(r.mermaid).toContain(node(ids[0]));
+    expect(r.mermaid).not.toContain(node(ids[2]));
+
+    expect((await g("q=%23stripes")).count).toBe(1);
+    expect((await g("domain=stripes")).mermaid).toContain(node(ids[1]));
+
+    const linked = await g("q=zebra%20top&linked=1");
+    expect(linked.count).toBe(1);
+    for (const id of ids) expect(linked.mermaid).toContain(node(id)); // dep + dependent come along
+  });
+});

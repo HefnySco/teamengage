@@ -543,31 +543,79 @@ const Domains = () => {
 
 // ---- Graph (UI-0003) ----------------------------------------------------------
 const Graph = ({ onOpen }) => {
-  const [filter, setFilter] = useState({ status: "", project: "" });
+  const domains = useDomains();
+  // q / status / domain / linked, remembered per tab like the board search
+  const [f, setF] = useState(() => {
+    try {
+      return { q: "", status: "", domain: "", linked: false, ...JSON.parse(sessionStorage.getItem("te.graph.f") ?? "{}") };
+    } catch {
+      return { q: "", status: "", domain: "", linked: false };
+    }
+  });
+  const [applied, setApplied] = useState(f);
   const [svg, setSvg] = useState("");
   const [src, setSrc] = useState("");
+  const [count, setCount] = useState(null);
+  const update = (patch) => {
+    const next = { ...f, ...patch };
+    setF(next);
+    try {
+      sessionStorage.setItem("te.graph.f", JSON.stringify(next));
+    } catch {
+      /* not remembered */
+    }
+  };
+  // redraw once typing pauses — mermaid layout is too slow for every keystroke
   useEffect(() => {
-    const q = new URLSearchParams(Object.entries(filter).filter(([, v]) => v)).toString();
-    api(`/api/graph${q ? "?" + q : ""}`).then(async (r) => {
+    const t = setTimeout(() => setApplied(f), f.q === applied.q ? 0 : 350);
+    return () => clearTimeout(t);
+  }, [f]);
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (applied.q.trim()) p.set("q", applied.q.trim());
+    if (applied.status) p.set("status", applied.status);
+    if (applied.domain) p.set("domain", applied.domain);
+    if (applied.linked) p.set("linked", "1");
+    const qs = p.toString();
+    let live = true;
+    api(`/api/graph${qs ? "?" + qs : ""}`).then(async (r) => {
+      if (!live) return;
       setSrc(r.mermaid);
+      setCount(r.count ?? null);
       const { default: mermaid } = await import("mermaid");
       mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "default" });
-      const { svg } = await mermaid.render("g", r.mermaid);
-      setSvg(svg);
+      const { svg } = await mermaid.render("g" + Date.now(), r.mermaid);
+      if (live) setSvg(svg);
     });
-  }, [filter]);
+    return () => {
+      live = false;
+    };
+  }, [applied]);
+  const filtering = f.q.trim() || f.status || f.domain;
   return html`
-    <h2 class="h4 mb-3">Graph</h2>
-    <div class="d-flex gap-2 mb-3">
-      <select class="form-select form-select-sm w-auto" onChange=${(e) => setFilter({ ...filter, status: e.target.value })}>
+    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+      <h2 class="h4 mb-0 me-2">Graph</h2>
+      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "22rem" }}
+        placeholder="search id, title, project, file, #domain…" value=${f.q}
+        onInput=${(e) => update({ q: e.target.value })}
+        onKeyDown=${(e) => e.key === "Escape" && update({ q: "" })} />
+      <select class="form-select form-select-sm w-auto" value=${f.status} onChange=${(e) => update({ status: e.target.value })}>
         <option value="">all statuses</option>
-        ${STATUSES.map((s) => html`<option>${s}</option>`)}
+        ${STATUSES.map((st) => html`<option value=${st}>${st}</option>`)}
       </select>
-      <input class="form-control form-control-sm w-auto" placeholder="project" value=${filter.project} onInput=${(e) => setFilter({ ...filter, project: e.target.value })} />
+      <select class="form-select form-select-sm w-auto" value=${f.domain} onChange=${(e) => update({ domain: e.target.value })}>
+        <option value="">all domains</option>
+        ${(domains ?? []).map((d) => html`<option value=${d.name}>#${d.name}</option>`)}
+      </select>
+      <label class="form-check-label small d-flex align-items-center gap-1" title="also show tasks one step away: dependencies, dependents, parent and children">
+        <input type="checkbox" class="form-check-input mt-0" checked=${f.linked} disabled=${!filtering}
+          onChange=${(e) => update({ linked: e.target.checked })} /> + linked
+      </label>
+      ${count !== null && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > 80 ? " — showing 80, narrow the search" : ""}</span>`}
     </div>
-    <div class="card card-body" dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
-      const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}-\d+/);
-      if (id) onOpen(id[0]);
+    <div class="card card-body graph-view" dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
+      const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
+      if (id) onOpen(id[0].replace("_", "-"));
     }} />
     <details class="mt-2"><summary class="text-secondary">mermaid source</summary><pre class="card card-body small">${src}</pre></details>
   `;

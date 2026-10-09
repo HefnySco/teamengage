@@ -23,6 +23,24 @@ export function depSatisfied(
   return unblocksOn ? unblocksOn === "review" : reviewUnblocks;
 }
 
+/** Board-style search shared by every page: all words must match. */
+export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
+  const words = (q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [
+    meta.id,
+    meta.title,
+    meta.project,
+    meta.legacy_id,
+    meta.source,
+    ...meta.domains.map((d) => `#${d} ${d}`),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 export interface IndexedItem {
   meta: ItemMeta;
   sections: Section[];
@@ -53,6 +71,8 @@ export interface QueryFilter {
   staleOnly?: boolean;
   /** items carrying this domain */
   domain?: string;
+  /** board-style search: every word must occur in id/title/project/legacy id/file/#domains */
+  q?: string;
   /** default false: archived items are hidden; true = only archived; "all" = both */
   archived?: boolean | "all";
 }
@@ -291,6 +311,7 @@ export class Index {
       if (f.archived !== "all" && Boolean(i.meta.archived) !== Boolean(f.archived)) return false;
       if (statuses && !statuses.includes(i.meta.status)) return false;
       if (f.domain && !i.meta.domains.includes(f.domain)) return false;
+      if (!matchesSearch(i.meta, f.q)) return false;
       if (f.type && i.meta.type !== f.type) return false;
       if (f.project && i.meta.project !== f.project) return false;
       if (f.claimed !== undefined && Boolean(i.claim) !== f.claimed) return false;
