@@ -5,6 +5,7 @@ import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
 import { TeError, NotFoundError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
+import { compareIds } from "../../core/address/refs.js";
 import type { Ambiguity } from "../../import/import.js";
 
 /**
@@ -122,7 +123,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   app.get("/api/inbox", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
-      const items = [...ops.index.items.values()].filter((i) => !i.meta.archived);
+      const items = [...ops.index.items.values()]
+        .filter((i) => !i.meta.archived)
+        .sort((a, b) => compareIds(a.meta.id, b.meta.id));
       return {
         drafts: items.filter((i) => i.meta.status === "draft").map((i) => i.meta.id),
         questions: items

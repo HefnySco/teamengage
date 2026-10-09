@@ -108,3 +108,17 @@ describe("renumber", () => {
     await expect(renumber(dir, "GL-0002", "MP-0002")).rejects.toThrow(ValidationError);
   });
 });
+
+describe("compareIds", () => {
+  it("prefix first, then the number numerically", async () => {
+    const { compareIds } = await import("./refs.js");
+    expect(["MP-0210", "AN-0002", "MP-0199", "MP-1000", "MP-0205", "GL-0019"].sort(compareIds)).toEqual([
+      "AN-0002",
+      "GL-0019",
+      "MP-0199",
+      "MP-0205",
+      "MP-0210",
+      "MP-1000",
+    ]);
+  });
+});

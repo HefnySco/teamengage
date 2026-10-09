@@ -80,6 +80,11 @@ export function idNumber(id: string): number {
   return Number(id.slice(id.indexOf("-") + 1));
 }
 
+/** Natural id order: prefix alphabetically, then the number (MP-0199 < MP-0205 < MP-1000). */
+export function compareIds(a: string, b: string): number {
+  return idPrefix(a).localeCompare(idPrefix(b)) || idNumber(a) - idNumber(b) || a.localeCompare(b);
+}
+
 /** Next free id for a prefix: max existing + 1, zero-padded to ≥4. */
 export function allocateId(prefix: string, existing: Iterable<string>): string {
   let max = 0;

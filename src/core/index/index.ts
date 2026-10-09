@@ -4,7 +4,7 @@ import { join, relative, isAbsolute } from "node:path";
 import { parseItemFile, parseMarkdown } from "../files/markdown.js";
 import { parseClaimFile } from "../claims/claims.js";
 import { DecisionMeta, type ItemMeta, type Section, type Status, type Turn, turnOf } from "../model/index.js";
-import { parseItemRef } from "../address/refs.js";
+import { parseItemRef, compareIds } from "../address/refs.js";
 import type { Claim } from "../model/claim.js";
 
 /** An item plus everything derived from the graph around it (DESIGN §5). */
@@ -278,7 +278,7 @@ export class Index {
         (a, b) =>
           a.meta.priority - b.meta.priority ||
           (a.meta.created ?? "").localeCompare(b.meta.created ?? "") ||
-          a.meta.id.localeCompare(b.meta.id),
+          compareIds(a.meta.id, b.meta.id),
       )
       .slice(0, limit);
   }
@@ -286,7 +286,8 @@ export class Index {
   query(f: QueryFilter): IndexedItem[] {
     const statuses = f.status === undefined ? undefined : Array.isArray(f.status) ? f.status : [f.status];
     const text = f.text?.toLowerCase();
-    return [...this.items.values()].filter((i) => {
+    // stable, natural id order — the map's order is file-load order
+    return [...this.items.values()].sort((a, b) => compareIds(a.meta.id, b.meta.id)).filter((i) => {
       if (f.archived !== "all" && Boolean(i.meta.archived) !== Boolean(f.archived)) return false;
       if (statuses && !statuses.includes(i.meta.status)) return false;
       if (f.domain && !i.meta.domains.includes(f.domain)) return false;
