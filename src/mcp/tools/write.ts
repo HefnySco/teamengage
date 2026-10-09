@@ -194,6 +194,7 @@ export function registerWriteTools(
             acceptance: z.array(z.string()).optional(),
             touches: z.array(z.string()).optional(),
             simple: z.string().optional(),
+            domains: z.array(z.string()).optional(),
           }),
         ),
       },

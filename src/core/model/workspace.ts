@@ -64,6 +64,20 @@ export const WorkspaceConfig = z
     mode: z.enum(["standard", "overlay"]).default("standard"),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
+    /** domain vocabulary: name → { description, color, keywords } (see core/domains) */
+    domains: z.preprocess((v) => v ?? {}, z
+      .record(
+        z.string(),
+        z
+          .object({
+            description: z.string().optional(),
+            color: z.string().optional(),
+            keywords: z.array(z.string()).optional(),
+          })
+          .passthrough()
+          .nullable()
+          .transform((v) => v ?? {}),
+      )).default({}),
     /** overlay mode: globs (relative to the root) of `.md` files that are not tasks */
     ignore: z.array(z.string()).default([]),
     /** Duration string like `24h`, `30m`, `7d`. */

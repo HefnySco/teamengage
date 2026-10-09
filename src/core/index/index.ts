@@ -36,6 +36,8 @@ export interface QueryFilter {
   text?: string;
   claimed?: boolean;
   staleOnly?: boolean;
+  /** items carrying this domain */
+  domain?: string;
   /** default false: archived items are hidden; true = only archived; "all" = both */
   archived?: boolean | "all";
 }
@@ -262,6 +264,7 @@ export class Index {
     return [...this.items.values()].filter((i) => {
       if (f.archived !== "all" && Boolean(i.meta.archived) !== Boolean(f.archived)) return false;
       if (statuses && !statuses.includes(i.meta.status)) return false;
+      if (f.domain && !i.meta.domains.includes(f.domain)) return false;
       if (f.type && i.meta.type !== f.type) return false;
       if (f.project && i.meta.project !== f.project) return false;
       if (f.claimed !== undefined && Boolean(i.claim) !== f.claimed) return false;

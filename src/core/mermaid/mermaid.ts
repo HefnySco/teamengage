@@ -57,6 +57,7 @@ function passesFilter(it: IndexedItem, f?: QueryFilter): boolean {
   const statuses = f.status === undefined ? undefined : Array.isArray(f.status) ? f.status : [f.status];
   if (statuses && !statuses.includes(it.meta.status)) return false;
   if (f.type && it.meta.type !== f.type) return false;
+  if (f.domain && !it.meta.domains.includes(f.domain)) return false;
   if (f.project && it.meta.project !== f.project) return false;
   if (f.resource && !it.meta.targets.some((t) => t.startsWith(`@${f.resource}`))) return false;
   if (f.text && !`${it.meta.title}\n${it.sections.map((s) => s.body).join("\n")}`.toLowerCase().includes(f.text.toLowerCase())) return false;

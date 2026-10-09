@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initCmd } from "./commands/init.js";
 import { guardCmd, hooksCmd } from "./commands/guard.js";
+import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
@@ -63,6 +64,9 @@ commands:
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
+  domains [suggest [--apply]]      list domains / keyword suggestions
+  domain add|rename|rm …           manage the domain list (rename onto an existing one merges)
+  tag <ID> name… [-name…]          add / remove domains on an item
   hooks [--install|--uninstall] [--settings <file>]
              Claude Code guard hooks (default ~/.claude/settings.json)
   guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
@@ -170,6 +174,12 @@ async function main(argv: string[]): Promise<number> {
       });
       return r.status ?? 1;
     }
+    case "domains":
+      return domainsCmd(rest, home);
+    case "domain":
+      return domainCmd(rest, home);
+    case "tag":
+      return tagCmd(rest, home);
     case "guard":
       return guardCmd(rest, home);
     case "hooks":

@@ -1,5 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { resolveSource, stripFrontmatter } from "../../core/files/source.js";
+import {
+  normalizeDomain,
+  domainColor,
+  rankDomains,
+  type DomainDef,
+} from "../../core/domains/domains.js";
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import type { IndexedItem } from "../../core/index/index.js";
@@ -95,14 +101,91 @@ export class WorkspaceOps {
 
   // ---- reads ------------------------------------------------------------
 
-  next(limit = 3): IndexedItem[] {
+  next(limit = 3, domain?: string): IndexedItem[] {
     const claimedTargets = [...this.index.claims.values()]
       .filter((c) => !c.conflicted)
       .flatMap((c) => c.targets);
+    const d = domain ? normalizeDomain(domain) : undefined;
     return this.index
-      .readyItems(50)
+      .readyItems()
+      .filter((i) => !d || i.meta.domains.includes(d))
       .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
       .slice(0, limit);
+  }
+
+  // ---- domains ------------------------------------------------------------
+
+  /** The vocabulary with item counts (archived items not counted as open). */
+  async domains() {
+    const defs = await this.store.currentDomains();
+    const names = new Set(Object.keys(defs));
+    for (const it of this.index.items.values()) for (const d of it.meta.domains) names.add(d);
+    return [...names].sort().map((name) => {
+      const items = [...this.index.items.values()].filter((i) => i.meta.domains.includes(name));
+      return {
+        name,
+        description: defs[name]?.description,
+        keywords: defs[name]?.keywords ?? [],
+        color: domainColor(name, defs[name]),
+        count: items.filter((i) => !i.meta.archived).length,
+        open: items.filter((i) => !i.meta.archived && !["done", "dropped"].includes(i.meta.status)).length,
+        archived: items.filter((i) => i.meta.archived).length,
+      };
+    });
+  }
+
+  async setDomains(id: string, domains: string[], actor: Session | "human") {
+    this.item(id);
+    return this.store.setDomains(id, domains, this.actorFor(actor));
+  }
+
+  defineDomain(name: string, patch: DomainDef) {
+    return this.store.defineDomain(name, patch);
+  }
+
+  renameDomain(from: string, to: string) {
+    return this.store.renameDomain(from, to, this.actorFor("human"));
+  }
+
+  deleteDomain(name: string) {
+    return this.store.deleteDomain(name, this.actorFor("human"));
+  }
+
+  /**
+   * Keyword-based suggestions: for each non-archived item, domains whose
+   * keywords occur in its title / task file / simple text and that it
+   * doesn't have yet. Nothing is changed.
+   */
+  async suggestDomains(): Promise<Array<{ id: string; title: string; current: string[]; add: string[] }>> {
+    const defs = await this.store.currentDomains();
+    const out: Array<{ id: string; title: string; current: string[]; add: string[] }> = [];
+    for (const it of this.index.items.values()) {
+      if (it.meta.archived) continue;
+      let text = "";
+      if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+        const src = await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source);
+        if (src) text = stripFrontmatter(src.text);
+      } else {
+        text = it.sections.map((s) => s.body).join("\n");
+      }
+      const touches = text.match(/^\**touches:?\**:?.*$/im)?.[0] ?? "";
+      const body = text.replace(/^#.*$/m, ""); // the title line counts as strong already
+      const lead = body.split(/\n\s*\n/).filter((p) => p.trim()).slice(0, 2).join("\n");
+      // the file name, not its folder: the folder is the project, already shown
+      const fileName = (it.meta.source ?? "").split("/").pop() ?? "";
+      const strong = [it.meta.title, it.meta.legacy_id ?? "", fileName, touches].join("\n");
+      const add = rankDomains({ strong, lead, body }, defs).filter((d) => !it.meta.domains.includes(d));
+      if (add.length) out.push({ id: it.meta.id, title: it.meta.title, current: it.meta.domains, add });
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** Apply suggestions (only adds — never removes a domain). */
+  async applySuggestions(ids?: string[]) {
+    const all = await this.suggestDomains();
+    const pick = ids ? all.filter((s) => ids.includes(s.id)) : all;
+    for (const s of pick) await this.setDomains(s.id, [...s.current, ...s.add], "human");
+    return { items: pick.length, added: pick.reduce((n, s) => n + s.add.length, 0) };
   }
 
   item(id: string): IndexedItem {
@@ -385,6 +468,7 @@ export class WorkspaceOps {
       acceptance?: string[];
       touches?: string[];
       simple?: string;
+      domains?: string[];
     }>,
     actor: Session | "human",
   ) {

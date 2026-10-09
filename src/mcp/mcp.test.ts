@@ -230,3 +230,22 @@ describe("archived dependencies stay visible to agents", () => {
     }
   });
 });
+
+describe("domains for agents", () => {
+  it("query/next filter by domain; brief and lists show #tags", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    await store.setDomains("WS-0003", ["mavlink", "missions"], human);
+    try {
+      const q = text((await client.callTool({ name: "query", arguments: { domain: "mavlink" } })) as never);
+      expect(q).toMatch(/^WS-0003 .*#mavlink #missions/m);
+      expect(q.split("\n")).toHaveLength(1);
+      const none = text((await client.callTool({ name: "next", arguments: { domain: "nothing-here" } })) as never);
+      expect(none).toBe("nothing ready");
+      const b = text((await client.callTool({ name: "brief", arguments: { id: "WS-0003" } })) as never);
+      expect(b).toContain("domains: #mavlink #missions");
+    } finally {
+      await store.setDomains("WS-0003", [], human);
+    }
+  });
+});

@@ -19,6 +19,7 @@ const META_KEY_ORDER = [
   "title",
   "status",
   "project",
+  "domains",
   "targets",
   "depends_on",
   "parent",

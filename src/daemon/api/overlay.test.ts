@@ -487,3 +487,76 @@ describe("notes", () => {
     expect(log).toMatch(/human added a note: first line with `code`\n.*human added a note: another one/);
   });
 });
+
+describe("domains", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+  const json = async (path: string, body?: unknown) => {
+    const r = await api(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { status: r.status, body: (await r.json()) as never };
+  };
+  const yaml = () => readFileSync(join(plans, "workspace.yaml"), "utf8");
+
+  it("tagging auto-adds to the vocabulary; filters work for board, next and query", async () => {
+    const { ids } = await store().createItems(
+      [
+        { type: "task", title: "Mavlink restart", project: "global", domains: ["MAVLink", "missions"] },
+        { type: "task", title: "Webclient panel", project: "global" },
+      ],
+      human,
+    );
+    const [a, b] = ids;
+    expect(store().idx.get(a)!.meta.domains).toEqual(["mavlink", "missions"]);
+    expect(yaml()).toMatch(/domains:[\s\S]*mavlink: \{\}[\s\S]*missions: \{\}/);
+
+    const r = await json(`/api/items/${b}/domains`, { domains: ["Web Client", "missions"] });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ domains: ["web-client", "missions"], added: ["web-client"] });
+    expect(store().idx.get(b)!.sections.find((s) => s.heading === "Log")!.body).toMatch(/domains: \+web-client \+missions/);
+
+    const byDomain = async (d: string) =>
+      ((await json(`/api/items?domain=${d}`)).body as Array<{ id: string }>).map((i) => i.id).filter((id) => ids.includes(id));
+    expect(await byDomain("missions")).toEqual([a, b]);
+    expect(await byDomain("mavlink")).toEqual([a]);
+
+    for (const id of ids) await json(`/api/items/${id}/approve`, {});
+    const next = ((await json("/api/next?limit=50&domain=web-client")).body as Array<{ meta: { id: string } }>).map((i) => i.meta.id);
+    expect(next).toEqual([b]);
+
+    const list = (await json("/api/domains")).body as Array<{ name: string; count: number; open: number }>;
+    expect(list.find((d) => d.name === "missions")).toMatchObject({ count: 2, open: 2 });
+  });
+
+  it("describe, rename, merge (keywords unioned), delete — every item follows", async () => {
+    expect((await json("/api/domains", { name: "comm", description: "de_comm module", keywords: ["de_comm"] })).status).toBe(200);
+    expect(yaml()).toMatch(/comm:\s*\n\s*description: de_comm module\s*\n\s*keywords:/);
+
+    const { ids } = await store().createItems([{ type: "task", title: "Typo tagged", project: "global", domains: ["mavlnk"] }], human);
+    // rename onto an existing domain = merge
+    const m = await json("/api/domains/mavlnk/rename", { to: "mavlink" });
+    expect(m.body).toMatchObject({ merged: true, items: ids });
+    expect(store().idx.get(ids[0])!.meta.domains).toEqual(["mavlink"]);
+    expect(yaml()).not.toMatch(/mavlnk: \{\}/);
+    expect(yaml()).toMatch(/mavlink:[\s\S]*keywords:[\s\S]*mavlnk/); // the old spelling keeps suggesting it
+
+    // plain rename keeps the definition
+    const rn = await json("/api/domains/comm/rename", { to: "communication" });
+    expect(rn.body).toMatchObject({ merged: false });
+    expect(yaml()).toMatch(/communication:\s*\n\s*description: de_comm module/);
+
+    const del = await json("/api/domains/missions/delete", {});
+    expect((del.body as { items: string[] }).items.length).toBeGreaterThan(0);
+    expect([...store().idx.items.values()].some((i) => i.meta.domains.includes("missions"))).toBe(false);
+    expect(yaml()).not.toMatch(/missions:/);
+  });
+
+  it("suggestions come from keywords; apply only adds", async () => {
+    await json("/api/domains", { name: "gate", keywords: ["wait gate"] });
+    const s = (await json("/api/domains/suggest")).body as Array<{ id: string; add: string[] }>;
+    const t12 = byLegacy("TASK-12-gate").meta.id;
+    expect(s.find((x) => x.id === t12)?.add).toContain("gate");
+    const ap = await json("/api/domains/suggest/apply", { ids: [t12] });
+    expect(ap.body).toMatchObject({ items: 1 });
+    expect(store().idx.get(t12)!.meta.domains).toContain("gate");
+    expect(((await json("/api/domains/suggest")).body as Array<{ id: string }>).some((x) => x.id === t12)).toBe(false);
+  });
+});

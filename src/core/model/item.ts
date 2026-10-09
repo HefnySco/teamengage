@@ -41,6 +41,8 @@ export const ItemMeta = z
     title: z.string().min(1),
     status: Status.default("draft"),
     project: Name.optional(),
+    /** hashtag-like labels; many per item (see core/domains) */
+    domains: z.array(z.string()).default([]),
     targets: z.array(TargetRef).default([]),
     depends_on: z.array(ItemRef).default([]),
     parent: ItemRef.optional(),

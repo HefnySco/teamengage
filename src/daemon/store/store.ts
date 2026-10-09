@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { Document as YamlDocument } from "yaml";
 import { existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { Index } from "../../core/index/index.js";
@@ -12,6 +13,10 @@ import {
   emitFrontmatter,
 } from "../../core/files/markdown.js";
 import { withTeTag, withoutTeTag, toSourcePath, appendNote, resolveSource } from "../../core/files/source.js";
+import { normalizeDomain, normalizeDomains, type DomainDef } from "../../core/domains/domains.js";
+
+/** keywords: trimmed, lowercase, unique. */
+const normalizeKeywords = (k: string[]) => [...new Set(k.map((w) => w.trim().toLowerCase()).filter(Boolean))];
 import {
   filePrefix,
   nextTaskNumber,
@@ -263,6 +268,7 @@ export class PlansStore {
       acceptance?: string[];
       touches?: string[];
       simple?: string;
+      domains?: string[];
     }>,
     actor: Actor,
   ): Promise<{ ids: string[]; files: string[] }> {
@@ -342,6 +348,7 @@ export class PlansStore {
           targets: d.targets ?? [],
           depends_on: d.depends_on ?? [],
           parent: d.parent,
+          domains: normalizeDomains(d.domains ?? []),
           priority: 2,
           version: 1,
           created: now,
@@ -362,7 +369,10 @@ export class PlansStore {
         });
         ids.push(id);
       }
+      const newDomains = await this.ensureDomains(normalizeDomains(drafts.flatMap((d) => d.domains ?? [])));
+      if (newDomains.length) writes.push({ rel: "workspace.yaml", content: "" }); // committed below, not rewritten
       for (const w of writes) {
+        if (w.rel === "workspace.yaml") continue;
         const p = join(this.ws.plansDir, w.rel);
         await writeFileAtomic(p, w.content);
         this.onFileWrite?.(p, w.content);
@@ -375,7 +385,9 @@ export class PlansStore {
         writes.map((w) => w.rel),
         `te: propose ${ids.join(", ")} by ${actor.session}`,
       );
-      for (const w of writes) await this.index.upsertFile(join(this.ws.plansDir, w.rel));
+      for (const w of writes) {
+        if (w.rel !== "workspace.yaml") await this.index.upsertFile(join(this.ws.plansDir, w.rel));
+      }
       return { ids, files };
     });
   }
@@ -671,20 +683,174 @@ export class PlansStore {
     });
   }
 
-  /** Append paths to workspace.yaml `ignore:` keeping the file's formatting. */
-  private async addIgnores(paths: string[]): Promise<void> {
+  /**
+   * Edit workspace.yaml in place (comments and formatting kept) and refresh
+   * the in-memory config from the result.
+   */
+  private async editWorkspaceYaml(edit: (doc: YamlDocument) => void): Promise<void> {
     const YAML = (await import("yaml")).default;
+    const { WorkspaceConfig } = await import("../../core/model/workspace.js");
     const abs = join(this.ws.plansDir, "workspace.yaml");
     const doc = YAML.parseDocument(await readFile(abs, "utf8"));
-    const cur = ((doc.toJS() as { ignore?: string[] } | null)?.ignore ?? []).filter(Boolean);
-    const next = [...cur, ...paths.filter((p) => !cur.includes(p))];
-    doc.set("ignore", next);
-    const seq = doc.get("ignore", true) as { flow?: boolean } | undefined;
-    if (seq && next.length <= 3) seq.flow = true;
+    // an empty `domains:` is null — give it a map before anything writes into it
+    if (doc.has("domains") && !YAML.isMap(doc.get("domains", true))) doc.set("domains", doc.createNode({}));
+    edit(doc);
     const out = doc.toString();
     await writeFileAtomic(abs, out);
     this.onFileWrite?.(abs, out);
-    this.ws.config.ignore.splice(0, this.ws.config.ignore.length, ...next);
+    const fresh = WorkspaceConfig.parse(YAML.parse(out) ?? {});
+    this.ws.config.ignore.splice(0, this.ws.config.ignore.length, ...fresh.ignore);
+    this.ws.config.domains = fresh.domains;
+  }
+
+  /** Append paths to workspace.yaml `ignore:`. */
+  private async addIgnores(paths: string[]): Promise<void> {
+    await this.editWorkspaceYaml((doc) => {
+      const cur = ((doc.toJS() as { ignore?: string[] } | null)?.ignore ?? []).filter(Boolean);
+      const next = [...cur, ...paths.filter((p) => !cur.includes(p))];
+      doc.set("ignore", next);
+      const seq = doc.get("ignore", true) as { flow?: boolean } | undefined;
+      if (seq && next.length <= 3) seq.flow = true;
+    });
+  }
+
+  /** The domain vocabulary as on disk now (a hand edit of workspace.yaml counts). */
+  async currentDomains(): Promise<Record<string, DomainDef>> {
+    const YAML = (await import("yaml")).default;
+    const { WorkspaceConfig } = await import("../../core/model/workspace.js");
+    const raw = YAML.parse(await readFile(join(this.ws.plansDir, "workspace.yaml"), "utf8")) ?? {};
+    return WorkspaceConfig.parse(raw).domains;
+  }
+
+  /** Add domains that aren't in workspace.yaml yet (auto-add on use). */
+  private async ensureDomains(names: string[]): Promise<string[]> {
+    const known = await this.currentDomains();
+    const missing = names.filter((n) => !(n in known));
+    if (missing.length) {
+      await this.editWorkspaceYaml((doc) => {
+        for (const n of missing) doc.setIn(["domains", n], doc.createNode({}));
+      });
+    }
+    return missing;
+  }
+
+  /** Rewrite one item's meta (version bump + History lines), re-index. */
+  private async rewriteItem(id: string, patch: (meta: ItemMeta) => ItemMeta | null, lines: string[]): Promise<boolean> {
+    const it = this.index.get(id);
+    if (!it) return false;
+    const abs = join(this.ws.plansDir, it.path);
+    const doc = parseItemFile(await readFile(abs, "utf8"), abs);
+    const next = patch({ ...doc.meta });
+    if (!next) return false;
+    const meta = { ...next, version: doc.meta.version + 1, updated: new Date().toISOString().slice(0, 10) } as ItemMeta;
+    await this.writeItemDoc(abs, doc.raw.text, meta, lines);
+    await this.index.upsertFile(abs);
+    return true;
+  }
+
+  /** Set an item's domains (normalized; unknown names are added to the vocabulary). */
+  setDomains(id: string, domains: string[], actor: Actor): Promise<{ domains: string[]; added: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const next = normalizeDomains(domains);
+      const before = it.meta.domains;
+      const plus = next.filter((d) => !before.includes(d));
+      const minus = before.filter((d) => !next.includes(d));
+      if (!plus.length && !minus.length) return { domains: next, added: [] };
+      const added = await this.ensureDomains(next);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const change = [...plus.map((d) => `+${d}`), ...minus.map((d) => `−${d}`)].join(" ");
+      await this.rewriteItem(id, (m) => ({ ...m, domains: next }), [`- ${now} ${who} domains: ${change}`]);
+      await this.commitPaths([it.path, ...(added.length ? ["workspace.yaml"] : [])], `te: ${id} domains ${change}`);
+      return { domains: next, added };
+    });
+  }
+
+  /** Create or update a domain's description / colour / keywords. */
+  defineDomain(name: string, patch: DomainDef): Promise<{ name: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const n = normalizeDomain(name);
+      if (!n) throw new ValidationError(`bad domain name '${name}'`);
+      await this.editWorkspaceYaml((doc) => {
+        if (!doc.hasIn(["domains", n])) doc.setIn(["domains", n], doc.createNode({}));
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === undefined) continue;
+          if (v === "" || (Array.isArray(v) && !v.length)) doc.deleteIn(["domains", n, k]);
+          else doc.setIn(["domains", n, k], doc.createNode(v));
+        }
+      });
+      await this.commitPaths(["workspace.yaml"], `te: domain ${n} defined`);
+      return { name: n };
+    });
+  }
+
+  /**
+   * Rename a domain; when `to` already exists this is a merge (its
+   * definition wins, keywords are unioned). Every item is rewritten.
+   */
+  renameDomain(from: string, to: string, actor: Actor): Promise<{ items: string[]; merged: boolean }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const a = normalizeDomain(from);
+      const b = normalizeDomain(to);
+      if (!a || !b) throw new ValidationError("rename needs two domain names");
+      if (a === b) return { items: [], merged: false };
+      const known = await this.currentDomains();
+      const users = [...this.index.items.values()].filter((i) => i.meta.domains.includes(a));
+      if (!(a in known) && !users.length) throw new NotFoundError(`domain '${a}' not found`);
+      const merged = b in known;
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const touched: string[] = [];
+      for (const it of users) {
+        await this.rewriteItem(
+          it.meta.id,
+          (m) => ({ ...m, domains: normalizeDomains(m.domains.map((d) => (d === a ? b : d))) }),
+          [`- ${now} ${who} domain ${a} ${merged ? "merged into" : "renamed to"} ${b}`],
+        );
+        touched.push(it.path);
+      }
+      await this.editWorkspaceYaml((doc) => {
+        const defA = (known[a] ?? {}) as DomainDef;
+        if (merged) {
+          const kw = normalizeKeywords([...(known[b]?.keywords ?? []), ...(defA.keywords ?? []), a]);
+          doc.setIn(["domains", b, "keywords"], doc.createNode(kw));
+        } else {
+          doc.setIn(["domains", b], doc.createNode({ ...defA, keywords: normalizeKeywords([...(defA.keywords ?? []), a]) }));
+        }
+        doc.deleteIn(["domains", a]);
+      });
+      await this.commitPaths([...touched, "workspace.yaml"], `te: domain ${a} → ${b}`);
+      return { items: users.map((i) => i.meta.id), merged };
+    });
+  }
+
+  /** Remove a domain from every item and from the vocabulary. */
+  deleteDomain(name: string, actor: Actor): Promise<{ items: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const n = normalizeDomain(name);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const users = [...this.index.items.values()].filter((i) => i.meta.domains.includes(n));
+      for (const it of users) {
+        await this.rewriteItem(it.meta.id, (m) => ({ ...m, domains: m.domains.filter((d) => d !== n) }), [
+          `- ${now} ${who} domain ${n} removed (domain deleted)`,
+        ]);
+      }
+      await this.editWorkspaceYaml((doc) => {
+        doc.deleteIn(["domains", n]);
+      });
+      await this.commitPaths([...users.map((i) => i.path), "workspace.yaml"], `te: domain ${n} deleted`);
+      return { items: users.map((i) => i.meta.id) };
+    });
   }
 
   /**

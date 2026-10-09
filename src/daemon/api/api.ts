@@ -51,6 +51,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         text: q.text,
         claimed: q.claimed === undefined ? undefined : q.claimed === "true",
         archived: q.archived === "all" ? "all" : q.archived === "true",
+        domain: q.domain || undefined,
       });
       return items.map((i) => ({
         ...i.meta,
@@ -77,7 +78,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   app.get("/api/next", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
-      return ops.next(Number((req.query as { limit?: string }).limit ?? 10));
+      const qq = req.query as { limit?: string; domain?: string };
+      return ops.next(Number(qq.limit ?? 10), qq.domain || undefined);
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -286,6 +288,39 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("simple", (ops, id, b) => ops.simple(id, "human", String(b.text ?? "")));
   act("note", (ops, id, b) => ops.note(id, "human", String(b.text ?? "")));
+  act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
+
+  // ---- domains vocabulary --------------------------------------------------
+  const route = (method: "GET" | "POST", path: string, fn: (ops: WorkspaceOps, req: { params: unknown; body: unknown; query: unknown }) => Promise<unknown>) =>
+    app.route({
+      method,
+      url: path,
+      handler: async (req, reply) => {
+        try {
+          return await fn(opsFor(ctx, wsOf(req.query)), req);
+        } catch (e) {
+          return sendErr(reply, e);
+        }
+      },
+    });
+  route("GET", "/api/domains", (ops) => ops.domains());
+  route("POST", "/api/domains", (ops, req) => {
+    const b = (req.body ?? {}) as { name?: string; description?: string; color?: string; keywords?: unknown };
+    if (!b.name) throw new TeError("USAGE", "domain needs {name}");
+    const keywords = Array.isArray(b.keywords) ? b.keywords.map(String) : typeof b.keywords === "string" ? b.keywords.split(",") : undefined;
+    return ops.defineDomain(b.name, { description: b.description, color: b.color, keywords });
+  });
+  route("POST", "/api/domains/:name/rename", (ops, req) => {
+    const to = String(((req.body ?? {}) as { to?: string }).to ?? "");
+    if (!to) throw new TeError("USAGE", "rename needs {to}");
+    return ops.renameDomain(String((req.params as { name: string }).name), to);
+  });
+  route("POST", "/api/domains/:name/delete", (ops, req) => ops.deleteDomain(String((req.params as { name: string }).name)));
+  route("GET", "/api/domains/suggest", (ops) => ops.suggestDomains());
+  route("POST", "/api/domains/suggest/apply", (ops, req) => {
+    const ids = ((req.body ?? {}) as { ids?: unknown }).ids;
+    return ops.applySuggestions(Array.isArray(ids) ? ids.map(String) : undefined);
+  });
   act("claim", (ops, id) => ops.humanClaim(id));
   act("release", (ops, id, b) => ops.release(id, "human", b.note ? String(b.note) : undefined));
   act("rollback", (ops, id, b) => ops.rollback(id, b.force === true));

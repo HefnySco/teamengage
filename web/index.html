@@ -24,6 +24,14 @@
       .md-view .md-cont { margin-left: 1rem; }
       .md-view > :last-child { margin-bottom: 0; }
       .md-inline code { font-size: .85em; }
+      /* domains */
+      .domain-chip { color: #fff; font-weight: 500; cursor: default; }
+      .domain-chip[title^="filter"], .board-col .domain-chip, .d-flex > .domain-chip { cursor: pointer; }
+      .domain-chip.active { outline: 2px solid var(--bs-body-color); outline-offset: 1px; }
+      .domain-chip.suggested { opacity: .8; border: 1px dashed #fff; }
+      .chip-x { cursor: pointer; opacity: .8; } .chip-x:hover { opacity: 1; }
+      .domain-input { width: 8rem; padding-top: 0; padding-bottom: 0; }
+      .editable { cursor: pointer; border-bottom: 1px dotted var(--bs-border-color); }
       /* lists scroll inside their card/column — the page never gets miles long */
       .scroll-list { max-height: 46vh; overflow-y: auto; }
       .board-col { min-width: 14rem; }

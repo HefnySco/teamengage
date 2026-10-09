@@ -28,7 +28,7 @@ export function errFrom(e: unknown): ToolResult {
 
 /** `GL-0013 in_progress agent "title" [claimed by x]` — the one-line item form. */
 export function itemLine(it: {
-  meta: { id: string; status: string; title: string };
+  meta: { id: string; status: string; title: string; domains?: string[] };
   claim?: { holder: string; machine: string };
   ready?: boolean;
   blocked?: boolean;
@@ -38,7 +38,8 @@ export function itemLine(it: {
   if (it.blocked) flags.push("blocked");
   else if (it.ready) flags.push("ready");
   const suffix = flags.length ? `  ${flags.join(" ")}` : "";
-  return `${it.meta.id} ${it.meta.status} "${it.meta.title}"${suffix}`;
+  const tags = it.meta.domains?.length ? `  ${it.meta.domains.map((d) => `#${d}`).join(" ")}` : "";
+  return `${it.meta.id} ${it.meta.status} "${it.meta.title}"${tags}${suffix}`;
 }
 
 /** Header the `te mcp` shim sends so the daemon can probe client liveness. */

@@ -75,14 +75,14 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
   server.registerTool(
     "next",
     {
-      description: "Ready, unclaimed items whose targets are free, best first.",
-      inputSchema: { limit: z.number().int().min(1).max(20).optional() },
+      description: "Ready, unclaimed items whose targets are free, best first. domain: only items tagged with it.",
+      inputSchema: { limit: z.number().int().min(1).max(20).optional(), domain: z.string().optional() },
     },
-    ({ limit }) => {
+    ({ limit, domain }) => {
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
-        const items = ops.next(limit ?? 3);
+        const items = ops.next(limit ?? 3, domain);
         if (!items.length) return okText("nothing ready");
         return okText(items.map(itemLine).join("\n"));
       } catch (e) {
@@ -109,6 +109,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const lines: string[] = [
           `${it.meta.id} ${it.meta.status}${it.meta.archived ? " [archived]" : ""} "${it.meta.title}" v${it.meta.version}`,
         ];
+        if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
         else lines.push(`source: ${b.source.path}${b.source.moved ? " (moved)" : ""}`, b.source.text.trim());
@@ -133,9 +134,10 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
   server.registerTool(
     "query",
     {
-      description: "Search items by status/type/project/resource/text.",
+      description: "Search items by status/type/project/domain/resource/text.",
       inputSchema: {
         status: z.string().optional(),
+        domain: z.string().optional(),
         type: z.string().optional(),
         project: z.string().optional(),
         resource: z.string().optional(),
@@ -150,6 +152,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           status: args.status as never,
           type: args.type,
           project: args.project,
+          domain: args.domain,
           resource: args.resource,
           text: args.text,
         });

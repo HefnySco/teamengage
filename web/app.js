@@ -64,11 +64,46 @@ const ClaimBadges = ({ c }) => html`
   ${c.unsynced && html`<span class="badge text-bg-warning ms-1">unsynced</span>`}
   ${staleClaim(c) && html`<span class="badge text-bg-warning ms-1">stale</span>`}
 `;
+// domain colours, fetched once and refreshed on change (chips everywhere use them)
+let domainColors = {};
+const domainListeners = new Set();
+const refreshDomains = () =>
+  api("/api/domains")
+    .then((rows) => {
+      domainColors = Object.fromEntries(rows.map((r) => [r.name, r.color]));
+      domainListeners.forEach((f) => f(rows));
+    })
+    .catch(() => {});
+refreshDomains();
+const fallbackColor = (name) => {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360} 55% 45%)`;
+};
+function useDomains() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    domainListeners.add(setRows);
+    refreshDomains();
+    return () => domainListeners.delete(setRows);
+  }, []);
+  return rows;
+}
+const DomainChip = ({ d, onClick, onRemove, active }) => html`
+  <span class="badge domain-chip ${active ? "active" : ""}" style=${{ background: domainColors[d] ?? fallbackColor(d) }}
+    title=${onClick ? `filter by #${d}` : `#${d}`}
+    onClick=${onClick ? (e) => { e.stopPropagation(); onClick(d); } : undefined}>
+    #${d}${onRemove && html`<span class="ms-1 chip-x" title="remove" onClick=${(e) => { e.stopPropagation(); onRemove(d); }}>×</span>`}
+  </span>`;
+const DomainChips = ({ ds, onClick, active }) =>
+  (ds ?? []).length ? html`<span class="d-inline-flex flex-wrap gap-1">${ds.map((d) => html`<${DomainChip} key=${d} d=${d} onClick=${onClick} active=${active === d} />`)}</span>` : null;
+
 const ItemLine = ({ i, onOpen }) => html`
   <div class="d-flex align-items-baseline gap-2 flex-wrap">
     <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
     <span class="badge ${ST_BADGE[i.status] ?? "text-bg-secondary"}">${i.status}</span>
     <span>${i.title}</span>
+    <${DomainChips} ds=${i.domains} />
     ${i.claim && html`<span class="claim-note">held by ${i.claim.holder}@${i.claim.machine}</span> <${ClaimBadges} c=${i.claim} />`}
     ${i.blocked && html`<span class="text-secondary">blocked</span>`}
   </div>
@@ -173,7 +208,7 @@ const Inbox = ({ onOpen }) => {
         ${view.questions.map(
           (q) => html`
             <div class="list-group-item" key=${q.id}>
-              <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id) }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id), domains: byId[q.id]?.domains }} onOpen=${onOpen} />
               <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
               <${AnswerBox} q=${q} />
             </div>
@@ -184,7 +219,7 @@ const Inbox = ({ onOpen }) => {
         ${view.drafts.map(
           (id) => html`
             <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "draft", title: title(id) }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id, status: "draft", title: title(id), domains: byId[id]?.domains }} onOpen=${onOpen} />
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
                 <button class="btn btn-sm btn-outline-success btn-act" onClick=${() => act(id, "complete", { note: "already done" })}>already done</button>
@@ -198,7 +233,7 @@ const Inbox = ({ onOpen }) => {
         ${view.reviews.map(
           (id) => html`
             <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "in_review", title: title(id) }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id, status: "in_review", title: title(id), domains: byId[id]?.domains }} onOpen=${onOpen} />
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-success btn-act" onClick=${() => act(id, "accept")}>accept (merge)</button>
                 <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
@@ -257,13 +292,22 @@ const saveSearch = (key, q) => {
 };
 // every word must appear in id, title, project or source path
 const matches = (i, words) => {
-  const hay = [i.id, i.title, i.project, i.legacy_id, i.source].filter(Boolean).join(" ").toLowerCase();
+  const hay = [i.id, i.title, i.project, i.legacy_id, i.source, ...(i.domains ?? []).map((d) => `#${d} ${d}`)]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   return words.every((w) => hay.includes(w));
 };
 
 const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
+  const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
+  const setDomain = (d) => {
+    const v = d === domain ? "" : d; // clicking the active domain clears it
+    setDomainState(v);
+    saveSearch("te.board.domain", v);
+  };
   // done cards get an archive button; the column header archives all shown
   const archive = async (ids) => {
     for (const id of ids) {
@@ -277,7 +321,11 @@ const Board = ({ onOpen }) => {
   };
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hits = words.length ? data.filter((i) => matches(i, words)) : data;
+  const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
+  const hits = words.length ? inDomain.filter((i) => matches(i, words)) : inDomain;
+  const domainCounts = {};
+  for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
+  const untagged = data.filter((i) => !(i.domains ?? []).length).length;
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.board.q", v);
@@ -298,8 +346,17 @@ const Board = ({ onOpen }) => {
         }}
         autofocus
       />
-      ${words.length > 0 && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${(words.length > 0 || domain) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
+    ${Object.keys(domainCounts).length > 0 && html`<div class="d-flex flex-wrap gap-1 mb-2 align-items-center">
+      <span class="text-secondary small me-1">domains:</span>
+      ${Object.entries(domainCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([d, n]) => html`<span class="badge domain-chip ${domain === d ? "active" : ""}" style=${{ background: domainColors[d] ?? fallbackColor(d) }}
+          onClick=${() => setDomain(d)} title="show only #${d} (click again to clear)">#${d} <span class="opacity-75">${n}</span></span>`)}
+      <span class="text-secondary small ms-1">${untagged} untagged</span>
+      ${domain && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setDomain(domain)}>clear</button>`}
+    </div>`}
     <div class="d-flex gap-3 overflow-x-auto pb-2">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
@@ -326,6 +383,7 @@ const Board = ({ onOpen }) => {
                       ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
                     </div>
                     <div class="small">${i.title}</div>
+                    ${(i.domains ?? []).length > 0 && html`<div class="mt-1"><${DomainChips} ds=${i.domains} onClick=${setDomain} active=${domain} /></div>`}
                     ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
                     ${s === "done" && !i.claim && html`<div class="text-end mt-1">
                       <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="archive"
@@ -380,6 +438,106 @@ const Archive = ({ onOpen }) => {
         `,
       )}
     </div>
+  `;
+};
+
+// ---- Domains -------------------------------------------------------------------
+const Domains = () => {
+  const rows = useDomains();
+  const [name, setName] = useState("");
+  const [sugg, setSugg] = useState(null);
+  const [pick, setPick] = useState({});
+  const call = async (path, body) => {
+    try {
+      const r = await post(path, body);
+      refreshDomains();
+      return r;
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const edit = async (r, field, label) => {
+    const cur = field === "keywords" ? (r.keywords ?? []).join(", ") : (r[field] ?? "");
+    const v = prompt(`${label} for #${r.name}`, cur);
+    if (v === null) return;
+    await call("/api/domains", { name: r.name, [field]: field === "keywords" ? v.split(",").map((x) => x.trim()).filter(Boolean) : v });
+  };
+  const rename = async (r) => {
+    const to = prompt(`Rename #${r.name} to… (an existing domain = merge into it)`, r.name);
+    if (!to || to === r.name) return;
+    const exists = (rows ?? []).some((x) => x.name === to.toLowerCase());
+    if (exists && !confirm(`#${to} exists — merge #${r.name} (${r.count} item(s)) into it?`)) return;
+    await call(`/api/domains/${encodeURIComponent(r.name)}/rename`, { to });
+  };
+  const del = async (r) => {
+    if (!confirm(`Delete #${r.name}? It is removed from ${r.count + r.archived} item(s).`)) return;
+    await call(`/api/domains/${encodeURIComponent(r.name)}/delete`, {});
+  };
+  const loadSuggest = async () => {
+    const s = await api("/api/domains/suggest");
+    setSugg(s);
+    setPick(Object.fromEntries(s.map((x) => [x.id, true])));
+  };
+  const apply = async () => {
+    const ids = Object.entries(pick).filter(([, v]) => v).map(([k]) => k);
+    if (!ids.length) return;
+    const r = await call("/api/domains/suggest/apply", { ids });
+    if (r) alert(`added ${r.added} tag(s) on ${r.items} item(s)`);
+    setSugg(null);
+  };
+  if (!rows) return html`<p class="text-secondary">loading…</p>`;
+  return html`
+    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+      <h2 class="h4 mb-0 me-2">Domains</h2>
+      <input class="form-control form-control-sm" style=${{ maxWidth: "14rem" }} placeholder="new domain" value=${name}
+        onInput=${(e) => setName(e.target.value)}
+        onKeyDown=${async (e) => {
+          if (e.key === "Enter" && name.trim()) {
+            await call("/api/domains", { name });
+            setName("");
+          }
+        }} />
+      <button class="btn btn-sm btn-primary" disabled=${!name.trim()} onClick=${async () => {
+        await call("/api/domains", { name });
+        setName("");
+      }}>add</button>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onClick=${loadSuggest}>suggest tags from keywords</button>
+    </div>
+    ${rows.length === 0 && html`<p class="text-secondary">no domains yet — add one, or type one on an item page</p>`}
+    <div class="table-responsive"><table class="table table-sm align-middle">
+      <thead><tr><th>domain</th><th>description</th><th>keywords (for suggestions)</th><th class="text-end">items</th><th class="text-end">open</th><th></th></tr></thead>
+      <tbody>
+        ${rows.map((r) => html`<tr key=${r.name}>
+          <td><a href=${`#/board`} onClick=${() => saveSearch("te.board.domain", r.name)}><${DomainChip} d=${r.name} /></a></td>
+          <td class="small"><span class="editable" onClick=${() => edit(r, "description", "Description")}>${r.description || html`<span class="text-secondary">add…</span>`}</span></td>
+          <td class="small"><span class="editable" onClick=${() => edit(r, "keywords", "Keywords (comma separated)")}>${(r.keywords ?? []).join(", ") || html`<span class="text-secondary">add…</span>`}</span></td>
+          <td class="text-end">${r.count}${r.archived ? html`<span class="text-secondary small"> +${r.archived} archived</span>` : ""}</td>
+          <td class="text-end">${r.open}</td>
+          <td class="text-end text-nowrap">
+            <button class="btn btn-sm btn-outline-secondary py-0" onClick=${() => edit(r, "color", "Colour (css, e.g. #2e7d32 — empty for automatic)")}>colour</button>
+            <button class="btn btn-sm btn-outline-secondary py-0" onClick=${() => rename(r)}>rename / merge</button>
+            <button class="btn btn-sm btn-outline-danger py-0" onClick=${() => del(r)}>delete</button>
+          </td>
+        </tr>`)}
+      </tbody>
+    </table></div>
+    ${sugg && html`<div class="card mt-3">
+      <div class="card-header py-2 d-flex align-items-center gap-2">
+        <b>Suggested tags</b> <span class="text-secondary small">${sugg.length} item(s) — from the keywords above; only adds, never removes</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onClick=${() => setPick(Object.fromEntries(sugg.map((x) => [x.id, !Object.values(pick).every(Boolean)])))}>toggle all</button>
+        <button class="btn btn-sm btn-primary py-0" onClick=${apply}>apply selected</button>
+      </div>
+      <ul class="list-group list-group-flush scroll-list">
+        ${sugg.length === 0 && html`<li class="list-group-item text-secondary small">nothing to suggest — add keywords to domains first</li>`}
+        ${sugg.map((x) => html`<li class="list-group-item small d-flex gap-2 align-items-center" key=${x.id}>
+          <input type="checkbox" checked=${!!pick[x.id]} onChange=${(e) => setPick({ ...pick, [x.id]: e.target.checked })} />
+          <a class="item id" href=${`#/item/${x.id}`}>${x.id}</a>
+          <span class="flex-grow-1">${x.title}</span>
+          <${DomainChips} ds=${x.current} />
+          ${x.add.map((d) => html`<span class="badge domain-chip suggested" style=${{ background: domainColors[d] ?? fallbackColor(d) }}>+#${d}</span>`)}
+        </li>`)}
+      </ul>
+    </div>`}
   `;
 };
 
@@ -503,6 +661,41 @@ const Notes = ({ id, text, onAdded }) => {
   `;
 };
 
+// domains on an item: chips with × and an input (datalist of known domains)
+const DomainEditor = ({ id, ds, onChanged }) => {
+  const rows = useDomains();
+  const [draft, setDraft] = useState("");
+  const save = async (next) => {
+    try {
+      await post(`/api/items/${id}/domains`, { domains: next });
+      setDraft("");
+      onChanged();
+      refreshDomains();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const add = () => {
+    const names = draft.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+    if (names.length) save([...(ds ?? []), ...names]);
+  };
+  return html`
+    <div class="d-flex flex-wrap align-items-center gap-1 mb-2">
+      <span class="text-secondary small me-1">domains</span>
+      ${(ds ?? []).map((d) => html`<${DomainChip} key=${d} d=${d} onRemove=${(x) => save(ds.filter((y) => y !== x))} />`)}
+      <input class="form-control form-control-sm domain-input" list="te-domain-list" placeholder="+ domain" value=${draft}
+        onInput=${(e) => setDraft(e.target.value)}
+        onKeyDown=${(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            add();
+          }
+        }} />
+      <datalist id="te-domain-list">${(rows ?? []).map((r) => html`<option value=${r.name}>${r.description ?? ""}</option>`)}</datalist>
+    </div>
+  `;
+};
+
 // ---- Item (UI-0005) ------------------------------------------------------------
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
@@ -538,6 +731,7 @@ const ItemView = ({ id }) => {
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
+    <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
       <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
     </div>`}
@@ -657,7 +851,7 @@ const Sync = () => {
 };
 
 // ---- shell ------------------------------------------------------------------------
-const routes = { inbox: Inbox, board: Board, graph: Graph, activity: Activity, sync: Sync, archive: Archive };
+const routes = { inbox: Inbox, board: Board, graph: Graph, activity: Activity, sync: Sync, domains: Domains, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {
