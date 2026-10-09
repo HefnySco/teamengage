@@ -1,6 +1,6 @@
 {
   "name": "teamengage",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "description": "One human, many local LLM agents, planning and executing together on shared plans.",
   "type": "module",
   "main": "dist/index.js",
