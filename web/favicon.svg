@@ -2,10 +2,10 @@
   <title>TeamEngage</title>
   <!-- AI: navy hexagon -->
   <polygon points="22,13 38.45,22.5 38.45,41.5 22,51 5.55,41.5 5.55,22.5"
-    fill="#1e3a5f" stroke="#1e3a5f" stroke-width="3" stroke-linejoin="round"/>
+    fill="#3b7dff" stroke="#3b7dff" stroke-width="3" stroke-linejoin="round"/>
   <!-- human: teal hexagon, overlapping — the overlap is where they work together -->
   <polygon points="42,13 58.45,22.5 58.45,41.5 42,51 25.55,41.5 25.55,22.5"
-    fill="#2bb3a3" fill-opacity="0.9" stroke="#2bb3a3" stroke-opacity="0.9" stroke-width="3" stroke-linejoin="round"/>
+    fill="#18d4a4" fill-opacity="0.9" stroke="#18d4a4" stroke-opacity="0.9" stroke-width="3" stroke-linejoin="round"/>
   <!-- done together -->
   <path d="M23.5 32.5 L30 39 L41.5 26.5" fill="none" stroke="#ffffff" stroke-width="5.5"
     stroke-linecap="round" stroke-linejoin="round"/>
