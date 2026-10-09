@@ -38,7 +38,7 @@ src/resources   git / ssh / folder / url resource drivers
 src/sync        multi-machine plans-repo sync and reconciliation
 src/import      importer for existing Markdown task folders
 web/            human web UI, served by the daemon
-skills/te-plan  Claude Code skill: break a goal into TeamEngage tasks
+skills/         agent skills: te-work (execute a task), te-plan (plan tasks)
 ```
 
 Task files in overlay workspaces follow `docs/TASK-FORMAT.md` (`te template`).

@@ -61,12 +61,19 @@ its own daemon; workspaces converge through the plans repo's git remote.
 
 Agents create tasks with `propose`; in a task-folder workspace it writes
 `<project>/TASK-NN-<slug>.md` from the standard template
-([TASK-FORMAT.md](TASK-FORMAT.md), `te template`). The `te-plan` Claude Code
-skill (`skills/te-plan/`) is the recipe for breaking a goal into tasks.
-Install it for Claude Code with:
+([TASK-FORMAT.md](TASK-FORMAT.md), `te template`).
+
+Two skills (Claude Code and Devin use the same `SKILL.md` format), both
+curl-only, no MCP needed:
+
+- `skills/te-work/` — implement / continue / pick up a task: hello → brief →
+  claim → log / ask → submit with evidence, release if blocked.
+- `skills/te-plan/` — break a goal into tasks with one `propose` call.
+
+Install by linking them into the agent's skills folder:
 
 ```bash
-ln -s "$PWD/skills/te-plan" ~/.claude/skills/te-plan
+ln -s "$PWD/skills/te-work" "$PWD/skills/te-plan" ~/.claude/skills/
 ```
 
 ## Enforcing the rules (when instructions aren't enough)

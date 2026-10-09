@@ -92,4 +92,24 @@ describe("shim proxy (MC-0004)", () => {
     expect(hello.content[0].text).toMatch(/session shimmed@test#/);
     await client.close();
   });
+
+  it("the built stdio shim (as Devin / IDEs launch it) passes the server instructions on", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+    const { resolve } = await import("node:path");
+    const client = new Client({ name: "stdio-test", version: "0.0.1" });
+    await client.connect(
+      new StdioClientTransport({
+        command: "node",
+        args: [resolve("dist/cli/main.js"), "mcp"],
+        env: { ...(process.env as Record<string, string>), TEAMENGAGE_HOME: home },
+      }),
+    );
+    try {
+      expect(client.getServerVersion()?.name).toBe("teamengage");
+      expect(client.getInstructions()).toMatch(/hello \(once\) → next → brief[\s\S]*propose/);
+    } finally {
+      await client.close();
+    }
+  });
 });

@@ -140,6 +140,11 @@ class Shim {
   clientCaps() {
     return this.client.getServerCapabilities() as Record<string, unknown> | undefined;
   }
+
+  /** The daemon's server instructions (protocol + authoring rules). */
+  instructions(): string | undefined {
+    return this.client.getInstructions();
+  }
 }
 
 export async function runShim(home?: string): Promise<void> {
@@ -147,9 +152,11 @@ export async function runShim(home?: string): Promise<void> {
   const shim = new Shim(new URL(`http://127.0.0.1:${port}/mcp`), token, home);
   await shim.connect();
 
+  // the shim answers initialize itself — pass the daemon's instructions on so
+  // stdio clients (Devin, Claude Code via `te mcp`) put the rules in the prompt
   const server = new Server(
-    { name: "teamengage-shim", version: "0.1.0" },
-    { capabilities: { tools: {}, ...(shim.clientCaps() ?? {}) } },
+    { name: "teamengage", version: "0.1.0" },
+    { capabilities: { tools: {}, ...(shim.clientCaps() ?? {}) }, instructions: shim.instructions() },
   );
   server.fallbackRequestHandler = async (req) => (await shim.forward(req)) as never;
   server.fallbackNotificationHandler = (n) => shim.forwardNotification(n);

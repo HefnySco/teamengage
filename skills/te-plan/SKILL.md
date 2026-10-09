@@ -15,18 +15,23 @@ teamengage repo). You never write task files by hand — `propose` renders them.
 
 ## 0. Connect
 
+Plain HTTP with curl — no MCP needed:
+
 ```bash
-T=$(curl -s -X POST http://127.0.0.1:4747/agent/hello -d '{"agent":"<your-name>"}' | sed -n 's/^token //p')
+B=http://127.0.0.1:4747/agent
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>"}' | tee /dev/stderr | sed -n 's/^token //p')
+H="X-TE-Session: $T"
 ```
 
-(or the `teamengage` MCP server: `hello`). Read the `hello` output: if it says
-the plans are **behind** — stop and ask the human to pull first.
+Read the `hello` output: if it says the plans are **behind** — stop and ask
+the human to pull first.
 
 ## 1. Understand before you split
 
-- Read what exists: `query {text: "<keywords>"}`, `query {project: "<p>"}`,
-  and `brief <id>` on anything related. Do **not** duplicate an existing
-  item — extend it with `log`, or depend on it.
+- Read what exists: `curl -s "$B/query?text=<keywords>" -H "$H"`,
+  `curl -s "$B/query?project=<p>" -H "$H"`, and `curl -s $B/brief/<id> -H "$H"`
+  on anything related. Do **not** duplicate an existing item — depend on it,
+  or note the overlap.
 - Read the project folder's README / PHASE / MEGAPLAN files for conventions.
 - Read the code you will point at. Acceptance criteria and `touches` must
   name real files, real commands, real test names.
@@ -98,7 +103,7 @@ honestly be (`droneengage_mavlink: src/mission/**`, not the whole repo).
 One call with the whole plan. Over HTTP:
 
 ```bash
-curl -s -X POST http://127.0.0.1:4747/agent/propose -H "X-TE-Session: $T" -d '{
+curl -s -X POST $B/propose -H "$H" -d '{
   "items": [
     { "type": "epic", "project": "global", "title": "Mission re-run support",
       "summary": "Flying the same mission twice must behave like the first run." },
@@ -139,7 +144,7 @@ Field notes:
   order you suggest approving them; they approve, reorder or drop.
 - Do not claim your own drafts, edit the `te:` line, or move files.
 - Later refinements to a proposed file: additive only (`## Acceptance`,
-  `## Notes`), each recorded with `log <id> {note}`.
+  `## Notes`), each recorded with `log`. To execute tasks, see te-work.
 
 ## Example result
 
