@@ -101,6 +101,19 @@ export async function archiveCmd(args: string[], home?: string): Promise<number>
 }
 export const unarchiveCmd = (args: string[], home?: string) => act("unarchive", args, {}, home);
 
+/** `te delete <ID> [reason] --yes` — remove from tracking; the task file stays, untagged. */
+export async function deleteCmd(args: string[], home?: string): Promise<number> {
+  const [id, ...rest] = positional(args);
+  if (!id || !args.includes("--yes")) {
+    process.stderr.write(
+      "usage: te delete <ID> [reason] --yes\n" +
+        "removes the item from TeamEngage; its task file stays as plain Markdown (te: line removed, path ignored)\n",
+    );
+    return 2;
+  }
+  return act("delete", [id, ...args.filter((a) => a.startsWith("--") && a !== "--yes")], { reason: rest.join(" ") }, home);
+}
+
 /** `te unhold <ID>` — release a hold → ready. */
 export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
 

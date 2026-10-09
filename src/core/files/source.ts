@@ -59,6 +59,20 @@ export function withTeTag(text: string, id: string): string {
   return `---${eol}${lines.join(eol)}${eol}---${eol}${text.slice(fm.block.length)}`;
 }
 
+/**
+ * Remove the `te: <id>` line (delete: the file becomes plain Markdown
+ * again). Other frontmatter keys stay; a block left empty is removed.
+ * Unchanged when the file isn't tagged with `id`.
+ */
+export function withoutTeTag(text: string, id: string): string {
+  const fm = leadingFrontmatter(text);
+  if (!fm || fm.map.te !== id) return text;
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = fm.yaml.split(/\r?\n/).filter((l) => !/^te:/.test(l));
+  const body = text.slice(fm.block.length);
+  return lines.some((l) => l.trim()) ? `---${eol}${lines.join(eol)}${eol}---${eol}${body}` : body;
+}
+
 /** Workspace-relative path with `/` separators — the same on every machine. */
 export function toSourcePath(root: string, abs: string): string {
   return relative(root, abs).split(sep).join("/");

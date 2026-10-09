@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, renameSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, renameSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -371,5 +371,59 @@ describe("overlay import honours ignore globs", () => {
     } finally {
       ws.config.ignore = [];
     }
+  });
+});
+
+describe("delete", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+  const post = (path: string, body: unknown = {}) =>
+    api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("removes tracking, untags the task file, ignores its path; refusals name the reason", async () => {
+    const { ids, files } = await store().createItems(
+      [
+        { type: "task", title: "Delete me", project: "global", simple: "plain" },
+        { type: "task", title: "Depends on it", project: "global", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [victim, user] = ids;
+
+    // still depended on → refused, nothing touched
+    const r1 = await post(`/api/items/${victim}/delete`);
+    expect(r1.status).toBeGreaterThanOrEqual(400);
+    expect(await r1.text()).toContain(user);
+    expect(store().idx.get(victim)).toBeDefined();
+
+    expect((await post(`/api/items/${user}/delete`, { reason: "duplicate" })).status).toBe(200);
+    // claimed → refused
+    expect((await post(`/api/items/${victim}/approve`)).status).toBe(200);
+    expect((await post(`/api/items/${victim}/claim`)).status).toBe(200);
+    expect((await post(`/api/items/${victim}/delete`)).status).toBeGreaterThanOrEqual(400);
+    expect((await post(`/api/items/${victim}/release`)).status).toBe(200);
+
+    const itemPath = join(plans, store().idx.get(victim)!.path);
+    const r = await post(`/api/items/${victim}/delete`, { reason: "mistake" });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { untagged: string[]; ignored: string[] };
+    const simple = files[0].replace(/\.md$/, ".simple.md");
+    expect(body.untagged.sort()).toEqual([files[0], simple].sort());
+
+    expect(store().idx.get(victim)).toBeUndefined();
+    expect(existsSync(itemPath)).toBe(false);
+    // the task file is still there, as plain markdown
+    const text = readFileSync(join(root, files[0]), "utf8");
+    expect(text.startsWith("# Delete me\n")).toBe(true);
+    // ignored in config (memory + file), so the tracker doesn't flag it
+    const ws = ctx.workspaces.get("tasks")!.ws;
+    expect(ws.config.ignore).toEqual(expect.arrayContaining([files[0], simple]));
+    expect(readFileSync(join(plans, "workspace.yaml"), "utf8")).toContain(files[0]);
+    const tracker = new OverlayTracker(store(), { debounceMs: 50 });
+    await tracker.rescan();
+    expect(tracker.findings().filter((f) => f.path?.includes("delete-me"))).toEqual([]);
+    // the event log keeps the record
+    const events = readFileSync(join(plans, "events", "test", `${new Date().toISOString().slice(0, 7)}.jsonl`), "utf8");
+    expect(events).toMatch(new RegExp(`"item":"${victim}","action":"delete".*Delete me — mistake`));
+    ws.config.ignore = [];
   });
 });

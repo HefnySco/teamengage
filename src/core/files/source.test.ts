@@ -157,3 +157,13 @@ describe("-simplified.md companions", () => {
     expect(r.moves).toEqual([{ id: "WC-0001", source: "w/done/a.md", simple_source: "w/done/a-simplified.md" }]);
   });
 });
+
+describe("withoutTeTag", () => {
+  it("removes only te:, drops an emptied block, ignores other ids", async () => {
+    const { withoutTeTag } = await import("./source.js");
+    expect(withoutTeTag("---\nte: GL-0001\n---\n# A\n", "GL-0001")).toBe("# A\n");
+    expect(withoutTeTag("---\nowner: me\nte: GL-0001\n---\n# A\n", "GL-0001")).toBe("---\nowner: me\n---\n# A\n");
+    expect(withoutTeTag("---\nte: GL-0002\n---\n# A\n", "GL-0001")).toBe("---\nte: GL-0002\n---\n# A\n");
+    expect(withoutTeTag("# plain\n", "GL-0001")).toBe("# plain\n");
+  });
+});

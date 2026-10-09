@@ -283,6 +283,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("draft", (ops, id, b) => ops.toDraft(id, b.reason ? String(b.reason) : undefined));
   act("archive", (ops, id, b) => ops.archive(id, b.reason ? String(b.reason) : undefined));
   act("unarchive", (ops, id) => ops.unarchive(id));
+  act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("claim", (ops, id) => ops.humanClaim(id));
   act("release", (ops, id, b) => ops.release(id, "human", b.note ? String(b.note) : undefined));
   act("rollback", (ops, id, b) => ops.rollback(id, b.force === true));

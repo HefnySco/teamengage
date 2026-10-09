@@ -193,6 +193,13 @@ done     = terminal
   it tagged `[archived]` in `brief`. Archived items leave the board, inbox,
   graph, `query` and `next`, and cannot be claimed. Claimed items must be
   released first.
+- **Delete** (`te delete <ID> --yes`, delete in the UI) removes an item from
+  TeamEngage, not from disk: the tracking file goes, the event log keeps a
+  `delete` record, and in overlay mode the task file stays as plain Markdown
+  (its `te:` line removed, its path added to `ignore:`). Deleting the file
+  itself is the human's own git operation. Refused while claimed or while
+  another item depends on it or names it as parent. Milder options first:
+  drop (decided against, still listed) and archive (hidden, restorable).
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
   `undrop`, `complete`, `hold`, `unhold`, `to_draft`, and `release` of
   someone else's claim.

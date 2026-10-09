@@ -534,6 +534,12 @@ export class WorkspaceOps {
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unarchive" });
   }
 
+  /** Human: remove an item from tracking (task file stays, untagged). */
+  async deleteItem(id: string, reason?: string) {
+    this.item(id);
+    return this.store.deleteItem(id, this.actorFor("human"), reason);
+  }
+
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });

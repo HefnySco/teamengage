@@ -11,7 +11,7 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag, toSourcePath } from "../../core/files/source.js";
+import { withTeTag, withoutTeTag, toSourcePath } from "../../core/files/source.js";
 import {
   filePrefix,
   nextTaskNumber,
@@ -593,6 +593,98 @@ export class PlansStore {
       if (touched.length) await this.commitPaths(touched, `te: ${done.join(", ")} task file moved`);
       return done;
     });
+  }
+
+  /**
+   * Delete an item from tracking (human only — callers check). Removes the
+   * item file; in overlay mode the task file(s) stay as plain Markdown: the
+   * `te:` line is removed and the path goes into `ignore:` so it isn't
+   * reported as untracked. Refused while claimed or while another item
+   * depends on it or names it as parent. The event log keeps the record.
+   */
+  deleteItem(id: string, actor: Actor, reason?: string): Promise<{ untagged: string[]; ignored: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      if (this.index.claims.has(id)) {
+        throw new ConflictError(`${id} is claimed by ${this.index.claims.get(id)!.holder} — release it first`);
+      }
+      const { parseItemRef } = await import("../../core/address/refs.js");
+      const refsIt = (r: string) => {
+        try {
+          const p = parseItemRef(r);
+          return !p.workspace && p.id === id;
+        } catch {
+          return false;
+        }
+      };
+      const users = [...this.index.items.values()]
+        .filter((o) => o.meta.id !== id && (o.meta.depends_on.some(refsIt) || (o.meta.parent && refsIt(o.meta.parent))))
+        .map((o) => o.meta.id);
+      if (users.length) {
+        throw new ConflictError(`${id} is still used by ${users.join(", ")} (depends_on/parent) — change those first`);
+      }
+
+      const untagged: string[] = [];
+      const ignored: string[] = [];
+      if (this.ws.config.mode === "overlay") {
+        for (const rel of [it.meta.source, it.meta.simple_source]) {
+          if (!rel) continue;
+          const abs = join(this.ws.root, rel);
+          if (existsSync(abs)) {
+            const text = await readFile(abs, "utf8");
+            const out = withoutTeTag(text, id);
+            if (out !== text) {
+              await writeFileAtomic(abs, out);
+              this.onFileWrite?.(abs, out);
+              untagged.push(rel);
+            }
+          }
+          if (!this.ws.config.ignore.includes(rel)) ignored.push(rel);
+        }
+        if (ignored.length) await this.addIgnores(ignored);
+      }
+
+      const absItem = join(this.ws.plansDir, it.path);
+      const { unlink } = await import("node:fs/promises");
+      await unlink(absItem);
+      this.onFileWrite?.(absItem, null);
+      this.index.removeFile(absItem);
+
+      const full = await this.events.append({
+        ts: new Date().toISOString(),
+        actor: actor.session,
+        item: id,
+        action: "delete",
+        from: it.meta.status,
+        note: [it.meta.title, reason].filter(Boolean).join(" — "),
+      });
+      this.onEvent?.(full);
+      await this.commitPaths(
+        [join("events", this.machine, eventFileName(full.ts)), ...(ignored.length ? ["workspace.yaml"] : [])],
+        `te: ${id} deleted by ${actor.session}`,
+        [it.path],
+      );
+      return { untagged, ignored };
+    });
+  }
+
+  /** Append paths to workspace.yaml `ignore:` keeping the file's formatting. */
+  private async addIgnores(paths: string[]): Promise<void> {
+    const YAML = (await import("yaml")).default;
+    const abs = join(this.ws.plansDir, "workspace.yaml");
+    const doc = YAML.parseDocument(await readFile(abs, "utf8"));
+    const cur = ((doc.toJS() as { ignore?: string[] } | null)?.ignore ?? []).filter(Boolean);
+    const next = [...cur, ...paths.filter((p) => !cur.includes(p))];
+    doc.set("ignore", next);
+    const seq = doc.get("ignore", true) as { flow?: boolean } | undefined;
+    if (seq && next.length <= 3) seq.flow = true;
+    const out = doc.toString();
+    await writeFileAtomic(abs, out);
+    this.onFileWrite?.(abs, out);
+    this.ws.config.ignore.splice(0, this.ws.config.ignore.length, ...next);
   }
 
   /** Overlay mode: write `te: <id>` into a task file's frontmatter. */
