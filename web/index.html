@@ -28,7 +28,10 @@
       /* domains */
       .domain-chip { color: #fff; font-weight: 500; cursor: default; }
       .domain-chip[title^="filter"], .board-col .domain-chip, .d-flex > .domain-chip { cursor: pointer; }
-      .domain-chip.active { outline: 2px solid var(--bs-body-color); outline-offset: 1px; }
+      /* the filtered domain stays solid; sibling chips in the same group fade */
+      .domain-chip { transition: opacity .15s; }
+      .domain-chip.active { font-weight: 700; }
+      *:has(> .domain-chip.active) > .domain-chip:not(.active) { opacity: .45; }
       .domain-chip.suggested { opacity: .8; border: 1px dashed #fff; }
       .chip-x { cursor: pointer; opacity: .8; } .chip-x:hover { opacity: 1; }
       .domain-input { width: 8rem; padding-top: 0; padding-bottom: 0; }
@@ -42,6 +45,11 @@
       .board-col .mini .id { font-size: .8rem; }
       .board-col .domain-chip { font-size: .62rem; padding: .15em .4em; }
       .board-col h3 { font-size: .75rem; }
+      /* column header: name and count take the status colour over an underline bar */
+      .board-col h3 { color: var(--st, #6c757d); font-weight: 700; border-bottom: 3px solid var(--st, #6c757d); padding-bottom: 3px; }
+      .board-col h3 .badge { background: var(--st, #6c757d); }
+      .st-in_progress.board-col h3 .badge, .st-waiting.board-col h3 .badge { color: #212529; }
+      .board-col h3 .board-archive-all { color: var(--st); border-color: var(--st); }
       .board-list { max-height: calc(100vh - 13rem); overflow-y: auto; }
       .act-log { max-height: 70vh; overflow-y: auto; }
       /* action buttons keep one width so they don't jump around */

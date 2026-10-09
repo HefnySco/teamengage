@@ -361,8 +361,8 @@ const Board = ({ onOpen }) => {
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
         return html`
-          <div class="board-col flex-shrink-0" key=${s}>
-            <h3 class="h6 text-uppercase text-secondary d-flex justify-content-between">
+          <div class="board-col st-${s} flex-shrink-0" key=${s}>
+            <h3 class="h6 text-uppercase d-flex justify-content-between">
               <span>${s.replace("_", " ")}</span>
               <span class="d-flex align-items-center gap-1">
                 ${s === "done" && items.some((i) => !i.claim) && html`<button class="btn btn-sm btn-outline-secondary py-0 px-1 board-archive-all"
