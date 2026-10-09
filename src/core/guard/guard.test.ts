@@ -107,6 +107,9 @@ describe("shell commands", () => {
     expect(bash("mv global/TASK-13-rerun.md global/done/")).toMatch(/never move task files into done/);
     expect(bash("git mv TASK-13.md done")).toMatch(/done/);
     expect(bash("sed -i 's/a/b/' global/TASK-13-rerun.md")).toMatch(/in place/);
+    // sed -i on a file outside the workspace while a task .md is only listed
+    expect(bash("sed -i s/a/b/ /r/code/web/app.js; ls /r/Tasks/andruav/x.md", "/r/code")).toBeNull();
+    expect(bash("sed -i s/a/b/ /r/Tasks/global/TASK-13-rerun.md", "/tmp")).toMatch(/in place/);
     expect(bash("git push origin master")).toMatch(/never git push/);
     expect(bash("git -C /r/Tasks push", "/tmp")).toMatch(/never git push/);
   });

@@ -146,7 +146,16 @@ function checkBash(cmd: string, cwd: string | undefined, wss: GuardWorkspace[]):
     if (MOVE.test(cmd) && /(^|[\s/'"])done\/?(\s|$|['"])|\/done\//.test(cmd)) {
       return "never move task files into done/ — status lives in TeamEngage; submit, and the human moves files.";
     }
-    if (IN_PLACE.test(cmd) && /\.md\b/.test(cmd)) {
+    // an in-place editor plus a .md path that resolves into this workspace
+    // (not a .md mentioned elsewhere in the same command line)
+    const mdInWs = (seg: string) =>
+      (seg.match(/[^\s|;&<>()'"]+\.md\b/g) ?? []).some((tok) => {
+        if (tok.startsWith("~") || tok.startsWith("$")) return false;
+        const abs = isAbsolute(tok) ? resolve(tok) : absCwd ? resolve(absCwd, tok) : undefined;
+        return abs !== undefined && within(abs, ws.root);
+      });
+    // per command segment: `sed -i … app.js; ls Tasks/x.md` edits no task file
+    if (cmd.split(/;|&&|\|\||\|/).some((seg) => IN_PLACE.test(seg) && mdInWs(seg))) {
       return "don't edit task files in place from the shell — use the Edit tool (edits must be additive and keep the te: line).";
     }
     if (PUSH.test(cmd)) {

@@ -444,7 +444,7 @@ const ItemView = ({ id, onOpen }) => {
     <h2 class="h4"><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
     <div class="d-flex align-items-center gap-2 mb-2">
       <${Badge} s=${it.meta.status} />
-      ${it.meta.archived && html`<span class="badge text-bg-dark">archived</span>`}
+      ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
@@ -461,7 +461,7 @@ const ItemView = ({ id, onOpen }) => {
       ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}
       ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success btn-act" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
       ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
-      ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-dark btn-act" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
+      ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
       ${it.meta.archived && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unarchive")}>unarchive</button>`}
       ${!it.claim && html`<button class="btn btn-sm btn-danger btn-act" onClick=${async () => {
         const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
@@ -489,7 +489,7 @@ const ItemView = ({ id, onOpen }) => {
     ${b.source && html`<div class="text-secondary small mb-2">source ${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</div>`}
     ${tab === "simple" && html`<div class="card card-body"><pre class="mb-0">${b.source?.simple?.text ?? (sec("Simple") || "(no Simple section)")}</pre></div>`}
     ${tab === "technical" && html`
-      <div class="card card-body"><pre class="mb-0">${b.source?.text ?? `${sec("Summary")}\n${sec("Acceptance")}`}</pre></div>
+      <div class="card card-body"><pre class="mb-0">${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n${sec("Acceptance")}`}</pre></div>
       ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
       ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}
