@@ -14,14 +14,33 @@ import type { LoadedWorkspace } from "../../core/config/config.js";
 /**
  * RS-0006: ssh resource against a real sshd — an ubuntu container with
  * openssh-server + rsync, keyed auth, non-standard port via `ssh_opts`.
- * Skipped on machines without docker.
+ * Skipped when docker or the image is unavailable.
  */
 
+const IMAGE = "ubuntu:24.04";
+
+/**
+ * Docker usable AND the image available (pulled here, up front): a missing
+ * daemon, an image that can't be pulled (registry limits, retired tags) or
+ * no network skips this suite instead of failing the whole run.
+ */
 const dockerOk = (() => {
   try {
     execFileSync("docker", ["info"], { stdio: "ignore" });
+  } catch {
+    return false;
+  }
+  try {
+    execFileSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" });
     return true;
   } catch {
+    /* not cached — try to pull */
+  }
+  try {
+    execFileSync("docker", ["pull", "-q", IMAGE], { stdio: "ignore", timeout: 180_000 });
+    return true;
+  } catch {
+    console.warn(`ssh.test: docker can't provide ${IMAGE} — skipping the real-sshd suite`);
     return false;
   }
 })();
@@ -66,7 +85,7 @@ beforeAll(async () => {
 
   execFileSync("docker", ["rm", "-f", NAME], { stdio: "ignore" });
   execFileSync("docker", [
-    "run", "-d", "--name", NAME, "-p", `${PORT}:22`, "ubuntu:20.04",
+    "run", "-d", "--name", NAME, "-p", `${PORT}:22`, IMAGE,
     "bash", "-c",
     `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server rsync >/dev/null 2>&1 && mkdir /run/sshd && useradd -m te && mkdir -p /home/te/.ssh ${REMOTE_DIR} && echo '${pub}' > /home/te/.ssh/authorized_keys && chown -R te:te /home/te && chmod 700 /home/te/.ssh && chmod 600 /home/te/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e`,
   ]);
