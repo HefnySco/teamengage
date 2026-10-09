@@ -4,3 +4,6 @@ coverage
 *.log
 .DS_Store
 web/dist/
+
+# plan data never belongs in the tool repo — keep workspaces in their own repos
+.teamengage/

@@ -3,8 +3,8 @@
 One human, many local LLM agents, planning and executing together on shared
 plans — concurrently, without corrupting each other's tasks or code.
 
-See `docs/DESIGN.md` for the design and `.teamengage/README.md` for the build
-plan this repository is developed against.
+See `docs/DESIGN.md` for the design. This repository holds the tool only —
+plans (TeamEngage's own or anyone's) live in their own repository, never here.
 
 ## Requirements
 
