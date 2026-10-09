@@ -5,6 +5,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../../daemon/server/context.js";
 import type { Session } from "../../core/model/session.js";
 import { errText, CLIENT_PID_HEADER, type ToolResult } from "../format.js";
+import { AUTHORING_RULES } from "../../core/files/template.js";
+
+/** Sent at initialize — MCP clients put it in the agent's system prompt. */
+export const MCP_INSTRUCTIONS = `TeamEngage coordinates the human's plans and the agents working on them.
+Workflow: hello (once) → next → brief <id> → claim <id> → log / ask → submit. Claim before
+touching code and work only in the paths brief/claim return. Ask instead of guessing. Never
+mark work done, never git push — the human approves and accepts. Never edit files under
+.teamengage/; change state only through these tools.
+
+${AUTHORING_RULES}`;
 
 /**
  * MCP over Streamable HTTP (DESIGN §6.1, §7). Mounted at `/mcp` on the daemon
@@ -40,7 +50,7 @@ export function createMcpServer(deps: McpDeps): {
   server: McpServer;
   binding: AgentBinding;
 } {
-  const server = new McpServer({ name: "teamengage", version: "0.1.0" });
+  const server = new McpServer({ name: "teamengage", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
   const binding: AgentBinding = {};
   deps.tools(server, binding, deps.ctx);
   return { server, binding };

@@ -68,3 +68,27 @@ Install it for Claude Code with:
 ```bash
 ln -s "$PWD/skills/te-plan" ~/.claude/skills/te-plan
 ```
+
+## Enforcing the rules (when instructions aren't enough)
+
+Agents can ignore `AGENTS.md`. Three layers make the rules hard to miss or
+break:
+
+- **Every session sees them**: the MCP server sends them as server
+  `instructions`, and every `hello` reply ends with a one-line `rules:`
+  summary (MCP and plain HTTP).
+- **Claude Code guard hooks** (`te hooks --install`, merged into
+  `~/.claude/settings.json`; `--uninstall` removes them):
+  - *SessionStart* injects the protocol and authoring rules when a session
+    starts inside a registered workspace, or in a folder that contains one.
+  - *PreToolUse* (`Write|Edit|MultiEdit|NotebookEdit|Bash`) runs `te guard`.
+    It refuses: writes under `.teamengage/`; creating task `.md` files by
+    hand (use `propose`); changing or removing a `te:` line; non-additive
+    edits of task files; and shell commands that write into `.teamengage/`,
+    edit task files in place (`sed -i` …), move files into `done/`, or
+    `git push` from the workspace.
+  - The agent gets the reason and can correct itself. The guard fails open
+    on any error. `TE_GUARD=off` disables it for a session started with that
+    variable. Humans editing files directly are never affected.
+- **The watcher** still reports anything that slips through: untracked
+  task files, missing or duplicate `te:` tags.

@@ -33,6 +33,10 @@ export function isToolResult(x: unknown): x is ToolResult {
   );
 }
 
+/** One line every session sees, whatever its instruction files say. */
+export const HELLO_RULES =
+  "rules: claim before code · new tasks only via propose · never edit te: lines or .teamengage/, never move files to done/ · task-file edits additive + log · never push · ask, don't guess";
+
 export function registerReadTools(server: McpServer, binding: AgentBinding, ctx: DaemonCtx): void {
   server.registerTool(
     "hello",
@@ -60,6 +64,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           lines.push(`resume: ${resume.map((c) => c.item).join(", ")}`);
         }
         lines.push(...handoffLines(await handoffStatus(ops.wsr)));
+        lines.push(HELLO_RULES);
         return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);

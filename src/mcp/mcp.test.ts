@@ -99,6 +99,14 @@ describe("MCP tools (MC-0001/2/3)", () => {
     const t = text(r as never);
     expect(t).toMatch(/session claude@test#[0-9a-f]{4}/);
     expect(t).toContain("workspace ws");
+    // the rules reach every session, whatever its instruction files say
+    expect(t).toMatch(/^rules: claim before code · new tasks only via propose/m);
+  });
+
+  it("server instructions carry the protocol and authoring rules", () => {
+    const ins = client.getInstructions() ?? "";
+    expect(ins).toMatch(/hello \(once\) → next → brief/);
+    expect(ins).toContain("Never edit or remove the \"te:\" frontmatter line");
   });
 
   it("write tools require hello first (new binding)", async () => {

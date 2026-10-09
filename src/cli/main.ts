@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initCmd } from "./commands/init.js";
+import { guardCmd, hooksCmd } from "./commands/guard.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
@@ -51,6 +52,9 @@ commands:
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
+  hooks [--install|--uninstall] [--settings <file>]
+             Claude Code guard hooks (default ~/.claude/settings.json)
+  guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
   daemon     run the daemon in the foreground
 
 options:
@@ -143,6 +147,10 @@ async function main(argv: string[]): Promise<number> {
       });
       return r.status ?? 1;
     }
+    case "guard":
+      return guardCmd(rest, home);
+    case "hooks":
+      return hooksCmd(rest);
     case "template":
       process.stdout.write(TEMPLATE_EXAMPLE);
       return 0;
