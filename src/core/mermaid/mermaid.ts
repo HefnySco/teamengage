@@ -19,6 +19,7 @@ export interface MermaidOpts {
 const CLASS_FOR: Record<string, string> = {
   draft: "draft",
   ready: "ready",
+  hold: "hold",
   in_progress: "active",
   in_review: "review",
   waiting: "waiting",
@@ -28,6 +29,7 @@ const CLASS_FOR: Record<string, string> = {
 
 const CLASS_DEFS = `  classDef draft fill:#9e9e9e,color:#fff
   classDef ready fill:#f9a825,color:#000
+  classDef hold fill:#6d4c41,color:#fff
   classDef active fill:#1e88e5,color:#fff
   classDef review fill:#8e24aa,color:#fff
   classDef waiting fill:#fb8c00,color:#000

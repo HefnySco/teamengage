@@ -8,6 +8,8 @@ export type ItemType = z.infer<typeof ItemType>;
 export const Status = z.enum([
   "draft",
   "ready",
+  /** parked by the human: approved-ish, but not for agents yet (next/claim skip it) */
+  "hold",
   "in_progress",
   "in_review",
   "waiting",
@@ -72,7 +74,7 @@ export interface ItemDoc {
 
 /** turn derivation per DESIGN §5. */
 export function turnOf(status: Status): Turn {
-  return status === "draft" || status === "in_review" || status === "waiting"
+  return status === "draft" || status === "hold" || status === "in_review" || status === "waiting"
     ? "human"
     : "agent";
 }

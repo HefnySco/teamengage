@@ -175,14 +175,21 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
   ▲                       ▲                │    │                    │
   │                       │                │    └─ask──▶ waiting ────┘ (answer → in_progress)
   └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
+hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
+                       ready|hold ──to_draft──▶ draft
 blocked  = derived: any depends_on not done
 dropped  = human only; ──undrop──▶ draft (re-approval required)
 done     = terminal
 ```
 
-- `turn`: `draft`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.
+- `turn`: `draft`, `hold`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.
+- `hold` parks an item: it is not a draft (the plan is fine), but not for
+  agents yet — `next` skips it and `claim` refuses it. `te hold` / `te unhold`
+  / `te draft`, or hold / resume / to draft in the UI. A claimed item must be
+  released before it can be held.
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
-  `undrop`, `complete`, and `release` of someone else's claim.
+  `undrop`, `complete`, `hold`, `unhold`, `to_draft`, and `release` of
+  someone else's claim.
 - `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
   any non-done item straight to `done` — for work finished outside
   TeamEngage. No review and no merge: a claim is released, branches are kept.

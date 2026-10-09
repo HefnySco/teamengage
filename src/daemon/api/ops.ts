@@ -502,6 +502,24 @@ export class WorkspaceOps {
     return r;
   }
 
+  /** Human: park a draft/ready item — agents can't see or claim it. */
+  async hold(id: string, reason?: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "hold", reason });
+  }
+
+  /** Human: release a hold → ready. */
+  async unhold(id: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unhold" });
+  }
+
+  /** Human: ready/hold → draft (needs approval again). */
+  async toDraft(id: string, reason?: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "to_draft", reason });
+  }
+
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });

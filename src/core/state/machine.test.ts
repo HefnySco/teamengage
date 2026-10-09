@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { turnOf } from "../model/item.js";
 import { transition, type Actor, type TransitionCtx } from "./machine.js";
 import { ItemMeta, type Status } from "../model/item.js";
 import type { Claim } from "../model/claim.js";
@@ -44,6 +45,13 @@ describe("every arrow in DESIGN §5", () => {
     ["in_progress →drop→ dropped", "in_progress", human, { type: "drop" }, "dropped", { claim: claimOf() }],
     ["dropped →undrop→ draft", "dropped", human, { type: "undrop" }, "draft", {}],
     ["draft →complete→ done", "draft", human, { type: "complete" }, "done", {}],
+    ["ready →hold→ hold", "ready", human, { type: "hold", reason: "after the release" }, "hold", {}],
+    ["draft →hold→ hold", "draft", human, { type: "hold" }, "hold", {}],
+    ["hold →unhold→ ready", "hold", human, { type: "unhold" }, "ready", {}],
+    ["ready →to_draft→ draft", "ready", human, { type: "to_draft" }, "draft", {}],
+    ["hold →to_draft→ draft", "hold", human, { type: "to_draft", reason: "rethink" }, "draft", {}],
+    ["hold →complete→ done", "hold", human, { type: "complete" }, "done", {}],
+    ["hold →drop→ dropped", "hold", human, { type: "drop" }, "dropped", {}],
     ["ready →complete→ done", "ready", human, { type: "complete", note: "did it by hand" }, "done", {}],
     ["in_progress →complete→ done", "in_progress", human, { type: "complete" }, "done", { claim: claimOf() }],
     ["waiting →complete→ done", "waiting", human, { type: "complete" }, "done", { claim: claimOf() }],
@@ -70,6 +78,14 @@ describe("every non-arrow is rejected", () => {
     ["ready", human, { type: "undrop" }, {}],
     ["dropped", agent, { type: "undrop" }, {}], // human-only
     ["done", human, { type: "complete" }, {}], // already done
+    ["ready", agent, { type: "hold" }, {}], // human-only
+    ["hold", agent, { type: "unhold" }, {}], // human-only
+    ["ready", agent, { type: "to_draft" }, {}], // human-only
+    ["hold", agent, { type: "claim", claim: claimOf() }, { depsDone: true }], // agents can't take held items
+    ["in_progress", human, { type: "hold" }, { claim: claimOf() }], // release first
+    ["ready", human, { type: "unhold" }, {}],
+    ["draft", human, { type: "to_draft" }, {}],
+    ["in_review", human, { type: "to_draft" }, {}],
     ["in_progress", agent, { type: "complete" }, { claim: claimOf() }], // human-only
     ["dropped", agent, { type: "claim", claim: claimOf() }, {}],
     ["waiting", agent, { type: "submit" }, { claim: claimOf() }],
@@ -174,5 +190,14 @@ describe("effects", () => {
   it("human releasing someone else's claim logs the takeover", () => {
     const r = transition(item("in_progress"), { type: "release", note: "stale" }, human, ctx({ claim: claimOf() }));
     expect(r.log[0]).toContain("was claude-code@desktop#a1f3");
+  });
+});
+
+describe("hold", () => {
+  it("is the human's turn, logs the reason", () => {
+    const r = transition(item("ready"), { type: "hold", reason: "after the release" }, human, ctx());
+    expect(turnOf(r.meta.status)).toBe("human");
+    expect(r.log[0]).toMatch(/put on hold \(from ready\): after the release$/);
+    expect(r.events[0]).toMatchObject({ action: "hold", from: "ready", to: "hold", note: "after the release" });
   });
 });

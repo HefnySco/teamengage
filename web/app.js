@@ -33,10 +33,11 @@ for (const kind of ["watch", "reconcile"]) {
   es.addEventListener(kind, (e) => notify({ kind, data: JSON.parse(e.data) }));
 }
 
-const STATUSES = ["draft", "ready", "in_progress", "waiting", "in_review", "done", "dropped"];
+const STATUSES = ["draft", "ready", "hold", "in_progress", "waiting", "in_review", "done", "dropped"];
 const ST_BADGE = {
   draft: "text-bg-secondary",
   ready: "text-bg-primary",
+  hold: "badge-hold",
   in_progress: "text-bg-warning",
   waiting: "text-bg-info",
   in_review: "badge-review",
@@ -382,6 +383,9 @@ const ItemView = ({ id, onOpen }) => {
     ${it.meta.question && html`<div class="alert alert-info py-1 px-2 small mb-2"><b>question:</b> ${it.meta.question.text}</div>`}
     <div class="d-flex gap-2 mb-3 flex-wrap">
       ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("approve")}>approve</button>`}
+      ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unhold")}>resume</button>`}
+      ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
+      ${(it.meta.status === "ready" || it.meta.status === "hold") && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("draft", "why back to draft? (optional)")}>to draft</button>`}
       ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success btn-act" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
       ${it.claim && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
       ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}

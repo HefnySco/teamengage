@@ -44,6 +44,12 @@ export type Action =
    * TeamEngage). No review, no merge: a claim is released, branches kept.
    */
   | { type: "complete"; note?: string }
+  /** Human parks an item: not a draft, but not for agents yet. */
+  | { type: "hold"; reason?: string }
+  /** Human releases a hold → ready. */
+  | { type: "unhold" }
+  /** Human sends a ready or held item back to draft (re-approval needed). */
+  | { type: "to_draft"; reason?: string }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -297,6 +303,30 @@ export function transition(
         out.effects.push({ type: "delete_claim" });
         out.effects.push({ type: "cleanup_work", keepBranches: true });
       }
+      return out;
+    }
+
+    case "hold": {
+      requireHuman(actor, action.type);
+      if (from !== "draft" && from !== "ready") fail(from, action.type);
+      set("hold", action.reason);
+      out.log.push(`- ${stamp} ${who} put on hold (from ${from})${action.reason ? `: ${action.reason}` : ""}`);
+      return out;
+    }
+
+    case "unhold": {
+      requireHuman(actor, action.type);
+      if (from !== "hold") fail(from, action.type);
+      set("ready");
+      out.log.push(`- ${stamp} ${who} resumed from hold → ready`);
+      return out;
+    }
+
+    case "to_draft": {
+      requireHuman(actor, action.type);
+      if (from !== "ready" && from !== "hold") fail(from, action.type);
+      set("draft", action.reason);
+      out.log.push(`- ${stamp} ${who} moved back to draft (from ${from})${action.reason ? `: ${action.reason}` : ""}`);
       return out;
     }
 

@@ -15,6 +15,9 @@ import {
   rejectCmd,
   dropCmd,
   undropCmd,
+  holdCmd,
+  unholdCmd,
+  draftCmd,
   doneCmd,
   releaseCmd,
   rollbackCmd,
@@ -45,6 +48,9 @@ commands:
   answer <ID> <text>
   reject | drop <ID> [reason]
   undrop <ID>         restore a dropped item back to draft
+  hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
+  unhold <ID>         release a hold → ready
+  draft <ID> [reason] send a ready or held item back to draft
   done <ID> [note]    mark done from any status (no review, no merge)
   renumber <OLD> <NEW>
   rollback <ID> [--yes]  restore claim snapshots onto live targets
@@ -122,6 +128,12 @@ async function main(argv: string[]): Promise<number> {
       return dropCmd(rest, home);
     case "undrop":
       return undropCmd(rest, home);
+    case "hold":
+      return holdCmd(rest, home);
+    case "unhold":
+      return unholdCmd(rest, home);
+    case "draft":
+      return draftCmd(rest, home);
     case "done":
       return doneCmd(rest, home);
     case "claim":

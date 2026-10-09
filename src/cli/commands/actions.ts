@@ -80,6 +80,29 @@ export async function dropCmd(args: string[], home?: string): Promise<number> {
 
 export const undropCmd = (args: string[], home?: string) => act("undrop", args, {}, home);
 
+/** `te hold <ID> [reason]` — park a draft/ready item; agents can't see or claim it. */
+export async function holdCmd(args: string[], home?: string): Promise<number> {
+  const [id, ...rest] = positional(args);
+  if (!id) {
+    process.stderr.write("usage: te hold <ID> [reason]\n");
+    return 2;
+  }
+  return act("hold", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
+}
+
+/** `te unhold <ID>` — release a hold → ready. */
+export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
+
+/** `te draft <ID> [reason]` — send a ready or held item back to draft. */
+export async function draftCmd(args: string[], home?: string): Promise<number> {
+  const [id, ...rest] = positional(args);
+  if (!id) {
+    process.stderr.write("usage: te draft <ID> [reason]\n");
+    return 2;
+  }
+  return act("draft", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
+}
+
 /** `te done <ID> [note]` — mark done from any status (no review, no merge). */
 export async function doneCmd(args: string[], home?: string): Promise<number> {
   const pos = positional(args);

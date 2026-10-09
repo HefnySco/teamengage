@@ -282,3 +282,36 @@ describe("complete — human marks done from any status", () => {
     expect((await post(`/api/items/${ids[1]}/complete`)).status).toBeGreaterThanOrEqual(400);
   });
 });
+
+describe("hold / unhold / to draft", () => {
+  it("held items leave next and can't be claimed; resume and to-draft work", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "parked" }], human);
+    const id = ids[0];
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const nextIds = async () =>
+      ((await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>).map((i) => i.meta.id);
+
+    expect((await post(`/api/items/${id}/approve`)).status).toBe(200);
+    expect(await nextIds()).toContain(id);
+
+    expect((await post(`/api/items/${id}/hold`, { reason: "after the release" })).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("hold");
+    expect(await nextIds()).not.toContain(id);
+    expect((await post(`/api/items/${id}/claim`)).status).toBeGreaterThanOrEqual(400);
+    const held = (await (await api(`/api/items?status=hold`)).json()) as Array<{ id: string; turn: string }>;
+    expect(held.find((i) => i.id === id)?.turn).toBe("human");
+
+    expect((await post(`/api/items/${id}/unhold`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("ready");
+    expect(await nextIds()).toContain(id);
+
+    expect((await post(`/api/items/${id}/draft`, { reason: "rethink" })).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("draft");
+    expect(store.idx.get(id)!.sections.find((s) => s.heading === "Log")!.body).toMatch(
+      /put on hold \(from ready\): after the release[\s\S]*resumed from hold[\s\S]*moved back to draft \(from ready\): rethink/,
+    );
+  });
+});
