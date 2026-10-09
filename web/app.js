@@ -100,7 +100,30 @@ function useApi(path, deps = []) {
 // ---- Inbox (UI-0002) --------------------------------------------------------
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
+  // the inbox lists ids; the item list supplies titles, projects and files to search
+  const { data: all } = useApi("/api/items?archived=all");
+  const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
   if (!data) return html`<p class="text-secondary">loading…</p>`;
+  const byId = Object.fromEntries((all ?? []).map((i) => [i.id, i]));
+  const title = (id) => byId[id]?.title ?? "";
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (id, ...extra) =>
+    !words.length ||
+    matches(byId[id] ?? { id }, words) ||
+    words.every((w) => extra.filter(Boolean).join(" ").toLowerCase().includes(w));
+  const view = {
+    questions: data.questions.filter((x) => hit(x.id, x.question?.text)),
+    drafts: data.drafts.filter((id) => hit(id)),
+    reviews: data.reviews.filter((id) => hit(id)),
+    claims: data.claims.filter((c) => hit(c.item, c.holder, c.machine)),
+    findings: data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind)),
+  };
+  const total = data.questions.length + data.drafts.length + data.reviews.length + data.claims.length + data.findings.length;
+  const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
+  const setSearch = (v) => {
+    setQ(v);
+    saveSearch("te.inbox.q", v);
+  };
   const act = async (id, action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
@@ -136,24 +159,31 @@ const Inbox = ({ onOpen }) => {
     !data.questions.length && !data.drafts.length && !data.reviews.length &&
     !data.claims.length && !data.findings.length;
   return html`
-    <h2 class="h4 mb-3">Inbox</h2>
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Inbox</h2>
+      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "24rem" }}
+        placeholder="search id, title, project, file, text…" value=${q}
+        onInput=${(e) => setSearch(e.target.value)}
+        onKeyDown=${(e) => e.key === "Escape" && setSearch("")} />
+      ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}</span>`}
+    </div>
     <div class="row g-3">
-      <${Section} title="Questions" tone="info" items=${data.questions}>
-        ${data.questions.map(
+      <${Section} title="Questions" tone="info" items=${view.questions}>
+        ${view.questions.map(
           (q) => html`
             <div class="list-group-item" key=${q.id}>
-              <${ItemLine} i=${{ id: q.id, status: "waiting", title: "" }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id) }} onOpen=${onOpen} />
               <p class="my-2">${q.question?.text}</p>
               <${AnswerBox} q=${q} />
             </div>
           `,
         )}
       <//>
-      <${Section} title="Drafts to approve" tone="secondary" items=${data.drafts}>
-        ${data.drafts.map(
+      <${Section} title="Drafts to approve" tone="secondary" items=${view.drafts}>
+        ${view.drafts.map(
           (id) => html`
             <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "draft", title: "" }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id, status: "draft", title: title(id) }} onOpen=${onOpen} />
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
                 <button class="btn btn-sm btn-outline-success btn-act" onClick=${() => act(id, "complete", { note: "already done" })}>already done</button>
@@ -163,11 +193,11 @@ const Inbox = ({ onOpen }) => {
           `,
         )}
       <//>
-      <${Section} title="Submissions to review" tone="success" items=${data.reviews}>
-        ${data.reviews.map(
+      <${Section} title="Submissions to review" tone="success" items=${view.reviews}>
+        ${view.reviews.map(
           (id) => html`
             <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "in_review", title: "" }} onOpen=${onOpen} />
+              <${ItemLine} i=${{ id, status: "in_review", title: title(id) }} onOpen=${onOpen} />
               <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-sm btn-success btn-act" onClick=${() => act(id, "accept")}>accept (merge)</button>
                 <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
@@ -176,19 +206,19 @@ const Inbox = ({ onOpen }) => {
           `,
         )}
       <//>
-      <${Section} title="Conflicted claims" tone="danger" items=${data.claims}>
-        ${data.claims.map(
+      <${Section} title="Conflicted claims" tone="danger" items=${view.claims}>
+        ${view.claims.map(
           (c) => html`
             <div class="list-group-item" key=${c.item}>
-              <span class="id">${c.item}</span> <span class="text-danger">conflicted claim</span>
+              <a class="item id" onClick=${() => onOpen(c.item)}>${c.item}</a> ${title(c.item)} <span class="text-danger">conflicted claim</span>
               <span class="text-secondary"> ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
               <div class="mt-2"><button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></div>
             </div>
           `,
         )}
       <//>
-      <${Section} title="Findings" tone="warning" items=${data.findings}>
-        ${data.findings.map(
+      <${Section} title="Findings" tone="warning" items=${view.findings}>
+        ${view.findings.map(
           (f, i) => html`
             <div class="list-group-item" key=${i}>
               <span class="badge text-bg-${f.severity === "error" ? "danger" : "warning"}">${f.severity}</span>
@@ -204,21 +234,22 @@ const Inbox = ({ onOpen }) => {
       <//>
     </div>
     ${empty && html`<p class="text-success mt-3">inbox zero — nothing needs you</p>`}
+    ${!empty && words.length > 0 && shown === 0 && html`<p class="text-secondary mt-3">nothing in the inbox matches "${q}"</p>`}
   `;
 };
 
 // ---- Board (UI-0004) ---------------------------------------------------------
 // remembered per browser tab, so coming back from an item keeps the search
-const loadSearch = () => {
+const loadSearch = (key) => {
   try {
-    return sessionStorage.getItem("te.board.q") ?? "";
+    return sessionStorage.getItem(key) ?? "";
   } catch {
     return "";
   }
 };
-const saveSearch = (q) => {
+const saveSearch = (key, q) => {
   try {
-    sessionStorage.setItem("te.board.q", q);
+    sessionStorage.setItem(key, q);
   } catch {
     /* storage blocked — search just isn't remembered */
   }
@@ -231,13 +262,13 @@ const matches = (i, words) => {
 
 const Board = ({ onOpen }) => {
   const { data } = useApi("/api/items");
-  const [q, setQ] = useState(loadSearch);
+  const [q, setQ] = useState(() => loadSearch("te.board.q"));
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hits = words.length ? data.filter((i) => matches(i, words)) : data;
   const setSearch = (v) => {
     setQ(v);
-    saveSearch(v);
+    saveSearch("te.board.q", v);
   };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
