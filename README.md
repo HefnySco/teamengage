@@ -1,3 +1,5 @@
+<p align="center"><img src="web/logo.svg" alt="TeamEngage" width="360" /></p>
+
 # teamengage
 
 One human, many local LLM agents, planning and executing together on shared

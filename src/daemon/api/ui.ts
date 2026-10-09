@@ -32,6 +32,10 @@ export function registerUiRoutes(app: FastifyInstance): void {
 
   app.get("/", async (_req, reply) => send(reply, join(webRoot, "index.html")));
   app.get("/ui", async (_req, reply) => send(reply, join(webRoot, "index.html")));
+  // the mark: favicon and header logo (web/favicon.svg, web/logo.svg)
+  app.get("/favicon.svg", async (_req, reply) => send(reply, join(webRoot, "favicon.svg")));
+  app.get("/favicon.ico", async (_req, reply) => send(reply, join(webRoot, "favicon.svg")));
+  app.get("/logo.svg", async (_req, reply) => send(reply, join(webRoot, "logo.svg")));
   app.get("/assets/:file", async (req, reply) => {
     const file = (req.params as { file: string }).file;
     if (file.includes("..")) return reply.code(404).send({ error: "not found" });

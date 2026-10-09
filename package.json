@@ -50,6 +50,9 @@
   "files": [
     "dist",
     "web/dist",
+    "web/index.html",
+    "web/favicon.svg",
+    "web/logo.svg",
     "README.md",
     "LICENSE"
   ],
