@@ -10,6 +10,18 @@
       .id { font-family: ui-monospace, monospace; font-weight: 600; }
       .badge-review { background: #6f42c1; color: #fff; }
       .badge-hold { background: #6d4c41; color: #fff; }
+      /* formatted task markdown */
+      .md-view { line-height: 1.5; overflow-wrap: anywhere; }
+      .md-view h1 { font-size: 1.35rem; } .md-view h2 { font-size: 1.15rem; margin-top: 1.2rem; }
+      .md-view h3 { font-size: 1.02rem; margin-top: 1rem; } .md-view h4, .md-view h5, .md-view h6 { font-size: .95rem; }
+      .md-view pre { background: var(--bs-tertiary-bg); padding: .6rem .8rem; border-radius: .35rem; font-size: .8rem; }
+      .md-view code { font-size: .85em; }
+      .md-view pre code { color: inherit; }
+      .md-view blockquote { border-left: 3px solid var(--bs-border-color); padding-left: .8rem; color: var(--bs-secondary-color); }
+      .md-view .md-table { overflow-x: auto; } .md-view table { font-size: .85rem; width: auto; }
+      .md-view li.md-task { list-style: none; margin-left: -1.2rem; }
+      .md-view .md-ref { text-decoration: underline dotted; }
+      .md-view .md-cont { margin-left: 1rem; }
       /* lists scroll inside their card/column — the page never gets miles long */
       .scroll-list { max-height: 46vh; overflow-y: auto; }
       .board-col { min-width: 14rem; }

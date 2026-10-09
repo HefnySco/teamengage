@@ -1,4 +1,5 @@
 import "bootstrap/dist/css/bootstrap.min.css";
+import { markdownToHtml } from "./markdown.js";
 import { h, render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -445,10 +446,36 @@ const History = ({ entries, onOpen }) => html`
   </div>
 `;
 
+// task text: formatted markdown by default, raw source on toggle (per browser)
+const loadMdView = () => {
+  try {
+    return localStorage.getItem("te.md.view") === "markdown" ? "markdown" : "formatted";
+  } catch {
+    return "formatted";
+  }
+};
+const saveMdView = (v) => {
+  try {
+    localStorage.setItem("te.md.view", v);
+  } catch {
+    /* not remembered — fine */
+  }
+};
+const MdBox = ({ text, view }) =>
+  view === "markdown"
+    ? html`<div class="card card-body"><pre class="mb-0">${text}</pre></div>`
+    : html`<div class="card card-body md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`;
+
 // ---- Item (UI-0005) ------------------------------------------------------------
 const ItemView = ({ id, onOpen }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
   const [picked, setTab] = useState(null);
+  const [mdView, setMdView] = useState(loadMdView);
+  const toggleMd = () => {
+    const v = mdView === "formatted" ? "markdown" : "formatted";
+    setMdView(v);
+    saveMdView(v);
+  };
   useEffect(() => setTab(null), [id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
@@ -513,10 +540,14 @@ const ItemView = ({ id, onOpen }) => {
         `,
       )}
     </ul>
-    ${b.source && html`<div class="text-secondary small mb-2">source ${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</div>`}
-    ${tab === "simple" && html`<div class="card card-body"><pre class="mb-0">${b.source?.simple?.text ?? (sec("Simple") || "(no Simple section)")}</pre></div>`}
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+      ${b.source && html`<span class="text-secondary small">source ${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span>`}
+      ${(tab === "simple" || tab === "technical") && html`<button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onClick=${toggleMd}
+        title="switch between formatted text and the markdown source">${mdView === "formatted" ? "show markdown" : "show formatted"}</button>`}
+    </div>
+    ${tab === "simple" && html`<${MdBox} view=${mdView} text=${b.source?.simple?.text ?? (sec("Simple") || "(no simple version — ask an agent: simple <id> {text})")} />`}
     ${tab === "technical" && html`
-      <div class="card card-body"><pre class="mb-0">${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n${sec("Acceptance")}`}</pre></div>
+      <${MdBox} view=${mdView} text=${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n\n## Acceptance\n${sec("Acceptance")}`} />
       ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
       ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}
