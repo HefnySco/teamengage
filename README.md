@@ -44,3 +44,8 @@ skills/         agent skills: te-work (execute a task), te-plan (plan tasks)
 ```
 
 Task files in overlay workspaces follow `docs/TASK-FORMAT.md` (`te template`).
+
+## License
+
+MIT — free to use, modify and redistribute, including commercially; just keep
+the copyright notice. See [LICENSE](LICENSE).
