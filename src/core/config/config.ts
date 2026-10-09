@@ -87,6 +87,10 @@ export function resolveWorkspace(
   );
   const plansDir = findPlansDir(absRoot);
   const config = loadWorkspaceConfig(plansDir);
+  if (config.mode === "overlay" && plansDir === absRoot) {
+    // overlay tracks task files in the root — the tracking state must stay apart
+    throw new ValidationError(`overlay workspace ${absRoot}: keep the plans in .teamengage/, not at the root`);
+  }
 
   const prefixToProject = new Map<string, string | null>([[config.prefix, null]]);
   for (const [proj, pc] of Object.entries(config.projects)) {
@@ -132,12 +136,14 @@ export function resourceRoots(ws: LoadedWorkspace): Record<string, string> {
 }
 
 /**
- * Locate the plans repo under a workspace root: `.teamengage/` when present,
- * otherwise the single immediate child directory containing `workspace.yaml`.
+ * Locate the plans repo under a workspace root: `.teamengage/` when present;
+ * the root itself when `workspace.yaml` sits there (a repo that holds only
+ * plans); otherwise the single immediate child directory containing it.
  */
 export function findPlansDir(absRoot: string): string {
   const def = join(absRoot, ".teamengage");
   if (existsSync(join(def, "workspace.yaml"))) return def;
+  if (existsSync(join(absRoot, "workspace.yaml"))) return absRoot;
   for (const d of readdirSync(absRoot, { withFileTypes: true })) {
     if (d.isDirectory() && existsSync(join(absRoot, d.name, "workspace.yaml"))) {
       return join(absRoot, d.name);

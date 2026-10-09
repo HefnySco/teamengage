@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import YAML from "yaml";
@@ -38,7 +38,7 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
       YAML.stringify({
         name,
         prefix,
-        plans: ".teamengage",
+        plans: relative(root, plansDir) || ".",
         sync: "manual",
         ...(overlay ? { mode: "overlay", commit: false } : {}),
         stale_after: "24h",

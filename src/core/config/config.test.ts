@@ -109,3 +109,23 @@ describe("resolveWorkspace", () => {
     rmSync(empty, { recursive: true, force: true });
   });
 });
+
+describe("plans at the workspace root", () => {
+  it("a repo holding only plans can keep workspace.yaml at its root; overlay may not", () => {
+    const root = mkdtempSync(join(tmpdir(), "te-rootplans-"));
+    try {
+      writeFileSync(join(root, "workspace.yaml"), "name: p\nprefix: TE\nplans: .\n");
+      expect(findPlansDir(root)).toBe(root);
+      const ws = resolveWorkspace(root, { home: root });
+      expect(ws.plansDir).toBe(ws.root);
+      writeFileSync(join(root, "workspace.yaml"), "name: p\nprefix: TE\nmode: overlay\n");
+      expect(() => resolveWorkspace(root, { home: root })).toThrow(/keep the plans in \.teamengage/);
+      // .teamengage/ still wins when both exist
+      mkdirSync(join(root, ".teamengage"));
+      writeFileSync(join(root, ".teamengage", "workspace.yaml"), "name: q\nprefix: TE\n");
+      expect(findPlansDir(root)).toBe(join(root, ".teamengage"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
