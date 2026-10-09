@@ -116,13 +116,16 @@ export class WorkspaceOps {
     const source = await this.source(it);
     const sectionBody = (dep: IndexedItem, name: string) =>
       dep.sections.find((s) => s.heading.toLowerCase() === name.toLowerCase())?.body ?? "";
-    const lastLine = (s: string) => s.trim().split("\n").filter(Boolean).at(-1) ?? "";
+    // archiving is bookkeeping, not an outcome — skip those lines
+    const lastLine = (s: string) =>
+      s.trim().split("\n").filter((l) => l && !/ (un)?archived \(status /.test(l)).at(-1) ?? "";
     const deps = it.meta.depends_on.map((ref) => {
       const parsed = parseItemRef(ref);
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
       return {
         ref,
         status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown",
+        archived: Boolean(dep?.meta.archived),
         outcome: dep ? lastLine(sectionBody(dep, "Log")) : "",
         evidence: dep ? lastLine(sectionBody(dep, "Evidence")) : "",
       };
@@ -518,6 +521,17 @@ export class WorkspaceOps {
   async toDraft(id: string, reason?: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "to_draft", reason });
+  }
+
+  /** Human: hide an item (status kept); refused while claimed. */
+  async archive(id: string, reason?: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "archive", reason });
+  }
+
+  async unarchive(id: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unarchive" });
   }
 
   async undrop(id: string) {

@@ -57,6 +57,9 @@ export const ItemMeta = z
     /** overlay mode: companion `.simple.md`, relative to the workspace root */
     simple_source: z.string().optional(),
     question: Question.optional(),
+    /** hidden from board/inbox/graph/next; status kept underneath (archive page) */
+    archived: z.boolean().optional(),
+    archived_at: z.string().optional(),
   })
   .passthrough();
 export type ItemMeta = z.infer<typeof ItemMeta>;

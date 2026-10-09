@@ -286,6 +286,44 @@ const Board = ({ onOpen }) => {
   `;
 };
 
+// ---- Archive -------------------------------------------------------------------
+// archived items keep their status; they only leave the board, inbox, graph and next
+const Archive = ({ onOpen }) => {
+  const { data, reload } = useApi("/api/items?archived=true");
+  const [q, setQ] = useState("");
+  if (!data) return html`<p class="text-secondary">loading…</p>`;
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = (words.length ? data.filter((i) => matches(i, words)) : data).sort((a, b) =>
+    (b.archived_at ?? "").localeCompare(a.archived_at ?? ""),
+  );
+  const unarchive = async (id) => {
+    await post(`/api/items/${id}/unarchive`).catch((e) => alert(e.message));
+    reload();
+  };
+  return html`
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Archive</h2>
+      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "24rem" }}
+        placeholder="search id, title, project, file…" value=${q} onInput=${(e) => setQ(e.target.value)} />
+      <span class="text-secondary small">${hits.length} of ${data.length} archived</span>
+    </div>
+    ${data.length === 0 && html`<p class="text-secondary">nothing archived — use "archive" on an item page</p>`}
+    <div class="list-group">
+      ${hits.map(
+        (i) => html`
+          <div class="list-group-item d-flex align-items-center gap-2 flex-wrap" key=${i.id}>
+            <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
+            <${Badge} s=${i.status} />
+            <span class="flex-grow-1">${i.title}</span>
+            ${i.archived_at && html`<span class="text-secondary small">archived ${ago(i.archived_at)} ago</span>`}
+            <button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => unarchive(i.id)}>unarchive</button>
+          </div>
+        `,
+      )}
+    </div>
+  `;
+};
+
 // ---- Graph (UI-0003) ----------------------------------------------------------
 const Graph = ({ onOpen }) => {
   const [filter, setFilter] = useState({ status: "", project: "" });
@@ -375,6 +413,7 @@ const ItemView = ({ id, onOpen }) => {
     <h2 class="h4"><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
     <div class="d-flex align-items-center gap-2 mb-2">
       <${Badge} s=${it.meta.status} />
+      ${it.meta.archived && html`<span class="badge text-bg-dark">archived</span>`}
       <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
@@ -391,6 +430,8 @@ const ItemView = ({ id, onOpen }) => {
       ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}
       ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success btn-act" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
       ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
+      ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-dark btn-act" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
+      ${it.meta.archived && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unarchive")}>unarchive</button>`}
     </div>
     <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
       ${TABS.map(
@@ -472,7 +513,7 @@ const Sync = () => {
 };
 
 // ---- shell ------------------------------------------------------------------------
-const routes = { inbox: Inbox, board: Board, graph: Graph, activity: Activity, sync: Sync };
+const routes = { inbox: Inbox, board: Board, graph: Graph, activity: Activity, sync: Sync, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

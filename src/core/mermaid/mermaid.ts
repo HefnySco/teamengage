@@ -52,6 +52,7 @@ function escLabel(s: string): string {
 }
 
 function passesFilter(it: IndexedItem, f?: QueryFilter): boolean {
+  if (it.meta.archived && f?.archived === undefined) return false;
   if (!f) return true;
   const statuses = f.status === undefined ? undefined : Array.isArray(f.status) ? f.status : [f.status];
   if (statuses && !statuses.includes(it.meta.status)) return false;

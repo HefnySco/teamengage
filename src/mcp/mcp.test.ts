@@ -211,3 +211,22 @@ describe("MCP tools (MC-0001/2/3)", () => {
     expect(ctx.workspaces.get("ws")!.store.idx.get("WS-0002")!.meta.status).toBe("ready");
   });
 });
+
+describe("archived dependencies stay visible to agents", () => {
+  it("brief tags an archived dep but keeps its status, so the sequence still reads right", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const dep = store.idx.get("WS-0001")!;
+    await store.perform("WS-0001", dep.meta.version, human, { type: "archive" });
+    try {
+      const t = text((await client.callTool({ name: "brief", arguments: { id: "WS-0003" } })) as never);
+      expect(t).toMatch(/dep WS-0001 (\w+) \[archived\]/);
+      expect(t).not.toMatch(/dep WS-0001 .*archived \(status/); // outcome is the real last step
+      const own = text((await client.callTool({ name: "brief", arguments: { id: "WS-0001" } })) as never);
+      expect(own).toMatch(/^WS-0001 \w+ \[archived\] /);
+    } finally {
+      const cur = store.idx.get("WS-0001")!;
+      await store.perform("WS-0001", cur.meta.version, human, { type: "unarchive" });
+    }
+  });
+});

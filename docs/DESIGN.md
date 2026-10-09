@@ -187,6 +187,12 @@ done     = terminal
   agents yet — `next` skips it and `claim` refuses it. `te hold` / `te unhold`
   / `te draft`, or hold / resume / to draft in the UI. A claimed item must be
   released before it can be held.
+- `archived` is a **tag, not a status** (`te archive` / `te unarchive`, the
+  Archive page in the UI). The item keeps its real status, so dependency
+  chains still resolve (an archived `done` dep is still done) and agents see
+  it tagged `[archived]` in `brief`. Archived items leave the board, inbox,
+  graph, `query` and `next`, and cannot be claimed. Claimed items must be
+  released first.
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
   `undrop`, `complete`, `hold`, `unhold`, `to_draft`, and `release` of
   someone else's claim.

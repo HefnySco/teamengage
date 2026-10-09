@@ -315,3 +315,34 @@ describe("hold / unhold / to draft", () => {
     );
   });
 });
+
+describe("archive", () => {
+  it("archived items leave items/next/inbox/graph, show on archived=true, and come back", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "old idea" }], human);
+    const id = ids[0];
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const listIds = async (q = "") => ((await (await api(`/api/items${q}`)).json()) as Array<{ id: string }>).map((i) => i.id);
+    expect((await post(`/api/items/${id}/approve`)).status).toBe(200);
+
+    expect((await post(`/api/items/${id}/archive`, { reason: "superseded" })).status).toBe(200);
+    expect(store.idx.get(id)!.meta).toMatchObject({ status: "ready", archived: true });
+    expect(await listIds()).not.toContain(id);
+    expect(await listIds("?archived=true")).toEqual([id]);
+    expect(await listIds("?archived=all")).toContain(id);
+    const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
+    expect(next.map((i) => i.meta.id)).not.toContain(id);
+    expect((await post(`/api/items/${id}/claim`)).status).toBeGreaterThanOrEqual(400);
+    const graph = (await (await api("/api/graph")).json()) as { mermaid: string };
+    expect(graph.mermaid).not.toContain(id.replace("-", "_"));
+
+    expect((await post(`/api/items/${id}/unarchive`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.archived).toBeUndefined();
+    expect(await listIds()).toContain(id);
+    expect(store.idx.get(id)!.sections.find((s) => s.heading === "Log")!.body).toMatch(
+      /archived \(status ready\): superseded[\s\S]*unarchived \(status ready\)/,
+    );
+  });
+});

@@ -106,14 +106,16 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const it = b.item;
         const sec = (n: string) =>
           it.sections.find((s) => s.heading.toLowerCase() === n.toLowerCase())?.body.trim() ?? "";
-        const lines: string[] = [`${it.meta.id} ${it.meta.status} "${it.meta.title}" v${it.meta.version}`];
+        const lines: string[] = [
+          `${it.meta.id} ${it.meta.status}${it.meta.archived ? " [archived]" : ""} "${it.meta.title}" v${it.meta.version}`,
+        ];
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
         else lines.push(`source: ${b.source.path}${b.source.moved ? " (moved)" : ""}`, b.source.text.trim());
         const acc = sec("Acceptance");
         if (acc) lines.push(`acceptance:\n${acc}`);
         for (const d of b.deps) {
-          lines.push(`dep ${d.ref} ${d.status}${d.outcome ? ` — ${d.outcome}` : ""}`);
+          lines.push(`dep ${d.ref} ${d.status}${d.archived ? " [archived]" : ""}${d.outcome ? ` — ${d.outcome}` : ""}`);
         }
         for (const d of b.decisions) {
           lines.push(`decision ${d.meta.id}: ${d.meta.title}`);

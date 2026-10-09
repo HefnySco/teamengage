@@ -201,3 +201,29 @@ describe("hold", () => {
     expect(r.events[0]).toMatchObject({ action: "hold", from: "ready", to: "hold", note: "after the release" });
   });
 });
+
+describe("archive", () => {
+  it("hides any unclaimed item without touching its status; unarchive restores", () => {
+    for (const s of ["draft", "ready", "hold", "done", "dropped", "in_review"] as Status[]) {
+      const r = transition(item(s), { type: "archive", reason: "old" }, human, ctx());
+      expect(r.meta.status).toBe(s);
+      expect(r.meta.archived).toBe(true);
+      expect(r.meta.archived_at).toBe(NOW);
+      const back = transition(r.meta, { type: "unarchive" }, human, ctx());
+      expect(back.meta.status).toBe(s);
+      expect(back.meta.archived).toBeUndefined();
+    }
+  });
+
+  it("refuses claimed items, agents, and double archive/unarchive", () => {
+    expect(() => transition(item("in_progress"), { type: "archive" }, human, ctx({ claim: claimOf() }))).toThrow(/release first/);
+    expect(() => transition(item("done"), { type: "archive" }, agent, ctx())).toThrow(/human-only/);
+    const a = transition(item("done"), { type: "archive" }, human, ctx()).meta;
+    expect(() => transition(a, { type: "archive" }, human, ctx())).toThrow(/already archived/);
+    expect(() => transition(item("done"), { type: "unarchive" }, human, ctx())).toThrow(/not archived/);
+    const archivedReady = transition(item("ready"), { type: "archive" }, human, ctx()).meta;
+    expect(() =>
+      transition(archivedReady, { type: "claim", claim: claimOf() }, agent, ctx({ depsDone: true })),
+    ).toThrow(/archived/);
+  });
+});

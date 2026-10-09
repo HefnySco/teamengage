@@ -16,6 +16,8 @@ import {
   dropCmd,
   undropCmd,
   holdCmd,
+  archiveCmd,
+  unarchiveCmd,
   unholdCmd,
   draftCmd,
   doneCmd,
@@ -50,6 +52,7 @@ commands:
   undrop <ID>         restore a dropped item back to draft
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
   unhold <ID>         release a hold → ready
+  archive <ID> [reason] / unarchive <ID>   hide / restore an item (status kept)
   draft <ID> [reason] send a ready or held item back to draft
   done <ID> [note]    mark done from any status (no review, no merge)
   renumber <OLD> <NEW>
@@ -130,6 +133,10 @@ async function main(argv: string[]): Promise<number> {
       return undropCmd(rest, home);
     case "hold":
       return holdCmd(rest, home);
+    case "archive":
+      return archiveCmd(rest, home);
+    case "unarchive":
+      return unarchiveCmd(rest, home);
     case "unhold":
       return unholdCmd(rest, home);
     case "draft":

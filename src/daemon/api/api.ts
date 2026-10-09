@@ -50,6 +50,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         resource: q.resource,
         text: q.text,
         claimed: q.claimed === undefined ? undefined : q.claimed === "true",
+        archived: q.archived === "all" ? "all" : q.archived === "true",
       });
       return items.map((i) => ({
         ...i.meta,
@@ -119,7 +120,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   app.get("/api/inbox", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
-      const items = [...ops.index.items.values()];
+      const items = [...ops.index.items.values()].filter((i) => !i.meta.archived);
       return {
         drafts: items.filter((i) => i.meta.status === "draft").map((i) => i.meta.id),
         questions: items
@@ -280,6 +281,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("hold", (ops, id, b) => ops.hold(id, b.reason ? String(b.reason) : undefined));
   act("unhold", (ops, id) => ops.unhold(id));
   act("draft", (ops, id, b) => ops.toDraft(id, b.reason ? String(b.reason) : undefined));
+  act("archive", (ops, id, b) => ops.archive(id, b.reason ? String(b.reason) : undefined));
+  act("unarchive", (ops, id) => ops.unarchive(id));
   act("claim", (ops, id) => ops.humanClaim(id));
   act("release", (ops, id, b) => ops.release(id, "human", b.note ? String(b.note) : undefined));
   act("rollback", (ops, id, b) => ops.rollback(id, b.force === true));

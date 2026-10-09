@@ -50,6 +50,9 @@ export type Action =
   | { type: "unhold" }
   /** Human sends a ready or held item back to draft (re-approval needed). */
   | { type: "to_draft"; reason?: string }
+  /** Human hides an item (any status, unclaimed); the status is kept. */
+  | { type: "archive"; reason?: string }
+  | { type: "unarchive" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -168,6 +171,7 @@ export function transition(
 
     case "claim": {
       if (from !== "ready") fail(from, action.type);
+      if (meta.archived) throw new InvalidTransitionError("cannot claim: item is archived — unarchive first", from, "claim");
       if (actor.kind === "daemon") throw new ForbiddenError("daemon cannot claim");
       if (ctx.depsDone === false) {
         throw new InvalidTransitionError("cannot claim: dependencies not done", from, "claim");
@@ -327,6 +331,29 @@ export function transition(
       if (from !== "ready" && from !== "hold") fail(from, action.type);
       set("draft", action.reason);
       out.log.push(`- ${stamp} ${who} moved back to draft (from ${from})${action.reason ? `: ${action.reason}` : ""}`);
+      return out;
+    }
+
+    case "archive": {
+      requireHuman(actor, action.type);
+      if (meta.archived) throw new InvalidTransitionError("already archived", from, action.type);
+      if (ctx.claim) {
+        throw new InvalidTransitionError(`cannot archive: claimed by ${ctx.claim.holder} — release first`, from, action.type);
+      }
+      out.meta.archived = true;
+      out.meta.archived_at = ctx.now;
+      out.events.push(ev(actor, stamp, meta.id, "archive", from, from, action.reason));
+      out.log.push(`- ${stamp} ${who} archived (status ${from})${action.reason ? `: ${action.reason}` : ""}`);
+      return out;
+    }
+
+    case "unarchive": {
+      requireHuman(actor, action.type);
+      if (!meta.archived) throw new InvalidTransitionError("not archived", from, action.type);
+      delete out.meta.archived;
+      delete out.meta.archived_at;
+      out.events.push(ev(actor, stamp, meta.id, "unarchive", from, from));
+      out.log.push(`- ${stamp} ${who} unarchived (status ${from})`);
       return out;
     }
 

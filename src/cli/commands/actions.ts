@@ -90,6 +90,17 @@ export async function holdCmd(args: string[], home?: string): Promise<number> {
   return act("hold", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
 }
 
+/** `te archive <ID> [reason]` — hide an item (status kept); `te unarchive <ID>`. */
+export async function archiveCmd(args: string[], home?: string): Promise<number> {
+  const [id, ...rest] = positional(args);
+  if (!id) {
+    process.stderr.write("usage: te archive <ID> [reason]\n");
+    return 2;
+  }
+  return act("archive", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
+}
+export const unarchiveCmd = (args: string[], home?: string) => act("unarchive", args, {}, home);
+
 /** `te unhold <ID>` — release a hold → ready. */
 export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
 
