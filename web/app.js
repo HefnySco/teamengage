@@ -14,11 +14,22 @@ if (qTok) {
   history.replaceState(null, "", location.pathname + location.hash.replace(/[#&]t=[^&]+/, "").replace(/^#&/, "#"));
 }
 
+// a stale te_token cookie (e.g. an older daemon's token) 401s every call —
+// say so instead of pages sitting on "loading…" forever
+const authBanner = () => {
+  if (document.getElementById("te-auth-banner")) return;
+  const d = document.createElement("div");
+  d.id = "te-auth-banner";
+  d.className = "alert alert-danger py-2 small";
+  d.textContent = "session expired — the daemon has a different token; reopen the UI with `te ui`";
+  document.getElementById("app")?.prepend(d);
+};
 const api = async (path, init) => {
   const res = await fetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) authBanner();
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
 };
@@ -883,10 +894,17 @@ const Activity = () => {
   const [filter, setFilter] = useState("");
   const listRef = useRef(null);
   useEffect(() => {
-    return onEvent((e) => {
-      if (e.kind === "event") setEvents((ev) => [...ev.slice(-499), e.data]);
-      else setEvents((ev) => [...ev.slice(-499), { ts: new Date().toISOString(), machine: "-", actor: e.kind, action: e.data.kind ?? e.data.message ?? "notice", item: e.data.item ?? "" }]);
-    });
+    // dedicated stream: ?replay back-fills the daemon's event buffer so the
+    // page never opens empty (the shared stream stays live-only)
+    const src = new EventSource("/events?replay=200");
+    src.onmessage = (e) => setEvents((ev) => [...ev.slice(-499), JSON.parse(e.data)]);
+    for (const kind of ["watch", "reconcile"]) {
+      src.addEventListener(kind, (e) => {
+        const d = JSON.parse(e.data);
+        setEvents((ev) => [...ev.slice(-499), { ts: new Date().toISOString(), machine: "-", actor: kind, action: d.kind ?? d.message ?? "notice", item: d.item ?? "" }]);
+      });
+    }
+    return () => src.close();
   }, []);
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight); }, [events]);
   const f = filter.toLowerCase();

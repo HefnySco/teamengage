@@ -4,7 +4,9 @@ import type { Event } from "../../core/model/event.js";
 /**
  * Live event stream (DM-0006): `GET /events` as Server-Sent Events. Every
  * committed event is pushed to all connected clients; `Last-Event-ID` resumes
- * from the in-memory replay buffer. Event ids are `machine|ts|seq`.
+ * from the in-memory replay buffer. `?replay=N` sends the last N buffered
+ * events on connect (fresh page loads carry no Last-Event-ID). Event ids are
+ * `machine|ts|seq`.
  */
 
 export function eventId(e: Event): string {
@@ -34,8 +36,9 @@ export class EventBus {
     reply.raw.write(`id: ${eventId(e)}\ndata: ${JSON.stringify(e)}\n\n`);
   }
 
-  /** Attach an SSE client; replays events after Last-Event-ID when given. */
-  attach(reply: FastifyReply, lastEventId?: string): void {
+  /** Attach an SSE client; replays events after Last-Event-ID when given,
+   *  otherwise the last `replay` buffered events when replay > 0. */
+  attach(reply: FastifyReply, lastEventId?: string, replay = 0): void {
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -47,6 +50,8 @@ export class EventBus {
       for (const e of this.buffer.slice(i === -1 ? this.buffer.length : i + 1)) {
         this.send(reply, e);
       }
+    } else if (replay > 0) {
+      for (const e of this.buffer.slice(-replay)) this.send(reply, e);
     }
     this.clients.add(reply);
     reply.raw.on("close", () => this.clients.delete(reply));
@@ -60,7 +65,9 @@ export class EventBus {
 export function registerEventRoutes(app: FastifyInstance, bus: EventBus): void {
   app.get("/events", async (req, reply) => {
     const last = req.headers["last-event-id"];
-    bus.attach(reply, Array.isArray(last) ? last[0] : last);
+    const raw = (req.query as { replay?: string }).replay;
+    const replay = raw === undefined ? 0 : Math.min(Math.max(0, parseInt(raw, 10) || 0), 500);
+    bus.attach(reply, Array.isArray(last) ? last[0] : last, replay);
     return reply; // keep the connection open
   });
 }

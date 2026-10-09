@@ -7,8 +7,9 @@ import { teHome } from "../../core/config/config.js";
 /**
  * Daemon process and HTTP server (DESIGN §6.1). One `teamengaged` per machine:
  * binds 127.0.0.1 on a random port, writes {pid, port, token} to
- * `~/.teamengage/daemon.json` (0600). All routes except /health need the
- * bearer token. Graceful shutdown drains plugin-provided async work.
+ * `~/.teamengage/daemon.json` (0600). The bearer token itself lives in
+ * `~/.teamengage/token` (0600) so it survives restarts. All routes except
+ * /health need it. Graceful shutdown drains plugin-provided async work.
  */
 
 export interface DaemonInfo {
@@ -79,7 +80,22 @@ export interface StartOpts {
 }
 
 export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
-  const token = randomBytes(24).toString("hex");
+  const home = teHome(opts.home);
+  mkdirSync(home, { recursive: true });
+  // stable per-machine token in <te home>/token (0600): a daemon restart then
+  // keeps browser sessions (te_token cookie) valid instead of logging out
+  const tokenPath = join(home, "token");
+  let token = "";
+  try {
+    token = readFileSync(tokenPath, "utf8").trim();
+  } catch {
+    /* first run — mint below */
+  }
+  if (!token) {
+    token = randomBytes(24).toString("hex");
+    writeFileSync(tokenPath, token);
+    chmodSync(tokenPath, 0o600);
+  }
   // forceCloseConnections: SSE/keep-alive clients would otherwise hold
   // server.close() open forever — SIGTERM must actually stop the daemon
   const app = Fastify({
@@ -127,8 +143,6 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
   const addr = app.server.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
 
-  const home = teHome(opts.home);
-  mkdirSync(home, { recursive: true });
   const info: DaemonInfo = {
     pid: process.pid,
     port,
