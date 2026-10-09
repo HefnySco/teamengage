@@ -36,6 +36,31 @@ function inline(text) {
   return out.replace(/\uE000(\d+)\uE000/g, (_m, i) => codes[Number(i)]);
 }
 
+/** One line of markdown (History entries): inline formatting only, escaped. */
+export function inlineMarkdown(text) {
+  return inline(escapeHtml(String(text ?? "")));
+}
+
+/**
+ * The `## Notes` section of a markdown file (last one, outside code
+ * fences), up to the next `## ` heading. Empty string when there is none.
+ */
+export function notesSection(md) {
+  const lines = String(md ?? "").replace(/\r\n/g, "\n").split("\n");
+  let fence = false;
+  let start = -1;
+  const heads = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (fence) return;
+    if (/^##\s/.test(l)) heads.push(i);
+    if (/^##\s+notes\s*$/i.test(l)) start = i;
+  });
+  if (start === -1) return "";
+  const end = heads.find((h) => h > start) ?? lines.length;
+  return lines.slice(start + 1, end).join("\n").trim();
+}
+
 const splitRow = (line) =>
   line
     .trim()

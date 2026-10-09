@@ -118,8 +118,9 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   simple <id> {text} (writes and links X.simple.md) — never by hand.
 - Never edit or remove the "te:" frontmatter line; never move files into
   done/ — status lives in TeamEngage, the human moves files.
-- Existing task files: additive edits only — append to "## Acceptance" or
-  "## Notes" — and record each edit with log.
+- Notes worth keeping in a task: note <id> {text} (appends to its "## Notes").
+  Other edits to existing task files: additive only (e.g. new "## Acceptance"
+  items), each recorded with log.
 `;
 
 /** What `te template` prints: the standard, as a filled-in example. */

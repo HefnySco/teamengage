@@ -546,6 +546,12 @@ export class WorkspaceOps {
     return this.store.setSimple(id, text, this.actorFor(actor));
   }
 
+  /** Add a multi-line note to the item (task file `## Notes`). */
+  async note(id: string, actor: Session | "human", text: string) {
+    this.item(id);
+    return this.store.addNote(id, text, this.actorFor(actor));
+  }
+
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });

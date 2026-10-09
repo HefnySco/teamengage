@@ -81,6 +81,28 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "note",
+    {
+      description:
+        "Add a note (multi-line markdown) to an item: appended to the task file's ## Notes with a timestamp. " +
+        "Use it for findings worth keeping in the task; progress goes in log. No claim needed.",
+      inputSchema: { id: z.string(), text: z.string() },
+    },
+    async ({ id, text }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.note(id, s, text);
+        return okText(`noted ${id} → ${r.path}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "simple",
     {
       description:

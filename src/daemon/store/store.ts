@@ -11,7 +11,7 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag, withoutTeTag, toSourcePath } from "../../core/files/source.js";
+import { withTeTag, withoutTeTag, toSourcePath, appendNote, resolveSource } from "../../core/files/source.js";
 import {
   filePrefix,
   nextTaskNumber,
@@ -721,6 +721,47 @@ export class PlansStore {
       }
       await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${actor.session} wrote the simple version`], sectionWrites);
       await this.commitPaths([it.path], `te: ${id} simple by ${actor.session}`);
+      await this.index.upsertFile(absItem);
+      return { path };
+    });
+  }
+
+  /**
+   * Add a note (multi-line markdown) to the item: overlay → appended to the
+   * task file's `## Notes` (found by its te: tag if it moved); standard → the
+   * item's `## Notes` section. A short History line records who added it.
+   */
+  addNote(id: string, text: string, actor: Actor): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const note = text.replace(/\r\n/g, "\n").trim();
+      if (!note) throw new ValidationError("note is empty");
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const block = `**${now.slice(0, 16).replace("T", " ")} · ${who}**\n\n${note}\n`;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now.slice(0, 10) } as ItemMeta;
+      let path = it.path;
+      const sectionWrites: Array<{ heading: string; text: string }> = [];
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const abs = join(this.ws.root, found.path);
+        const out = appendNote(found.text, block);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        path = found.path;
+      } else {
+        sectionWrites.push({ heading: "Notes", text: `\n${block}` });
+      }
+      const first = note.split("\n")[0];
+      const summary = first.length > 80 ? `${first.slice(0, 80)}…` : first;
+      await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${who} added a note: ${summary}`], sectionWrites);
+      await this.commitPaths([it.path], `te: ${id} note by ${who}`);
       await this.index.upsertFile(absItem);
       return { path };
     });

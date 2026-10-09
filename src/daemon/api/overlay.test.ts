@@ -462,3 +462,28 @@ describe("simple tool", () => {
     expect(tracker.findings().filter((f) => f.path?.includes("TASK-12-gate"))).toEqual([]);
   });
 });
+
+describe("notes", () => {
+  it("a multi-line note lands in the task file's ## Notes; History gets a short line", async () => {
+    const { ids, files } = await store().createItems([{ type: "task", title: "Noted task", project: "global" }], {
+      kind: "human",
+      session: "human",
+      machine: "test",
+    });
+    const id = ids[0];
+    const post = (body: unknown) =>
+      api(`/api/items/${id}/note`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    expect((await post({ text: "first line with `code`\nsecond line\n\n- a list" })).status).toBe(200);
+    expect((await post({ text: "another one" })).status).toBe(200);
+    expect((await post({ text: "   " })).status).toBeGreaterThanOrEqual(400);
+
+    const file = readFileSync(join(root, files[0]), "utf8");
+    const notes = file.slice(file.indexOf("## Notes"));
+    expect(notes).toMatch(/## Notes\n\n\*\*\d{4}-\d\d-\d\d \d\d:\d\d · human\*\*\n\nfirst line with `code`\nsecond line\n\n- a list\n\n\*\*.* · human\*\*\n\nanother one\n$/);
+    // everything above Notes is untouched (template body)
+    expect(file.startsWith(`---\nte: ${id}\n---\n# Noted task\n`)).toBe(true);
+    const log = store().idx.get(id)!.sections.find((s) => s.heading === "Log")!.body;
+    expect(log).toMatch(/human added a note: first line with `code`\n.*human added a note: another one/);
+  });
+});

@@ -187,3 +187,21 @@ describe("overlayReport: companions added later", () => {
     expect(r.findings.map((f) => f.kind)).toEqual(["duplicate_tag"]);
   });
 });
+
+describe("appendNote", () => {
+  it("appends at the end of ## Notes, before the next section, never touching other lines", async () => {
+    const { appendNote } = await import("./source.js");
+    const B = "**t · human**\n\nline one\nline two\n";
+    expect(appendNote("# T\n\n## Notes\n- old\n\n## Log\nx\n", B)).toBe(
+      "# T\n\n## Notes\n- old\n\n**t · human**\n\nline one\nline two\n\n## Log\nx\n",
+    );
+    // last section, empty
+    expect(appendNote("# T\n\n## Notes\n\n", B)).toBe("# T\n\n## Notes\n\n**t · human**\n\nline one\nline two\n");
+    // no Notes section → added at the end
+    expect(appendNote("# T\nbody\n", B)).toBe("# T\nbody\n\n## Notes\n\n**t · human**\n\nline one\nline two\n");
+    // a '## Notes' inside a code fence is not the section
+    expect(appendNote("# T\n```\n## Notes\n```\n", "n")).toBe("# T\n```\n## Notes\n```\n\n## Notes\n\nn\n");
+    // CRLF kept
+    expect(appendNote("# T\r\n## Notes\r\n", "n")).toBe("# T\r\n## Notes\r\n\r\nn\r\n");
+  });
+});

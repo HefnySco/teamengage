@@ -1,5 +1,5 @@
 import "bootstrap/dist/css/bootstrap.min.css";
-import { markdownToHtml } from "./markdown.js";
+import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { h, render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -174,7 +174,7 @@ const Inbox = ({ onOpen }) => {
           (q) => html`
             <div class="list-group-item" key=${q.id}>
               <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id) }} onOpen=${onOpen} />
-              <p class="my-2">${q.question?.text}</p>
+              <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
               <${AnswerBox} q=${q} />
             </div>
           `,
@@ -428,7 +428,7 @@ const parseLog = (body) =>
       return m ? { ts: m[1], who: m[2], text: m[3] } : { text: l.replace(/^-\s*/, "") };
     });
 
-const History = ({ entries, onOpen }) => html`
+const History = ({ entries }) => html`
   <div class="card mt-3">
     <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
     <ul class="list-group list-group-flush scroll-list">
@@ -438,7 +438,7 @@ const History = ({ entries, onOpen }) => html`
           <li class="list-group-item small" key=${i}>
             ${e.ts && html`<span class="text-secondary me-2" title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span>`}
             ${e.who && html`<b class="me-1">${e.who}</b>`}
-            <${LinkedText} text=${e.text} onOpen=${onOpen} />
+            <span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
           </li>
         `,
       )}
@@ -466,8 +466,45 @@ const MdBox = ({ text, view }) =>
     ? html`<div class="card card-body"><pre class="mb-0">${text}</pre></div>`
     : html`<div class="card card-body md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`;
 
+// notes: the task file's ## Notes, shown formatted, plus a multi-line field to add one
+const Notes = ({ id, text, onAdded }) => {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    try {
+      await post(`/api/items/${id}/note`, { text: draft });
+      setDraft("");
+      onAdded();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`
+    <div class="card mt-3">
+      <div class="card-header py-2"><b>Notes</b> <span class="text-secondary small">kept in the task file's ## Notes — agents see them too</span></div>
+      <div class="card-body">
+        ${text
+          ? html`<div class="md-view mb-3" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`
+          : html`<p class="text-secondary small mb-2">no notes yet</p>`}
+        <textarea class="form-control form-control-sm" rows="4" placeholder="add a note — markdown welcome; Ctrl+Enter to save"
+          value=${draft} onInput=${(e) => setDraft(e.target.value)}
+          onKeyDown=${(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) add();
+          }} />
+        <div class="d-flex justify-content-end mt-2">
+          <button class="btn btn-sm btn-primary btn-act" disabled=${!draft.trim() || busy} onClick=${add}>${busy ? "saving…" : "add note"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
 // ---- Item (UI-0005) ------------------------------------------------------------
-const ItemView = ({ id, onOpen }) => {
+const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
   const [picked, setTab] = useState(null);
   const [mdView, setMdView] = useState(loadMdView);
@@ -504,7 +541,11 @@ const ItemView = ({ id, onOpen }) => {
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
       <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
     </div>`}
-    ${it.meta.question && html`<div class="alert alert-info py-1 px-2 small mb-2"><b>question:</b> ${it.meta.question.text}</div>`}
+    ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
+      <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from ${it.meta.question.asked_by}</span>` : ""}
+      <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
+      ${(it.meta.question.options ?? []).length > 0 && html`<div class="mt-1">options: ${it.meta.question.options.map((o, i) => html`<span class="badge text-bg-secondary me-1">${i + 1}. ${o}</span>`)}</div>`}
+    </div>`}
     <div class="d-flex gap-2 mb-3 flex-wrap">
       ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("approve")}>approve</button>`}
       ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unhold")}>resume</button>`}
@@ -555,7 +596,8 @@ const ItemView = ({ id, onOpen }) => {
       ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
     </div>`}
     ${b.decisions.map((d) => html`<div class="card card-body mt-2"><b>${d.meta.id}</b> ${d.meta.title}</div>`)}
-    <${History} entries=${history} onOpen=${onOpen} />
+    <${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} />
+    <${History} entries=${history} />
   `;
 };
 

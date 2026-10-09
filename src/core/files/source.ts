@@ -73,6 +73,35 @@ export function withoutTeTag(text: string, id: string): string {
   return lines.some((l) => l.trim()) ? `---${eol}${lines.join(eol)}${eol}---${eol}${body}` : body;
 }
 
+/**
+ * Append a block to the file's `## Notes` section (the last one, outside
+ * code fences): at the end of that section, before the next `## ` heading.
+ * No such section → one is added at the end of the file. Purely additive.
+ */
+export function appendNote(text: string, block: string): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let notesAt = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (/^##\s+notes\s*$/i.test(l)) notesAt = i;
+  });
+  const add = block.replace(/\s+$/, "").split(/\r?\n/);
+  if (notesAt === -1) {
+    return [text.replace(/\s+$/, ""), "", "## Notes", "", ...add, ""].join(eol);
+  }
+  const next = headings.find((h) => h > notesAt) ?? lines.length;
+  // end of the section's content, ignoring its trailing blank lines
+  let end = next;
+  while (end - 1 > notesAt && lines[end - 1].trim() === "") end--;
+  const after = lines.slice(next);
+  return [...lines.slice(0, end), "", ...add, ...(after.length ? ["", ...after] : [""])].join(eol);
+}
+
 /** Workspace-relative path with `/` separators — the same on every machine. */
 export function toSourcePath(root: string, abs: string): string {
   return relative(root, abs).split(sep).join("/");

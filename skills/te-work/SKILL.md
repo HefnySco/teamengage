@@ -80,9 +80,15 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   curl -s -X POST $B/log/GL-0019 -H "$H" -d '{"note":"restart detection in handleMissionCurrentCount; unit test green"}'
   ```
 
-- Learned something the task file should keep? Append it under `## Notes`
-  (or a new `## Acceptance` item) — additive only, never rewrite existing
-  lines, never touch the `te:` line — and `log` that you did.
+- Learned something the task file should keep (a finding, a gotcha, a
+  measurement)? Add it as a note — it is appended to the task's `## Notes`
+  with a timestamp; markdown and several lines are fine:
+
+  ```bash
+  curl -s -X POST $B/note/GL-0019 -H "$H" -d '{"text":"mission_mode is 0 on ArduPilot < 4.5 — restart detection falls back to seq decrease"}'
+  ```
+
+  Never rewrite existing lines or touch the `te:` line.
 
 ### Plain-English version
 

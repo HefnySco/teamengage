@@ -346,3 +346,18 @@ describe("archive", () => {
     );
   });
 });
+
+describe("notes (standard workspace)", () => {
+  it("go into the item's ## Notes section", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const { ids } = await store.createItems([{ type: "task", title: "std note" }], { kind: "human", session: "human", machine: "test" });
+    const r = await api(`/api/items/${ids[0]}/note`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "line 1\nline 2" }),
+    });
+    expect(r.status).toBe(200);
+    const notes = store.idx.get(ids[0])!.sections.find((s) => s.heading === "Notes")!.body;
+    expect(notes).toMatch(/· human\*\*\n\nline 1\nline 2/);
+  });
+});
