@@ -80,6 +80,13 @@ const fallbackColor = (name) => {
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return `hsl(${h % 360} 55% 45%)`;
 };
+// <input type=color> needs #rrggbb — canvas resolves hsl()/named colours for us
+const colorCtx = document.createElement("canvas").getContext("2d");
+const toHexColor = (css) => {
+  colorCtx.fillStyle = "#888888";
+  colorCtx.fillStyle = css;
+  return colorCtx.fillStyle;
+};
 function useDomains() {
   const [rows, setRows] = useState(null);
   useEffect(() => {
@@ -514,7 +521,10 @@ const Domains = () => {
           <td class="text-end">${r.count}${r.archived ? html`<span class="text-secondary small"> +${r.archived} archived</span>` : ""}</td>
           <td class="text-end">${r.open}</td>
           <td class="text-end text-nowrap">
-            <button class="btn btn-sm btn-outline-secondary py-0" onClick=${() => edit(r, "color", "Colour (css, e.g. #2e7d32 — empty for automatic)")}>colour</button>
+            <input type="color" class="domain-color" value=${toHexColor(r.color ?? fallbackColor(r.name))}
+              title="pick a colour for #${r.name}${r.color ? "" : " (automatic — inherited from the name)"}"
+              onChange=${(e) => call("/api/domains", { name: r.name, color: e.target.value })} />
+            ${r.color && html`<button class="btn btn-sm btn-link py-0 px-1 text-secondary" title="reset to the automatic colour" onClick=${() => call("/api/domains", { name: r.name, color: "" })}>×</button>`}
             <button class="btn btn-sm btn-outline-secondary py-0" onClick=${() => rename(r)}>rename / merge</button>
             <button class="btn btn-sm btn-outline-danger py-0" onClick=${() => del(r)}>delete</button>
           </td>
