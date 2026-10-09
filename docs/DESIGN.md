@@ -177,12 +177,19 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
   └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
                        ready|hold ──to_draft──▶ draft
-blocked  = derived: any depends_on not done
+blocked  = derived: any depends_on not done (in_review counts as done
+           unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
 done     = terminal
 ```
 
 - `turn`: `draft`, `hold`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.
+- `review_unblocks` (default `true`): a dependency that is submitted
+  (`in_review`) unblocks its dependents, so approved work can go on in
+  sequence without waiting for each acceptance. `brief` marks such a
+  dependency "not accepted yet"; if it is rejected while a dependent is
+  started, the inbox shows a `started_on_open_dep` warning. Set `false` to
+  require `done`.
 - `hold` parks an item: it is not a draft (the plan is fine), but not for
   agents yet — `next` skips it and `claim` refuses it. `te hold` / `te unhold`
   / `te draft`, or hold / resume / to draft in the UI. A claimed item must be

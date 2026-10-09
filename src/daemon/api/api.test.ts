@@ -361,3 +361,67 @@ describe("notes (standard workspace)", () => {
     expect(notes).toMatch(/· human\*\*\n\nline 1\nline 2/);
   });
 });
+
+describe("review_unblocks: a dependency in review lets dependents start", () => {
+  it("B can start once A is submitted; rejecting A flags B; off → B waits for done", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "A first" },
+        { type: "task", title: "B builds on A", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [a, b] = ids;
+    await ops.approve(a);
+    await ops.approve(b);
+    expect(store.idx.get(b)!.blocked).toBe(true); // A not started
+
+    const s1 = ctx.sessions.hello("agent-a");
+    await ops.claim(a, s1);
+    expect(store.idx.get(b)!.blocked).toBe(true); // A in progress still blocks
+    await ops.submit(a, s1, { notes: "done" });
+    expect(store.idx.get(a)!.meta.status).toBe("in_review");
+
+    // default (review_unblocks: true): B is ready and claimable now
+    expect(store.idx.get(b)!.blocked).toBe(false);
+    expect(ops.next(50).map((i) => i.meta.id)).toContain(b);
+    const brief = await ops.brief(b);
+    expect(brief.deps.find((d) => d.ref === a)).toMatchObject({ status: "in_review", pending: true });
+    const s2 = ctx.sessions.hello("agent-b");
+    await ops.claim(b, s2);
+    expect(store.idx.get(b)!.meta.status).toBe("in_progress");
+
+    // A is rejected → B started on top of it: inbox warning
+    await ops.reject(a, "needs rework");
+    expect(ops.findings().some((f) => f.kind === "started_on_open_dep" && f.item === b)).toBe(true);
+
+    // review_unblocks: false → only done unblocks
+    const { ids: more } = await store.createItems(
+      [
+        { type: "task", title: "C first" },
+        { type: "task", title: "D after C", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [c, d] = more;
+    await ops.approve(c);
+    await ops.approve(d);
+    await ops.claim(c, s1);
+    await ops.submit(c, s1, {});
+    expect(store.idx.get(d)!.blocked).toBe(false);
+    wsr.ws.config.review_unblocks = false;
+    store.idx.setReviewUnblocks(false);
+    try {
+      expect(store.idx.get(d)!.blocked).toBe(true);
+      await expect(ops.claim(d, s2)).rejects.toThrow(/dependencies not done/);
+    } finally {
+      wsr.ws.config.review_unblocks = true;
+      store.idx.setReviewUnblocks(true);
+    }
+  });
+});

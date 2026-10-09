@@ -84,6 +84,7 @@ export class PlansStore {
 
   async init(): Promise<void> {
     this.index = await Index.load(this.ws.plansDir);
+    this.index.setReviewUnblocks(this.ws.config.review_unblocks);
     this.events = new EventLog(join(this.ws.plansDir, "events"), this.machine);
     this.ready = true;
   }

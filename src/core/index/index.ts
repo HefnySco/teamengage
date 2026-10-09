@@ -8,6 +8,14 @@ import { parseItemRef } from "../address/refs.js";
 import type { Claim } from "../model/claim.js";
 
 /** An item plus everything derived from the graph around it (DESIGN §5). */
+/**
+ * Does a dependency in `status` let its dependents start? done/dropped
+ * always; in_review too unless the workspace turns review_unblocks off.
+ */
+export function depSatisfied(status: Status, reviewUnblocks: boolean): boolean {
+  return status === "done" || status === "dropped" || (reviewUnblocks && status === "in_review");
+}
+
 export interface IndexedItem {
   meta: ItemMeta;
   sections: Section[];
@@ -52,6 +60,9 @@ export class Index {
   cycles: string[][] = [];
   /** files that failed to parse: path → message */
   invalidFiles = new Map<string, string>();
+
+  /** see workspace.yaml review_unblocks; set by the store from the config */
+  reviewUnblocks = true;
 
   constructor(
     readonly plansDir: string,
@@ -234,11 +245,17 @@ export class Index {
         } catch {
           return false; // unparseable ref → validator finding, not a block
         }
-        return status !== undefined && status !== "done" && status !== "dropped";
+        return status !== undefined && !depSatisfied(status, this.reviewUnblocks);
       });
       it.turn = turnOf(it.meta.status);
       it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim;
     }
+  }
+
+  /** Change the review_unblocks rule and re-derive blocked/ready. */
+  setReviewUnblocks(on: boolean): void {
+    this.reviewUnblocks = on;
+    this.derive();
   }
 
   get(id: string): IndexedItem | undefined {

@@ -1,7 +1,7 @@
 import { isStale } from "../model/claim.js";
 import { parseItemRef, parseTargetRef } from "../address/refs.js";
 import { targetsOverlap, type Roots } from "../claims/claims.js";
-import type { Index } from "../index/index.js";
+import { depSatisfied, type Index } from "../index/index.js";
 
 /** Plan-graph health check (DESIGN CR-0009). Feeds the human inbox + `te validate`. */
 
@@ -11,6 +11,7 @@ export type FindingKind =
   | "dangling_ref"
   | "cycle"
   | "done_with_open_deps"
+  | "started_on_open_dep"
   | "duplicate_id"
   | "invalid_frontmatter"
   | "conflict_markers"
@@ -87,6 +88,28 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
           item: id,
           path: it.path,
           message: `${id} references missing item ${parsed.id}`,
+        });
+      }
+    }
+    // started (or submitted) while a dependency is no longer in review/done —
+    // e.g. the dependency was rejected after this one began on top of it
+    if (["in_progress", "waiting", "in_review"].includes(it.meta.status)) {
+      const back = it.meta.depends_on.filter((d) => {
+        try {
+          const p = parseItemRef(d);
+          const dep = p.workspace ? undefined : index.items.get(p.id);
+          return dep && !depSatisfied(dep.meta.status, index.reviewUnblocks);
+        } catch {
+          return false;
+        }
+      });
+      if (back.length > 0) {
+        f({
+          severity: "warning",
+          kind: "started_on_open_dep",
+          item: id,
+          path: it.path,
+          message: `${id} is ${it.meta.status} but its dependency ${back.join(", ")} is not done or in review (rejected?) — check the work built on it`,
         });
       }
     }

@@ -62,6 +62,11 @@ export const WorkspaceConfig = z
      * point at the task file via `source` (relative to the root).
      */
     mode: z.enum(["standard", "overlay"]).default("standard"),
+    /**
+     * A dependency in review (submitted, not accepted yet) unblocks the items
+     * that depend on it. `false`: only done/dropped unblock.
+     */
+    review_unblocks: z.boolean().default(true),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */

@@ -8,7 +8,7 @@ import {
 } from "../../core/domains/domains.js";
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
-import type { IndexedItem } from "../../core/index/index.js";
+import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
@@ -95,7 +95,7 @@ export class WorkspaceOps {
       const status = parsed.workspace
         ? this.links?.statusOf(ref)
         : (this.index.get(parsed.id)?.meta.status ?? this.links?.statusOf(ref));
-      return status === "done" || status === "dropped";
+      return status !== undefined && depSatisfied(status, this.wsr.ws.config.review_unblocks);
     });
   }
 
@@ -209,6 +209,8 @@ export class WorkspaceOps {
         ref,
         status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown",
         archived: Boolean(dep?.meta.archived),
+        /** satisfied only because review_unblocks: its work may still be rejected */
+        pending: dep?.meta.status === "in_review",
         outcome: dep ? lastLine(sectionBody(dep, "Log")) : "",
         evidence: dep ? lastLine(sectionBody(dep, "Evidence")) : "",
       };
