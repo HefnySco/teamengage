@@ -21,7 +21,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "build:web": "esbuild web/app.js --bundle --format=esm --splitting --outdir=web/dist --minify"
+    "build:web": "esbuild web/app.js --bundle --format=esm --splitting --outdir=web/dist --minify",
+    "ui": "node dist/cli/main.js ui"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",

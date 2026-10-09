@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -233,7 +233,7 @@ describe("import planning (IM-0001)", () => {
       path: `done/${name}.md`,
       content: `# ${name}\n\n**Depends on:** ${dep}\n`,
     });
-    // real lines from mission_planner that produced P4B-02⇄03 and VG-01⇄02 cycles
+    // real-world dep lines that produced P4B-02⇄03 and VG-01⇄02 cycles
     const files = [
       mk("TASK-P4B-02-expr", "nothing (the geo functions come from P4B-03; stub them until then)."),
       mk("TASK-P4B-03-geo", "P4B-02 (the expression geo functions call into this core)."),
@@ -282,27 +282,32 @@ describe("import planning (IM-0001)", () => {
     expect(depItem).toBeDefined();
   });
 
-  it("imports the real ~/de_code/Tasks/global folder end-to-end", async () => {
-    const real = join(process.env.HOME ?? "", "de_code", "Tasks", "global");
-    if (!existsSync(real)) return; // machine without the repo — nothing to verify
-    const files = await scanFolder(real);
-    expect(files.length).toBeGreaterThan(10);
-
+  it("end-to-end apply: hostile titles re-parse cleanly", async () => {
+    // titles carry `:` `()` `` ` `` `#` `"` `[]` and other YAML-hostile
+    // characters — every created file must re-parse after the round-trip
+    const src2 = mkdtempSync(join(tmpdir(), "te-import-hostile-"));
+    mkdirSync(join(src2, "done"), { recursive: true });
+    mkdirSync(join(src2, "todo"), { recursive: true });
+    writeFileSync(
+      join(src2, "done", "TASK-X-01 hostile.md"),
+      '# TASK-X-01: Foo (bar) — `baz` #qux "zap" [wip]\n\nBody.\n',
+    );
+    writeFileSync(
+      join(src2, "done", "TASK-X-01 hostile.simple.md"),
+      'Plain words, no "markup".',
+    );
+    writeFileSync(
+      join(src2, "todo", "TASK-X-02 dep.md"),
+      "# TASK-X-02: depends\n\nDepends on: X-01\n",
+    );
+    const files = await scanFolder(src2);
     const plan = planImport(files, { prefix: "WS", existingIds: [] });
-    expect(plan.items.length).toBeGreaterThan(10);
-    // unique ids, real titles, merged .simple.md companions
+    expect(plan.items).toHaveLength(2);
     const idSet = new Set(plan.items.map((i) => i.suggestedId));
     expect(idSet.size).toBe(plan.items.length);
-    for (const i of plan.items) {
-      expect(i.suggestedId).toMatch(/^WS-\d{4}$/);
-      expect(i.title.trim().length).toBeGreaterThan(0);
-    }
-    expect(plan.items.filter((i) => i.simple).length).toBeGreaterThan(0);
-    // dep refs resolve to allocated ids or are reported as ambiguities
     for (const i of plan.items) for (const d of i.depends_on) expect(idSet.has(d)).toBe(true);
 
-    // apply into a fresh store — every created file must re-parse (real
-    // titles carry `:` `()` `` ` `` and other YAML-hostile characters)
+    // apply into a fresh store — every created file must re-parse
     const root2 = mkdtempSync(join(tmpdir(), "te-import-real-"));
     const plans2 = join(root2, ".teamengage");
     mkdirSync(join(plans2, "items"), { recursive: true });
@@ -336,37 +341,6 @@ describe("import planning (IM-0001)", () => {
     expect(idx2.invalidFiles.size).toBe(0);
     expect(idx2.items.size).toBe(plan.items.length);
     rmSync(root2, { recursive: true, force: true });
-  });
-
-  it("dry-run on the real ~/de_code/Tasks/mission_planner tree", async () => {
-    const real = join(process.env.HOME ?? "", "de_code", "Tasks", "mission_planner");
-    if (!existsSync(real)) return; // machine without the corpus — nothing to verify
-    const files = await scanFolder(real);
-    const plan = planImport(files, { prefix: "MP", existingIds: [] });
-
-    // unique ids even where legacy basenames repeat across folders
-    const idSet = new Set(plan.items.map((i) => i.suggestedId));
-    expect(idSet.size).toBe(plan.items.length);
-
-    // status from ANY path segment: files under nested DONE/ dirs are done
-    const nested = plan.items.filter((i) => i.sources.some((s) => /(^|\/)done\//i.test(s)));
-    expect(nested.length).toBeGreaterThan(5);
-    for (const i of nested) expect(i.status).toBe("done");
-
-    // duplicate legacy names imported as separate items AND flagged
-    const dupLegacy = plan.ambiguities.filter((a) => a.kind === "duplicate_legacy");
-    expect(dupLegacy.length).toBeGreaterThan(0);
-    const p4f04 = plan.items.filter((i) => i.legacy_id === "TASK-P4F-04-launch-grant-schema");
-    expect(p4f04.length).toBe(2);
-
-    // **Depends on:** lines resolve short refs like "P1F-01" to new ids
-    const p1f02 = plan.items.find((i) => i.legacy_id === "TASK-P1F-02-operation-cloud-ui")!;
-    expect(p1f02.depends_on).toEqual([
-      plan.items.find((i) => i.legacy_id === "TASK-P1F-01-cloud-mission-store")!.suggestedId,
-    ]);
-
-    // genuinely unresolvable refs are reported, not dropped or invented
-    expect(plan.ambiguities.some((a) => a.kind === "unresolved_dep")).toBe(true);
-    for (const i of plan.items) for (const d of i.depends_on) expect(idSet.has(d)).toBe(true);
+    rmSync(src2, { recursive: true, force: true });
   });
 });
