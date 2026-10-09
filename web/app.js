@@ -377,7 +377,7 @@ const Board = ({ onOpen }) => {
             <div class="board-list">
               ${items.map(
                 (i) => html`
-                  <div class="card card-body mini p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
+                  <div class="card card-body mini st-${s} p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="d-flex justify-content-between">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
@@ -554,6 +554,7 @@ const Graph = ({ onOpen }) => {
   });
   const [applied, setApplied] = useState(f);
   const [svg, setSvg] = useState("");
+  const [zoom, setZoom] = useState(1);
   const [src, setSrc] = useState("");
   const [count, setCount] = useState(null);
   const update = (patch) => {
@@ -613,10 +614,19 @@ const Graph = ({ onOpen }) => {
       </label>
       ${count !== null && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > 80 ? " — showing 80, narrow the search" : ""}</span>`}
     </div>
-    <div class="card card-body graph-view" dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
-      const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
-      if (id) onOpen(id[0].replace("_", "-"));
-    }} />
+    <div class="graph-wrap">
+      <div class="graph-tools btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary bg-body" title="zoom out" disabled=${zoom <= 0.2}
+          onClick=${() => setZoom((z) => Math.max(0.2, +(z / 1.25).toFixed(2)))}>−</button>
+        <button class="btn btn-outline-secondary bg-body" title="reset zoom" onClick=${() => setZoom(1)}>${Math.round(zoom * 100)}%</button>
+        <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= 4}
+          onClick=${() => setZoom((z) => Math.min(4, +(z * 1.25).toFixed(2)))}>+</button>
+      </div>
+      <div class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
+        const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
+        if (id) onOpen(id[0].replace("_", "-"));
+      }} />
+    </div>
     <details class="mt-2"><summary class="text-secondary">mermaid source</summary><pre class="card card-body small">${src}</pre></details>
   `;
 };
@@ -729,7 +739,7 @@ const DomainEditor = ({ id, ds, onChanged }) => {
   };
   return html`
     <div class="d-flex flex-wrap align-items-center gap-1 mb-2">
-      <span class="text-secondary small me-1">domains</span>
+      <span class="text-secondary small me-1 item-lbl">domains</span>
       ${(ds ?? []).map((d) => html`<${DomainChip} key=${d} d=${d} onRemove=${(x) => save(ds.filter((y) => y !== x))} />`)}
       <input class="form-control form-control-sm domain-input" list="te-domain-list" placeholder="+ domain" value=${draft}
         onInput=${(e) => setDraft(e.target.value)}
@@ -773,15 +783,42 @@ const ItemView = ({ id }) => {
   const history = parseLog(sec("log"));
   const last = history.at(-1);
   return html`
-    <h2 class="h4"><span class="id">${it.meta.id}</span> ${it.meta.title}</h2>
-    <div class="d-flex align-items-center gap-2 mb-2">
+    <div class="item-bar d-flex align-items-center gap-2">
+      <span class="id">${it.meta.id}</span>
       <${Badge} s=${it.meta.status} />
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
-      <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
+      <span class="item-bar-title text-secondary" title=${it.meta.title}>${it.meta.title}</span>
+      <div class="d-flex gap-2 ms-auto flex-nowrap">
+        ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}>approve</button>`}
+        ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}>resume</button>`}
+        ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
+        ${(it.meta.status === "ready" || it.meta.status === "hold") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", "why back to draft? (optional)")}>to draft</button>`}
+        ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
+        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
+        ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}>undrop</button>`}
+        ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
+        ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
+        ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
+        ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}>unarchive</button>`}
+        ${!it.claim && html`<button class="btn btn-sm btn-danger" onClick=${async () => {
+          const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
+            (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
+          if (!confirm(msg)) return;
+          const reason = prompt("reason (optional)");
+          if (reason === null) return;
+          try {
+            await post(`/api/items/${id}/delete`, { reason });
+            nav("board");
+          } catch (e) {
+            alert(e.message);
+          }
+        }}>delete</button>`}
+      </div>
     </div>
+    <div class="text-secondary small mb-2">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</div>
     <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
     <div class="d-flex align-items-center gap-2 mb-2 small flex-wrap">
-      <span class="text-secondary">tasks depending on this may start</span>
+      <span class="text-secondary item-lbl" title="tasks depending on this may start">unblocks</span>
       <div class="btn-group btn-group-sm" role="group">
         ${[
           ["default", `default (${b.reviewUnblocks === false ? "at acceptance" : "at review"})`],
@@ -801,32 +838,6 @@ const ItemView = ({ id }) => {
       <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
       ${(it.meta.question.options ?? []).length > 0 && html`<div class="mt-1">options: ${it.meta.question.options.map((o, i) => html`<span class="badge text-bg-secondary me-1">${i + 1}. ${o}</span>`)}</div>`}
     </div>`}
-    <div class="d-flex gap-2 mb-3 flex-wrap">
-      ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("approve")}>approve</button>`}
-      ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unhold")}>resume</button>`}
-      ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
-      ${(it.meta.status === "ready" || it.meta.status === "hold") && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("draft", "why back to draft? (optional)")}>to draft</button>`}
-      ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success btn-act" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
-      ${it.claim && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
-      ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act("undrop")}>undrop</button>`}
-      ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success btn-act" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
-      ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
-      ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary btn-act" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
-      ${it.meta.archived && html`<button class="btn btn-sm btn-primary btn-act" onClick=${() => act("unarchive")}>unarchive</button>`}
-      ${!it.claim && html`<button class="btn btn-sm btn-danger btn-act" onClick=${async () => {
-        const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
-          (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-        if (!confirm(msg)) return;
-        const reason = prompt("reason (optional)");
-        if (reason === null) return;
-        try {
-          await post(`/api/items/${id}/delete`, { reason });
-          nav("board");
-        } catch (e) {
-          alert(e.message);
-        }
-      }}>delete</button>`}
-    </div>
     <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
       ${TABS.map(
         (t) => html`

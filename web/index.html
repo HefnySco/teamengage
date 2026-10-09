@@ -50,7 +50,22 @@
       .claim-note { font-size: .78rem; color: var(--bs-warning-text-emphasis); }
       a.item { cursor: pointer; text-decoration: none; }
       .mini { cursor: pointer; }
-      .mini:hover { border-color: var(--bs-primary); }
+      /* a card's hover takes its status colour */
+      .st-draft { --st: #6c757d; } .st-ready { --st: #0d6efd; }
+      .st-hold { --st: #6d4c41; } .st-in_progress { --st: #ffc107; }
+      .st-waiting { --st: #0dcaf0; } .st-in_review { --st: #6f42c1; }
+      .st-done { --st: #198754; } .st-dropped { --st: #dc3545; }
+      .mini:hover { border-color: var(--st, var(--bs-primary)); background: color-mix(in srgb, var(--st, var(--bs-primary)) 8%, transparent); }
+      /* item page: the bar pins id, status and the actions under the navbar */
+      .item-bar { position: sticky; top: 2.75rem; z-index: 1010; background: var(--bs-body-bg); border-bottom: 1px solid var(--bs-border-color); padding: .35rem 0; margin-bottom: .5rem; }
+      .item-bar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .item-lbl { display: inline-block; width: 4.6rem; flex: none; }
+      /* graph: a scrollable zoom canvas; nodes open items on click */
+      .graph-wrap { position: relative; }
+      .graph-tools { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
+      .graph-view { overflow: auto; max-height: calc(100vh - 12rem); }
+      .graph-view svg { transform: scale(var(--zoom, 1)); transform-origin: top left; }
+      .graph-view .node, .graph-view .node * { cursor: pointer; }
     </style>
   </head>
   <body>
