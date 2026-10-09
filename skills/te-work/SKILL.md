@@ -55,7 +55,8 @@ You get the task file itself (summary, `**Touches:**`, `## Acceptance`),
 dependency status, decisions already made, and resolved targets.
 
 - A dependency not `done` → don't start; tell the human which one blocks.
-  Exception: a dependency `in_review` ("not accepted yet") does not block —
+  Exception: a dependency `in_review` ("not accepted yet") does not block,
+  unless brief marks it `[key task — wait for its acceptance]` —
   build on its submitted work, but read its evidence first and mention the
   dependency in your `log`; if it gets rejected, the inbox flags your task.
 - Status `draft` or `hold` → not approved for agents; tell the human.

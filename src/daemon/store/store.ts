@@ -749,6 +749,37 @@ export class PlansStore {
     return true;
   }
 
+  /** Set when an item's dependents may start (undefined = workspace default). */
+  setUnblocksOn(id: string, on: "review" | "done" | undefined, actor: Actor): Promise<{ unblocks_on?: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      if (it.meta.unblocks_on === on) return { unblocks_on: on };
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const what =
+        on === "done" ? "key task: dependents wait for acceptance"
+        : on === "review" ? "dependents may start once it is in review"
+        : "dependents follow the workspace default";
+      await this.rewriteItem(
+        id,
+        (m) => {
+          const next = { ...m } as ItemMeta;
+          if (on) next.unblocks_on = on;
+          else delete next.unblocks_on;
+          return next;
+        },
+        [`- ${now} ${who} ${what}`],
+      );
+      // dependents' blocked flags depend on this item
+      this.index.setReviewUnblocks(this.index.reviewUnblocks);
+      await this.commitPaths([it.path], `te: ${id} unblocks_on ${on ?? "default"}`);
+      return { unblocks_on: on };
+    });
+  }
+
   /** Set an item's domains (normalized; unknown names are added to the vocabulary). */
   setDomains(id: string, domains: string[], actor: Actor): Promise<{ domains: string[]; added: string[] }> {
     return this.enqueue(async () => {

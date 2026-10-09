@@ -117,7 +117,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         if (acc) lines.push(`acceptance:\n${acc}`);
         for (const d of b.deps) {
           lines.push(
-            `dep ${d.ref} ${d.status}${d.pending ? " (not accepted yet — build on it, but it may still change)" : ""}${d.archived ? " [archived]" : ""}${d.outcome ? ` — ${d.outcome}` : ""}`,
+            `dep ${d.ref} ${d.status}${d.key && !["done", "dropped"].includes(d.status) ? " [key task — wait for its acceptance]" : ""}${d.pending ? " (not accepted yet — build on it, but it may still change)" : ""}${d.archived ? " [archived]" : ""}${d.outcome ? ` — ${d.outcome}` : ""}`,
           );
         }
         for (const d of b.decisions) {

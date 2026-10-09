@@ -59,6 +59,12 @@ export const ItemMeta = z
     /** overlay mode: companion `.simple.md`, relative to the workspace root */
     simple_source: z.string().optional(),
     question: Question.optional(),
+    /**
+     * When this item's dependents may start: "done" = a key task, they wait
+     * for acceptance; "review" = once it is submitted. Unset → workspace
+     * review_unblocks.
+     */
+    unblocks_on: z.enum(["review", "done"]).optional(),
     /** hidden from board/inbox/graph/next; status kept underneath (archive page) */
     archived: z.boolean().optional(),
     archived_at: z.string().optional(),

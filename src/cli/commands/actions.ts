@@ -114,6 +114,30 @@ export async function deleteCmd(args: string[], home?: string): Promise<number> 
   return act("delete", [id, ...args.filter((a) => a.startsWith("--") && a !== "--yes")], { reason: rest.join(" ") }, home);
 }
 
+/**
+ * `te key <ID>` — dependents wait for this task's acceptance;
+ * `te key <ID> --review` — they may start once it is in review;
+ * `te key <ID> --off` — back to the workspace default.
+ */
+export async function keyCmd(args: string[], home?: string): Promise<number> {
+  const [id] = positional(args.filter((a) => a !== "--off" && a !== "--review"));
+  if (!id) {
+    process.stderr.write("usage: te key <ID> [--review|--off]\n");
+    return 2;
+  }
+  const on = args.includes("--off") ? "default" : args.includes("--review") ? "review" : "done";
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/unblocks${wsQ(args)}`,
+    { on },
+    home,
+  )) as { unblocks_on?: string };
+  process.stdout.write(
+    `${id.toUpperCase()}: ${r.unblocks_on === "done" ? "key task — dependents wait for acceptance" : r.unblocks_on === "review" ? "dependents may start at review" : "workspace default"}\n`,
+  );
+  return 0;
+}
+
 /** `te unhold <ID>` — release a hold → ready. */
 export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
 

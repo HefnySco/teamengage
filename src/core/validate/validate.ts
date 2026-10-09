@@ -98,7 +98,7 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
         try {
           const p = parseItemRef(d);
           const dep = p.workspace ? undefined : index.items.get(p.id);
-          return dep && !depSatisfied(dep.meta.status, index.reviewUnblocks);
+          return dep && !depSatisfied(dep.meta.status, index.reviewUnblocks, dep.meta.unblocks_on);
         } catch {
           return false;
         }

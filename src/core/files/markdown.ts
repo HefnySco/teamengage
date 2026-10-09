@@ -32,6 +32,7 @@ const META_KEY_ORDER = [
   "imported_from",
   "source",
   "simple_source",
+  "unblocks_on",
   "archived",
   "archived_at",
   "question",

@@ -379,7 +379,7 @@ const Board = ({ onOpen }) => {
                 (i) => html`
                   <div class="card card-body mini p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="d-flex justify-content-between">
-                      <span class="id">${i.id}</span>
+                      <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
                     </div>
                     <div class="small">${i.title}</div>
@@ -732,6 +732,19 @@ const ItemView = ({ id }) => {
       <span class="text-secondary small">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</span>
     </div>
     <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
+    <div class="d-flex align-items-center gap-2 mb-2 small flex-wrap">
+      <span class="text-secondary">tasks depending on this may start</span>
+      <div class="btn-group btn-group-sm" role="group">
+        ${[
+          ["default", `default (${b.reviewUnblocks === false ? "at acceptance" : "at review"})`],
+          ["review", "at review"],
+          ["done", "🔑 only after acceptance"],
+        ].map(
+          ([v, label]) => html`<button class="btn py-0 ${(it.meta.unblocks_on ?? "default") === v ? "btn-secondary" : "btn-outline-secondary"}"
+            onClick=${() => act("unblocks", { on: v })}>${label}</button>`,
+        )}
+      </div>
+    </div>
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
       <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
     </div>`}

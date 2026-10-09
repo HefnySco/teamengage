@@ -425,3 +425,68 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
     }
   });
 });
+
+describe("per-task unblocks_on (key tasks)", () => {
+  it("a key task holds its dependents until accepted, even with review_unblocks on; and the reverse", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "Key foundation" },
+        { type: "task", title: "Built on the key", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [k, dep] = ids;
+    await ops.approve(k);
+    await ops.approve(dep);
+    const r = await api(`/api/items/${k}/unblocks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on: "done" }),
+    });
+    expect(r.status).toBe(200);
+    expect(store.idx.get(k)!.meta.unblocks_on).toBe("done");
+
+    const s = ctx.sessions.hello("key-agent");
+    await ops.claim(k, s);
+    await ops.submit(k, s, {});
+    expect(wsr.ws.config.review_unblocks).toBe(true);
+    expect(store.idx.get(dep)!.blocked).toBe(true); // key task in review still blocks
+    const brief = await ops.brief(dep);
+    expect(brief.deps[0]).toMatchObject({ key: true, pending: false });
+    await expect(ops.claim(dep, ctx.sessions.hello("other"))).rejects.toThrow(/dependencies not done/);
+
+    await ops.accept(k);
+    expect(store.idx.get(dep)!.blocked).toBe(false);
+
+    // the reverse: workspace strict, one task opts in to unblocking at review
+    wsr.ws.config.review_unblocks = false;
+    store.idx.setReviewUnblocks(false);
+    try {
+      const { ids: more } = await store.createItems(
+        [
+          { type: "task", title: "Loose one" },
+          { type: "task", title: "After loose", depends_on: ["#0"] },
+        ],
+        human,
+      );
+      await ops.approve(more[0]);
+      await ops.approve(more[1]);
+      await ops.setUnblocksOn(more[0], "review");
+      await ops.claim(more[0], s);
+      await ops.submit(more[0], s, {});
+      expect(store.idx.get(more[1])!.blocked).toBe(false);
+      // back to default → strict workspace rule applies again
+      await ops.setUnblocksOn(more[0], "default");
+      expect(store.idx.get(more[0])!.meta.unblocks_on).toBeUndefined();
+      expect(store.idx.get(more[1])!.blocked).toBe(true);
+    } finally {
+      wsr.ws.config.review_unblocks = true;
+      store.idx.setReviewUnblocks(true);
+    }
+  });
+});

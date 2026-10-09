@@ -12,8 +12,15 @@ import type { Claim } from "../model/claim.js";
  * Does a dependency in `status` let its dependents start? done/dropped
  * always; in_review too unless the workspace turns review_unblocks off.
  */
-export function depSatisfied(status: Status, reviewUnblocks: boolean): boolean {
-  return status === "done" || status === "dropped" || (reviewUnblocks && status === "in_review");
+export function depSatisfied(
+  status: Status,
+  reviewUnblocks: boolean,
+  /** the dependency's own unblocks_on, when known (local items) */
+  unblocksOn?: "review" | "done",
+): boolean {
+  if (status === "done" || status === "dropped") return true;
+  if (status !== "in_review") return false;
+  return unblocksOn ? unblocksOn === "review" : reviewUnblocks;
 }
 
 export interface IndexedItem {
@@ -237,15 +244,16 @@ export class Index {
     for (const it of this.items.values()) {
       it.blocked = it.meta.depends_on.some((d) => {
         let status: Status | undefined;
+        let unblocksOn: "review" | "done" | undefined;
         try {
           const parsed = parseItemRef(d);
-          status = parsed.workspace
-            ? this.depStatus(d)
-            : (this.items.get(parsed.id)?.meta.status ?? this.depStatus(d));
+          const local = parsed.workspace ? undefined : this.items.get(parsed.id);
+          status = local?.meta.status ?? this.depStatus(d);
+          unblocksOn = local?.meta.unblocks_on;
         } catch {
           return false; // unparseable ref → validator finding, not a block
         }
-        return status !== undefined && !depSatisfied(status, this.reviewUnblocks);
+        return status !== undefined && !depSatisfied(status, this.reviewUnblocks, unblocksOn);
       });
       it.turn = turnOf(it.meta.status);
       it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim;

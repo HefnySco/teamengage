@@ -288,6 +288,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("simple", (ops, id, b) => ops.simple(id, "human", String(b.text ?? "")));
   act("note", (ops, id, b) => ops.note(id, "human", String(b.text ?? "")));
+  act("unblocks", (ops, id, b) => {
+    const on = String(b.on ?? "default");
+    if (!["review", "done", "default"].includes(on)) throw new TeError("USAGE", "unblocks needs {on: review|done|default}");
+    return ops.setUnblocksOn(id, on as "review" | "done" | "default");
+  });
   act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
 
   // ---- domains vocabulary --------------------------------------------------

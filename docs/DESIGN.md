@@ -190,6 +190,10 @@ done     = terminal
   dependency "not accepted yet"; if it is rejected while a dependent is
   started, the inbox shows a `started_on_open_dep` warning. Set `false` to
   require `done`.
+- Per task, `unblocks_on` overrides that for the task's dependents:
+  `done` makes it a **key task** (🔑 — dependents wait for its acceptance;
+  `te key <ID>`, the toggle on the item page), `review` lets them start at
+  review even in a strict workspace; unset follows the workspace.
 - `hold` parks an item: it is not a draft (the plan is fine), but not for
   agents yet — `next` skips it and `claim` refuses it. `te hold` / `te unhold`
   / `te draft`, or hold / resume / to draft in the UI. A claimed item must be

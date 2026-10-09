@@ -92,10 +92,9 @@ export class WorkspaceOps {
       } catch {
         return false;
       }
-      const status = parsed.workspace
-        ? this.links?.statusOf(ref)
-        : (this.index.get(parsed.id)?.meta.status ?? this.links?.statusOf(ref));
-      return status !== undefined && depSatisfied(status, this.wsr.ws.config.review_unblocks);
+      const local = parsed.workspace ? undefined : this.index.get(parsed.id);
+      const status = local?.meta.status ?? this.links?.statusOf(ref);
+      return status !== undefined && depSatisfied(status, this.wsr.ws.config.review_unblocks, local?.meta.unblocks_on);
     });
   }
 
@@ -210,7 +209,11 @@ export class WorkspaceOps {
         status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown",
         archived: Boolean(dep?.meta.archived),
         /** satisfied only because review_unblocks: its work may still be rejected */
-        pending: dep?.meta.status === "in_review",
+        pending:
+          dep?.meta.status === "in_review" &&
+          depSatisfied("in_review", this.wsr.ws.config.review_unblocks, dep.meta.unblocks_on),
+        /** a key task: dependents wait for its acceptance */
+        key: (dep?.meta.unblocks_on ?? (this.wsr.ws.config.review_unblocks ? "review" : "done")) === "done",
         outcome: dep ? lastLine(sectionBody(dep, "Log")) : "",
         evidence: dep ? lastLine(sectionBody(dep, "Evidence")) : "",
       };
@@ -234,7 +237,7 @@ export class WorkspaceOps {
         host: res?.config.kind === "ssh" ? res.config.host : undefined,
       };
     });
-    return { item: it, deps, decisions, targets, question: it.meta.question, source };
+    return { item: it, deps, decisions, targets, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks };
   }
 
   /**
@@ -636,6 +639,12 @@ export class WorkspaceOps {
   async note(id: string, actor: Session | "human", text: string) {
     this.item(id);
     return this.store.addNote(id, text, this.actorFor(actor));
+  }
+
+  /** Human: when may this item's dependents start — "done" (key task), "review", or default. */
+  async setUnblocksOn(id: string, on: "review" | "done" | "default") {
+    this.item(id);
+    return this.store.setUnblocksOn(id, on === "default" ? undefined : on, this.actorFor("human"));
   }
 
   async undrop(id: string) {
