@@ -349,3 +349,27 @@ describe("propose: #N batch-local refs", () => {
     ).rejects.toThrow(/earlier item/);
   });
 });
+
+describe("overlay import honours ignore globs", () => {
+  it("skips root-relative ignored files, imports the rest", async () => {
+    const ws = ctx.workspaces.get("tasks")!.ws;
+    writeFileSync(join(root, "AGENTS.md"), "# TeamEngage agent protocol\n");
+    mkdirSync(join(root, "notes"), { recursive: true });
+    writeFileSync(join(root, "notes", "README.md"), "# notes index\n");
+    writeFileSync(join(root, "notes", "TASK-01-real.md"), "# TASK-01: real\n");
+    ws.config.ignore = ["AGENTS.md", "**/README.md"];
+    try {
+      const dry = await post("/api/import", { folder: root, apply: false });
+      const preview = String(dry.preview);
+      expect(preview).toContain("notes/TASK-01-real.md");
+      expect(preview).not.toContain("AGENTS.md");
+      expect(preview).not.toContain("README.md");
+      // ignore is root-relative even when importing a subfolder
+      const sub = await post("/api/import", { folder: join(root, "notes"), apply: false });
+      expect(String(sub.preview)).not.toContain("README.md");
+      expect(sub.count).toBe(1);
+    } finally {
+      ws.config.ignore = [];
+    }
+  });
+});

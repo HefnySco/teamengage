@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
 import { TeError, NotFoundError } from "../../core/model/errors.js";
-import { readTeTag, toSourcePath } from "../../core/files/source.js";
+import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import type { Ambiguity } from "../../import/import.js";
 
 /**
@@ -175,7 +175,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ? ops.wsr.ws.config.projects[b.project]?.prefix
         : ops.wsr.ws.config.prefix;
       if (!prefix) throw new NotFoundError(`unknown project '${b.project}'`);
-      const files = await scanFolder(b.folder);
+      let files = await scanFolder(b.folder);
       const root = importRoot(b.folder);
       const ws = ops.wsr.ws;
       const overlay = ws.config.mode === "overlay";
@@ -190,6 +190,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           throw new TeError("USAGE", `overlay import folder must be inside the workspace root ${wsRoot}`);
         }
         keyOf = (rel) => toSourcePath(wsRoot, join(root, rel));
+        // `ignore:` globs (root-relative) name .md files that are not tasks
+        const ignore = ws.config.ignore.map(globToRegExp);
+        files = files.filter((f) => !ignore.some((r) => r.test(keyOf(f.path))));
         existingSources = new Set();
         for (const i of ops.index.items.values()) {
           for (const s of [i.meta.source, i.meta.simple_source]) {
