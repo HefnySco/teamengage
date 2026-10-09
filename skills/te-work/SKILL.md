@@ -84,6 +84,18 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   (or a new `## Acceptance` item) — additive only, never rewrite existing
   lines, never touch the `te:` line — and `log` that you did.
 
+### Plain-English version
+
+Asked for a "simple" version (or the task has none and the human wants one)?
+Write it with the tool — never create `X.simple.md` by hand:
+
+```bash
+curl -s -X POST $B/simple/GL-0019 -H "$H" -d '{"text":"If you fly the same mission twice, the add-ons now react the second time too."}'
+```
+
+It creates (or replaces) the companion file next to the task, tags and links
+it, and the web page shows it under "simple". No claim needed.
+
 ## 6. Unsure? Ask — don't guess
 
 ```bash

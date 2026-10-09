@@ -114,7 +114,8 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   "nothing"), a "**Touches:**" line (repos/paths), and a "## Acceptance"
   checklist an agent can verify. Format: \`te template\`.
 - Create tasks with propose (it writes the file from the template and
-  tracks it) — never by hand.
+  tracks it) — never by hand. Plain-English version for the human:
+  simple <id> {text} (writes and links X.simple.md) — never by hand.
 - Never edit or remove the "te:" frontmatter line; never move files into
   done/ — status lives in TeamEngage, the human moves files.
 - Existing task files: additive edits only — append to "## Acceptance" or

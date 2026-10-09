@@ -540,6 +540,12 @@ export class WorkspaceOps {
     return this.store.deleteItem(id, this.actorFor("human"), reason);
   }
 
+  /** Agent or human: write the plain-English version (no claim needed — it touches no code). */
+  async simple(id: string, actor: Session | "human", text: string) {
+    this.item(id);
+    return this.store.setSimple(id, text, this.actorFor(actor));
+  }
+
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });

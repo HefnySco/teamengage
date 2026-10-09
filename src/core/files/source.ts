@@ -250,6 +250,21 @@ export function overlayReport(
         });
       }
     }
+    // a plain-English companion added later (by hand or by an agent) and
+    // tagged with this id: adopt it as the item's simple_source
+    if (!it.simple_source && !isSimple(it.source)) {
+      const simples = paths.filter(isSimple);
+      if (simples.length === 1) move.simple_source = simples[0];
+      else if (simples.length > 1) {
+        findings.push({
+          kind: "duplicate_tag",
+          severity: "warning",
+          item: it.id,
+          path: simples.join(", "),
+          message: `${it.id} has ${simples.length} simple companions tagged te: ${it.id}: ${simples.join(", ")} — keep one`,
+        });
+      }
+    }
     if (move.source !== undefined || move.simple_source !== undefined) moves.push(move);
   }
 

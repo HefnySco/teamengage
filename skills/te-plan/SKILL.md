@@ -136,7 +136,8 @@ Field notes:
 - `summary`: what and why, with the facts an agent needs (functions, files,
   message ids). Longer background goes in `## Notes` later via `log` +
   additive edit.
-- `simple`: add when the human will want a plain-English version.
+- `simple`: add when the human will want a plain-English version (for an
+  existing task: `curl -s -X POST $B/simple/<id> -H "$H" -d '{"text":"…"}'`).
 
 ## 7. After proposing
 

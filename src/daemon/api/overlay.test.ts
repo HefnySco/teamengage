@@ -427,3 +427,38 @@ describe("delete", () => {
     ws.config.ignore = [];
   });
 });
+
+describe("simple tool", () => {
+  it("an agent writes the plain-English version: created, tagged, linked; replaced on a second call", async () => {
+    const hello = await fetch(`${daemon.url}/agent/hello`, { method: "POST", body: JSON.stringify({ agent: "writer" }) });
+    const token = /^token (\S+)/.exec(await hello.text())![1];
+    const call = (path: string, body: unknown) =>
+      fetch(`${daemon.url}${path}`, { method: "POST", headers: { [SESSION_HEADER]: token }, body: JSON.stringify(body) }).then(
+        async (r) => ({ status: r.status, text: await r.text() }),
+      );
+    const id = byLegacy("TASK-12-gate").meta.id;
+    expect(store().idx.get(id)!.meta.simple_source).toBeUndefined();
+
+    const r = await call(`/agent/simple/${id}`, { text: "The drone waits at a gate until told to go." });
+    expect(r.status).toBe(200);
+    expect(r.text.trim()).toBe(`simple ${id} → global/TASK-12-gate.simple.md`);
+    const meta = store().idx.get(id)!.meta;
+    expect(meta.simple_source).toBe("global/TASK-12-gate.simple.md");
+    const file = join(root, "global", "TASK-12-gate.simple.md");
+    expect(readFileSync(file, "utf8")).toBe(
+      `---\nte: ${id}\n---\n# TASK-12: Wait gate (simple)\n\nThe drone waits at a gate until told to go.\n`,
+    );
+
+    await call(`/agent/simple/${id}`, { text: "Version two." });
+    expect(readFileSync(file, "utf8")).toContain("Version two.");
+    expect(readFileSync(file, "utf8")).not.toContain("waits at a gate");
+    const b = (await (await api(`/api/items/${id}`)).json()) as { source: { simple: { text: string } } };
+    expect(b.source.simple.text).toContain("Version two.");
+    expect(store().idx.get(id)!.sections.find((s) => s.heading === "Log")!.body).toMatch(/writer@test#\w+ wrote the simple version/);
+
+    // the tracker sees a linked, tagged companion — nothing to report or merge
+    const tracker = new OverlayTracker(store(), { debounceMs: 50 });
+    await tracker.rescan();
+    expect(tracker.findings().filter((f) => f.path?.includes("TASK-12-gate"))).toEqual([]);
+  });
+});

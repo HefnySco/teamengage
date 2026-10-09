@@ -30,6 +30,7 @@ describe("file writes", () => {
 
   it("new task files must come from propose; ignored and non-md files are fine", () => {
     expect(run("Write", { file_path: "/r/Tasks/global/TASK-20-new.md", content: "# x" })).toMatch(/created with propose/);
+    expect(run("Write", { file_path: "/r/Tasks/global/TASK-13-rerun.simple.md", content: "x" })).toMatch(/simple tool/);
     expect(run("Write", { file_path: "/r/Tasks/AGENTS.md", content: "x" })).toBeNull();
     expect(run("Write", { file_path: "/r/Tasks/tools/check.py", content: "x" })).toBeNull();
     // standard workspaces don't restrict files outside .teamengage/
@@ -97,6 +98,9 @@ describe("shell commands", () => {
     expect(bash("cat .teamengage/items/GL/GL-0019.md 2>/dev/null | head")).toBeNull();
     expect(bash("grep -r status .teamengage/items > /tmp/out.txt")).toBeNull();
     expect(bash("git add .teamengage && git commit -m x")).toBeNull();
+    // ~/.teamengage is the per-machine dir, not the workspace's plans dir
+    expect(bash("node main.js > ~/.teamengage/daemon.log 2>&1; grep x /r/Tasks/.teamengage/items/AN/AN-0004.md")).toBeNull();
+    expect(bash("rm /r/Tasks/.teamengage/claims/X.yaml", "/home")).toMatch(/writes under/);
   });
 
   it("moving into done/, in-place edits of task files and git push are refused", () => {

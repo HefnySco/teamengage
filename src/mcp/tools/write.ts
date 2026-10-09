@@ -81,6 +81,28 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "simple",
+    {
+      description:
+        "Write the item's plain-English version for the human (a short, non-technical explanation of what and why). " +
+        "Creates or replaces <task>.simple.md and links it — never create .simple.md files by hand. No claim needed.",
+      inputSchema: { id: z.string(), text: z.string() },
+    },
+    async ({ id, text }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.simple(id, s, text);
+        return okText(`simple ${id} → ${r.path}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "ask",
     {
       description: "Record a question → item waits for the human.",

@@ -167,3 +167,23 @@ describe("withoutTeTag", () => {
     expect(withoutTeTag("# plain\n", "GL-0001")).toBe("# plain\n");
   });
 });
+
+describe("overlayReport: companions added later", () => {
+  it("adopts a newly tagged .simple.md as simple_source", () => {
+    const r = overlayReport(
+      { tagged: new Map([["AN-0004", ["andruav/04-final.md", "andruav/04-final.simple.md"]]]), untracked: [] },
+      [{ id: "AN-0004", source: "andruav/04-final.md" }],
+    );
+    expect(r.moves).toEqual([{ id: "AN-0004", simple_source: "andruav/04-final.simple.md" }]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it("two companions → a finding, nothing adopted", () => {
+    const r = overlayReport(
+      { tagged: new Map([["AN-0004", ["a.md", "a.simple.md", "a-simplified.md"]]]), untracked: [] },
+      [{ id: "AN-0004", source: "a.md" }],
+    );
+    expect(r.moves).toEqual([]);
+    expect(r.findings.map((f) => f.kind)).toEqual(["duplicate_tag"]);
+  });
+});

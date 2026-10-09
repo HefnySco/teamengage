@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { readTeTag, globToRegExp } from "../files/source.js";
+import { readTeTag, globToRegExp, SIMPLE_SUFFIX } from "../files/source.js";
 
 /**
  * Agent guard (Claude Code PreToolUse / SessionStart hooks, `te guard`).
@@ -85,6 +85,9 @@ function checkWrite(
   if (ws.ignore.some((g) => globToRegExp(g).test(r))) return null;
 
   const before = read(abs);
+  if (before === null && SIMPLE_SUFFIX.test(r)) {
+    return `${r}: plain-English versions are written with the simple tool (simple <id> {text}) — it creates, tags and links the file.`;
+  }
   if (before === null) {
     return (
       `${r}: task files are created with propose (it writes the file from the template and ` +
@@ -113,7 +116,6 @@ function checkWrite(
 
 // commands that modify files; redirects count only when they target .teamengage/
 const WRITE_VERB = /(^|[\s;&|(])(rm|mv|cp|tee|touch|truncate|install|ln|git\s+(rm|mv|checkout|restore))\s|\bsed\s+(-[a-zA-Z]*i|--in-place)|\bperl\s+-[a-zA-Z]*i/;
-const REDIRECT_INTO_PLANS = />>?\s*['"]?[^\s'"|;&]*\.teamengage\//;
 const IN_PLACE = /\bsed\s+(-[a-zA-Z]*i|--in-place)|\bperl\s+-[a-zA-Z]*i|\bawk\s+-i\s+inplace/;
 const MOVE = /(^|[\s;&|(])(git\s+mv|mv)\s/;
 const PUSH = /(^|[\s;&|(])git(\s+-C\s+\S+)?\s+push\b/;
@@ -127,7 +129,17 @@ function checkBash(cmd: string, cwd: string | undefined, wss: GuardWorkspace[]):
     const below = absCwd && within(ws.root, absCwd) && ws.root !== absCwd ? relative(absCwd, ws.root) : undefined;
     const mentions = cmd.includes(ws.root) || here === ws || (below !== undefined && cmd.includes(`${below}/`));
     if (!mentions) continue;
-    if (REDIRECT_INTO_PLANS.test(cmd) || (/\.teamengage\//.test(cmd) && WRITE_VERB.test(cmd))) {
+    // only paths that resolve into THIS workspace's plans dir count —
+    // ~/.teamengage (the per-machine dir) or another tree's never do
+    const intoPlans = (token: string) => {
+      const p = token.replace(/^['"]|['"]$/g, "");
+      if (p.startsWith("~") || p.startsWith("$")) return false;
+      const abs = isAbsolute(p) ? resolve(p) : absCwd ? resolve(absCwd, p) : undefined;
+      return abs !== undefined && within(abs, ws.plansDir);
+    };
+    const planTokens = (cmd.match(/[^\s|;&<>()]*\.teamengage\/?[^\s|;&<>()]*/g) ?? []).filter(intoPlans);
+    const redirectTargets = [...cmd.matchAll(/>>?\s*([^\s|;&]+)/g)].map((m) => m[1]);
+    if (redirectTargets.some(intoPlans) || (planTokens.length && WRITE_VERB.test(cmd))) {
       return `this command writes under ${ws.name}'s .teamengage/: ${PLANS_MSG}. (Only reading? Use the Read tool.)`;
     }
     if (!ws.overlay) continue;

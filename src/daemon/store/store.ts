@@ -687,6 +687,45 @@ export class PlansStore {
     this.ws.config.ignore.splice(0, this.ws.config.ignore.length, ...next);
   }
 
+  /**
+   * Write an item's plain-English version. Overlay: `<source>.simple.md`
+   * (or the recorded simple_source) from the template, tagged and linked —
+   * created or replaced as a whole, since it is derived from the task.
+   * Standard mode: the `## Simple` section. Not a state change; any status.
+   */
+  setSimple(id: string, text: string, actor: Actor): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      if (!text.trim()) throw new ValidationError("simple text is empty");
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const now = new Date().toISOString();
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now.slice(0, 10) } as ItemMeta;
+      let path = it.path;
+      const sectionWrites: Array<{ heading: string; text: string }> = [];
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const rel = doc.meta.simple_source ?? doc.meta.source.replace(/\.md$/i, ".simple.md");
+        const abs = join(this.ws.root, rel);
+        const out = renderSimpleFile(id, doc.meta.title, text);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        meta.simple_source = rel;
+        path = rel;
+      } else {
+        // standard mode: replace the Simple section wholesale
+        doc.sections = doc.sections.filter((s) => s.heading.toLowerCase() !== "simple");
+        sectionWrites.push({ heading: "Simple", text: text.trim() + "\n" });
+      }
+      await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${actor.session} wrote the simple version`], sectionWrites);
+      await this.commitPaths([it.path], `te: ${id} simple by ${actor.session}`);
+      await this.index.upsertFile(absItem);
+      return { path };
+    });
+  }
+
   /** Overlay mode: write `te: <id>` into a task file's frontmatter. */
   private async tagSource(rel: string, id: string): Promise<void> {
     const abs = join(this.ws.root, rel);
