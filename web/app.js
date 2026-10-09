@@ -261,8 +261,19 @@ const matches = (i, words) => {
 };
 
 const Board = ({ onOpen }) => {
-  const { data } = useApi("/api/items");
+  const { data, reload } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
+  // done cards get an archive button; the column header archives all shown
+  const archive = async (ids) => {
+    for (const id of ids) {
+      try {
+        await post(`/api/items/${id}/archive`, { reason: "archived from the board" });
+      } catch (e) {
+        alert(`${id}: ${e.message}`);
+      }
+    }
+    reload();
+  };
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hits = words.length ? data.filter((i) => matches(i, words)) : data;
@@ -294,7 +305,16 @@ const Board = ({ onOpen }) => {
         return html`
           <div class="board-col flex-shrink-0" key=${s}>
             <h3 class="h6 text-uppercase text-secondary d-flex justify-content-between">
-              <span>${s.replace("_", " ")}</span><span class="badge ${ST_BADGE[s]}">${items.length}</span>
+              <span>${s.replace("_", " ")}</span>
+              <span class="d-flex align-items-center gap-1">
+                ${s === "done" && items.some((i) => !i.claim) && html`<button class="btn btn-sm btn-outline-secondary py-0 px-1 board-archive-all"
+                  title="archive every done card shown (respects the search)"
+                  onClick=${() => {
+                    const ids = items.filter((i) => !i.claim).map((i) => i.id);
+                    if (confirm(`Archive ${ids.length} done item(s)${words.length ? " matching the search" : ""}?\nThey move to the archive page and can be unarchived.`)) archive(ids);
+                  }}>archive all</button>`}
+                <span class="badge ${ST_BADGE[s]}">${items.length}</span>
+              </span>
             </h3>
             <div class="board-list">
               ${items.map(
@@ -306,6 +326,13 @@ const Board = ({ onOpen }) => {
                     </div>
                     <div class="small">${i.title}</div>
                     ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
+                    ${s === "done" && !i.claim && html`<div class="text-end mt-1">
+                      <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="archive"
+                        onClick=${(e) => {
+                          e.stopPropagation(); // don't open the item
+                          archive([i.id]);
+                        }}>archive</button>
+                    </div>`}
                   </div>
                 `,
               )}
