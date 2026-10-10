@@ -193,6 +193,14 @@ export class PlansStore {
               content: decisionFile(e.decisionId, e.title, id, actor, now),
             });
             break;
+          case "update_decision": {
+            const prev = this.index.decisions.get(e.decisionId);
+            writes.push({
+              rel: join("decisions", `${e.decisionId}.md`),
+              content: decisionFile(e.decisionId, e.title, id, actor, now, prev?.meta),
+            });
+            break;
+          }
           default:
             external.push(e);
         }
@@ -241,7 +249,7 @@ export class PlansStore {
       for (const e of tr.effects) {
         if (e.type === "write_claim") this.index.setClaim(e.claim);
         if (e.type === "delete_claim") this.index.setClaim(null, id);
-        if (e.type === "create_decision") {
+        if (e.type === "create_decision" || e.type === "update_decision") {
           const dpath = join(this.ws.plansDir, "decisions", `${e.decisionId}.md`);
           const d = parseMarkdown(await readFile(dpath, "utf8"), DecisionMeta, dpath);
           this.index.decisions.set(e.decisionId, {
@@ -1056,14 +1064,22 @@ export class PlansStore {
   }
 }
 
-function decisionFile(id: string, title: string, item: string, actor: Actor, now: string): string {
+function decisionFile(
+  id: string,
+  title: string,
+  item: string,
+  actor: Actor,
+  now: string,
+  prev?: DecisionMeta,
+): string {
+  // a changed answer keeps its id and creation date and bumps the version
   const meta = {
     id,
     title,
     item,
     decided_by: actor.kind === "human" ? "human" : actor.session,
-    created: now.slice(0, 10),
-    version: 1,
+    created: prev?.created ?? now.slice(0, 10),
+    version: (prev?.version ?? 0) + 1,
   };
   return `${emitFrontmatter(meta)}\n## Question\nSee ${item}.\n\n## Answer\n${title}\n`;
 }

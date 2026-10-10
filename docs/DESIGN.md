@@ -184,6 +184,8 @@ hold     = human only; draft|ready ──hold──▶ hold ──unhold──�
 blocked  = derived: any depends_on not done (in_review counts as done
            unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
+change_answer = human only, in_progress: revise the item's latest answer
+           (same decision id, version +1, old → new in the Log)
 done     = terminal
 ```
 

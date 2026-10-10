@@ -37,6 +37,10 @@ beforeAll(async () => {
   writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001", "ready", "targets: [\"@self:src/a.ts\"]\n"));
   writeFileSync(join(plans, "items", "WS", "WS-0002.md"), item("WS-0002", "ready", "targets: [\"@self:src/a.ts\"]\n"));
   writeFileSync(join(plans, "items", "WS", "WS-0003.md"), item("WS-0003"));
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0009.md"),
+    item("WS-0009", "waiting", "question:\n  text: which?\n  options: [a, b]\n  asked_by: x\n  asked_at: 2026-10-10T00:00:00Z\n"),
+  );
   execFileSync("git", ["add", "-A"], { cwd: plans });
   execFileSync("git", ["commit", "-m", "init"], { cwd: plans });
 
@@ -517,5 +521,31 @@ describe("graph search", () => {
     const linked = await g("q=zebra%20top&linked=1");
     expect(linked.count).toBe(1);
     for (const id of ids) expect(linked.mermaid).toContain(node(id)); // dep + dependent come along
+  });
+});
+
+describe("change_answer", () => {
+  it("revises the latest answer of an in-progress item in place", async () => {
+    const post = (action: string, body: unknown) =>
+      api(`/api/items/WS-0009/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post("change_answer", { text: "too early" })).status).toBeGreaterThanOrEqual(400);
+    expect((await post("answer", { text: "a" })).status).toBe(200);
+    expect((await post("change_answer", { text: "b, after all" })).status).toBe(200);
+
+    const brief = (await (await api("/api/items/WS-0009")).json()) as {
+      item: { meta: { status: string }; sections: Array<{ heading: string; body: string }> };
+      decisions: Array<{ meta: { id: string; title: string; version: number } }>;
+    };
+    expect(brief.item.meta.status).toBe("in_progress");
+    const own = brief.decisions.filter((d) => d.meta.title.startsWith("b"));
+    expect(own).toHaveLength(1);
+    expect(own[0].meta.version).toBe(2);
+    expect(brief.decisions.some((d) => d.meta.title === "a")).toBe(false);
+    const log = brief.item.sections.find((x) => x.heading === "Log")?.body ?? "";
+    expect(log).toContain(`changed answer ${own[0].meta.id}: "a" → "b, after all"`);
   });
 });

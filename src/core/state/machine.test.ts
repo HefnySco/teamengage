@@ -123,6 +123,7 @@ describe("actor rules", () => {
       [{ type: "reject" }, "in_review"],
       [{ type: "drop" }, "ready"],
       [{ type: "answer", decisionId: "D-1", decisionTitle: "t" }, "waiting"],
+      [{ type: "change_answer", decisionId: "D-1", decisionTitle: "t", previous: "p" }, "in_progress"],
     ];
     for (const [a, status] of attempts) {
       expect(() => transition(item(status), a, agent, ctx({ claim: claimOf() }))).toThrow(
@@ -180,6 +181,16 @@ describe("effects", () => {
       decisionId: "D-0007",
       title: "use X",
     });
+  });
+  it("change_answer updates the decision in place, only while in progress", () => {
+    const a = { type: "change_answer", decisionId: "D-0007", decisionTitle: "use Y", previous: "use X" } as const;
+    const r = transition(item("in_progress"), a, human, ctx({ claim: claimOf() }));
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([{ type: "update_decision", decisionId: "D-0007", title: "use Y" }]);
+    expect(r.log[0]).toContain('changed answer D-0007: "use X" → "use Y"');
+    for (const s of ["waiting", "in_review", "done", "ready"] as const) {
+      expect(() => transition(item(s), a, human, ctx({ claim: claimOf() }))).toThrow(InvalidTransitionError);
+    }
   });
   it("ask records the question on the item", () => {
     const q = { text: "which db?", options: ["a", "b"], asked_by: agent.session, asked_at: NOW };

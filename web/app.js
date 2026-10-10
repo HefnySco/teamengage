@@ -171,6 +171,32 @@ const AnswerBox = ({ id, opts, onAnswer }) => {
   `;
 };
 
+// a recorded answer; the latest one on an in-progress item can be revised
+const DecisionCard = ({ d, canChange, onChange }) => {
+  const [text, setText] = useState(null);
+  const save = () => {
+    const answer = (text ?? "").trim();
+    if (!answer || answer === d.meta.title) return setText(null);
+    if (confirm(`Change answer ${d.meta.id}\n\nfrom: ${d.meta.title}\nto:   ${answer}`)) {
+      onChange(answer);
+      setText(null);
+    }
+  };
+  return html`
+    <div class="card card-body mt-2">
+      <div class="d-flex gap-2 align-items-start">
+        <div class="flex-grow-1"><b>${d.meta.id}</b>${d.meta.version > 1 ? html` <span class="text-secondary small">(changed)</span>` : ""} ${text === null && d.meta.title}</div>
+        ${canChange && text === null && html`<button class="btn btn-sm btn-outline-primary py-0" onClick=${() => setText(d.meta.title)}>change answer</button>`}
+      </div>
+      ${text !== null && html`<div class="d-flex gap-2 mt-2 flex-wrap">
+        <textarea class="form-control form-control-sm" rows="2" value=${text} onInput=${(e) => setText(e.target.value)} />
+        <button class="btn btn-sm btn-primary" onClick=${save}>save</button>
+        <button class="btn btn-sm btn-outline-secondary" onClick=${() => setText(null)}>cancel</button>
+      </div>`}
+    </div>
+  `;
+};
+
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
   // the inbox lists ids; the item list supplies titles, projects and files to search
@@ -830,6 +856,9 @@ const ItemView = ({ id }) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
   };
+  // the answer the human gave on this item (its latest decision) - changeable while in progress
+  const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
+    .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
   // a cancelled prompt (null) aborts the action — only OK fires it
   const askThen = (action, label) => {
     const reason = prompt(label);
@@ -917,7 +946,8 @@ const ItemView = ({ id }) => {
     ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
       ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
     </div>`}
-    ${b.decisions.map((d) => html`<div class="card card-body mt-2"><b>${d.meta.id}</b> ${d.meta.title}</div>`)}
+    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${it.meta.status === "in_progress" && d.meta.id === ownLast}
+      onChange=${(text) => act("change_answer", { text })} />`)}
     <${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} />
     <${History} entries=${history} />
   `;

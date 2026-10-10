@@ -503,6 +503,30 @@ export class WorkspaceOps {
     });
   }
 
+  /** Revise the answer already given: the item's latest decision. */
+  async changeAnswer(id: string, decisionTitle: string) {
+    const it = this.item(id);
+    const own = [...this.index.decisions.values()]
+      .filter((d) => {
+        try {
+          return parseItemRef(d.meta.item).id === id;
+        } catch {
+          return false;
+        }
+      })
+      .sort((a, b) => a.meta.id.localeCompare(b.meta.id, undefined, { numeric: true }));
+    const last = own[own.length - 1];
+    if (!last) {
+      throw new InvalidTransitionError(`cannot change_answer: ${id} has no answer yet`, it.meta.status, "change_answer");
+    }
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "change_answer",
+      decisionId: last.meta.id,
+      decisionTitle,
+      previous: last.meta.title,
+    });
+  }
+
   async accept(id: string) {
     const it = this.item(id);
     // refuse early — never merge work for an item that isn't in_review

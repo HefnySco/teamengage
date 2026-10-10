@@ -39,12 +39,17 @@ export function registerUiRoutes(app: FastifyInstance): void {
     if (!existsSync(path) || !path.startsWith(webRoot)) {
       return reply.code(404).send({ error: "not found" });
     }
-    return reply.type(MIME[extname(path)] ?? "application/octet-stream").send(readFileSync(path));
+    // revalidate every load: a rebuilt bundle must reach open tabs on reload
+    return reply
+      .type(MIME[extname(path)] ?? "application/octet-stream")
+      .header("cache-control", "no-cache")
+      .send(readFileSync(path));
   };
 
   const index = (reply: FastifyReply) =>
     reply
       .type(MIME[".html"])
+      .header("cache-control", "no-cache")
       .send(readFileSync(join(webRoot, "index.html"), "utf8").replaceAll("__TE_VERSION__", version));
 
   app.get("/", async (_req, reply) => index(reply));

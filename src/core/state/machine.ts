@@ -29,6 +29,8 @@ export type Action =
   | { type: "log"; note: string }
   | { type: "ask"; question: Question }
   | { type: "answer"; decisionId: string; decisionTitle: string }
+  /** Human revises the answer already given (the item's latest decision). */
+  | { type: "change_answer"; decisionId: string; decisionTitle: string; previous: string }
   | {
       type: "submit";
       note?: string;
@@ -71,7 +73,8 @@ export type Effect =
   | { type: "setup_work" } // worktrees / snapshots for the claim's targets
   | { type: "cleanup_work"; keepBranches?: boolean }
   | { type: "merge_required" }
-  | { type: "create_decision"; decisionId: string; title: string };
+  | { type: "create_decision"; decisionId: string; title: string }
+  | { type: "update_decision"; decisionId: string; title: string };
 
 export interface TransitionResult {
   meta: ItemMeta;
@@ -227,6 +230,23 @@ export function transition(
       out.log.push(`- ${stamp} ${who} answered → ${action.decisionId}`);
       out.effects.push({
         type: "create_decision",
+        decisionId: action.decisionId,
+        title: action.decisionTitle,
+      });
+      return out;
+    }
+
+    case "change_answer": {
+      requireHuman(actor, action.type);
+      // the agent is acting on the answer: it may still be revised; once
+      // the work is submitted or closed, the answer is part of the record
+      if (from !== "in_progress") fail(from, action.type);
+      out.log.push(
+        `- ${stamp} ${who} changed answer ${action.decisionId}: "${action.previous}" → "${action.decisionTitle}"`,
+      );
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from, action.decisionTitle));
+      out.effects.push({
+        type: "update_decision",
         decisionId: action.decisionId,
         title: action.decisionTitle,
       });
