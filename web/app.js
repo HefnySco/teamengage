@@ -152,6 +152,19 @@ function useApi(path, deps = []) {
 }
 
 // ---- Inbox (UI-0002) --------------------------------------------------------
+// answer a waiting item's question: one button per option, or free text
+const AnswerBox = ({ opts, onAnswer }) => {
+  const [text, setText] = useState("");
+  return html`
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      ${(opts ?? []).map((o, i) => html`<button class="btn btn-sm btn-outline-secondary text-start" onClick=${() => onAnswer(o)}>opt ${i + 1}: ${o}</button>`)}
+      <input class="form-control form-control-sm w-auto" value=${text} onInput=${(e) => setText(e.target.value)}
+        onKeyDown=${(e) => e.key === "Enter" && text && onAnswer(text)} placeholder="answer…" />
+      <button class="btn btn-sm btn-primary btn-act" onClick=${() => text && onAnswer(text)}>answer</button>
+    </div>
+  `;
+};
+
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
   // the inbox lists ids; the item list supplies titles, projects and files to search
@@ -187,17 +200,6 @@ const Inbox = ({ onOpen }) => {
     const reason = prompt(label);
     if (reason !== null) act(id, action, { reason });
   };
-  const AnswerBox = ({ q }) => {
-    const [text, setText] = useState("");
-    const opts = q.question?.options ?? [];
-    return html`
-      <div class="d-flex gap-2 flex-wrap align-items-center">
-        <input class="form-control form-control-sm w-auto" value=${text} onInput=${(e) => setText(e.target.value)} placeholder="answer…" />
-        ${opts.map((o, i) => html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => act(q.id, "answer", { text: o })}>opt ${i + 1}: ${o}</button>`)}
-        <button class="btn btn-sm btn-primary btn-act" onClick=${() => text && act(q.id, "answer", { text })}>answer</button>
-      </div>
-    `;
-  };
   const Section = ({ title, tone, items, children }) =>
     items.length === 0 ? null : html`
       <div class="col-lg-6 col-xl-4">
@@ -228,7 +230,7 @@ const Inbox = ({ onOpen }) => {
             <div class="list-group-item" key=${q.id}>
               <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id), domains: byId[q.id]?.domains }} onOpen=${onOpen} />
               <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
-              <${AnswerBox} q=${q} />
+              <${AnswerBox} opts=${q.question?.options} onAnswer=${(text) => act(q.id, "answer", { text })} />
             </div>
           `,
         )}
@@ -884,7 +886,7 @@ const ItemView = ({ id }) => {
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from ${it.meta.question.asked_by}</span>` : ""}
       <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
-      ${(it.meta.question.options ?? []).length > 0 && html`<div class="mt-1">options: ${it.meta.question.options.map((o, i) => html`<span class="badge text-bg-secondary me-1">${i + 1}. ${o}</span>`)}</div>`}
+      ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
     </div>`}
     <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
       ${TABS.map(
