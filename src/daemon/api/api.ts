@@ -164,7 +164,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
       const { plansGitStatus } = await import("../sync/sync.js");
-      return await plansGitStatus(ops.wsr, { fetch: (req.query as { fetch?: string }).fetch === "1" });
+      const f = (req.query as { fetch?: string }).fetch;
+      return await plansGitStatus(ops.wsr, { fetch: f === "1" ? true : f || undefined });
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -173,7 +174,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
       const { pullPlans } = await import("../sync/sync.js");
-      return await pullPlans(ops.wsr);
+      return await pullPlans(ops.wsr, ((req.body ?? {}) as { remote?: string }).remote || undefined);
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -182,7 +183,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
       const { commitAndPushPlans } = await import("../sync/sync.js");
-      return await commitAndPushPlans(ops.wsr, String(((req.body ?? {}) as { message?: string }).message ?? ""));
+      const b = (req.body ?? {}) as { message?: string; remote?: string };
+      return await commitAndPushPlans(ops.wsr, String(b.message ?? ""), b.remote || undefined);
     } catch (e) {
       return sendErr(reply, e);
     }

@@ -85,11 +85,39 @@ describe("task folder git from the web", () => {
     await commitAndPushPlans(wsB, "Tasks: three from laptop");
 
     writeFileSync(join(a, "Tasks", "TASK-04-w.md"), "# four\n");
-    await expect(commitAndPushPlans(wsA, "x")).rejects.toThrow(/behind by 1 commit\(s\) — pull first/);
+    await expect(commitAndPushPlans(wsA, "x")).rejects.toThrow(/behind origin by 1 commit\(s\) — pull from origin first/);
 
     g(a, "add", "Tasks/TASK-04-w.md");
     g(a, "commit", "-qm", "local four", "--", "Tasks");
-    await expect(pullPlans(wsA)).rejects.toThrow(/diverged: 1 local and 1 remote/);
+    await expect(pullPlans(wsA)).rejects.toThrow(/diverged from origin: 1 local and 1 remote/);
     expect(existsSync(join(a, "Tasks", "TASK-03-z.md"))).toBe(false); // nothing merged
+  });
+});
+
+describe("choosing the remote", () => {
+  it("lists every remote; push and pull go only where chosen", async () => {
+    const backup = join(home, "backup.git");
+    g(home, "init", "-q", "--bare", "-b", "main", backup);
+    // laptop: get in sync with origin first, then add a second remote
+    g(b, "remote", "add", "backupDT", backup);
+    const st = await plansGitStatus(wsB, { fetch: true });
+    expect(st.remotes.map((r) => [r.name, r.fetchUrl])).toEqual([
+      ["backupDT", backup],
+      ["origin", join(home, "remote.git")],
+    ]);
+    expect(st.defaultRemote).toBe("origin");
+    expect(st.remotes.find((r) => r.name === "backupDT")!.ref).toBeUndefined(); // empty remote, no branch yet
+
+    writeFileSync(join(b, "Tasks", "TASK-05-v.md"), "# five\n");
+    const r = await commitAndPushPlans(wsB, "Tasks: five to backup", "backupDT");
+    expect(r).toMatchObject({ remote: "backupDT", committed: 1, pushed: true });
+    expect(g(home, "--git-dir", backup, "log", "-1", "--format=%s", "main")).toBe("Tasks: five to backup");
+    // origin did not get it
+    const after = await plansGitStatus(wsB, { fetch: true });
+    expect(after.remotes.find((x) => x.name === "origin")).toMatchObject({ ahead: 1 });
+    expect(after.remotes.find((x) => x.name === "backupDT")).toMatchObject({ ahead: 0, behind: 0 });
+
+    await expect(pullPlans(wsB, "nope")).rejects.toThrow(/no remote named 'nope'/);
+    expect((await pullPlans(wsB, "backupDT")).pulled).toBe(0);
   });
 });

@@ -294,16 +294,32 @@ export async function reconcile(
 
 // ---- human-triggered sync of the plans (task folder) repo -----------------
 
+export interface PlansRemote {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+  /** `<remote>/<branch>` tracking ref, when this remote has the branch */
+  ref?: string;
+  ahead: number;
+  behind: number;
+  /** fetched in this call (false: not asked, offline, or failed) */
+  fetched: boolean;
+}
+
 export interface PlansGitStatus {
   repo: string;
   /** the workspace root inside the repo — the only path pull/commit touch */
   scope: string;
   branch?: string;
+  /** the branch's configured upstream (`origin/master`), the default choice */
   upstream?: string;
+  /** remote of the upstream — what the UI preselects */
+  defaultRemote?: string;
+  /** every remote (`git remote -v`) with ahead/behind against its copy of the branch */
+  remotes: PlansRemote[];
+  /** ahead/behind against the upstream (nav badge) */
   ahead: number;
   behind: number;
-  /** a remote fetch happened (false: offline or no remote — counts last-known) */
-  fetched: boolean;
   /** uncommitted changes inside the scope: porcelain status + path */
   changes: Array<{ status: string; path: string }>;
 }
@@ -313,64 +329,119 @@ async function plansRepoTop(wsr: WorkspaceRuntime): Promise<string> {
   return (await git(wsr.ws.plansDir, ["rev-parse", "--show-toplevel"])).trim();
 }
 
-/** Ahead/behind + uncommitted changes of the task folder (fetch optional). */
-export async function plansGitStatus(wsr: WorkspaceRuntime, opts: { fetch?: boolean } = {}): Promise<PlansGitStatus> {
+/** `git remote -v` → [{name, fetchUrl, pushUrl}] */
+async function listRemotes(repo: string): Promise<Array<{ name: string; fetchUrl: string; pushUrl: string }>> {
+  const out = new Map<string, { name: string; fetchUrl: string; pushUrl: string }>();
+  for (const line of (await git(repo, ["remote", "-v"])).split("\n")) {
+    const m = /^(\S+)\s+(\S+)\s+\((fetch|push)\)/.exec(line);
+    if (!m) continue;
+    const r = out.get(m[1]) ?? { name: m[1], fetchUrl: "", pushUrl: "" };
+    if (m[3] === "fetch") r.fetchUrl = m[2];
+    else r.pushUrl = m[2];
+    out.set(m[1], r);
+  }
+  return [...out.values()];
+}
+
+/**
+ * Status of the task folder: branch, every remote with ahead/behind, and
+ * uncommitted changes. `fetch`: true = all remotes, a name = only that one.
+ */
+export async function plansGitStatus(
+  wsr: WorkspaceRuntime,
+  opts: { fetch?: boolean | string } = {},
+): Promise<PlansGitStatus> {
   const repo = await plansRepoTop(wsr);
   const scope = relative(repo, wsr.ws.root) || ".";
   const branch = (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim() || undefined;
-  const fetched = opts.fetch ? await fetchPlansRepo(wsr.ws.plansDir, 20_000) : false;
   const upstream = await upstreamRef(repo);
-  let ahead = 0;
-  let behind = 0;
-  if (upstream) ({ ahead, behind } = await aheadBehind(repo, upstream).catch(() => ({ ahead: 0, behind: 0 })));
+  const defaultRemote = upstream ? upstream.slice(0, upstream.indexOf("/")) : undefined;
+  const remotes: PlansRemote[] = [];
+  const listed = await listRemotes(repo);
+  // fetch in parallel with a short timeout: one dead remote (an unmounted
+  // backup disk, no network) must not stall the page
+  const fetchedBy = new Map(
+    await Promise.all(
+      listed.map(async (r) => {
+        const want = branch && (opts.fetch === true || opts.fetch === r.name);
+        const ok = want
+          ? await git(repo, ["fetch", "-q", r.name, branch!], { timeoutMs: 8_000 }).then(() => true).catch(() => false)
+          : false;
+        return [r.name, ok] as const;
+      }),
+    ),
+  );
+  for (const r of listed) {
+    const fetched = fetchedBy.get(r.name) ?? false;
+    const ref = branch ? `${r.name}/${branch}` : undefined;
+    const exists = ref ? await git(repo, ["rev-parse", "--verify", "-q", `refs/remotes/${ref}`]).then(() => true).catch(() => false) : false;
+    const ab = exists && ref ? await aheadBehind(repo, ref).catch(() => ({ ahead: 0, behind: 0 })) : { ahead: 0, behind: 0 };
+    remotes.push({ ...r, ref: exists ? ref : undefined, ...ab, fetched });
+  }
+  const up = remotes.find((r) => r.name === defaultRemote);
   const porcelain = await git(repo, ["status", "--porcelain", "--untracked-files=all", "--", scope]);
   const changes = porcelain
     .split("\n")
     .filter(Boolean)
     .map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
-  return { repo, scope, branch, upstream, ahead, behind, fetched, changes };
+  return { repo, scope, branch, upstream, defaultRemote, remotes, ahead: up?.ahead ?? 0, behind: up?.behind ?? 0, changes };
+}
+
+function pickRemote(st: PlansGitStatus, name?: string): PlansRemote {
+  const want = name || st.defaultRemote;
+  if (!want) throw new ClaimRefusedError("choose a remote — this branch has no upstream to default to");
+  const r = st.remotes.find((x) => x.name === want);
+  if (!r) throw new ClaimRefusedError(`no remote named '${want}' (git remote -v)`);
+  return r;
 }
 
 /**
- * Pull: fetch, then fast-forward only. Diverged history (both sides have
- * commits) or local edits that collide are refused — those need a human
- * at a terminal, never an automatic merge of the plans.
+ * Pull from the chosen remote (default: the upstream's): fetch, then
+ * fast-forward only. Diverged history or colliding local edits are refused —
+ * those need a human at a terminal, never an automatic merge of the plans.
  */
-export async function pullPlans(wsr: WorkspaceRuntime): Promise<{ pulled: number; status: PlansGitStatus }> {
+export async function pullPlans(wsr: WorkspaceRuntime, remote?: string): Promise<{ remote: string; pulled: number; status: PlansGitStatus }> {
   return wsr.store.enqueue(async () => {
-    const before = await plansGitStatus(wsr, { fetch: true });
-    if (!before.upstream) throw new ClaimRefusedError("the task folder's branch has no upstream — set it once: git push -u origin <branch>");
-    if (!before.fetched) throw new ClaimRefusedError("could not reach the remote — offline?");
-    if (before.behind === 0) return { pulled: 0, status: before };
-    if (before.ahead > 0) {
+    const first = await plansGitStatus(wsr);
+    const r0 = pickRemote(first, remote);
+    const before = await plansGitStatus(wsr, { fetch: r0.name });
+    const r = pickRemote(before, r0.name);
+    if (!r.fetched) throw new ClaimRefusedError(`could not fetch from ${r.name} (${r.fetchUrl}) — offline?`);
+    if (!r.ref) throw new ClaimRefusedError(`${r.name} has no branch ${before.branch}`);
+    if (r.behind === 0) return { remote: r.name, pulled: 0, status: before };
+    if (r.ahead > 0) {
       throw new ClaimRefusedError(
-        `diverged: ${before.ahead} local and ${before.behind} remote commit(s) — resolve in a terminal (git pull --rebase in ${before.repo})`,
+        `diverged from ${r.name}: ${r.ahead} local and ${r.behind} remote commit(s) — resolve in a terminal (git pull --rebase ${r.name} ${before.branch} in ${before.repo})`,
       );
     }
     try {
-      await git(before.repo, ["merge", "--ff-only", before.upstream], { timeoutMs: 60_000 });
+      await git(before.repo, ["merge", "--ff-only", r.ref], { timeoutMs: 60_000 });
     } catch (e) {
       throw new ClaimRefusedError(`pull refused by git (local uncommitted changes collide?): ${(e as Error).message.split("\n")[0]}`);
     }
     await wsr.store.reindex();
     void wsr.overlay?.rescan();
-    return { pulled: before.behind, status: await plansGitStatus(wsr) };
+    return { remote: r.name, pulled: r.behind, status: await plansGitStatus(wsr) };
   });
 }
 
 /**
- * Commit & Push: commit every change inside the task folder (and nothing
- * outside it), then push the branch to its upstream. Refused while behind —
- * pull first — so it never creates a merge.
+ * Commit & Push to the chosen remote (default: the upstream's): commit every
+ * change inside the task folder (and nothing outside it), then push the
+ * branch to the same branch on that remote. Refused while behind that remote.
  */
 export async function commitAndPushPlans(
   wsr: WorkspaceRuntime,
   message: string,
-): Promise<{ committed: number; pushed: boolean; status: PlansGitStatus }> {
+  remote?: string,
+): Promise<{ remote: string; committed: number; pushed: boolean; status: PlansGitStatus }> {
   return wsr.store.enqueue(async () => {
-    const before = await plansGitStatus(wsr, { fetch: true });
-    if (!before.upstream) throw new ClaimRefusedError("the task folder's branch has no upstream — set it once: git push -u origin <branch>");
-    if (before.behind > 0) throw new ClaimRefusedError(`behind by ${before.behind} commit(s) — pull first`);
+    const first = await plansGitStatus(wsr);
+    const r0 = pickRemote(first, remote);
+    if (!first.branch || first.branch === "HEAD") throw new ClaimRefusedError("the task folder is not on a branch");
+    const before = await plansGitStatus(wsr, { fetch: r0.name });
+    const r = pickRemote(before, r0.name);
+    if (r.ref && r.behind > 0) throw new ClaimRefusedError(`behind ${r.name} by ${r.behind} commit(s) — pull from ${r.name} first`);
     let committed = 0;
     if (before.changes.length) {
       await git(before.repo, ["add", "-A", "--", before.scope]);
@@ -378,13 +449,15 @@ export async function commitAndPushPlans(
       await git(before.repo, ["commit", "-q", "-m", message.trim() || `Tasks: update from ${wsr.store.machine}`, "--", before.scope]);
       committed = before.changes.length;
     }
-    const now = await plansGitStatus(wsr);
-    if (now.ahead === 0) return { committed, pushed: false, status: now };
+    const now = pickRemote(await plansGitStatus(wsr), r.name);
+    if (now.ref && now.ahead === 0) return { remote: r.name, committed, pushed: false, status: await plansGitStatus(wsr) };
     try {
-      await git(before.repo, ["push"], { timeoutMs: 90_000, humanPlansPush: true });
+      await git(before.repo, ["push", r.name, `HEAD:refs/heads/${before.branch}`], { timeoutMs: 90_000, humanPlansPush: true });
     } catch (e) {
-      throw new ClaimRefusedError(`push failed: ${(e as Error).message.split("\n")[0]}`);
+      throw new ClaimRefusedError(`push to ${r.name} failed: ${(e as Error).message.split("\n")[0]}`);
     }
-    return { committed, pushed: true, status: await plansGitStatus(wsr) };
+    // refresh our view of that remote's branch
+    await git(before.repo, ["fetch", "-q", r.name, before.branch!], { timeoutMs: 20_000 }).catch(() => {});
+    return { remote: r.name, committed, pushed: true, status: await plansGitStatus(wsr) };
   });
 }
