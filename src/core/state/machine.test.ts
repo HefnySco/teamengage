@@ -180,15 +180,19 @@ describe("effects", () => {
       type: "create_decision",
       decisionId: "D-0007",
       title: "use X",
+      question: { text: "?", asked_by: agent.session, asked_at: NOW },
     });
   });
-  it("change_answer updates the decision in place, only while in progress", () => {
+  it("change_answer updates the decision in place until the item is closed", () => {
     const a = { type: "change_answer", decisionId: "D-0007", decisionTitle: "use Y", previous: "use X" } as const;
     const r = transition(item("in_progress"), a, human, ctx({ claim: claimOf() }));
     expect(r.meta.status).toBe("in_progress");
     expect(r.effects).toEqual([{ type: "update_decision", decisionId: "D-0007", title: "use Y" }]);
     expect(r.log[0]).toContain('changed answer D-0007: "use X" → "use Y"');
-    for (const s of ["waiting", "in_review", "done", "ready"] as const) {
+    for (const s of ["ready", "waiting", "in_review", "hold"] as const) {
+      expect(transition(item(s), a, human, ctx({ claim: claimOf() })).meta.status).toBe(s);
+    }
+    for (const s of ["done", "dropped"] as const) {
       expect(() => transition(item(s), a, human, ctx({ claim: claimOf() }))).toThrow(InvalidTransitionError);
     }
   });

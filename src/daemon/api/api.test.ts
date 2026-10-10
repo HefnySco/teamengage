@@ -538,12 +538,15 @@ describe("change_answer", () => {
 
     const brief = (await (await api("/api/items/WS-0009")).json()) as {
       item: { meta: { status: string }; sections: Array<{ heading: string; body: string }> };
-      decisions: Array<{ meta: { id: string; title: string; version: number } }>;
+      decisions: Array<{ meta: { id: string; title: string; version: number; question?: string; options?: string[] } }>;
     };
     expect(brief.item.meta.status).toBe("in_progress");
     const own = brief.decisions.filter((d) => d.meta.title.startsWith("b"));
     expect(own).toHaveLength(1);
     expect(own[0].meta.version).toBe(2);
+    // the question and its options stay with the answer, also after a change
+    expect(own[0].meta.question).toBe("which?");
+    expect(own[0].meta.options).toEqual(["a", "b"]);
     expect(brief.decisions.some((d) => d.meta.title === "a")).toBe(false);
     const log = brief.item.sections.find((x) => x.heading === "Log")?.body ?? "";
     expect(log).toContain(`changed answer ${own[0].meta.id}: "a" → "b, after all"`);

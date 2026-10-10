@@ -171,7 +171,7 @@ const AnswerBox = ({ id, opts, onAnswer }) => {
   `;
 };
 
-// a recorded answer; the latest one on an in-progress item can be revised
+// a recorded answer; the item's latest one can be revised until the item is closed
 const DecisionCard = ({ d, canChange, onChange }) => {
   const [text, setText] = useState(null);
   const save = () => {
@@ -188,6 +188,12 @@ const DecisionCard = ({ d, canChange, onChange }) => {
         <div class="flex-grow-1"><b>${d.meta.id}</b>${d.meta.version > 1 ? html` <span class="text-secondary small">(changed)</span>` : ""} ${text === null && d.meta.title}</div>
         ${canChange && text === null && html`<button class="btn btn-sm btn-outline-primary py-0" onClick=${() => setText(d.meta.title)}>change answer</button>`}
       </div>
+      ${d.meta.question && html`<div class="small text-secondary mt-1">asked: ${d.meta.question}</div>`}
+      ${(d.meta.options ?? []).length > 0 && html`<div class="d-flex gap-1 mt-1 flex-wrap small">
+        ${d.meta.options.map((o, i) => text === null
+          ? html`<span class="badge ${o === d.meta.title ? "text-bg-primary" : "text-bg-secondary"}">opt ${i + 1}: ${o}</span>`
+          : html`<button class="btn btn-sm py-0 ${o === text ? "btn-secondary" : "btn-outline-secondary"}" onClick=${() => setText(o)}>opt ${i + 1}: ${o}</button>`)}
+      </div>`}
       ${text !== null && html`<div class="d-flex gap-2 mt-2 flex-wrap">
         <textarea class="form-control form-control-sm" rows="2" value=${text} onInput=${(e) => setText(e.target.value)} />
         <button class="btn btn-sm btn-primary" onClick=${save}>save</button>
@@ -856,7 +862,7 @@ const ItemView = ({ id }) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
     reload();
   };
-  // the answer the human gave on this item (its latest decision) - changeable while in progress
+  // the answer the human gave on this item (its latest decision) - changeable until the item is closed
   const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
     .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
   // a cancelled prompt (null) aborts the action — only OK fires it
@@ -946,7 +952,7 @@ const ItemView = ({ id }) => {
     ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
       ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
     </div>`}
-    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${it.meta.status === "in_progress" && d.meta.id === ownLast}
+    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!["done", "dropped"].includes(it.meta.status) && d.meta.id === ownLast}
       onChange=${(text) => act("change_answer", { text })} />`)}
     <${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} />
     <${History} entries=${history} />

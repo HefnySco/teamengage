@@ -73,7 +73,7 @@ export type Effect =
   | { type: "setup_work" } // worktrees / snapshots for the claim's targets
   | { type: "cleanup_work"; keepBranches?: boolean }
   | { type: "merge_required" }
-  | { type: "create_decision"; decisionId: string; title: string }
+  | { type: "create_decision"; decisionId: string; title: string; question?: Question }
   | { type: "update_decision"; decisionId: string; title: string };
 
 export interface TransitionResult {
@@ -232,15 +232,17 @@ export function transition(
         type: "create_decision",
         decisionId: action.decisionId,
         title: action.decisionTitle,
+        // keep what was asked: the item's question is cleared on answer
+        ...(meta.question ? { question: meta.question } : {}),
       });
       return out;
     }
 
     case "change_answer": {
       requireHuman(actor, action.type);
-      // the agent is acting on the answer: it may still be revised; once
-      // the work is submitted or closed, the answer is part of the record
-      if (from !== "in_progress") fail(from, action.type);
+      // the human may revise an answer until the item is closed; a closed
+      // item's answer is part of the record
+      if (TERMINAL.includes(from)) fail(from, action.type);
       out.log.push(
         `- ${stamp} ${who} changed answer ${action.decisionId}: "${action.previous}" → "${action.decisionTitle}"`,
       );

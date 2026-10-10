@@ -26,7 +26,7 @@ import {
 } from "../../core/files/template.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
-import { DecisionMeta, type Event, type ItemMeta } from "../../core/model/index.js";
+import { DecisionMeta, type Event, type ItemMeta, type Question } from "../../core/model/index.js";
 import type { Claim } from "../../core/model/claim.js";
 import { ConflictError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
@@ -190,7 +190,7 @@ export class PlansStore {
           case "create_decision":
             writes.push({
               rel: join("decisions", `${e.decisionId}.md`),
-              content: decisionFile(e.decisionId, e.title, id, actor, now),
+              content: decisionFile(e.decisionId, e.title, id, actor, now, undefined, e.question),
             });
             break;
           case "update_decision": {
@@ -1071,8 +1071,11 @@ function decisionFile(
   actor: Actor,
   now: string,
   prev?: DecisionMeta,
+  q?: Question,
 ): string {
-  // a changed answer keeps its id and creation date and bumps the version
+  // a changed answer keeps its id, creation date and question; version +1
+  const question = q?.text ?? (prev?.question as string | undefined);
+  const options = q?.options ?? (prev?.options as string[] | undefined);
   const meta = {
     id,
     title,
@@ -1080,6 +1083,11 @@ function decisionFile(
     decided_by: actor.kind === "human" ? "human" : actor.session,
     created: prev?.created ?? now.slice(0, 10),
     version: (prev?.version ?? 0) + 1,
+    ...(question ? { question } : {}),
+    ...(options?.length ? { options } : {}),
   };
-  return `${emitFrontmatter(meta)}\n## Question\nSee ${item}.\n\n## Answer\n${title}\n`;
+  const asked = question
+    ? question + (options?.length ? "\n\nOptions:\n" + options.map((o, i) => `${i + 1}. ${o}`).join("\n") : "")
+    : `See ${item}.`;
+  return `${emitFrontmatter(meta)}\n## Question\n${asked}\n\n## Answer\n${title}\n`;
 }
