@@ -711,7 +711,9 @@ const Graph = ({ onOpen }) => {
         onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
         onClick=${(e) => {
           if (Date.now() < panSuppressUntil.current) return;
-          const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
+          // pointer capture retargets click at the view — hit-test the node actually under the pointer
+          const el = document.elementFromPoint(e.clientX, e.clientY) ?? e.target;
+          const id = el?.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
           if (id) onOpen(id[0].replace("_", "-"));
         }} />
     </div>
