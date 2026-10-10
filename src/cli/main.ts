@@ -66,7 +66,7 @@ commands:
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
-  domains [suggest [--apply]]      list domains / keyword suggestions
+  domains [suggest [--apply] | untagged]   list domains / keyword suggestions / untagged items
   domain add|rename|rm …           manage the domain list (rename onto an existing one merges)
   tag <ID> name… [-name…]          add / remove domains on an item
   hooks [--install|--uninstall] [--settings <file>]

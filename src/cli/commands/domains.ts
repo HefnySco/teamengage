@@ -4,6 +4,7 @@ import { daemonApi } from "../client.js";
  * Domain commands:
  *   te domains [--json]                       list with counts
  *   te domains suggest [--apply] [--json]     keyword suggestions (adds only)
+ *   te domains untagged [--json]              open items without any domain
  *   te domain add <name> [description…] [--color c] [--keywords a,b]
  *   te domain rename <old> <new>              (merge when <new> exists)
  *   te domain rm <name>
@@ -38,6 +39,32 @@ interface DomainRow {
 }
 
 export async function domainsCmd(args: string[], home?: string): Promise<number> {
+  if (args[0] === "untagged") {
+    // open (non-archived) items without any domain — what te-tag works through
+    const rest = args.slice(1);
+    const items = (await daemonApi("GET", `/api/items${wsQ(rest)}`, undefined, home)) as Array<{
+      id: string;
+      title: string;
+      status: string;
+      project?: string;
+      source?: string;
+      domains?: string[];
+    }>;
+    const untagged = items.filter((i) => !(i.domains ?? []).length);
+    if (rest.includes("--json")) {
+      process.stdout.write(
+        JSON.stringify(
+          untagged.map(({ id, title, status, project, source }) => ({ id, title, status, project, source })),
+          null,
+          2,
+        ) + "\n",
+      );
+      return 0;
+    }
+    for (const i of untagged) process.stdout.write(`${i.id} ${i.status} [${i.project ?? "-"}] ${i.title}\n`);
+    process.stdout.write(`\n${untagged.length} untagged item(s)\n`);
+    return 0;
+  }
   if (args[0] === "suggest") {
     const rest = args.slice(1);
     if (rest.includes("--apply")) {

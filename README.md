@@ -40,7 +40,7 @@ src/resources   git / ssh / folder / url resource drivers
 src/sync        multi-machine plans-repo sync and reconciliation
 src/import      importer for existing Markdown task folders
 web/            human web UI, served by the daemon
-skills/         agent skills: te-work (execute a task), te-plan (plan tasks)
+skills/         agent skills: te-work (execute), te-plan (plan), te-tag (tag domains)
 ```
 
 Task files in overlay workspaces follow `docs/TASK-FORMAT.md` (`te template`).

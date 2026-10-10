@@ -69,11 +69,13 @@ curl-only, no MCP needed:
 - `skills/te-work/` — implement / continue / pick up a task: hello → brief →
   claim → log / ask → submit with evidence, release if blocked.
 - `skills/te-plan/` — break a goal into tasks with one `propose` call.
+- `skills/te-tag/` — tag untagged tasks with domains by reading them
+  (`te domains untagged`, plan for the human's OK, `te tag`).
 
 Install by linking them into the agent's skills folder:
 
 ```bash
-ln -s "$PWD/skills/te-work" "$PWD/skills/te-plan" ~/.claude/skills/
+ln -s "$PWD/skills/te-work" "$PWD/skills/te-plan" "$PWD/skills/te-tag" ~/.claude/skills/
 ```
 
 ## Enforcing the rules (when instructions aren't enough)
