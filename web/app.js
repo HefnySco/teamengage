@@ -614,6 +614,30 @@ const Graph = ({ onOpen }) => {
     };
   }, [applied]);
   const filtering = f.q.trim() || f.status || f.domain;
+  // drag anywhere pans the scrollable view; a press that moves <5px still counts as a click (opens the item)
+  const viewRef = useRef(null);
+  const pan = useRef(null);
+  const panSuppressUntil = useRef(0);
+  const panStart = (e) => {
+    if (e.button !== 0 || !viewRef.current) return;
+    pan.current = { x: e.clientX, y: e.clientY, left: viewRef.current.scrollLeft, top: viewRef.current.scrollTop, moved: false };
+    viewRef.current.setPointerCapture(e.pointerId);
+  };
+  const panMove = (e) => {
+    const d = pan.current;
+    if (!d) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) <= 4) return;
+    d.moved = true;
+    viewRef.current.classList.add("dragging");
+    viewRef.current.scrollLeft = d.left - dx;
+    viewRef.current.scrollTop = d.top - dy;
+  };
+  const panEnd = () => {
+    if (pan.current?.moved) panSuppressUntil.current = Date.now() + 350;
+    viewRef.current?.classList.remove("dragging");
+    pan.current = null;
+  };
   return html`
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
       <h2 class="h4 mb-0 me-2">Graph</h2>
@@ -643,10 +667,13 @@ const Graph = ({ onOpen }) => {
         <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= 4}
           onClick=${() => setZoom((z) => Math.min(4, +(z * 1.25).toFixed(2)))}>+</button>
       </div>
-      <div class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }} onClick=${(e) => {
-        const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
-        if (id) onOpen(id[0].replace("_", "-"));
-      }} />
+      <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }}
+        onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
+        onClick=${(e) => {
+          if (Date.now() < panSuppressUntil.current) return;
+          const id = e.target.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
+          if (id) onOpen(id[0].replace("_", "-"));
+        }} />
     </div>
     <details class="mt-2"><summary class="text-secondary">mermaid source</summary><pre class="card card-body small">${src}</pre></details>
   `;
@@ -929,6 +956,8 @@ const Activity = () => {
 
 // ---- Sync (UI-0007) ----------------------------------------------------------------
 // the task folder's own git: what the other machines see after a pull
+const p2 = (n) => String(n).padStart(2, "0");
+const stamp = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
 const PlansGit = () => {
   const [g, setG] = useState(null);
   const [busy, setBusy] = useState("");
@@ -961,6 +990,11 @@ const PlansGit = () => {
   useEffect(() => {
     load(true);
   }, []);
+  // pre-fill the suggested message once the status knows the machine name — never overwrite typing;
+  // after a commit, msg resets to "" and the box refills with a fresh timestamp
+  useEffect(() => {
+    if (g?.machine && !msg) setMsg(`Tasks: ${g.machine} — ${stamp(new Date())}`);
+  }, [g, msg]);
   const run = async (what, path, body) => {
     setBusy(what);
     setNote(null);
@@ -991,6 +1025,19 @@ const PlansGit = () => {
   const pushR = names.includes(pushTo) ? pushTo : (g.defaultRemote ?? names[0] ?? "");
   const rp = g.remotes.find((r) => r.name === pullR);
   const rs = g.remotes.find((r) => r.name === pushR);
+  // per-direction status: pull only cares about `behind`; push about uncommitted + `ahead` (blocked while `behind`)
+  const pullState = !rp?.ref
+    ? html`<span class="small text-secondary">no ${g.branch} there</span>`
+    : rp.behind > 0
+      ? html`<span class="badge text-bg-warning">↓ ${rp.behind} to pull</span>`
+      : html`<span class="badge text-bg-success">in sync</span>`;
+  const pushState = !rs?.ref
+    ? html`<span class="small text-secondary">no ${g.branch} there</span>`
+    : rs.behind > 0
+      ? html`<span class="badge text-bg-warning">↓ ${rs.behind} — pull first</span>`
+      : rs.ahead > 0
+        ? html`<span class="badge text-bg-info">↑ ${rs.ahead} to push</span>`
+        : html`<span class="badge text-bg-success">in sync</span>`;
   const state = (r) =>
     !r.ref ? html`<span class="text-secondary">no ${g.branch} there</span>`
     : !r.ahead && !r.behind ? html`<span class="badge text-bg-success">in sync</span>`
@@ -1013,7 +1060,21 @@ const PlansGit = () => {
           <dt class="col-sm-3 col-lg-2">task folder</dt><dd class="col-sm-9 col-lg-10 mb-1"><code>${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}</code>
             <span class="text-secondary">— the only path Pull / Commit & Push touch</span></dd>
         </dl>
-        <details class="small mb-3"><summary class="text-secondary">check it yourself in a terminal</summary>
+        ${g.remotes.length === 0 && html`<p class="small text-secondary mb-0">no remotes — add one in a terminal: git remote add origin ${"<url>"}</p>`}
+        ${g.remotes.length > 0 && html`<details class="small mb-2"><summary class="text-secondary">${g.remotes.length} remote(s)</summary>
+          <div class="table-responsive"><table class="table table-sm align-middle small mb-0 mt-1">
+            <thead><tr><th>remote</th><th>fetch</th><th>push</th><th>${g.branch}</th></tr></thead>
+            <tbody>
+              ${g.remotes.map((r) => html`<tr key=${r.name}>
+                <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream)</span>` : ""}${!r.fetched ? html` <span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>` : ""}</td>
+                <td><code class="small">${r.fetchUrl}</code></td>
+                <td>${r.pushUrl === r.fetchUrl ? html`<span class="text-secondary">same</span>` : html`<code class="small">${r.pushUrl}</code>`}</td>
+                <td>${state(r)}</td>
+              </tr>`)}
+            </tbody>
+          </table></div>
+        </details>`}
+        <details class="small"><summary class="text-secondary">check it yourself in a terminal</summary>
           <pre class="mb-0 mt-1 p-2 bg-body-tertiary rounded">${[
             `cd ${g.repo}`,
             `git status -- ${g.scope}`,
@@ -1023,59 +1084,74 @@ const PlansGit = () => {
             ...g.remotes.filter((r) => r.ref).map((r) => `git log --oneline HEAD..${r.ref}   # to pull from ${r.name}`),
           ].join("\n")}</pre>
         </details>
-        <div class="table-responsive"><table class="table table-sm align-middle small mb-3">
-          <thead><tr><th>remote</th><th>fetch</th><th>push</th><th>${g.branch}</th></tr></thead>
-          <tbody>
-            ${g.remotes.length === 0 && html`<tr><td colspan="4" class="text-secondary">no remotes — add one in a terminal: git remote add origin &lt;url&gt;</td></tr>`}
-            ${g.remotes.map((r) => html`<tr key=${r.name}>
-              <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream)</span>` : ""}${!r.fetched ? html` <span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>` : ""}</td>
-              <td><code class="small">${r.fetchUrl}</code></td>
-              <td>${r.pushUrl === r.fetchUrl ? html`<span class="text-secondary">same</span>` : html`<code class="small">${r.pushUrl}</code>`}</td>
-              <td>${state(r)}</td>
-            </tr>`)}
-          </tbody>
-        </table></div>
-        ${g.remotes.length > 0 && html`
-        <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-          <span class="small text-secondary" style=${{ width: "4.5rem" }}>pull from</span>
-          ${remoteSelect(pullR, choose("te.sync.pull", setPullFrom))}
-          <button class="btn btn-sm btn-outline-primary" disabled=${!!busy}
-            title="fetch from this remote and fast-forward — brings in the other machines' work"
-            onClick=${() => run("pull", "/api/plans-git/pull", { remote: pullR })}>${busy === "pull" ? "pulling…" : `Pull${rp?.behind ? ` (${rp.behind})` : ""}`}</button>
-        </div>
-        <div class="d-flex gap-2 flex-wrap align-items-center">
-          <span class="small text-secondary" style=${{ width: "4.5rem" }}>commit</span>
-          <input class="form-control form-control-sm" style=${{ maxWidth: "24rem" }} placeholder="commit message (default: Tasks: update from this machine)"
-            value=${msg} onInput=${(e) => setMsg(e.target.value)} />
-          <button class="btn btn-sm btn-outline-primary" disabled=${!!busy || !g.changes.length}
-            title="commit every change in the task folder locally (no push)"
-            onClick=${() => run("commit", "/api/plans-git/commit", { message: msg })}>${busy === "commit" ? "committing…" : `Commit${g.changes.length ? ` (${g.changes.length})` : ""}`}</button>
-        </div>
-        <div class="d-flex gap-2 flex-wrap align-items-center mt-2">
-          <span class="small text-secondary" style=${{ width: "4.5rem" }}>push to</span>
-          ${remoteSelect(pushR, choose("te.sync.push", setPushTo))}
-          <button class="btn btn-sm btn-primary" disabled=${!!busy || (rs?.behind ?? 0) > 0 || (!g.changes.length && rs?.ref && !rs?.ahead)}
-            title=${(rs?.behind ?? 0) > 0 ? `pull from ${pushR} first` : `commit every change in the task folder and push to ${pushR}`}
-            onClick=${() => {
-              const ok = confirm(
-                `Commit & Push\n\n` +
-                  `repository:   ${g.repo}\n` +
-                  `task folder:  ${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}\n` +
-                  `branch:       ${g.branch}\n` +
-                  `remote:       ${pushR} → ${rs?.pushUrl ?? "?"}\n\n` +
-                  `${g.changes.length ? `commit ${g.changes.length} change(s) in the task folder` : "no new changes to commit"}` +
-                  `${rs?.ahead ? `, push ${rs.ahead} existing commit(s)` : ""}` +
-                  `\nmessage: ${msg.trim() || "Tasks: update from this machine"}\n\nProceed?`,
-              );
-              if (ok) run("push", "/api/plans-git/push", { message: msg, remote: pushR });
-            }}>${busy === "push" ? "pushing…" : `Commit & Push`}</button>
-        </div>`}
-        ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mt-2 mb-0">${note.text}</div>`}
-        ${g.changes.length > 0 && html`<details class="mt-2"><summary class="small text-secondary">${g.changes.length} uncommitted change(s) in the task folder</summary>
-          <ul class="small mb-0 scroll-list">${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
-        <p class="small text-secondary mt-2 mb-0">Pull only fast-forwards; Commit & Push commits only the task folder and refuses while behind the chosen remote — anything else needs a terminal.</p>
       </div>
     </div>
+    ${g.remotes.length > 0 && html`
+    <div class="row">
+      <div class="col-md-6">
+        <div class="card mb-3 h-100 dir-pull">
+          <div class="card-header py-2 d-flex align-items-center gap-2">
+            <span class="dir-glyph">⇩</span>
+            <div><b>Pull</b><div class="small text-secondary">other machines → this one</div></div>
+            <div class="ms-auto d-flex align-items-center gap-1">${!rp?.fetched && html`<span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>`}${pullState}</div>
+          </div>
+          <div class="card-body">
+            <div class="d-flex gap-2 align-items-center">
+              <span class="small text-secondary" style=${{ width: "3rem" }}>from</span>
+              ${remoteSelect(pullR, choose("te.sync.pull", setPullFrom))}
+            </div>
+            <div class="small mt-1 text-break"><code class="small text-secondary">${rp?.fetchUrl ?? ""}</code></div>
+            <button class="btn btn-sm btn-outline-primary w-100 mt-2" disabled=${!!busy}
+              title="fetch from this remote and fast-forward — brings in the other machines' work"
+              onClick=${() => run("pull", "/api/plans-git/pull", { remote: pullR })}>${busy === "pull" ? "pulling…" : `↓ Pull${rp?.behind ? ` (${rp.behind})` : ""} from ${pullR}`}</button>
+            <div class="dir-foot">fetch + fast-forward only — never writes to the remote</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card mb-3 h-100 dir-push">
+          <div class="card-header py-2 d-flex align-items-center gap-2">
+            <span class="dir-glyph">⇧</span>
+            <div><b>Commit & Push</b><div class="small text-secondary">this machine → other machines</div></div>
+            <div class="ms-auto d-flex align-items-center gap-1">${!rs?.fetched && html`<span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>`}${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}${pushState}</div>
+          </div>
+          <div class="card-body">
+            <div class="d-flex gap-2 align-items-center">
+              <span class="small text-secondary" style=${{ width: "3rem" }}>to</span>
+              ${remoteSelect(pushR, choose("te.sync.push", setPushTo))}
+            </div>
+            <div class="small mt-1 text-break"><code class="small text-secondary">${rs?.pushUrl ?? ""}</code></div>
+            <input class="form-control form-control-sm mt-2" placeholder="commit message"
+              value=${msg} onInput=${(e) => setMsg(e.target.value)} />
+            <div class="d-flex gap-2 mt-2">
+              <button class="btn btn-sm btn-outline-success" disabled=${!!busy || !g.changes.length}
+                title="commit every change in the task folder locally (no push)"
+                onClick=${() => run("commit", "/api/plans-git/commit", { message: msg })}>${busy === "commit" ? "committing…" : `Commit${g.changes.length ? ` (${g.changes.length})` : ""}`}</button>
+              <button class="btn btn-sm btn-success flex-grow-1" disabled=${!!busy || (rs?.behind ?? 0) > 0 || (!g.changes.length && rs?.ref && !rs?.ahead)}
+                title=${(rs?.behind ?? 0) > 0 ? `pull from ${pushR} first` : `commit every change in the task folder and push to ${pushR}`}
+                onClick=${() => {
+                  const ok = confirm(
+                    `Commit & Push\n\n` +
+                      `repository:   ${g.repo}\n` +
+                      `task folder:  ${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}\n` +
+                      `branch:       ${g.branch}\n` +
+                      `remote:       ${pushR} → ${rs?.pushUrl ?? "?"}\n\n` +
+                      `${g.changes.length ? `commit ${g.changes.length} change(s) in the task folder` : "no new changes to commit"}` +
+                      `${rs?.ahead ? `, push ${rs.ahead} existing commit(s)` : ""}` +
+                      `\nmessage: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}\n\nProceed?`,
+                  );
+                  if (ok) run("push", "/api/plans-git/push", { message: msg, remote: pushR });
+                }}>${busy === "push" ? "pushing…" : `↑ Commit & Push to ${pushR}`}</button>
+            </div>
+            ${g.changes.length > 0 && html`<details class="mt-2"><summary class="small text-secondary">${g.changes.length} uncommitted change(s) in the task folder</summary>
+              <ul class="small mb-0 scroll-list">${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
+            <div class="dir-foot">commits only the task folder · refuses while behind the chosen remote</div>
+          </div>
+        </div>
+      </div>
+    </div>`}
+    ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mb-3">${note.text}</div>`}
+    <p class="small text-secondary mb-0">Pull only fast-forwards; Commit & Push commits only the task folder and refuses while behind the chosen remote — anything else needs a terminal.</p>
   `;
 };
 

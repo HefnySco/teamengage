@@ -325,6 +325,8 @@ export interface PlansGitStatus {
   behind: number;
   /** uncommitted changes inside the scope: porcelain status + path */
   changes: Array<{ status: string; path: string }>;
+  /** this machine's name — the UI puts it in the suggested commit message */
+  machine: string;
 }
 
 async function plansRepoTop(wsr: WorkspaceRuntime): Promise<string> {
@@ -387,7 +389,7 @@ export async function plansGitStatus(
     .split("\n")
     .filter(Boolean)
     .map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
-  return { repo, scope, branch, upstream, defaultRemote, remotes, ahead: up?.ahead ?? 0, behind: up?.behind ?? 0, changes };
+  return { repo, scope, branch, upstream, defaultRemote, remotes, ahead: up?.ahead ?? 0, behind: up?.behind ?? 0, changes, machine: wsr.store.machine };
 }
 
 function pickRemote(st: PlansGitStatus, name?: string): PlansRemote {
@@ -433,7 +435,10 @@ async function commitTaskFolder(wsr: WorkspaceRuntime, st: PlansGitStatus, messa
   if (!st.changes.length) return 0;
   await git(st.repo, ["add", "-A", "--", st.scope]);
   // pathspec: never sweep in staged changes from outside the task folder
-  await git(st.repo, ["commit", "-q", "-m", message.trim() || `Tasks: update from ${wsr.store.machine}`, "--", st.scope]);
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  await git(st.repo, ["commit", "-q", "-m", message.trim() || `Tasks: ${wsr.store.machine} — ${stamp}`, "--", st.scope]);
   return st.changes.length;
 }
 

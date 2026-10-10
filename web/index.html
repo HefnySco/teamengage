@@ -79,6 +79,15 @@
       .graph-view { overflow: auto; max-height: calc(100vh - 12rem); }
       .graph-view svg { transform: scale(var(--zoom, 1)); transform-origin: top left; }
       .graph-view .node, .graph-view .node * { cursor: pointer; }
+      .graph-view { cursor: grab; }
+      .graph-view.dragging, .graph-view.dragging * { cursor: grabbing !important; user-select: none; }
+      /* sync: pull (blue, left) / push (green, right) direction panels */
+      .dir-pull .card-header { border-bottom: 2px solid var(--bs-primary); }
+      .dir-push .card-header { border-bottom: 2px solid var(--bs-success); }
+      .dir-glyph { font-size: 1.35rem; line-height: 1; }
+      .dir-pull .dir-glyph { color: var(--bs-primary); }
+      .dir-push .dir-glyph { color: var(--bs-success); }
+      .dir-foot { font-size: .75rem; color: var(--bs-secondary-color); margin-top: .6rem; }
     </style>
   </head>
   <body>
