@@ -16,6 +16,10 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
                 draft → ready → in progress → in review → done
 ```
 
+| Board — every task, by status | Graph — dependencies as a diagram | Sync — git between machines |
+|---|---|---|
+| ![Board view](docs/screenshots/board.png) | ![Graph view](docs/screenshots/graph.png) | ![Sync view](docs/screenshots/sync.png) |
+
 ### Why it helps
 
 - **Your task files stay yours.** Point it at an existing folder of Markdown
