@@ -152,15 +152,21 @@ function useApi(path, deps = []) {
 }
 
 // ---- Inbox (UI-0002) --------------------------------------------------------
-// answer a waiting item's question: one button per option, or free text
-const AnswerBox = ({ opts, onAnswer }) => {
+// answer a waiting item's question: an option button (or typing) only fills
+// the answer; nothing is sent until "answer" is pressed and confirmed
+const AnswerBox = ({ id, opts, onAnswer }) => {
   const [text, setText] = useState("");
+  const submit = () => {
+    const answer = text.trim();
+    if (answer && confirm(`Answer ${id ?? "this question"} with:\n\n${answer}`)) onAnswer(answer);
+  };
   return html`
     <div class="d-flex gap-2 flex-wrap align-items-center">
-      ${(opts ?? []).map((o, i) => html`<button class="btn btn-sm btn-outline-secondary text-start" onClick=${() => onAnswer(o)}>opt ${i + 1}: ${o}</button>`)}
+      ${(opts ?? []).map((o, i) => html`<button class="btn btn-sm ${text === o ? "btn-secondary" : "btn-outline-secondary"} text-start"
+        onClick=${() => setText(o)}>opt ${i + 1}: ${o}</button>`)}
       <input class="form-control form-control-sm w-auto" value=${text} onInput=${(e) => setText(e.target.value)}
-        onKeyDown=${(e) => e.key === "Enter" && text && onAnswer(text)} placeholder="answer…" />
-      <button class="btn btn-sm btn-primary btn-act" onClick=${() => text && onAnswer(text)}>answer</button>
+        onKeyDown=${(e) => e.key === "Enter" && submit()} placeholder="answer…" />
+      <button class="btn btn-sm btn-primary btn-act" disabled=${!text.trim()} onClick=${submit}>answer</button>
     </div>
   `;
 };
@@ -230,7 +236,7 @@ const Inbox = ({ onOpen }) => {
             <div class="list-group-item" key=${q.id}>
               <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id), domains: byId[q.id]?.domains }} onOpen=${onOpen} />
               <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
-              <${AnswerBox} opts=${q.question?.options} onAnswer=${(text) => act(q.id, "answer", { text })} />
+              <${AnswerBox} id=${q.id} opts=${q.question?.options} onAnswer=${(text) => act(q.id, "answer", { text })} />
             </div>
           `,
         )}
@@ -886,7 +892,7 @@ const ItemView = ({ id }) => {
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from ${it.meta.question.asked_by}</span>` : ""}
       <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
-      ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
+      ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} id=${id} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
     </div>`}
     <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
       ${TABS.map(
