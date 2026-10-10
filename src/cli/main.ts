@@ -100,6 +100,12 @@ Ask, don't guess.
 
 ## ${AUTHORING_RULES}`;
 
+// `te … | head` closes stdout early — that's not an error, just stop quietly
+process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+  if (e.code === "EPIPE") process.exit(0);
+  throw e;
+});
+
 async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2);
   if (args.includes("--version") || args.includes("-v")) {
