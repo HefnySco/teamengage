@@ -25,6 +25,7 @@ describe("UI serving (UI-0001)", () => {
     const html = await res.text();
     expect(html).toContain("TeamEngage");
     expect(html).toContain("/assets/app.js");
+    expect(html).toMatch(/v\d+\.\d+\.\d+/); // __TE_VERSION__ replaced
   });
 
   it("cookie token authenticates API + assets", async () => {
