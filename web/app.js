@@ -928,11 +928,97 @@ const Activity = () => {
 };
 
 // ---- Sync (UI-0007) ----------------------------------------------------------------
+// the task folder's own git: what the other machines see after a pull
+const PlansGit = () => {
+  const [g, setG] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [note, setNote] = useState(null);
+  const load = (fetch) =>
+    api(`/api/plans-git${fetch ? "?fetch=1" : ""}`)
+      .then((r) => {
+        setG(r);
+        refreshSyncBadge(r);
+      })
+      .catch((e) => setNote({ kind: "danger", text: e.message }));
+  useEffect(() => {
+    load(true);
+  }, []);
+  const run = async (what, path, body) => {
+    setBusy(what);
+    setNote(null);
+    try {
+      const r = await post(path, body);
+      setG(r.status);
+      refreshSyncBadge(r.status);
+      setNote({
+        kind: "success",
+        text:
+          what === "pull"
+            ? r.pulled ? `pulled ${r.pulled} commit(s)` : "already up to date"
+            : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? "pushed" : "nothing to push"}`,
+      });
+      if (what === "push") setMsg("");
+    } catch (e) {
+      setNote({ kind: "danger", text: e.message });
+    } finally {
+      setBusy("");
+    }
+  };
+  if (!g) return html`<div class="card card-body mb-3">${note ? html`<span class="text-danger">${note.text}</span>` : "checking the task folder's git…"}</div>`;
+  return html`
+    <div class="card mb-3">
+      <div class="card-header py-2 d-flex align-items-center gap-2 flex-wrap">
+        <b>Task folder</b>
+        <span class="text-secondary small">${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}</span>
+        <span class="badge text-bg-secondary">${g.branch ?? "?"}${g.upstream ? ` → ${g.upstream}` : " (no upstream)"}</span>
+        ${g.behind > 0 && html`<span class="badge text-bg-warning">↓ ${g.behind} to pull</span>`}
+        ${g.ahead > 0 && html`<span class="badge text-bg-info">↑ ${g.ahead} to push</span>`}
+        ${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}
+        ${!g.behind && !g.ahead && !g.changes.length && html`<span class="badge text-bg-success">in sync</span>`}
+        <button class="btn btn-sm btn-link ms-auto py-0" onClick=${() => load(true)}>check remote</button>
+      </div>
+      <div class="card-body">
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+          <button class="btn btn-sm btn-outline-primary" disabled=${!!busy || !g.upstream}
+            title="fast-forward to the remote — brings in the other machines' work"
+            onClick=${() => run("pull", "/api/plans-git/pull")}>${busy === "pull" ? "pulling…" : `Pull${g.behind ? ` (${g.behind})` : ""}`}</button>
+          <input class="form-control form-control-sm" style=${{ maxWidth: "26rem" }} placeholder=${`commit message (default: Tasks: update from this machine)`}
+            value=${msg} onInput=${(e) => setMsg(e.target.value)} />
+          <button class="btn btn-sm btn-primary" disabled=${!!busy || !g.upstream || g.behind > 0 || (!g.changes.length && !g.ahead)}
+            title=${g.behind > 0 ? "pull first" : "commit every change in the task folder and push it"}
+            onClick=${() => run("push", "/api/plans-git/push", { message: msg })}>${busy === "push" ? "pushing…" : "Commit & Push"}</button>
+        </div>
+        ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mt-2 mb-0">${note.text}</div>`}
+        ${g.changes.length > 0 && html`<details class="mt-2"><summary class="small text-secondary">${g.changes.length} uncommitted change(s) in the task folder</summary>
+          <ul class="small mb-0 scroll-list">${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
+        <p class="small text-secondary mt-2 mb-0">Pull only fast-forwards; Commit &amp; Push commits only the task folder and refuses while behind — anything else needs a terminal.</p>
+      </div>
+    </div>
+  `;
+};
+
+// nav badge on "sync": something to pull / push (cheap local status, refreshed on events)
+function refreshSyncBadge(g) {
+  const a = document.querySelector('#nav a[data-r="sync"]');
+  if (!a) return;
+  const n = (g?.behind ?? 0) + (g?.ahead ?? 0) + (g?.changes?.length ?? 0);
+  a.dataset.badge = n ? (g.behind ? `↓${g.behind}` : "●") : "";
+}
+const pollSyncBadge = () => api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
+setTimeout(pollSyncBadge, 500);
+setInterval(pollSyncBadge, 60_000);
+onEvent(() => {
+  clearTimeout(pollSyncBadge.t);
+  pollSyncBadge.t = setTimeout(pollSyncBadge, 1500);
+});
+
 const Sync = () => {
   const { data: s } = useApi("/api/sync");
   if (!s) return html`<p class="text-secondary">loading…</p>`;
   return html`
     <h2 class="h4 mb-3">Sync</h2>
+    <${PlansGit} />
     <div class="card card-body mb-2">
       plans repo: ${s.repo.remote ? html`${s.repo.ahead} ahead / ${s.repo.behind} behind <span class="text-secondary">${s.repo.upstream ?? ""}</span>` : "no remote"}
     </div>

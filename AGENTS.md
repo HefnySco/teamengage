@@ -264,6 +264,10 @@ Work is coordinated through the task folder's git repo:
 - **After working:** commit `<task-folder>` (task files + `.teamengage/`)
   and `git push`. TeamEngage never commits or pushes on its own in overlay
   mode — the human decides.
+- The human can do both from the web UI: **Sync** page → **Pull**
+  (fast-forward only) and **Commit & Push** (commits only the task folder,
+  refused while behind). The `sync` tab shows a badge when there is
+  something to pull or push. Agents must not press these or push themselves.
 - Work isn't meant to run on two machines at the same time on the same
   task; claims show which machine holds what.
 

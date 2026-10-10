@@ -159,6 +159,35 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // ---- task folder git: human-pressed Pull / Commit & Push ----------------
+  app.get("/api/plans-git", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { plansGitStatus } = await import("../sync/sync.js");
+      return await plansGitStatus(ops.wsr, { fetch: (req.query as { fetch?: string }).fetch === "1" });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+  app.post("/api/plans-git/pull", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { pullPlans } = await import("../sync/sync.js");
+      return await pullPlans(ops.wsr);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+  app.post("/api/plans-git/push", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { commitAndPushPlans } = await import("../sync/sync.js");
+      return await commitAndPushPlans(ops.wsr, String(((req.body ?? {}) as { message?: string }).message ?? ""));
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   /** Machine handoff: behind/ahead (after a fetch), uncommitted plans, other machines' claims. */
   app.get("/api/handoff", async (req, reply) => {
     try {

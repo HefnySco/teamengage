@@ -89,6 +89,14 @@ export class PlansStore {
     this.ready = true;
   }
 
+  /** Re-read every plan file from disk (after a pull changed many at once). */
+  reindex(): Promise<void> {
+    return (async () => {
+      this.index = await Index.load(this.ws.plansDir);
+      this.index.setReviewUnblocks(this.ws.config.review_unblocks);
+    })();
+  }
+
   get idx(): Index {
     return this.index;
   }

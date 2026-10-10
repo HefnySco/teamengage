@@ -39,7 +39,11 @@ same plan concurrently. That is TeamEngage's reason to exist.
 5. **Evidence before done.** Agents *submit*; the human *accepts*.
 6. **Ask, don't guess.** Ambiguity becomes a recorded question; the agent moves on.
 7. **Never push for the human.** TeamEngage commits and merges locally; pushing
-   anywhere is the human's call.
+   anywhere is the human's call. The one exception is the human pressing
+   **Commit & Push** on the Sync page: it commits only the task folder and
+   pushes the plans repo's branch to its upstream (refused while behind);
+   **Pull** only fast-forwards. Agents can't reach either, and code repos
+   are never pushed.
 8. **Minimal agent output.** Tools return IDs and one-liners; detail on request.
 9. **Small schema.** Add fields only when a real workflow needs them.
 

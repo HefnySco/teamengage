@@ -40,6 +40,7 @@
       .domain-color::-webkit-color-swatch { border: 0; border-radius: .2rem; }
       .domain-color::-moz-color-swatch { border: 0; border-radius: .2rem; }
       .editable { cursor: pointer; border-bottom: 1px dotted var(--bs-border-color); }
+      #nav a[data-badge]:not([data-badge=""])::after { content: attr(data-badge); margin-left: .3rem; font-size: .7em; color: var(--bs-warning); font-weight: 700; }
       /* lists scroll inside their card/column — the page never gets miles long */
       .scroll-list { max-height: 46vh; overflow-y: auto; }
       /* fixed, narrow columns; long titles wrap inside the card */

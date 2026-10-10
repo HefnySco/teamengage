@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { writeFileAtomic } from "../store/atomic.js";
 import {
   git,
@@ -289,5 +289,102 @@ export async function reconcile(
       await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
     }
     return [...marked];
+  });
+}
+
+// ---- human-triggered sync of the plans (task folder) repo -----------------
+
+export interface PlansGitStatus {
+  repo: string;
+  /** the workspace root inside the repo — the only path pull/commit touch */
+  scope: string;
+  branch?: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  /** a remote fetch happened (false: offline or no remote — counts last-known) */
+  fetched: boolean;
+  /** uncommitted changes inside the scope: porcelain status + path */
+  changes: Array<{ status: string; path: string }>;
+}
+
+async function plansRepoTop(wsr: WorkspaceRuntime): Promise<string> {
+  if (!(await isRepo(wsr.ws.plansDir))) throw new ClaimRefusedError("the task folder is not a git repository");
+  return (await git(wsr.ws.plansDir, ["rev-parse", "--show-toplevel"])).trim();
+}
+
+/** Ahead/behind + uncommitted changes of the task folder (fetch optional). */
+export async function plansGitStatus(wsr: WorkspaceRuntime, opts: { fetch?: boolean } = {}): Promise<PlansGitStatus> {
+  const repo = await plansRepoTop(wsr);
+  const scope = relative(repo, wsr.ws.root) || ".";
+  const branch = (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim() || undefined;
+  const fetched = opts.fetch ? await fetchPlansRepo(wsr.ws.plansDir, 20_000) : false;
+  const upstream = await upstreamRef(repo);
+  let ahead = 0;
+  let behind = 0;
+  if (upstream) ({ ahead, behind } = await aheadBehind(repo, upstream).catch(() => ({ ahead: 0, behind: 0 })));
+  const porcelain = await git(repo, ["status", "--porcelain", "--untracked-files=all", "--", scope]);
+  const changes = porcelain
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
+  return { repo, scope, branch, upstream, ahead, behind, fetched, changes };
+}
+
+/**
+ * Pull: fetch, then fast-forward only. Diverged history (both sides have
+ * commits) or local edits that collide are refused — those need a human
+ * at a terminal, never an automatic merge of the plans.
+ */
+export async function pullPlans(wsr: WorkspaceRuntime): Promise<{ pulled: number; status: PlansGitStatus }> {
+  return wsr.store.enqueue(async () => {
+    const before = await plansGitStatus(wsr, { fetch: true });
+    if (!before.upstream) throw new ClaimRefusedError("the task folder's branch has no upstream — set it once: git push -u origin <branch>");
+    if (!before.fetched) throw new ClaimRefusedError("could not reach the remote — offline?");
+    if (before.behind === 0) return { pulled: 0, status: before };
+    if (before.ahead > 0) {
+      throw new ClaimRefusedError(
+        `diverged: ${before.ahead} local and ${before.behind} remote commit(s) — resolve in a terminal (git pull --rebase in ${before.repo})`,
+      );
+    }
+    try {
+      await git(before.repo, ["merge", "--ff-only", before.upstream], { timeoutMs: 60_000 });
+    } catch (e) {
+      throw new ClaimRefusedError(`pull refused by git (local uncommitted changes collide?): ${(e as Error).message.split("\n")[0]}`);
+    }
+    await wsr.store.reindex();
+    void wsr.overlay?.rescan();
+    return { pulled: before.behind, status: await plansGitStatus(wsr) };
+  });
+}
+
+/**
+ * Commit & Push: commit every change inside the task folder (and nothing
+ * outside it), then push the branch to its upstream. Refused while behind —
+ * pull first — so it never creates a merge.
+ */
+export async function commitAndPushPlans(
+  wsr: WorkspaceRuntime,
+  message: string,
+): Promise<{ committed: number; pushed: boolean; status: PlansGitStatus }> {
+  return wsr.store.enqueue(async () => {
+    const before = await plansGitStatus(wsr, { fetch: true });
+    if (!before.upstream) throw new ClaimRefusedError("the task folder's branch has no upstream — set it once: git push -u origin <branch>");
+    if (before.behind > 0) throw new ClaimRefusedError(`behind by ${before.behind} commit(s) — pull first`);
+    let committed = 0;
+    if (before.changes.length) {
+      await git(before.repo, ["add", "-A", "--", before.scope]);
+      // pathspec: never sweep in staged changes from outside the task folder
+      await git(before.repo, ["commit", "-q", "-m", message.trim() || `Tasks: update from ${wsr.store.machine}`, "--", before.scope]);
+      committed = before.changes.length;
+    }
+    const now = await plansGitStatus(wsr);
+    if (now.ahead === 0) return { committed, pushed: false, status: now };
+    try {
+      await git(before.repo, ["push"], { timeoutMs: 90_000, humanPlansPush: true });
+    } catch (e) {
+      throw new ClaimRefusedError(`push failed: ${(e as Error).message.split("\n")[0]}`);
+    }
+    return { committed, pushed: true, status: await plansGitStatus(wsr) };
   });
 }

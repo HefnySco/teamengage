@@ -23,6 +23,11 @@ export interface RunOpts {
   timeoutMs?: number;
   /** Extra environment. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The one exception to "TeamEngage never pushes": the human pressing
+   * Commit & Push for the plans (task folder) repo. Nothing else sets it.
+   */
+  humanPlansPush?: boolean;
 }
 
 const FORBIDDEN = new Set(["push"]);
@@ -32,7 +37,7 @@ const FORBIDDEN = new Set(["push"]);
  * — TeamEngage never pushes for the human (DESIGN principle 7, decision 6).
  */
 export async function git(repo: string, args: string[], opts: RunOpts = {}): Promise<string> {
-  if (args.length > 0 && FORBIDDEN.has(args[0])) {
+  if (args.length > 0 && FORBIDDEN.has(args[0]) && !opts.humanPlansPush) {
     throw new GitError("git push is forbidden in TeamEngage", repo, args);
   }
   try {
