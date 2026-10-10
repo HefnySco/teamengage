@@ -752,6 +752,32 @@ const History = ({ entries }) => html`
   </div>
 `;
 
+// dependencies of an item: ref, live status and the dep's latest log line
+const Deps = ({ deps }) => html`
+  <div class="card mt-3">
+    <div class="card-header py-2"><b>Dependencies</b> <span class="text-secondary small">what this task waits on</span></div>
+    <ul class="list-group list-group-flush">
+      ${deps.map((d) => {
+        const e = parseLog(d.outcome)[0] ?? {};
+        return html`
+          <li class="list-group-item small" key=${d.ref}>
+            ${d.ref.includes(":")
+              ? html`<span class="id me-2">${d.ref}</span>`
+              : html`<a class="item id me-2" onClick=${() => nav(`item/${d.ref}`)}>${d.ref}</a>`}
+            <${Badge} s=${d.status} />
+            ${d.key && html` <span title="key task — dependents wait for its acceptance">🔑</span>`}
+            ${d.pending && html` <span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
+            ${e.text && html`<div class="text-secondary mt-1">
+              ${e.ts && html`<span title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span> `}
+              ${e.who && html`<b class="me-1">${e.who}</b>`}<span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
+            </div>`}
+          </li>
+        `;
+      })}
+    </ul>
+  </div>
+`;
+
 // task text: formatted markdown by default, raw source on toggle (per browser)
 const loadMdView = () => {
   try {
@@ -949,7 +975,6 @@ const ItemView = ({ id }) => {
     ${tab === "technical" && html`
       <${MdBox} view=${mdView} text=${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n\n## Acceptance\n${sec("Acceptance")}`} />
       ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
-      ${b.deps.map((d) => html`<div class="text-secondary small">dep ${d.ref} ${d.status}${d.outcome ? " — " + d.outcome : ""}</div>`)}
     `}
     ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
       ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
@@ -957,6 +982,7 @@ const ItemView = ({ id }) => {
     ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!["done", "dropped"].includes(it.meta.status) && d.meta.id === ownLast}
       onChange=${(text) => act("change_answer", { text })} />`)}
     <${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} />
+    ${b.deps.length > 0 && html`<${Deps} deps=${b.deps} />`}
     <${History} entries=${history} />
   `;
 };
