@@ -992,7 +992,7 @@ const PlansGit = () => {
         ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mt-2 mb-0">${note.text}</div>`}
         ${g.changes.length > 0 && html`<details class="mt-2"><summary class="small text-secondary">${g.changes.length} uncommitted change(s) in the task folder</summary>
           <ul class="small mb-0 scroll-list">${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
-        <p class="small text-secondary mt-2 mb-0">Pull only fast-forwards; Commit &amp; Push commits only the task folder and refuses while behind — anything else needs a terminal.</p>
+        <p class="small text-secondary mt-2 mb-0">Pull only fast-forwards; Commit & Push commits only the task folder and refuses while behind — anything else needs a terminal.</p>
       </div>
     </div>
   `;
