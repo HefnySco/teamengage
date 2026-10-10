@@ -973,9 +973,11 @@ const PlansGit = () => {
         text:
           what === "pull"
             ? r.pulled ? `pulled ${r.pulled} commit(s) from ${r.remote}` : `already up to date with ${r.remote}`
-            : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? `pushed to ${r.remote}` : `nothing to push to ${r.remote}`}`,
+            : what === "commit"
+              ? r.committed ? `committed ${r.committed} change(s) locally — push when ready` : "nothing to commit"
+              : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? `pushed to ${r.remote}` : `nothing to push to ${r.remote}`}`,
       });
-      if (what === "push") setMsg("");
+      if (what !== "pull") setMsg("");
     } catch (e) {
       setNote({ kind: "danger", text: e.message });
     } finally {
@@ -1042,10 +1044,16 @@ const PlansGit = () => {
             onClick=${() => run("pull", "/api/plans-git/pull", { remote: pullR })}>${busy === "pull" ? "pulling…" : `Pull${rp?.behind ? ` (${rp.behind})` : ""}`}</button>
         </div>
         <div class="d-flex gap-2 flex-wrap align-items-center">
-          <span class="small text-secondary" style=${{ width: "4.5rem" }}>push to</span>
-          ${remoteSelect(pushR, choose("te.sync.push", setPushTo))}
+          <span class="small text-secondary" style=${{ width: "4.5rem" }}>commit</span>
           <input class="form-control form-control-sm" style=${{ maxWidth: "24rem" }} placeholder="commit message (default: Tasks: update from this machine)"
             value=${msg} onInput=${(e) => setMsg(e.target.value)} />
+          <button class="btn btn-sm btn-outline-primary" disabled=${!!busy || !g.changes.length}
+            title="commit every change in the task folder locally (no push)"
+            onClick=${() => run("commit", "/api/plans-git/commit", { message: msg })}>${busy === "commit" ? "committing…" : `Commit${g.changes.length ? ` (${g.changes.length})` : ""}`}</button>
+        </div>
+        <div class="d-flex gap-2 flex-wrap align-items-center mt-2">
+          <span class="small text-secondary" style=${{ width: "4.5rem" }}>push to</span>
+          ${remoteSelect(pushR, choose("te.sync.push", setPushTo))}
           <button class="btn btn-sm btn-primary" disabled=${!!busy || (rs?.behind ?? 0) > 0 || (!g.changes.length && rs?.ref && !rs?.ahead)}
             title=${(rs?.behind ?? 0) > 0 ? `pull from ${pushR} first` : `commit every change in the task folder and push to ${pushR}`}
             onClick=${() => {

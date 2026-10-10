@@ -390,7 +390,11 @@ Content is never copied: `brief` reads the task file live.
   vanished sources, one id tagged on two files (a copied task), and tags of
   ids this machine doesn't have (pull first).
 - `commit: false`: the daemon writes plan files and the human commits them
-  with their own Tasks edits. The daemon never commits task files.
+  with their own Tasks edits. The daemon never commits task files, but it
+  **stages** (`git add`) everything it writes — tracking files, claims,
+  events, and the task files `propose` / `simple` / `note` create — so
+  nothing it creates is left untracked. The Sync page commits it all
+  (**Commit**, or **Commit & Push**).
 - `hello` / `te status` report the handoff state after a best-effort fetch:
   plans behind upstream (agents stop and ask the human to pull), uncommitted
   plan files, and items held on other machines, including claims already

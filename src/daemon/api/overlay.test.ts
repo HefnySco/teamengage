@@ -560,3 +560,20 @@ describe("domains", () => {
     expect(((await json("/api/domains/suggest")).body as Array<{ id: string }>).some((x) => x.id === t12)).toBe(false);
   });
 });
+
+describe("nothing TeamEngage writes is left untracked (commit: false)", () => {
+  it("propose stages the new task files and their tracking files; nothing is committed", async () => {
+    const head = git("rev-parse", "HEAD");
+    const { ids, files } = await store().createItems(
+      [{ type: "task", title: "Staged by propose", project: "global", simple: "plain words" }],
+      { kind: "human", session: "human", machine: "test" },
+    );
+    const status = git("status", "--porcelain", "--untracked-files=all");
+    const line = (p: string) => status.split("\n").find((l) => l.endsWith(p)) ?? "";
+    expect(line(files[0])).toMatch(/^A /);
+    expect(line(files[0].replace(/\.md$/, ".simple.md"))).toMatch(/^A /);
+    const itemRel = `.teamengage/${store().idx.get(ids[0])!.path}`;
+    expect(line(itemRel)).toMatch(/^A /);
+    expect(git("rev-parse", "HEAD")).toBe(head); // staged, not committed
+  });
+});

@@ -121,3 +121,16 @@ describe("choosing the remote", () => {
     expect((await pullPlans(wsB, "backupDT")).pulled).toBe(0);
   });
 });
+
+describe("Commit (local only)", () => {
+  it("commits the task folder without pushing", async () => {
+    const { commitPlans } = await import("./sync.js");
+    writeFileSync(join(b, "Tasks", "TASK-06-u.md"), "# six\n");
+    const r = await commitPlans(wsB, "Tasks: six, local");
+    expect(r.committed).toBe(1);
+    expect(g(b, "log", "-1", "--format=%s")).toBe("Tasks: six, local");
+    expect(r.status.changes).toEqual([]);
+    expect(r.status.remotes.find((x) => x.name === "origin")!.ahead).toBeGreaterThan(0); // not pushed
+    expect((await commitPlans(wsB, "again")).committed).toBe(0);
+  });
+});

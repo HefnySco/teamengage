@@ -284,9 +284,12 @@ export async function reconcile(
       }
     }
     // claim-file writes are plans mutations too — commit them so they sync
+    // (or only stage them when the workspace leaves committing to the human)
     if (touched.length && (await isRepo(wsr.ws.plansDir))) {
-      await git(wsr.ws.plansDir, ["add", "--", ...touched]);
-      await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
+      await git(wsr.ws.plansDir, ["add", "--", ...touched]).catch(() => {});
+      if (wsr.ws.config.commit) {
+        await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
+      }
     }
     return [...marked];
   });
@@ -425,6 +428,24 @@ export async function pullPlans(wsr: WorkspaceRuntime, remote?: string): Promise
   });
 }
 
+/** Commit every change inside the task folder (nothing outside it); returns how many. */
+async function commitTaskFolder(wsr: WorkspaceRuntime, st: PlansGitStatus, message: string): Promise<number> {
+  if (!st.changes.length) return 0;
+  await git(st.repo, ["add", "-A", "--", st.scope]);
+  // pathspec: never sweep in staged changes from outside the task folder
+  await git(st.repo, ["commit", "-q", "-m", message.trim() || `Tasks: update from ${wsr.store.machine}`, "--", st.scope]);
+  return st.changes.length;
+}
+
+/** Commit (local only, no push): everything in the task folder. */
+export async function commitPlans(wsr: WorkspaceRuntime, message: string): Promise<{ committed: number; status: PlansGitStatus }> {
+  return wsr.store.enqueue(async () => {
+    const st = await plansGitStatus(wsr);
+    const committed = await commitTaskFolder(wsr, st, message);
+    return { committed, status: await plansGitStatus(wsr) };
+  });
+}
+
 /**
  * Commit & Push to the chosen remote (default: the upstream's): commit every
  * change inside the task folder (and nothing outside it), then push the
@@ -442,13 +463,7 @@ export async function commitAndPushPlans(
     const before = await plansGitStatus(wsr, { fetch: r0.name });
     const r = pickRemote(before, r0.name);
     if (r.ref && r.behind > 0) throw new ClaimRefusedError(`behind ${r.name} by ${r.behind} commit(s) — pull from ${r.name} first`);
-    let committed = 0;
-    if (before.changes.length) {
-      await git(before.repo, ["add", "-A", "--", before.scope]);
-      // pathspec: never sweep in staged changes from outside the task folder
-      await git(before.repo, ["commit", "-q", "-m", message.trim() || `Tasks: update from ${wsr.store.machine}`, "--", before.scope]);
-      committed = before.changes.length;
-    }
+    const committed = await commitTaskFolder(wsr, before, message);
     const now = pickRemote(await plansGitStatus(wsr), r.name);
     if (now.ref && now.ahead === 0) return { remote: r.name, committed, pushed: false, status: await plansGitStatus(wsr) };
     try {

@@ -394,6 +394,9 @@ export class PlansStore {
         writes.map((w) => w.rel),
         `te: propose ${ids.join(", ")} by ${actor.session}`,
       );
+      // the new task files are the human's content: staged so they are never
+      // orphaned (untracked), committed by the human
+      await this.stageTaskFiles(taskWrites.map((t) => toSourcePath(this.ws.root, t.abs)));
       for (const w of writes) {
         if (w.rel !== "workspace.yaml") await this.index.upsertFile(join(this.ws.plansDir, w.rel));
       }
@@ -503,12 +506,14 @@ export class PlansStore {
         // tag each task file after its item exists: a half-done tagging pass
         // still resolves by the recorded `source` path. Task files are the
         // human's content — tagged, never committed by the daemon.
+        const tagged: string[] = [];
         for (const d of items) {
           if (!created.includes(d.id)) continue;
           for (const rel of [d.source, d.simple_source]) {
-            if (rel) await this.tagSource(rel, d.id);
+            if (rel && (await this.tagSource(rel, d.id))) tagged.push(rel);
           }
         }
+        await this.stageTaskFiles(tagged);
       }
       return { created, skipped };
     });
@@ -688,6 +693,7 @@ export class PlansStore {
         `te: ${id} deleted by ${actor.session}`,
         [it.path],
       );
+      await this.stageTaskFiles(untagged);
       return { untagged, ignored };
     });
   }
@@ -927,6 +933,7 @@ export class PlansStore {
       }
       await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${actor.session} wrote the simple version`], sectionWrites);
       await this.commitPaths([it.path], `te: ${id} simple by ${actor.session}`);
+      if (path !== it.path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return { path };
     });
@@ -968,20 +975,22 @@ export class PlansStore {
       const summary = first.length > 80 ? `${first.slice(0, 80)}…` : first;
       await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${who} added a note: ${summary}`], sectionWrites);
       await this.commitPaths([it.path], `te: ${id} note by ${who}`);
+      if (path !== it.path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return { path };
     });
   }
 
   /** Overlay mode: write `te: <id>` into a task file's frontmatter. */
-  private async tagSource(rel: string, id: string): Promise<void> {
+  private async tagSource(rel: string, id: string): Promise<boolean> {
     const abs = join(this.ws.root, rel);
-    if (!existsSync(abs)) return;
+    if (!existsSync(abs)) return false;
     const text = await readFile(abs, "utf8");
     const out = withTeTag(text, id);
-    if (out === text) return;
+    if (out === text) return false;
     await writeFileAtomic(abs, out);
     this.onFileWrite?.(abs, out);
+    return true;
   }
 
   private items(): { metaIds: () => string[] } {
@@ -993,8 +1002,35 @@ export class PlansStore {
    * nothing changed, or the workspace leaves committing to the human
    * (`commit: false`).
    */
+  /**
+   * `git add` (and `git rm --cached` for deletes) without committing. Paths
+   * are relative to the plans dir; task files outside it are given as
+   * `../global/TASK-…md`. Best effort: staging must never fail a write.
+   */
+  private async stagePaths(paths: string[], deletes: string[] = []): Promise<void> {
+    if (!(await isRepo(this.ws.plansDir))) return;
+    const onDisk = [...new Set(paths)].filter((p) => existsSync(join(this.ws.plansDir, p)));
+    try {
+      if (onDisk.length) await git(this.ws.plansDir, ["add", "--", ...onDisk]);
+      for (const d of deletes) {
+        await git(this.ws.plansDir, ["rm", "-q", "--cached", "--ignore-unmatch", "--", d]).catch(() => {});
+      }
+    } catch {
+      /* index busy (the human is running git) — the next write stages again */
+    }
+  }
+
+  /** Stage task files TeamEngage wrote (workspace-root relative) — never committed by the daemon. */
+  private async stageTaskFiles(rootRelPaths: string[]): Promise<void> {
+    await this.stagePaths(rootRelPaths.map((p) => relative(this.ws.plansDir, join(this.ws.root, p))));
+  }
+
   private async commitPaths(paths: string[], message: string, deletes: string[] = []): Promise<void> {
-    if (!this.ws.config.commit) return;
+    if (!this.ws.config.commit) {
+      // the human commits — but nothing TeamEngage writes is left untracked
+      await this.stagePaths(paths, deletes);
+      return;
+    }
     if (!(await isRepo(this.ws.plansDir))) return;
     const rel = paths.map((p) => relative(this.ws.plansDir, join(this.ws.plansDir, p)));
     const onDisk = rel.filter((p) => existsSync(join(this.ws.plansDir, p)));

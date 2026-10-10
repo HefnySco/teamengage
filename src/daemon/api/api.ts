@@ -179,6 +179,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return sendErr(reply, e);
     }
   });
+  app.post("/api/plans-git/commit", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { commitPlans } = await import("../sync/sync.js");
+      return await commitPlans(ops.wsr, String(((req.body ?? {}) as { message?: string }).message ?? ""));
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
   app.post("/api/plans-git/push", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
