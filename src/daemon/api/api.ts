@@ -52,6 +52,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         text: q.text,
         claimed: q.claimed === undefined ? undefined : q.claimed === "true",
         archived: q.archived === "all" ? "all" : q.archived === "true",
+        starred: q.starred === undefined ? undefined : q.starred === "true",
         domain: q.domain || undefined,
         q: q.q || undefined,
       });
@@ -359,6 +360,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("draft", (ops, id, b) => ops.toDraft(id, b.reason ? String(b.reason) : undefined));
   act("archive", (ops, id, b) => ops.archive(id, b.reason ? String(b.reason) : undefined));
   act("unarchive", (ops, id) => ops.unarchive(id));
+  act("star", (ops, id, b) => ops.star(id, b.color === undefined ? undefined : String(b.color)));
+  act("unstar", (ops, id) => ops.unstar(id));
   act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("simple", (ops, id, b) => ops.simple(id, "human", String(b.text ?? "")));
   act("note", (ops, id, b) => ops.note(id, "human", String(b.text ?? "")));

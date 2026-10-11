@@ -30,6 +30,10 @@ export const Question = z.object({
 });
 export type Question = z.infer<typeof Question>;
 
+/** The board ★ colours (bootstrap warning/danger/success/primary). */
+export const StarColor = z.enum(["yellow", "red", "green", "blue"]);
+export type StarColor = z.infer<typeof StarColor>;
+
 /**
  * Item frontmatter (DESIGN §4 'Item file'). Unknown fields are preserved via
  * passthrough — never rejected, never lost on rewrite.
@@ -68,6 +72,9 @@ export const ItemMeta = z
     /** hidden from board/inbox/graph/next; status kept underneath (archive page) */
     archived: z.boolean().optional(),
     archived_at: z.string().optional(),
+    /** the human's watch marker — board ★ colour, no workflow effect; unset = not starred */
+    star_color: StarColor.optional(),
+    starred_at: z.string().optional(),
   })
   .passthrough();
 export type ItemMeta = z.infer<typeof ItemMeta>;

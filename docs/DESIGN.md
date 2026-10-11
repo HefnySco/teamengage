@@ -211,6 +211,12 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   it tagged `[archived]` in `brief`. Archived items leave the board, inbox,
   graph, `query` and `next`, and cannot be claimed. Claimed items must be
   released first.
+- `star_color` is the human's **bookmark** (`te star <ID>
+  [yellow|red|green|blue]` / `te unstar`, ★ on board cards and the item
+  page — clicking flips none → yellow → red → green → blue → none). A pure
+  marker with no workflow effect: it works in any status — even while
+  claimed — hides nothing, and never feeds `next` ordering (that stays
+  `priority`-driven).
 - **Delete** (`te delete <ID> --yes`, delete in the UI) removes an item from
   TeamEngage, not from disk: the tracking file goes, the event log keeps a
   `delete` record, and in overlay mode the task file stays as plain Markdown
@@ -219,8 +225,8 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   another item depends on it or names it as parent. Milder options first:
   drop (decided against, still listed) and archive (hidden, restorable).
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
-  `undrop`, `complete`, `hold`, `unhold`, `to_draft`, and `release` of
-  someone else's claim.
+  `undrop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
+  `star`/`unstar`, and `release` of someone else's claim.
 - `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
   any non-done item straight to `done` — for work finished outside
   TeamEngage. No review and no merge: a claim is released, branches are kept.

@@ -305,8 +305,8 @@ export interface PlansRemote {
   ref?: string;
   ahead: number;
   behind: number;
-  /** fetched in this call (false: not asked, offline, or failed) */
-  fetched: boolean;
+  /** true = verified reachable in this call; false = asked and failed; undefined = not asked */
+  fetched?: boolean;
 }
 
 export interface PlansGitStatus {
@@ -364,20 +364,24 @@ export async function plansGitStatus(
   const remotes: PlansRemote[] = [];
   const listed = await listRemotes(repo);
   // fetch in parallel with a short timeout: one dead remote (an unmounted
-  // backup disk, no network) must not stall the page
-  const fetchedBy = new Map(
-    await Promise.all(
-      listed.map(async (r) => {
-        const want = branch && (opts.fetch === true || opts.fetch === r.name);
-        const ok = want
-          ? await git(repo, ["fetch", "-q", r.name, branch!], { timeoutMs: 8_000 }).then(() => true).catch(() => false)
-          : false;
-        return [r.name, ok] as const;
-      }),
-    ),
+  // backup disk, no network) must not stall the page. Only remotes we
+  // actually asked get a fetched verdict — "not asked" stays undefined so
+  // the UI doesn't cry wolf about a remote nobody contacted this call.
+  const fetchedBy = new Map<string, boolean>(
+    (
+      await Promise.all(
+        listed.map(async (r) => {
+          const want = Boolean(branch) && (opts.fetch === true || opts.fetch === r.name);
+          const ok = want
+            ? await git(repo, ["fetch", "-q", r.name, branch!], { timeoutMs: 8_000 }).then(() => true).catch(() => false)
+            : undefined;
+          return [r.name, ok] as const;
+        }),
+      )
+    ).filter((e): e is [string, boolean] => e[1] !== undefined),
   );
   for (const r of listed) {
-    const fetched = fetchedBy.get(r.name) ?? false;
+    const fetched = fetchedBy.get(r.name);
     const ref = branch ? `${r.name}/${branch}` : undefined;
     const exists = ref ? await git(repo, ["rev-parse", "--verify", "-q", `refs/remotes/${ref}`]).then(() => true).catch(() => false) : false;
     const ab = exists && ref ? await aheadBehind(repo, ref).catch(() => ({ ahead: 0, behind: 0 })) : { ahead: 0, behind: 0 };
@@ -398,6 +402,13 @@ function pickRemote(st: PlansGitStatus, name?: string): PlansRemote {
   const r = st.remotes.find((x) => x.name === want);
   if (!r) throw new ClaimRefusedError(`no remote named '${want}' (git remote -v)`);
   return r;
+}
+
+/** A pull/push contacted `name` — it answered, so the returned status may claim it verified. */
+function markFetched(st: PlansGitStatus, name: string, fetched: boolean | undefined): PlansGitStatus {
+  const r = st.remotes.find((x) => x.name === name);
+  if (r) r.fetched = fetched;
+  return st;
 }
 
 /**
@@ -447,7 +458,7 @@ async function pullIn(
   }
   await wsr.store.reindex();
   void wsr.overlay?.rescan();
-  return { remote: r.name, pulled: r.behind, stashed, status: await plansGitStatus(wsr) };
+  return { remote: r.name, pulled: r.behind, stashed, status: markFetched(await plansGitStatus(wsr), r.name, true) };
 }
 
 /**
@@ -504,7 +515,7 @@ export async function commitAndPushPlans(
     if (r.ref && r.behind > 0) throw new ClaimRefusedError(`behind ${r.name} by ${r.behind} commit(s) — pull from ${r.name} first`);
     const committed = await commitTaskFolder(wsr, before, message);
     const now = pickRemote(await plansGitStatus(wsr), r.name);
-    if (now.ref && now.ahead === 0) return { remote: r.name, committed, pushed: false, status: await plansGitStatus(wsr) };
+    if (now.ref && now.ahead === 0) return { remote: r.name, committed, pushed: false, status: markFetched(await plansGitStatus(wsr), r.name, r.fetched) };
     try {
       await git(before.repo, ["push", r.name, `HEAD:refs/heads/${before.branch}`], { timeoutMs: 90_000, humanPlansPush: true });
     } catch (e) {
@@ -512,7 +523,7 @@ export async function commitAndPushPlans(
     }
     // refresh our view of that remote's branch
     await git(before.repo, ["fetch", "-q", r.name, before.branch!], { timeoutMs: 20_000 }).catch(() => {});
-    return { remote: r.name, committed, pushed: true, status: await plansGitStatus(wsr) };
+    return { remote: r.name, committed, pushed: true, status: markFetched(await plansGitStatus(wsr), r.name, true) };
   });
 }
 
@@ -547,6 +558,6 @@ export async function syncNow(
       }
       await git(st.repo, ["fetch", "-q", r.name, mid.branch], { timeoutMs: 20_000 }).catch(() => {});
     }
-    return { remote: r.name, pulled: p.pulled, committed, pushed, status: await plansGitStatus(wsr) };
+    return { remote: r.name, pulled: p.pulled, committed, pushed, status: markFetched(await plansGitStatus(wsr), r.name, true) };
   });
 }

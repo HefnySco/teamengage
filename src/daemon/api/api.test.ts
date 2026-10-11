@@ -374,6 +374,31 @@ describe("archive", () => {
   });
 });
 
+describe("star", () => {
+  it("starred items keep their place; colour flips; ?starred=true lists only them; unstar clears", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "watch me" }], human);
+    const id = ids[0];
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const listIds = async (q = "") => ((await (await api(`/api/items${q}`)).json()) as Array<{ id: string }>).map((i) => i.id);
+
+    expect((await post(`/api/items/${id}/star`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.star_color).toBe("yellow");
+    expect(await listIds()).toContain(id); // starring hides nothing
+    expect(await listIds("?starred=true")).toEqual([id]);
+
+    expect((await post(`/api/items/${id}/star`, { color: "blue" })).status).toBe(200);
+    expect(store.idx.get(id)!.meta.star_color).toBe("blue");
+    expect((await post(`/api/items/${id}/star`, { color: "purple" })).status).toBe(400);
+
+    expect((await post(`/api/items/${id}/unstar`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.star_color).toBeUndefined();
+    expect(await listIds("?starred=true")).toEqual([]);
+  });
+});
+
 describe("notes (standard workspace)", () => {
   it("go into the item's ## Notes section", async () => {
     const store = ctx.workspaces.get("ws")!.store;

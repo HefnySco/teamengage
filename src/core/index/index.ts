@@ -75,6 +75,8 @@ export interface QueryFilter {
   q?: string;
   /** default false: archived items are hidden; true = only archived; "all" = both */
   archived?: boolean | "all";
+  /** the human's watch marker; undefined = don't filter on it */
+  starred?: boolean;
 }
 
 export class Index {
@@ -309,6 +311,7 @@ export class Index {
     // stable, natural id order — the map's order is file-load order
     return [...this.items.values()].sort((a, b) => compareIds(a.meta.id, b.meta.id)).filter((i) => {
       if (f.archived !== "all" && Boolean(i.meta.archived) !== Boolean(f.archived)) return false;
+      if (f.starred !== undefined && Boolean(i.meta.star_color) !== f.starred) return false;
       if (statuses && !statuses.includes(i.meta.status)) return false;
       if (f.domain && !i.meta.domains.includes(f.domain)) return false;
       if (!matchesSearch(i.meta, f.q)) return false;

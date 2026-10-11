@@ -35,6 +35,8 @@ const META_KEY_ORDER = [
   "unblocks_on",
   "archived",
   "archived_at",
+  "star_color",
+  "starred_at",
   "question",
 ];
 

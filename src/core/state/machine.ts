@@ -1,5 +1,5 @@
 import type { Claim } from "../model/claim.js";
-import type { ItemMeta, Question, Status } from "../model/item.js";
+import type { ItemMeta, Question, StarColor, Status } from "../model/item.js";
 import type { Event } from "../model/event.js";
 import {
   ForbiddenError,
@@ -59,6 +59,9 @@ export type Action =
   /** Human hides an item (any status, unclaimed); the status is kept. */
   | { type: "archive"; reason?: string }
   | { type: "unarchive" }
+  /** Human bookmarks an item (any status, even claimed); a different colour re-stars it. */
+  | { type: "star"; color?: StarColor }
+  | { type: "unstar" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -386,6 +389,30 @@ export function transition(
       delete out.meta.archived_at;
       out.events.push(ev(actor, stamp, meta.id, "unarchive", from, from));
       out.log.push(`- ${stamp} ${who} unarchived (status ${from})`);
+      return out;
+    }
+
+    case "star": {
+      requireHuman(actor, action.type);
+      const color = action.color ?? "yellow";
+      if (meta.star_color === color) throw new InvalidTransitionError(`already starred ${color}`, from, action.type);
+      delete (out.meta as Record<string, unknown>).starred; // legacy boolean → star_color
+      out.meta.star_color = color;
+      out.meta.starred_at = ctx.now;
+      out.events.push(ev(actor, stamp, meta.id, "star", from, from, color));
+      out.log.push(`- ${stamp} ${who} starred ${color} (status ${from})`);
+      return out;
+    }
+
+    case "unstar": {
+      requireHuman(actor, action.type);
+      const legacy = (meta as Record<string, unknown>).starred;
+      if (!meta.star_color && !legacy) throw new InvalidTransitionError("not starred", from, action.type);
+      delete out.meta.star_color;
+      delete out.meta.starred_at;
+      delete (out.meta as Record<string, unknown>).starred; // legacy boolean → star_color
+      out.events.push(ev(actor, stamp, meta.id, "unstar", from, from));
+      out.log.push(`- ${stamp} ${who} unstarred (status ${from})`);
       return out;
     }
 

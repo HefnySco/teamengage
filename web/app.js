@@ -119,6 +119,7 @@ const DomainChips = ({ ds, onClick, active }) =>
 const ItemLine = ({ i, onOpen }) => html`
   <div class="d-flex align-items-baseline gap-2 flex-wrap">
     <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
+    ${i.star_color && html`<span class="${STAR_TEXT[i.star_color]}" title="starred ${i.star_color}"><${StarIcon} filled /></span>`}
     <span class="badge ${ST_BADGE[i.status] ?? "text-bg-secondary"}">${i.status}</span>
     <span>${i.title}</span>
     <${DomainChips} ds=${i.domains} />
@@ -128,6 +129,23 @@ const ItemLine = ({ i, onOpen }) => html`
 `;
 
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
+
+// bootstrap-icons glyphs, inlined (no icon font dependency)
+const ArchiveIcon = () => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M0 2a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1v7.5a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 1 12.5V5a1 1 0 0 1-1-1zm2 3v7.5A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5V5zm13-3H1v2h14zM5 7.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/>
+  </svg>`;
+const StarIcon = ({ filled }) => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+    ${filled
+      ? html`<path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/>`
+      : html`<path d="M2.866 14.85c-.078.444.36.791.746.593l4.39-2.256 4.389 2.256c.386.198.824-.149.746-.592l-.83-4.73 3.522-3.356c.33-.314.16-.888-.282-.95l-4.898-.696L8.465.792a.513.513 0 0 0-.927 0L5.354 5.12l-4.898.696c-.441.062-.612.636-.283.95l3.523 3.356-.83 4.73zm4.905-2.767-3.686 1.894.694-3.957a.56.56 0 0 0-.163-.505L1.71 6.745l4.052-.576a.53.53 0 0 0 .393-.288L8 2.223l1.847 3.658a.53.53 0 0 0 .393.288l4.052.575-2.906 2.77a.56.56 0 0 0-.163.506l.694 3.957-3.686-1.894a.5.5 0 0 0-.461 0z"/>`}
+  </svg>`;
+// the ★ flips through the bootstrap colours; undefined means unstarred
+const STAR_CYCLE = ["yellow", "red", "green", "blue"];
+const STAR_TEXT = { yellow: "text-warning", red: "text-danger", green: "text-success", blue: "text-primary" };
+const STAR_BTN = { yellow: "btn-warning", red: "btn-danger", green: "btn-success", blue: "btn-primary" };
+const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset → yellow; blue → undefined (unstar)
 
 // IDs (XX-0000) inside free text become item links
 const ID_TOKEN = /\b([A-Z][A-Z0-9]*-\d+)\b/;
@@ -372,6 +390,7 @@ const Board = ({ onOpen }) => {
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
   const [sort, setSortState] = useState(() => loadSearch("te.board.sort"));
+  const [starredOnly, setStarredOnlyState] = useState(() => loadSearch("te.board.starred") === "1");
   const setDomain = (d) => {
     const v = d === domain ? "" : d; // clicking the active domain clears it
     setDomainState(v);
@@ -388,10 +407,21 @@ const Board = ({ onOpen }) => {
     }
     reload();
   };
+  // a card's ★ flips none → yellow → red → green → blue → none — every column
+  const toggleStar = async (i) => {
+    const next = nextStarColor(i.star_color);
+    try {
+      await post(`/api/items/${i.id}/${next ? "star" : "unstar"}`, next ? { color: next } : {});
+    } catch (e) {
+      alert(`${i.id}: ${e.message}`);
+    }
+    reload();
+  };
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
-  const hits = words.length ? inDomain.filter((i) => matches(i, words)) : inDomain;
+  const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
+  const hits = words.length ? inStar.filter((i) => matches(i, words)) : inStar;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -402,6 +432,10 @@ const Board = ({ onOpen }) => {
   const setSort = (v) => {
     setSortState(v);
     saveSearch("te.board.sort", v);
+  };
+  const setStarredOnly = (v) => {
+    setStarredOnlyState(v);
+    saveSearch("te.board.starred", v ? "1" : "");
   };
   // id ↑↓ | date ↓↑ | AZ — clicking the active field flips its direction
   const eff = sort || "id-asc";
@@ -432,7 +466,8 @@ const Board = ({ onOpen }) => {
         autofocus
       />
       <span class="btn-group btn-group-sm">${sortBtn("id", "id")}${sortBtn("date", "date")}${sortBtn("name", "AZ")}</span>
-      ${(words.length > 0 || domain) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      <button class="btn btn-sm ${starredOnly ? "btn-warning" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /></button>
+      ${(words.length > 0 || domain || starredOnly) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
     ${Object.keys(domainCounts).length > 0 && html`<div class="d-flex flex-wrap gap-1 mb-2 align-items-center">
       <span class="text-secondary small me-1">domains:</span>
@@ -457,7 +492,7 @@ const Board = ({ onOpen }) => {
                   onClick=${() => {
                     const ids = items.filter((i) => !i.claim).map((i) => i.id);
                     if (confirm(`Archive ${ids.length} done item(s)${words.length ? " matching the search" : ""}?\nThey move to the archive page and can be unarchived.`)) archive(ids);
-                  }}>archive all</button>`}
+                  }}><${ArchiveIcon} /> all</button>`}
                 <span class="badge ${ST_BADGE[s]}">${items.length}</span>
               </span>
             </h3>
@@ -467,17 +502,24 @@ const Board = ({ onOpen }) => {
                   <div class="card card-body mini st-${s} p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="d-flex justify-content-between">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
-                      ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
+                      <span class="d-flex align-items-center gap-1">
+                        ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
+                        <button class="btn btn-sm p-0 border-0 star-btn ${i.star_color ? `starred ${STAR_TEXT[i.star_color]}` : "text-secondary"}" title=${i.star_color ? `starred ${i.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+                          onClick=${(e) => {
+                            e.stopPropagation(); // don't open the item
+                            toggleStar(i);
+                          }}><${StarIcon} filled=${Boolean(i.star_color)} /></button>
+                      </span>
                     </div>
                     <div class="small">${i.title}</div>
                     ${(i.domains ?? []).length > 0 && html`<div class="mt-1"><${DomainChips} ds=${i.domains} onClick=${setDomain} active=${domain} /></div>`}
                     ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
                     ${s === "done" && !i.claim && html`<div class="text-end mt-1">
-                      <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="archive"
+                      <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="archive"
                         onClick=${(e) => {
                           e.stopPropagation(); // don't open the item
                           archive([i.id]);
-                        }}>archive</button>
+                        }}><${ArchiveIcon} /></button>
                     </div>`}
                   </div>
                 `,
@@ -517,6 +559,7 @@ const Archive = ({ onOpen }) => {
         (i) => html`
           <div class="list-group-item d-flex align-items-center gap-2 flex-wrap" key=${i.id}>
             <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
+            ${i.star_color && html`<span class="${STAR_TEXT[i.star_color]}" title="starred ${i.star_color}"><${StarIcon} filled /></span>`}
             <${Badge} s=${i.status} />
             <span class="flex-grow-1">${i.title}</span>
             ${i.archived_at && html`<span class="text-secondary small">archived ${ago(i.archived_at)} ago</span>`}
@@ -979,6 +1022,7 @@ const ItemView = ({ id }) => {
         ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}>undrop</button>`}
         ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
         ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
+        <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>
         ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
         ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}>unarchive</button>`}
         ${!it.claim && html`<button class="btn btn-sm btn-danger" onClick=${async () => {
@@ -1162,11 +1206,13 @@ const PlansGit = () => {
   const rp = g.remotes.find((r) => r.name === pullR);
   const rs = g.remotes.find((r) => r.name === pushR);
   // per-direction status: pull only cares about `behind`; push about uncommitted + `ahead` (blocked while `behind`).
-  // a green badge claims a verified state — an unreachable remote only has last-known counts
+  // green = verified this call; ⚠ only when a fetch was tried and failed — an unasked remote stays neutral
   const okBadge = (r, text) =>
-    r.fetched
+    r.fetched === true
       ? html`<span class="badge text-bg-success">${text}</span>`
-      : html`<span class="badge text-bg-secondary" title="remote not reachable — counts are last-known">${text} — last known</span>`;
+      : r.fetched === false
+        ? html`<span class="badge text-bg-secondary" title="remote not reachable — counts are last-known">${text} — last known</span>`
+        : html`<span class="badge text-bg-secondary">${text}</span>`;
   const pullState = !rp?.ref
     ? html`<span class="small text-secondary">no ${g.branch} there</span>`
     : rp.behind > 0
@@ -1221,7 +1267,7 @@ const PlansGit = () => {
             <thead><tr><th>remote</th><th>fetch</th><th>push</th><th>${g.branch}</th></tr></thead>
             <tbody>
               ${g.remotes.map((r) => html`<tr key=${r.name}>
-                <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream)</span>` : ""}${!r.fetched ? html` <span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>` : ""}</td>
+                <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream)</span>` : ""}${r.fetched === false ? html` <span class="text-warning" title="fetch failed — counts are last-known">⚠</span>` : ""}</td>
                 <td><code class="small">${r.fetchUrl}</code></td>
                 <td>${r.pushUrl === r.fetchUrl ? html`<span class="text-secondary">same</span>` : html`<code class="small">${r.pushUrl}</code>`}</td>
                 <td>${state(r)}</td>
@@ -1248,7 +1294,7 @@ const PlansGit = () => {
           <div class="card-header py-2 d-flex align-items-center gap-2">
             <span class="dir-glyph">⇩</span>
             <div><b>Pull</b><div class="small text-secondary">other machines → this one</div></div>
-            <div class="ms-auto d-flex align-items-center gap-1">${!rp?.fetched && html`<span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>`}${pullState}</div>
+            <div class="ms-auto d-flex align-items-center gap-1">${rp?.fetched === false && html`<span class="text-warning" title="fetch failed — counts are last-known">⚠</span>`}${pullState}</div>
           </div>
           <div class="card-body">
             <div class="d-flex gap-2 align-items-center">
@@ -1278,7 +1324,7 @@ const PlansGit = () => {
           <div class="card-header py-2 d-flex align-items-center gap-2">
             <span class="dir-glyph">⇧</span>
             <div><b>Commit & Push</b><div class="small text-secondary">this machine → other machines</div></div>
-            <div class="ms-auto d-flex align-items-center gap-1">${!rs?.fetched && html`<span class="text-warning" title="not reachable just now — counts are last-known">⚠</span>`}${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}${pushState}</div>
+            <div class="ms-auto d-flex align-items-center gap-1">${rs?.fetched === false && html`<span class="text-warning" title="fetch failed — counts are last-known">⚠</span>`}${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}${pushState}</div>
           </div>
           <div class="card-body">
             <div class="d-flex gap-2 align-items-center">

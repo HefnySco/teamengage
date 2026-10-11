@@ -12,7 +12,7 @@ import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
-import type { Status } from "../../core/model/item.js";
+import { StarColor, type Status } from "../../core/model/item.js";
 import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
@@ -198,9 +198,9 @@ export class WorkspaceOps {
     const source = await this.source(it);
     const sectionBody = (dep: IndexedItem, name: string) =>
       dep.sections.find((s) => s.heading.toLowerCase() === name.toLowerCase())?.body ?? "";
-    // archiving is bookkeeping, not an outcome — skip those lines
+    // archiving/starring is bookkeeping, not an outcome — skip those lines
     const lastLine = (s: string) =>
-      s.trim().split("\n").filter((l) => l && !/ (un)?archived \(status /.test(l)).at(-1) ?? "";
+      s.trim().split("\n").filter((l) => l && !/ (un)?(archived|starred)( \w+)? \(status /.test(l)).at(-1) ?? "";
     const deps = it.meta.depends_on.map((ref) => {
       const parsed = parseItemRef(ref);
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
@@ -645,6 +645,21 @@ export class WorkspaceOps {
   async unarchive(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unarchive" });
+  }
+
+  /** Human: bookmark an item (any status, even claimed — board ★, no workflow effect). */
+  async star(id: string, color?: string) {
+    const it = this.item(id);
+    const parsed = color === undefined ? undefined : StarColor.safeParse(color);
+    if (parsed && !parsed.success) {
+      throw new TeError("USAGE", `star color must be one of ${StarColor.options.join("|")}`);
+    }
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "star", color: parsed?.data });
+  }
+
+  async unstar(id: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unstar" });
   }
 
   /** Human: remove an item from tracking (task file stays, untagged). */

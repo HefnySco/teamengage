@@ -55,6 +55,9 @@
       .board-col h3 .badge { background: var(--st, #6c757d); }
       .st-in_progress.board-col h3 .badge, .st-waiting.board-col h3 .badge { color: #212529; }
       .board-col h3 .board-archive-all { color: var(--st); border-color: var(--st); }
+      /* a card's star is quiet until hovered or starred */
+      .board-col .star-btn { opacity: .35; }
+      .board-col .mini:hover .star-btn, .board-col .star-btn.starred { opacity: 1; }
       .board-list { max-height: calc(100vh - 13rem); overflow-y: auto; }
       .act-log { max-height: 70vh; overflow-y: auto; }
       /* action buttons keep one width so they don't jump around */

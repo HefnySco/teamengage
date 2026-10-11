@@ -21,6 +21,8 @@ import {
   keyCmd,
   deleteCmd,
   unarchiveCmd,
+  starCmd,
+  unstarCmd,
   unholdCmd,
   draftCmd,
   doneCmd,
@@ -57,6 +59,7 @@ commands:
   unhold <ID>         release a hold → ready
   key <ID> [--review|--off]   key task: dependents wait for its acceptance
   archive <ID> [reason] / unarchive <ID>   hide / restore an item (status kept)
+  star <ID> [yellow|red|green|blue] / unstar <ID>   bookmark an item (board ★)
   delete <ID> [reason] --yes   remove from tracking; task file stays (untagged, ignored)
   draft <ID> [reason] send a ready, held or done item back to draft
   done <ID> [note]    mark done from any status (no review, no merge)
@@ -155,6 +158,10 @@ async function main(argv: string[]): Promise<number> {
       return deleteCmd(rest, home);
     case "unarchive":
       return unarchiveCmd(rest, home);
+    case "star":
+      return starCmd(rest, home);
+    case "unstar":
+      return unstarCmd(rest, home);
     case "unhold":
       return unholdCmd(rest, home);
     case "draft":

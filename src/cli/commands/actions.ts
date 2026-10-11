@@ -101,6 +101,17 @@ export async function archiveCmd(args: string[], home?: string): Promise<number>
 }
 export const unarchiveCmd = (args: string[], home?: string) => act("unarchive", args, {}, home);
 
+/** `te star <ID> [yellow|red|green|blue]` / `te unstar <ID>` — the human's board bookmark. */
+export async function starCmd(args: string[], home?: string): Promise<number> {
+  const [id, color] = positional(args);
+  if (!id) {
+    process.stderr.write("usage: te star <ID> [yellow|red|green|blue]\n");
+    return 2;
+  }
+  return act("star", [id, ...args.filter((a) => a.startsWith("--"))], { color }, home);
+}
+export const unstarCmd = (args: string[], home?: string) => act("unstar", args, {}, home);
+
 /** `te delete <ID> [reason] --yes` — remove from tracking; the task file stays, untagged. */
 export async function deleteCmd(args: string[], home?: string): Promise<number> {
   const [id, ...rest] = positional(args);
