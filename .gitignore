@@ -7,3 +7,6 @@ web/dist/
 
 # plan data never belongs in the tool repo — keep workspaces in their own repos
 .teamengage/
+
+# local-only skills (machine-specific, not shipped)
+skills/te-analysis/
