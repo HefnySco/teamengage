@@ -356,11 +356,22 @@ const matches = (i, words) => {
     .toLowerCase();
   return words.every((w) => hay.includes(w));
 };
+// board card order: date = last touched (updated, else created), name = title — id breaks ties
+const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
+const SORTS = {
+  "id-asc": byId,
+  "id-desc": (a, b) => byId(b, a),
+  "date-desc": (a, b) => (b.updated ?? b.created ?? "").localeCompare(a.updated ?? a.created ?? "") || byId(a, b),
+  "date-asc": (a, b) => (a.updated ?? a.created ?? "").localeCompare(b.updated ?? b.created ?? "") || byId(a, b),
+  "name-asc": (a, b) => (a.title ?? "").localeCompare(b.title ?? "") || byId(a, b),
+  "name-desc": (a, b) => (b.title ?? "").localeCompare(a.title ?? "") || byId(a, b),
+};
 
 const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
+  const [sort, setSortState] = useState(() => loadSearch("te.board.sort"));
   const setDomain = (d) => {
     const v = d === domain ? "" : d; // clicking the active domain clears it
     setDomainState(v);
@@ -388,6 +399,22 @@ const Board = ({ onOpen }) => {
     setQ(v);
     saveSearch("te.board.q", v);
   };
+  const setSort = (v) => {
+    setSortState(v);
+    saveSearch("te.board.sort", v);
+  };
+  // id ↑↓ | date ↓↑ | AZ — clicking the active field flips its direction
+  const eff = sort || "id-asc";
+  const sortBtn = (field, label) => {
+    const on = eff.startsWith(field);
+    const desc = eff.endsWith("desc");
+    const text =
+      field === "name" && on ? (desc ? "Z→A" : "A→Z")
+      : on ? `${label} ${desc ? "↓" : "↑"}`
+      : label;
+    const next = !on ? `${field}-${field === "date" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
+    return html`<button class="btn btn-sm ${on ? "btn-secondary" : "btn-outline-secondary"}" title="order cards inside each column" onClick=${() => setSort(next)}>${text}</button>`;
+  };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Board</h2>
@@ -404,6 +431,7 @@ const Board = ({ onOpen }) => {
         }}
         autofocus
       />
+      <span class="btn-group btn-group-sm">${sortBtn("id", "id")}${sortBtn("date", "date")}${sortBtn("name", "AZ")}</span>
       ${(words.length > 0 || domain) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
     ${Object.keys(domainCounts).length > 0 && html`<div class="d-flex flex-wrap gap-1 mb-2 align-items-center">
@@ -418,6 +446,7 @@ const Board = ({ onOpen }) => {
     <div class="d-flex gap-3 overflow-x-auto pb-2">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
+        if (SORTS[sort]) items.sort(SORTS[sort]);
         return html`
           <div class="board-col st-${s} flex-shrink-0" key=${s}>
             <h3 class="h6 text-uppercase d-flex justify-content-between">
@@ -678,6 +707,38 @@ const Graph = ({ onOpen }) => {
     viewRef.current?.classList.remove("dragging");
     pan.current = null;
   };
+  // wheel zooms around the cursor: remember the content point under it, restore the scroll
+  // position once the new --zoom scale has re-rendered. zoomRef tracks the latest level —
+  // fast wheel ticks land before re-render, so state alone would drop steps
+  const zoomRef = useRef(zoom);
+  const zoomAnchor = useRef(null);
+  const applyZoom = (z2) => {
+    zoomRef.current = z2;
+    setZoom(z2);
+  };
+  const wheelZoom = (e) => {
+    e.preventDefault();
+    const v = viewRef.current;
+    if (!v) return;
+    const r = v.getBoundingClientRect();
+    const st = getComputedStyle(v);
+    const ox = e.clientX - r.left - (parseFloat(st.paddingLeft) || 0);
+    const oy = e.clientY - r.top - (parseFloat(st.paddingTop) || 0);
+    const z1 = zoomRef.current;
+    const z2 = Math.min(4, Math.max(0.2, +(z1 * (e.deltaY < 0 ? 1.25 : 1 / 1.25)).toFixed(2)));
+    if (z2 === z1) return;
+    zoomAnchor.current = { ox, oy, cx: (v.scrollLeft + ox) / z1, cy: (v.scrollTop + oy) / z1 };
+    applyZoom(z2);
+  };
+  useEffect(() => {
+    const a = zoomAnchor.current;
+    const v = viewRef.current;
+    zoomRef.current = zoom;
+    zoomAnchor.current = null;
+    if (!a || !v) return;
+    v.scrollLeft = a.cx * zoom - a.ox;
+    v.scrollTop = a.cy * zoom - a.oy;
+  }, [zoom]);
   return html`
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
       <h2 class="h4 mb-0 me-2">Graph</h2>
@@ -702,13 +763,14 @@ const Graph = ({ onOpen }) => {
     <div class="graph-wrap">
       <div class="graph-tools btn-group btn-group-sm">
         <button class="btn btn-outline-secondary bg-body" title="zoom out" disabled=${zoom <= 0.2}
-          onClick=${() => setZoom((z) => Math.max(0.2, +(z / 1.25).toFixed(2)))}>−</button>
-        <button class="btn btn-outline-secondary bg-body" title="reset zoom" onClick=${() => setZoom(1)}>${Math.round(zoom * 100)}%</button>
+          onClick=${() => applyZoom(Math.max(0.2, +(zoomRef.current / 1.25).toFixed(2)))}>−</button>
+        <button class="btn btn-outline-secondary bg-body" title="reset zoom" onClick=${() => applyZoom(1)}>${Math.round(zoom * 100)}%</button>
         <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= 4}
-          onClick=${() => setZoom((z) => Math.min(4, +(z * 1.25).toFixed(2)))}>+</button>
+          onClick=${() => applyZoom(Math.min(4, +(zoomRef.current * 1.25).toFixed(2)))}>+</button>
       </div>
       <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }}
         onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
+        onWheel=${wheelZoom}
         onClick=${(e) => {
           if (Date.now() < panSuppressUntil.current) return;
           // pointer capture retargets click at the view — hit-test the node actually under the pointer
@@ -1097,22 +1159,29 @@ const PlansGit = () => {
   const pushR = names.includes(pushTo) ? pushTo : (g.defaultRemote ?? names[0] ?? "");
   const rp = g.remotes.find((r) => r.name === pullR);
   const rs = g.remotes.find((r) => r.name === pushR);
-  // per-direction status: pull only cares about `behind`; push about uncommitted + `ahead` (blocked while `behind`)
+  // per-direction status: pull only cares about `behind`; push about uncommitted + `ahead` (blocked while `behind`).
+  // a green badge claims a verified state — an unreachable remote only has last-known counts
+  const okBadge = (r, text) =>
+    r.fetched
+      ? html`<span class="badge text-bg-success">${text}</span>`
+      : html`<span class="badge text-bg-secondary" title="remote not reachable — counts are last-known">${text} — last known</span>`;
   const pullState = !rp?.ref
     ? html`<span class="small text-secondary">no ${g.branch} there</span>`
     : rp.behind > 0
       ? html`<span class="badge text-bg-warning">↓ ${rp.behind} to pull</span>`
-      : html`<span class="badge text-bg-success">in sync</span>`;
+      : okBadge(rp, "nothing to pull");
   const pushState = !rs?.ref
     ? html`<span class="small text-secondary">no ${g.branch} there</span>`
     : rs.behind > 0
       ? html`<span class="badge text-bg-warning">↓ ${rs.behind} — pull first</span>`
       : rs.ahead > 0
         ? html`<span class="badge text-bg-info">↑ ${rs.ahead} to push</span>`
-        : html`<span class="badge text-bg-success">in sync</span>`;
+        : g.changes.length
+          ? null // the "N uncommitted" badge already says what needs doing
+          : okBadge(rs, "nothing to push");
   const state = (r) =>
     !r.ref ? html`<span class="text-secondary">no ${g.branch} there</span>`
-    : !r.ahead && !r.behind ? html`<span class="badge text-bg-success">in sync</span>`
+    : !r.ahead && !r.behind ? okBadge(r, "in sync")
     : html`${r.behind > 0 && html`<span class="badge text-bg-warning me-1">↓ ${r.behind} to pull</span>`}${r.ahead > 0 && html`<span class="badge text-bg-info">↑ ${r.ahead} to push</span>`}`;
   const remoteSelect = (value, onChange) => html`
     <select class="form-select form-select-sm w-auto" value=${value} onChange=${(e) => onChange(e.target.value)}>
