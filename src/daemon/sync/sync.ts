@@ -401,33 +401,67 @@ function pickRemote(st: PlansGitStatus, name?: string): PlansRemote {
 }
 
 /**
+ * fetch + fast-forward merge of `remote`'s branch. `stash`: uncommitted
+ * task-folder changes are stashed first and popped after the merge — so a
+ * pull that would fail on colliding edits can still fast-forward. A failed
+ * pop keeps the stash and reports the conflicts.
+ */
+async function pullIn(
+  wsr: WorkspaceRuntime,
+  remote: string | undefined,
+  stash: boolean,
+): Promise<{ remote: string; pulled: number; stashed: boolean; status: PlansGitStatus }> {
+  const first = await plansGitStatus(wsr);
+  const r0 = pickRemote(first, remote);
+  const before = await plansGitStatus(wsr, { fetch: r0.name });
+  const r = pickRemote(before, r0.name);
+  if (!r.fetched) throw new ClaimRefusedError(`could not fetch from ${r.name} (${r.fetchUrl}) — offline?`);
+  if (!r.ref) throw new ClaimRefusedError(`${r.name} has no branch ${before.branch}`);
+  if (r.behind === 0) return { remote: r.name, pulled: 0, stashed: false, status: before };
+  if (r.ahead > 0) {
+    throw new ClaimRefusedError(
+      `diverged from ${r.name}: ${r.ahead} local and ${r.behind} remote commit(s) — resolve in a terminal (git pull --rebase ${r.name} ${before.branch} in ${before.repo})`,
+    );
+  }
+  let stashed = false;
+  if (stash && before.changes.length) {
+    await git(before.repo, ["stash", "push", "-u", "-m", "te: pull stash", "--", before.scope]);
+    stashed = true;
+  }
+  try {
+    await git(before.repo, ["merge", "--ff-only", r.ref], { timeoutMs: 60_000 });
+  } catch (e) {
+    throw new ClaimRefusedError(
+      `pull refused by git (local uncommitted changes collide?): ${(e as Error).message.split("\n")[0]}` +
+        (stashed ? " — your changes are safe in the stash (git stash pop)" : ""),
+    );
+  }
+  if (stashed) {
+    try {
+      await git(before.repo, ["stash", "pop"]);
+    } catch {
+      throw new ClaimRefusedError(
+        `pulled ${r.behind} commit(s) from ${r.name}, but unstash hit conflicts — resolve in a terminal (git status); the stash is kept (git stash list)`,
+      );
+    }
+  }
+  await wsr.store.reindex();
+  void wsr.overlay?.rescan();
+  return { remote: r.name, pulled: r.behind, stashed, status: await plansGitStatus(wsr) };
+}
+
+/**
  * Pull from the chosen remote (default: the upstream's): fetch, then
  * fast-forward only. Diverged history or colliding local edits are refused —
  * those need a human at a terminal, never an automatic merge of the plans.
+ * `opts.stash`: stash task-folder changes around the pull instead of failing.
  */
-export async function pullPlans(wsr: WorkspaceRuntime, remote?: string): Promise<{ remote: string; pulled: number; status: PlansGitStatus }> {
-  return wsr.store.enqueue(async () => {
-    const first = await plansGitStatus(wsr);
-    const r0 = pickRemote(first, remote);
-    const before = await plansGitStatus(wsr, { fetch: r0.name });
-    const r = pickRemote(before, r0.name);
-    if (!r.fetched) throw new ClaimRefusedError(`could not fetch from ${r.name} (${r.fetchUrl}) — offline?`);
-    if (!r.ref) throw new ClaimRefusedError(`${r.name} has no branch ${before.branch}`);
-    if (r.behind === 0) return { remote: r.name, pulled: 0, status: before };
-    if (r.ahead > 0) {
-      throw new ClaimRefusedError(
-        `diverged from ${r.name}: ${r.ahead} local and ${r.behind} remote commit(s) — resolve in a terminal (git pull --rebase ${r.name} ${before.branch} in ${before.repo})`,
-      );
-    }
-    try {
-      await git(before.repo, ["merge", "--ff-only", r.ref], { timeoutMs: 60_000 });
-    } catch (e) {
-      throw new ClaimRefusedError(`pull refused by git (local uncommitted changes collide?): ${(e as Error).message.split("\n")[0]}`);
-    }
-    await wsr.store.reindex();
-    void wsr.overlay?.rescan();
-    return { remote: r.name, pulled: r.behind, status: await plansGitStatus(wsr) };
-  });
+export async function pullPlans(
+  wsr: WorkspaceRuntime,
+  remote?: string,
+  opts: { stash?: boolean } = {},
+): Promise<{ remote: string; pulled: number; stashed: boolean; status: PlansGitStatus }> {
+  return wsr.store.enqueue(() => pullIn(wsr, remote, opts.stash ?? false));
 }
 
 /** Commit every change inside the task folder (nothing outside it); returns how many. */
@@ -479,5 +513,40 @@ export async function commitAndPushPlans(
     // refresh our view of that remote's branch
     await git(before.repo, ["fetch", "-q", r.name, before.branch!], { timeoutMs: 20_000 }).catch(() => {});
     return { remote: r.name, committed, pushed: true, status: await plansGitStatus(wsr) };
+  });
+}
+
+/**
+ * Sync now (human-pressed): pull → commit → push in one run against the
+ * chosen remote (default upstream). Task-folder changes are stashed around
+ * the pull and committed after it. Stops at the first step needing judgment
+ * — diverged history or an unstash conflict is reported, never merged.
+ */
+export async function syncNow(
+  wsr: WorkspaceRuntime,
+  message: string,
+  remote?: string,
+): Promise<{ remote: string; pulled: number; committed: number; pushed: boolean; status: PlansGitStatus }> {
+  return wsr.store.enqueue(async () => {
+    const p = await pullIn(wsr, remote, true);
+    const mid = p.status;
+    if (!mid.branch || mid.branch === "HEAD") throw new ClaimRefusedError("the task folder is not on a branch");
+    const committed = await commitTaskFolder(wsr, mid, message);
+    const st = await plansGitStatus(wsr);
+    const r = pickRemote(st, p.remote);
+    if (r.ref && r.behind > 0) throw new ClaimRefusedError(`behind ${r.name} again after the pull — someone pushed; press sync now again`);
+    let pushed = false;
+    if (!(r.ref && r.ahead === 0)) {
+      try {
+        await git(st.repo, ["push", r.name, `HEAD:refs/heads/${mid.branch}`], { timeoutMs: 90_000, humanPlansPush: true });
+        pushed = true;
+      } catch (e) {
+        throw new ClaimRefusedError(
+          `${p.pulled ? `pulled ${p.pulled}, ` : ""}${committed ? `committed ${committed}, ` : ""}but push to ${r.name} failed: ${(e as Error).message.split("\n")[0]}`,
+        );
+      }
+      await git(st.repo, ["fetch", "-q", r.name, mid.branch], { timeoutMs: 20_000 }).catch(() => {});
+    }
+    return { remote: r.name, pulled: p.pulled, committed, pushed, status: await plansGitStatus(wsr) };
   });
 }

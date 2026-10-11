@@ -1140,10 +1140,12 @@ const PlansGit = () => {
         kind: "success",
         text:
           what === "pull"
-            ? r.pulled ? `pulled ${r.pulled} commit(s) from ${r.remote}` : `already up to date with ${r.remote}`
+            ? r.pulled ? `pulled ${r.pulled} commit(s) from ${r.remote}${r.stashed ? " (stashed + restored local changes)" : ""}` : `already up to date with ${r.remote}`
             : what === "commit"
               ? r.committed ? `committed ${r.committed} change(s) locally — push when ready` : "nothing to commit"
-              : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? `pushed to ${r.remote}` : `nothing to push to ${r.remote}`}`,
+              : what === "syncnow"
+                ? `synced with ${r.remote}: ${[r.pulled ? `pulled ${r.pulled}` : "", r.committed ? `committed ${r.committed}` : "", r.pushed ? "pushed" : ""].filter(Boolean).join(", ") || "already in sync"}`
+                : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? `pushed to ${r.remote}` : `nothing to push to ${r.remote}`}`,
       });
       if (what !== "pull") setMsg("");
     } catch (e) {
@@ -1193,7 +1195,19 @@ const PlansGit = () => {
         <b>Task folder git</b>
         <span class="badge text-bg-secondary">branch ${g.branch ?? "?"}</span>
         ${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}
-        <button class="btn btn-sm btn-link ms-auto py-0" onClick=${() => load(true)}>check remotes</button>
+        ${g.remotes.length > 0 && html`<button class="btn btn-sm btn-outline-primary ms-auto py-0 px-2" disabled=${!!busy}
+          title="fetch → pull (stashing local changes) → commit the task folder → push"
+          onClick=${() => {
+            const ok = confirm(
+              `Sync now — ${g.defaultRemote ?? g.remotes[0]?.name}\n\n` +
+                `1. fetch + fast-forward pull${g.changes.length ? ` (stashing ${g.changes.length} local change(s) first)` : ""}\n` +
+                `2. commit the task folder\n` +
+                `3. push\n\n` +
+                `message: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}\n\nProceed?`,
+            );
+            if (ok) run("syncnow", "/api/plans-git/sync-now", { remote: g.defaultRemote, message: msg });
+          }}>${busy === "syncnow" ? "syncing…" : "⟳ sync now"}</button>`}
+        <button class="btn btn-sm btn-link ${g.remotes.length ? "" : "ms-auto "}py-0" onClick=${() => load(true)}>check remotes</button>
       </div>
       <div class="card-body">
         <dl class="row small mb-2">
@@ -1245,6 +1259,16 @@ const PlansGit = () => {
             <button class="btn btn-sm btn-outline-primary w-100 mt-2" disabled=${!!busy}
               title="fetch from this remote and fast-forward — brings in the other machines' work"
               onClick=${() => run("pull", "/api/plans-git/pull", { remote: pullR })}>${busy === "pull" ? "pulling…" : `↓ Pull${rp?.behind ? ` (${rp.behind})` : ""} from ${pullR}`}</button>
+            ${g.changes.length > 0 && html`<button class="btn btn-sm btn-link w-100 py-0" disabled=${!!busy}
+              title="stash the task folder's uncommitted changes, pull, then unstash — pop conflicts keep the stash for a terminal"
+              onClick=${() => {
+                const ok = confirm(
+                  `Stash → pull → unstash\n\n` +
+                    `stash ${g.changes.length} local change(s) in the task folder, pull from ${pullR}, then unstash.\n` +
+                    `Conflicts on unstash stay in the worktree for a terminal — the stash is kept.\n\nProceed?`,
+                );
+                if (ok) run("pull", "/api/plans-git/pull", { remote: pullR, stash: true });
+              }}>stash → pull → unstash</button>`}
             <div class="dir-foot">fetch + fast-forward only — never writes to the remote</div>
           </div>
         </div>

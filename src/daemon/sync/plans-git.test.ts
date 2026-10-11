@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { PlansStore } from "../store/store.js";
 import { resolveWorkspace } from "../../core/config/config.js";
 import type { WorkspaceRuntime } from "../server/context.js";
-import { plansGitStatus, pullPlans, commitAndPushPlans } from "./sync.js";
+import { plansGitStatus, pullPlans, commitAndPushPlans, syncNow } from "./sync.js";
 
 /**
  * Human-pressed Pull / Commit & Push of the task folder: two clones of one
@@ -132,5 +132,49 @@ describe("Commit (local only)", () => {
     expect(r.status.changes).toEqual([]);
     expect(r.status.remotes.find((x) => x.name === "origin")!.ahead).toBeGreaterThan(0); // not pushed
     expect((await commitPlans(wsB, "again")).committed).toBe(0);
+  });
+});
+
+describe("stash → pull → unstash and sync now", () => {
+  let c: string;
+  it("pulls over dirty colliding task files via stash", async () => {
+    // flush laptop's local commits to origin — the pull must be behind-only, not diverged
+    await commitAndPushPlans(wsB, "Tasks: catch up to origin");
+    c = join(home, "c");
+    g(home, "clone", "-q", join(home, "remote.git"), c);
+    g(c, "config", "user.email", "t@t");
+    g(c, "config", "user.name", "t");
+    // remote: new line at the TOP of TASK-02-y.md
+    writeFileSync(join(c, "Tasks", "TASK-02-y.md"), "remote head\n# two\n");
+    g(c, "add", "Tasks/TASK-02-y.md");
+    g(c, "commit", "-qm", "remote touches two");
+    g(c, "push", "-q", "origin", "main");
+    // laptop: same file, appended line, uncommitted — a plain ff merge refuses
+    writeFileSync(join(b, "Tasks", "TASK-02-y.md"), "# two\nlocal tail\n");
+    await expect(pullPlans(wsB)).rejects.toThrow(/pull refused by git/);
+    const r = await pullPlans(wsB, undefined, { stash: true });
+    expect(r.pulled).toBe(1);
+    expect(r.stashed).toBe(true);
+    const content = readFileSync(join(b, "Tasks", "TASK-02-y.md"), "utf8");
+    expect(content).toContain("remote head");
+    expect(content).toContain("local tail");
+    expect(g(b, "stash", "list")).toBe("");
+    expect(r.status.changes.map((x) => x.path)).toContain("Tasks/TASK-02-y.md");
+  });
+
+  it("sync now pulls, commits and pushes in one run", async () => {
+    // remote: another commit on a different file (clean pop for the laptop's stash)
+    writeFileSync(join(c, "Tasks", "TASK-03-z.md"), "# three\nremote v2\n");
+    g(c, "add", "-A");
+    g(c, "commit", "-qm", "remote v2 on three");
+    g(c, "push", "-q", "origin", "main");
+    // laptop: the dirty TASK-02 from the previous test plus a brand-new file
+    writeFileSync(join(b, "Tasks", "TASK-07-t.md"), "# seven\n");
+    const r = await syncNow(wsB, "Tasks: seven + local tail");
+    expect(r.pulled).toBe(1);
+    expect(r.committed).toBe(2); // TASK-02-y.md (unstashed) + TASK-07-t.md
+    expect(r.pushed).toBe(true);
+    expect(g(home, "--git-dir", join(home, "remote.git"), "log", "-1", "--format=%s", "main")).toBe("Tasks: seven + local tail");
+    expect(r.status.changes).toEqual([]);
   });
 });

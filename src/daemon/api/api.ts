@@ -174,7 +174,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
       const { pullPlans } = await import("../sync/sync.js");
-      return await pullPlans(ops.wsr, ((req.body ?? {}) as { remote?: string }).remote || undefined);
+      const b = (req.body ?? {}) as { remote?: string; stash?: boolean };
+      return await pullPlans(ops.wsr, b.remote || undefined, { stash: b.stash === true });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+  app.post("/api/plans-git/sync-now", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { syncNow } = await import("../sync/sync.js");
+      const b = (req.body ?? {}) as { remote?: string; message?: string };
+      return await syncNow(ops.wsr, String(b.message ?? ""), b.remote || undefined);
     } catch (e) {
       return sendErr(reply, e);
     }
