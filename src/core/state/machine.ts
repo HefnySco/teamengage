@@ -399,6 +399,7 @@ export function transition(
       delete (out.meta as Record<string, unknown>).starred; // legacy boolean → star_color
       out.meta.star_color = color;
       out.meta.starred_at = ctx.now;
+      out.meta.updated = meta.updated; // a bookmark isn't an edit — keeps the card's place in date-sorted views
       out.events.push(ev(actor, stamp, meta.id, "star", from, from, color));
       out.log.push(`- ${stamp} ${who} starred ${color} (status ${from})`);
       return out;
@@ -411,6 +412,7 @@ export function transition(
       delete out.meta.star_color;
       delete out.meta.starred_at;
       delete (out.meta as Record<string, unknown>).starred; // legacy boolean → star_color
+      out.meta.updated = meta.updated; // a bookmark isn't an edit — keeps the card's place in date-sorted views
       out.events.push(ev(actor, stamp, meta.id, "unstar", from, from));
       out.log.push(`- ${stamp} ${who} unstarred (status ${from})`);
       return out;

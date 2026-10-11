@@ -247,14 +247,18 @@ describe("archive", () => {
 describe("star", () => {
   it("bookmarks any status without touching it — even claimed items", () => {
     for (const s of ["draft", "ready", "hold", "in_progress", "waiting", "in_review", "done", "dropped"] as Status[]) {
-      const r = transition(item(s), { type: "star" }, human, ctx(s === "in_progress" ? { claim: claimOf() } : {}));
+      const it = item(s);
+      it.updated = "2026-10-01";
+      const r = transition(it, { type: "star" }, human, ctx(s === "in_progress" ? { claim: claimOf() } : {}));
       expect(r.meta.status).toBe(s);
       expect(r.meta.star_color).toBe("yellow");
       expect(r.meta.starred_at).toBe(NOW);
+      expect(r.meta.updated).toBe("2026-10-01"); // bookmarking isn't an edit
       const back = transition(r.meta, { type: "unstar" }, human, ctx());
       expect(back.meta.status).toBe(s);
       expect(back.meta.star_color).toBeUndefined();
       expect(back.meta.starred_at).toBeUndefined();
+      expect(back.meta.updated).toBe("2026-10-01");
     }
   });
 
