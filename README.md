@@ -42,13 +42,19 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
 
 ```bash
 git clone https://github.com/HefnySco/teamengage.git ~/teamengage
-cd ~/teamengage && npm ci && npm run build && npm link
+cd ~/teamengage && npm run deploy                                      # deps + build + `te` on PATH
 
 te init --overlay --root ~/my-project/Tasks --name tasks --prefix TK   # track an existing task folder
 te import ~/my-project/Tasks --apply                                   # tag the task files (dry run without --apply)
-te ui                                                                  # open the web board
+npm run autorun                                                        # keep the daemon running (systemd user service, Linux)
+npm run ui                                                             # open the web board
 curl http://127.0.0.1:4747/agent                                       # what your agents read
 ```
+
+Any `te` command starts the daemon on demand — `autorun` just keeps it
+alive across logins. Skip it on non-systemd setups and use
+`npm run daemon` (foreground) instead; `npm run restart` restarts the
+service after an update.
 
 The task folder should be its own **git repository with a private remote** —
 that is how the plan is shared with your other machines. Plan data never goes
