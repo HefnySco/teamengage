@@ -973,7 +973,7 @@ const ItemView = ({ id }) => {
         ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}>approve</button>`}
         ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}>resume</button>`}
         ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
-        ${(it.meta.status === "ready" || it.meta.status === "hold") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", "why back to draft? (optional)")}>to draft</button>`}
+        ${(it.meta.status === "ready" || it.meta.status === "hold" || it.meta.status === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", it.meta.status === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${it.meta.status === "done" ? "reopen" : "to draft"}</button>`}
         ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
         ${it.claim && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
         ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}>undrop</button>`}

@@ -50,6 +50,7 @@ describe("every arrow in DESIGN §5", () => {
     ["hold →unhold→ ready", "hold", human, { type: "unhold" }, "ready", {}],
     ["ready →to_draft→ draft", "ready", human, { type: "to_draft" }, "draft", {}],
     ["hold →to_draft→ draft", "hold", human, { type: "to_draft", reason: "rethink" }, "draft", {}],
+    ["done →to_draft→ draft", "done", human, { type: "to_draft", reason: "marked by mistake" }, "draft", {}],
     ["hold →complete→ done", "hold", human, { type: "complete" }, "done", {}],
     ["hold →drop→ dropped", "hold", human, { type: "drop" }, "dropped", {}],
     ["ready →complete→ done", "ready", human, { type: "complete", note: "did it by hand" }, "done", {}],

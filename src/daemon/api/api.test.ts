@@ -318,6 +318,29 @@ describe("hold / unhold / to draft", () => {
       /put on hold \(from ready\): after the release[\s\S]*resumed from hold[\s\S]*moved back to draft \(from ready\): rethink/,
     );
   });
+
+  it("a done item goes back to draft and reopens the lifecycle", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "done by mistake" }], human);
+    const id = ids[0];
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    expect((await post(`/api/items/${id}/complete`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("done");
+
+    expect((await post(`/api/items/${id}/draft`, { reason: "marked by mistake" })).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("draft");
+    expect(store.idx.get(id)!.sections.find((s) => s.heading === "Log")!.body).toMatch(
+      /moved back to draft \(from done\): marked by mistake/,
+    );
+
+    // back through the normal path: approve → claim
+    expect((await post(`/api/items/${id}/approve`)).status).toBe(200);
+    expect((await post(`/api/items/${id}/claim`)).status).toBe(200);
+    expect(store.idx.get(id)!.meta.status).toBe("in_progress");
+  });
 });
 
 describe("archive", () => {

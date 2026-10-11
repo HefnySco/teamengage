@@ -58,7 +58,7 @@ commands:
   key <ID> [--review|--off]   key task: dependents wait for its acceptance
   archive <ID> [reason] / unarchive <ID>   hide / restore an item (status kept)
   delete <ID> [reason] --yes   remove from tracking; task file stays (untagged, ignored)
-  draft <ID> [reason] send a ready or held item back to draft
+  draft <ID> [reason] send a ready, held or done item back to draft
   done <ID> [note]    mark done from any status (no review, no merge)
   renumber <OLD> <NEW>
   rollback <ID> [--yes]  restore claim snapshots onto live targets

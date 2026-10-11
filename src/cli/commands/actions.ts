@@ -141,7 +141,7 @@ export async function keyCmd(args: string[], home?: string): Promise<number> {
 /** `te unhold <ID>` — release a hold → ready. */
 export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
 
-/** `te draft <ID> [reason]` — send a ready or held item back to draft. */
+/** `te draft <ID> [reason]` — send a ready, held or done item back to draft. */
 export async function draftCmd(args: string[], home?: string): Promise<number> {
   const [id, ...rest] = positional(args);
   if (!id) {

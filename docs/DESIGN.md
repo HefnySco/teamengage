@@ -180,13 +180,14 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
   │                       │                │    └─ask──▶ waiting ────┘ (answer → in_progress)
   └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
-                       ready|hold ──to_draft──▶ draft
+                       ready|hold|done ──to_draft──▶ draft
 blocked  = derived: any depends_on not done (in_review counts as done
            unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
 change_answer = human only, any status but done/dropped: revise the item's latest answer
            (same decision id, version +1, old → new in the Log)
-done     = terminal
+done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mistake;
+           the item goes through approve → claim again)
 ```
 
 - `turn`: `draft`, `hold`, `in_review`, `waiting` → **human**; `ready`, `in_progress` → **agent**.

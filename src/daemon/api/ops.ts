@@ -630,7 +630,7 @@ export class WorkspaceOps {
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "unhold" });
   }
 
-  /** Human: ready/hold → draft (needs approval again). */
+  /** Human: ready/hold/done → draft (needs approval again; reopens a done-by-mistake item). */
   async toDraft(id: string, reason?: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "to_draft", reason });

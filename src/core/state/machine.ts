@@ -50,7 +50,11 @@ export type Action =
   | { type: "hold"; reason?: string }
   /** Human releases a hold → ready. */
   | { type: "unhold" }
-  /** Human sends a ready or held item back to draft (re-approval needed). */
+  /**
+   * Human sends a ready, held or done item back to draft (re-approval
+   * needed). `done` may have been set by mistake — drafting it reopens the
+   * normal draft → ready → in_progress path.
+   */
   | { type: "to_draft"; reason?: string }
   /** Human hides an item (any status, unclaimed); the status is kept. */
   | { type: "archive"; reason?: string }
@@ -350,9 +354,15 @@ export function transition(
 
     case "to_draft": {
       requireHuman(actor, action.type);
-      if (from !== "ready" && from !== "hold") fail(from, action.type);
+      if (from !== "ready" && from !== "hold" && from !== "done") fail(from, action.type);
       set("draft", action.reason);
       out.log.push(`- ${stamp} ${who} moved back to draft (from ${from})${action.reason ? `: ${action.reason}` : ""}`);
+      // a done item shouldn't hold a claim, but don't let a stale one
+      // block the reopened item's next claim
+      if (ctx.claim) {
+        out.effects.push({ type: "delete_claim" });
+        out.effects.push({ type: "cleanup_work", keepBranches: true });
+      }
       return out;
     }
 
