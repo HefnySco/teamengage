@@ -22,6 +22,10 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "build:web": "esbuild web/app.js --bundle --format=esm --splitting --outdir=web/dist --minify",
+    "deploy": "npm ci && npm run build && npm link",
+    "daemon": "node dist/daemon/main.js",
+    "autorun": "bash scripts/service.sh install",
+    "restart": "bash scripts/service.sh restart",
     "ui": "node dist/cli/main.js ui"
   },
   "dependencies": {
