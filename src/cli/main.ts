@@ -46,7 +46,7 @@ usage: te <command> [options]
 commands:
   init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>] [--overlay]
                    create a workspace (.teamengage plans repo)
-  ls [--status s] [--project p] [--text t] [--json]
+  ls [--status s] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   validate [--json]

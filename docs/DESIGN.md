@@ -351,7 +351,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `ask(id, question, options?)` | Raise question → item `waiting`, turn → human. |
 | `submit(id, evidence)` | Commits/tests/notes → `in_review`. |
 | `propose(items[])` | Create `draft` items/edges (a plan for the human to approve). |
-| `query(filter)` | Search by status/type/resource/project/text. |
+| `query(filter)` | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains). |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph. |
 
 Plus a generated instruction snippet (`teamengage agents-md`) to drop into

@@ -34,7 +34,9 @@ export async function lsCmd(args: string[], home?: string): Promise<number> {
     wsQ(args),
     opt(args, "--status") ? `status=${opt(args, "--status")}` : "",
     opt(args, "--project") ? `project=${opt(args, "--project")}` : "",
+    opt(args, "--domain") ? `domain=${opt(args, "--domain")}` : "",
     opt(args, "--text") ? `text=${encodeURIComponent(opt(args, "--text")!)}` : "",
+    opt(args, "--q") ? `q=${encodeURIComponent(opt(args, "--q")!)}` : "",
   ]
     .filter(Boolean)
     .join("&");

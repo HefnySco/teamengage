@@ -136,7 +136,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
   server.registerTool(
     "query",
     {
-      description: "Search items by status/type/project/domain/resource/text.",
+      description:
+        "Search items by status/type/project/domain/resource/text; q = board search (all words in id/title/file/#domains).",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),
@@ -144,6 +145,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         project: z.string().optional(),
         resource: z.string().optional(),
         text: z.string().optional(),
+        q: z.string().optional(),
       },
     },
     (args) => {
@@ -157,6 +159,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           domain: args.domain,
           resource: args.resource,
           text: args.text,
+          q: args.q,
         });
         if (!items.length) return okText("no matches");
         return okText(items.slice(0, 50).map(itemLine).join("\n"));
