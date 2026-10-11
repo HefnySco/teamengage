@@ -116,18 +116,6 @@ const DomainChip = ({ d, onClick, onRemove, active }) => html`
 const DomainChips = ({ ds, onClick, active }) =>
   (ds ?? []).length ? html`<span class="d-inline-flex flex-wrap gap-1">${ds.map((d) => html`<${DomainChip} key=${d} d=${d} onClick=${onClick} active=${active === d} />`)}</span>` : null;
 
-const ItemLine = ({ i, onOpen }) => html`
-  <div class="d-flex align-items-baseline gap-2 flex-wrap">
-    <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
-    ${i.star_color && html`<span class="${STAR_TEXT[i.star_color]}" title="starred ${i.star_color}"><${StarIcon} filled /></span>`}
-    <span class="badge ${ST_BADGE[i.status] ?? "text-bg-secondary"}">${i.status}</span>
-    <span>${i.title}</span>
-    <${DomainChips} ds=${i.domains} />
-    ${i.claim && html`<span class="claim-note">held by ${i.claim.holder}@${i.claim.machine}</span> <${ClaimBadges} c=${i.claim} />`}
-    ${i.blocked && html`<span class="text-secondary">blocked</span>`}
-  </div>
-`;
-
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
 
 // bootstrap-icons glyphs, inlined (no icon font dependency)
@@ -221,14 +209,63 @@ const DecisionCard = ({ d, canChange, onChange }) => {
   `;
 };
 
+// quiet domain tag: grey chip, the domain colour shrunk to a 6px dot;
+// pass onClick to make it a filter control (board cards + filter row)
+const DomainTags = ({ ds, onClick, active }) => {
+  const shown = (ds ?? []).slice(0, 2);
+  return html`<span class="d-inline-flex gap-1 align-items-center">
+    ${shown.map((d) => html`<span key=${d}
+      class="triage-tag ${onClick ? "clickable" : ""} ${active === d ? "on" : ""}"
+      title=${onClick ? `show only #${d} (click again to clear)` : `#${d}`}
+      style=${`--c:${domainColors[d] ?? fallbackColor(d)}`}
+      onClick=${onClick ? (e) => { e.stopPropagation(); onClick(d); } : undefined}><i></i>${d}</span>`)}
+    ${(ds ?? []).length > shown.length && html`<span class="triage-tag">+${ds.length - shown.length}</span>`}
+  </span>`;
+};
+
+// status as a coloured dot + text — the only place colour carries meaning
+const InboxStatus = ({ s, c, label }) => html`
+  <span class="triage-st ${s ? `st-${s}` : ""}" style=${c ? `--st:${c}` : null}>${label ?? (s ?? "").replace("_", " ")}</span>`;
+
+// a waiting question: one row whose "answer" button expands it in place —
+// full question markdown + the answer box
+const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
+  const [open, setOpen] = useState(false);
+  return html`
+    <div class="triage-li">
+      <span class="id-cell">
+        <a class="item id" onClick=${() => onOpen(q.id)}>${q.id}</a>
+        ${item?.star_color && html`<span class="${STAR_TEXT[item.star_color]}" title="starred ${item.star_color}"><${StarIcon} filled /></span>`}
+      </span>
+      <${InboxStatus} s="waiting" />
+      <span class="t text-secondary" title=${q.question?.text}>${(q.question?.text ?? item?.title ?? "").replace(/\s+/g, " ")}</span>
+      <${DomainTags} ds=${item?.domains} />
+      <span class="acts">
+        <button class="tbtn ${open ? "" : "primary"}" onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
+      </span>
+      ${open && html`
+        <div class="triage-detail">
+          ${item?.title && html`<div class="small text-secondary mb-1">${item.title}</div>`}
+          <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
+          <${AnswerBox} id=${q.id} opts=${q.question?.options} onAnswer=${(text) => { setOpen(false); onAnswer(text); }} />
+        </div>`}
+    </div>`;
+};
+
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
   // the inbox lists ids; the item list supplies titles, projects and files to search
   const { data: all } = useApi("/api/items?archived=all");
   const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
+  const [kind, setKind] = useState("all");
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const byId = Object.fromEntries((all ?? []).map((i) => [i.id, i]));
   const title = (id) => byId[id]?.title ?? "";
+  // trailing "held by …" note for rows of claimed items
+  const claimNote = (id) => {
+    const c = byId[id]?.claim;
+    return c ? html` <span class="text-secondary">· ${c.holder.split("@")[0]}@${c.machine} ${ago(c.claimed_at)}</span>` : null;
+  };
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (id, ...extra) =>
     !words.length ||
@@ -256,20 +293,92 @@ const Inbox = ({ onOpen }) => {
     const reason = prompt(label);
     if (reason !== null) act(id, action, { reason });
   };
-  const Section = ({ title, tone, items, children }) =>
-    items.length === 0 ? null : html`
-      <div class="col-lg-6 col-xl-4">
-        <div class="card">
-          <div class="card-header py-2 d-flex justify-content-between">
-            <b>${title}</b><span class="badge text-bg-${tone}">${items.length}</span>
-          </div>
-          <div class="list-group list-group-flush scroll-list">${children}</div>
-        </div>
-      </div>
-    `;
-  const empty =
-    !data.questions.length && !data.drafts.length && !data.reviews.length &&
-    !data.claims.length && !data.findings.length;
+  const empty = !total;
+
+  // one dense line per thing that needs you; actions reveal on hover
+  const idCell = (id) => html`
+    <span class="id-cell">
+      <a class="item id" onClick=${() => onOpen(id)}>${id}</a>
+      ${byId[id]?.star_color && html`<span class="${STAR_TEXT[byId[id].star_color]}" title="starred ${byId[id].star_color}"><${StarIcon} filled /></span>`}
+    </span>`;
+  const itemRow = (id, st, extra, acts) => html`
+    <div class="triage-li" key=${id}>
+      ${idCell(id)}
+      ${st}
+      <span class="t" title=${title(id)}>${title(id) || "—"}${extra}</span>
+      <${DomainTags} ds=${byId[id]?.domains} />
+      <span class="acts">${acts}</span>
+    </div>`;
+  const groups = [
+    {
+      key: "questions",
+      label: "Questions",
+      rows: view.questions.map(
+        (x) => html`<${QuestionRow} key=${x.id} q=${x} item=${byId[x.id]} onOpen=${onOpen}
+          onAnswer=${(text) => act(x.id, "answer", { text })} />`,
+      ),
+    },
+    {
+      key: "claims",
+      label: "Conflicts",
+      rows: view.claims.map(
+        (c) => html`
+          <div class="triage-li" key=${c.item}>
+            ${idCell(c.item)}
+            <${InboxStatus} c="var(--bs-danger)" label="conflict" />
+            <span class="t" title=${title(c.item)}>
+              ${title(c.item)} <span class="text-secondary">· held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
+            </span>
+            <${DomainTags} ds=${byId[c.item]?.domains} />
+            <span class="acts"><button class="tbtn" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></span>
+          </div>`,
+      ),
+    },
+    {
+      key: "reviews",
+      label: "Review",
+      rows: view.reviews.map((id) =>
+        itemRow(
+          id,
+          html`<${InboxStatus} s="in_review" />`,
+          claimNote(id),
+          html`<button class="tbtn primary" onClick=${() => act(id, "accept")}>accept</button>
+            <button class="tbtn ghost danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
+        ),
+      ),
+    },
+    {
+      key: "findings",
+      label: "Findings",
+      rows: view.findings.map(
+        (f, i) => html`
+          <div class="triage-li" key=${i}>
+            ${f.item ? idCell(f.item) : html`<span class="id text-secondary" title=${f.path}>${f.path ?? ""}</span>`}
+            <span class="triage-sev ${f.severity === "error" ? "err" : ""}">${f.severity ?? "warning"}</span>
+            <span class="t text-secondary" title=${f.message}><${LinkedText} text=${f.message} onOpen=${onOpen} /></span>
+            <span></span>
+            <span class="acts">${f.item && html`<button class="tbtn ghost" onClick=${() => onOpen(f.item)}>open</button>`}</span>
+          </div>`,
+      ),
+    },
+    {
+      key: "drafts",
+      label: "Drafts",
+      rows: view.drafts.map((id) =>
+        itemRow(
+          id,
+          html`<${InboxStatus} s="draft" />`,
+          claimNote(id),
+          html`<button class="tbtn primary" onClick=${() => act(id, "approve")}>approve</button>
+            <button class="tbtn ghost" onClick=${() => act(id, "complete", { note: "already done" })}>done</button>
+            <button class="tbtn ghost danger" onClick=${() => askThen(id, "drop", "drop reason")}>drop</button>`,
+        ),
+      ),
+    },
+  ].map((g) => ({ ...g, n: g.rows.length }));
+  // when the picked group runs empty (or never had anything) fall back to all
+  const effKind = groups.some((g) => g.key === kind && g.n > 0) ? kind : "all";
+  const shownGroups = groups.filter((g) => g.n > 0 && (effKind === "all" || g.key === effKind));
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
@@ -278,73 +387,24 @@ const Inbox = ({ onOpen }) => {
         onInput=${(e) => setSearch(e.target.value)}
         onKeyDown=${(e) => e.key === "Escape" && setSearch("")} />
       ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}</span>`}
+      ${!empty && html`
+        <span class="seg ms-auto">
+          <button class=${effKind === "all" ? "on" : ""} onClick=${() => setKind("all")}>All ${shown}</button>
+          ${groups.map(
+            (g) => g.n > 0 && html`<button key=${g.key} class=${effKind === g.key ? "on" : ""} onClick=${() => setKind(g.key)}>${g.label} ${g.n}</button>`,
+          )}
+        </span>`}
     </div>
-    <div class="row g-3">
-      <${Section} title="Questions" tone="info" items=${view.questions}>
-        ${view.questions.map(
-          (q) => html`
-            <div class="list-group-item" key=${q.id}>
-              <${ItemLine} i=${{ id: q.id, status: "waiting", title: title(q.id), domains: byId[q.id]?.domains }} onOpen=${onOpen} />
-              <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(q.question?.text ?? "") }} />
-              <${AnswerBox} id=${q.id} opts=${q.question?.options} onAnswer=${(text) => act(q.id, "answer", { text })} />
-            </div>
-          `,
+    ${shownGroups.length > 0 && html`
+      <div class="triage">
+        ${shownGroups.map(
+          (g) => html`
+            <div key=${g.key}>
+              <div class="triage-group">${g.label} <span class="n">${g.n}</span></div>
+              ${g.rows}
+            </div>`,
         )}
-      <//>
-      <${Section} title="Drafts to approve" tone="secondary" items=${view.drafts}>
-        ${view.drafts.map(
-          (id) => html`
-            <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "draft", title: title(id), domains: byId[id]?.domains }} onOpen=${onOpen} />
-              <div class="d-flex gap-2 mt-2">
-                <button class="btn btn-sm btn-primary btn-act" onClick=${() => act(id, "approve")}>approve</button>
-                <button class="btn btn-sm btn-outline-success btn-act" onClick=${() => act(id, "complete", { note: "already done" })}>already done</button>
-                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "drop", "drop reason")}>drop</button>
-              </div>
-            </div>
-          `,
-        )}
-      <//>
-      <${Section} title="Submissions to review" tone="success" items=${view.reviews}>
-        ${view.reviews.map(
-          (id) => html`
-            <div class="list-group-item" key=${id}>
-              <${ItemLine} i=${{ id, status: "in_review", title: title(id), domains: byId[id]?.domains }} onOpen=${onOpen} />
-              <div class="d-flex gap-2 mt-2">
-                <button class="btn btn-sm btn-success btn-act" onClick=${() => act(id, "accept")}>accept (merge)</button>
-                <button class="btn btn-sm btn-outline-danger btn-act" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
-              </div>
-            </div>
-          `,
-        )}
-      <//>
-      <${Section} title="Conflicted claims" tone="danger" items=${view.claims}>
-        ${view.claims.map(
-          (c) => html`
-            <div class="list-group-item" key=${c.item}>
-              <a class="item id" onClick=${() => onOpen(c.item)}>${c.item}</a> ${title(c.item)} <span class="text-danger">conflicted claim</span>
-              <span class="text-secondary"> ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
-              <div class="mt-2"><button class="btn btn-sm btn-outline-primary btn-act" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></div>
-            </div>
-          `,
-        )}
-      <//>
-      <${Section} title="Findings" tone="warning" items=${view.findings}>
-        ${view.findings.map(
-          (f, i) => html`
-            <div class="list-group-item" key=${i}>
-              <span class="badge text-bg-${f.severity === "error" ? "danger" : "warning"}">${f.severity}</span>
-              ${" "}
-              ${f.item
-                ? html`<a class="item id" onClick=${() => onOpen(f.item)}>${f.item}</a>`
-                : html`<span class="id">${f.path ?? ""}</span>`}
-              ${" "}
-              <${LinkedText} text=${f.message} onOpen=${onOpen} />
-            </div>
-          `,
-        )}
-      <//>
-    </div>
+      </div>`}
     ${empty && html`<p class="text-success mt-3">inbox zero — nothing needs you</p>`}
     ${!empty && words.length > 0 && shown === 0 && html`<p class="text-secondary mt-3">nothing in the inbox matches "${q}"</p>`}
   `;
@@ -391,6 +451,7 @@ const Board = ({ onOpen }) => {
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
   const [sort, setSortState] = useState(() => loadSearch("te.board.sort"));
   const [starredOnly, setStarredOnlyState] = useState(() => loadSearch("te.board.starred") === "1");
+  const [domShowAll, setDomShowAll] = useState(false);
   const setDomain = (d) => {
     const v = d === domain ? "" : d; // clicking the active domain clears it
     setDomainState(v);
@@ -439,7 +500,7 @@ const Board = ({ onOpen }) => {
   };
   // id ↑↓ | date ↓↑ | AZ — clicking the active field flips its direction
   const eff = sort || "id-asc";
-  const sortBtn = (field, label) => {
+  const sortSeg = (field, label) => {
     const on = eff.startsWith(field);
     const desc = eff.endsWith("desc");
     const text =
@@ -447,8 +508,12 @@ const Board = ({ onOpen }) => {
       : on ? `${label} ${desc ? "↓" : "↑"}`
       : label;
     const next = !on ? `${field}-${field === "date" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
-    return html`<button class="btn btn-sm ${on ? "btn-secondary" : "btn-outline-secondary"}" title="order cards inside each column" onClick=${() => setSort(next)}>${text}</button>`;
+    return html`<button class=${on ? "on" : ""} title="order cards inside each column" onClick=${() => setSort(next)}>${text}</button>`;
   };
+  const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
+  const domTag = ([d, n]) => html`
+    <span key=${d} class="triage-tag clickable ${domain === d ? "on" : ""}" title="show only #${d} (click again to clear)"
+      style=${`--c:${domainColors[d] ?? fallbackColor(d)}`} onClick=${() => setDomain(d)}><i></i>${d} <span class="n">${n}</span></span>`;
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Board</h2>
@@ -465,62 +530,71 @@ const Board = ({ onOpen }) => {
         }}
         autofocus
       />
-      <span class="btn-group btn-group-sm">${sortBtn("id", "id")}${sortBtn("date", "date")}${sortBtn("name", "AZ")}</span>
-      <button class="btn btn-sm ${starredOnly ? "btn-warning" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /></button>
+      <span class="seg">${sortSeg("id", "id")}${sortSeg("date", "date")}${sortSeg("name", "AZ")}</span>
+      <button class="tbtn ${starredOnly ? "primary" : ""}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       ${(words.length > 0 || domain || starredOnly) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
-    ${Object.keys(domainCounts).length > 0 && html`<div class="d-flex flex-wrap gap-1 mb-2 align-items-center">
-      <span class="text-secondary small me-1">domains:</span>
-      ${Object.entries(domainCounts)
-        .sort((a, b) => b[1] - a[1])
-        .map(([d, n]) => html`<span class="badge domain-chip ${domain === d ? "active" : ""}" style=${{ background: domainColors[d] ?? fallbackColor(d) }}
-          onClick=${() => setDomain(d)} title="show only #${d} (click again to clear)">#${d} <span class="opacity-75">${n}</span></span>`)}
-      <span class="text-secondary small ms-1">${untagged} untagged</span>
+    ${domEntries.length > 0 && html`<div class="board-filters">
+      <span class="lbl">Domains</span>
+      ${(domShowAll ? domEntries : domEntries.slice(0, 12)).map(domTag)}
+      ${!domShowAll && domEntries.length > 12 && html`<span class="triage-tag clickable" onClick=${() => setDomShowAll(true)}>+${domEntries.length - 12} more</span>`}
+      <span class="faint">${untagged} untagged</span>
       ${domain && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setDomain(domain)}>clear</button>`}
     </div>`}
-    <div class="d-flex gap-3 overflow-x-auto pb-2">
+    <div class="board-cols">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
         if (SORTS[sort]) items.sort(SORTS[sort]);
+        // empty columns collapse to a thin strip (mockup sample 3)
+        if (items.length === 0) return html`
+          <div class="board-col collapsed" key=${s}>
+            <div class="col-hd"><${InboxStatus} s=${s} label=${s.replace("_", " ")} /> <span class="n">0</span></div>
+          </div>`;
         return html`
-          <div class="board-col st-${s} flex-shrink-0" key=${s}>
-            <h3 class="h6 text-uppercase d-flex justify-content-between">
-              <span>${s.replace("_", " ")}</span>
-              <span class="d-flex align-items-center gap-1">
-                ${s === "done" && items.some((i) => !i.claim) && html`<button class="btn btn-sm btn-outline-secondary py-0 px-1 board-archive-all"
-                  title="archive every done card shown (respects the search)"
-                  onClick=${() => {
-                    const ids = items.filter((i) => !i.claim).map((i) => i.id);
-                    if (confirm(`Archive ${ids.length} done item(s)${words.length ? " matching the search" : ""}?\nThey move to the archive page and can be unarchived.`)) archive(ids);
-                  }}><${ArchiveIcon} /> all</button>`}
-                <span class="badge ${ST_BADGE[s]}">${items.length}</span>
-              </span>
-            </h3>
-            <div class="board-list">
+          <div class="board-col" key=${s}>
+            <div class="col-hd">
+              <${InboxStatus} s=${s} label=${s.replace("_", " ")} />
+              <span class="n">${items.length}</span>
+              ${s === "done" && items.some((i) => !i.claim) && html`<button class="icon-btn x"
+                title="archive every done card shown (respects the search)"
+                onClick=${() => {
+                  const ids = items.filter((i) => !i.claim).map((i) => i.id);
+                  if (confirm(`Archive ${ids.length} done item(s)${words.length ? " matching the search" : ""}?\nThey move to the archive page and can be unarchived.`)) archive(ids);
+                }}><${ArchiveIcon} /></button>`}
+            </div>
+            <div class="col-body">
               ${items.map(
                 (i) => html`
-                  <div class="card card-body mini st-${s} p-2 mb-2" key=${i.id} onClick=${() => onOpen(i.id)}>
-                    <div class="d-flex justify-content-between">
+                  <div class="bcard" key=${i.id} onClick=${() => onOpen(i.id)}>
+                    <div class="bcard-top">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
-                      <span class="d-flex align-items-center gap-1">
-                        ${i.blocked && html`<span class="badge text-bg-secondary">blocked</span>`}
-                        <button class="btn btn-sm p-0 border-0 star-btn ${i.star_color ? `starred ${STAR_TEXT[i.star_color]}` : "text-secondary"}" title=${i.star_color ? `starred ${i.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+                      <span class="bcard-x">
+                        ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
+                          onClick=${(e) => {
+                            e.stopPropagation(); // don't open the item
+                            archive([i.id]);
+                          }}><${ArchiveIcon} /></button>`}
+                        <button class="icon-btn ${i.star_color ? `on ${STAR_TEXT[i.star_color]}` : ""}"
+                          title=${i.star_color ? `starred ${i.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
                           onClick=${(e) => {
                             e.stopPropagation(); // don't open the item
                             toggleStar(i);
                           }}><${StarIcon} filled=${Boolean(i.star_color)} /></button>
                       </span>
                     </div>
-                    <div class="small">${i.title}</div>
-                    ${(i.domains ?? []).length > 0 && html`<div class="mt-1"><${DomainChips} ds=${i.domains} onClick=${setDomain} active=${domain} /></div>`}
-                    ${i.claim && html`<div class="claim-note">${i.claim.holder.split("@")[0]} · ${ago(i.claim.claimed_at)} <${ClaimBadges} c=${i.claim} /></div>`}
-                    ${s === "done" && !i.claim && html`<div class="text-end mt-1">
-                      <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="archive"
-                        onClick=${(e) => {
-                          e.stopPropagation(); // don't open the item
-                          archive([i.id]);
-                        }}><${ArchiveIcon} /></button>
-                    </div>`}
+                    <div class="bcard-title">${i.title}</div>
+                    ${((i.domains ?? []).length > 0 || i.claim || i.blocked) && html`
+                      <div class="bcard-meta">
+                        <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
+                        ${i.blocked && html`<span>blocked</span>`}
+                        ${i.claim && html`<span class="d-inline-flex align-items-center gap-1 ms-auto">
+                          <span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
+                          ${ago(i.claim.claimed_at)}
+                          ${i.claim.conflicted && html`<span class="text-danger">conflict</span>`}
+                          ${i.claim.unsynced && html`<span class="text-warning-emphasis">unsynced</span>`}
+                          ${staleClaim(i.claim) && html`<span class="text-warning-emphasis">stale</span>`}
+                        </span>`}
+                      </div>`}
                   </div>
                 `,
               )}
@@ -1373,12 +1447,22 @@ function refreshSyncBadge(g) {
   const n = (g?.behind ?? 0) + (g?.ahead ?? 0) + (g?.changes?.length ?? 0);
   a.dataset.badge = n ? (g.behind ? `↓${g.behind}` : "●") : "";
 }
-const pollSyncBadge = () => api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
-setTimeout(pollSyncBadge, 500);
-setInterval(pollSyncBadge, 60_000);
+// nav count on "inbox": everything waiting on the human
+function refreshInboxBadge(d) {
+  const a = document.querySelector('#nav a[data-r="inbox"]');
+  if (!a) return;
+  const n = ["questions", "drafts", "reviews", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
+  a.dataset.count = n || "";
+}
+const pollNavBadges = () => {
+  api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
+  api("/api/inbox").then(refreshInboxBadge).catch(() => {});
+};
+setTimeout(pollNavBadges, 500);
+setInterval(pollNavBadges, 60_000);
 onEvent(() => {
-  clearTimeout(pollSyncBadge.t);
-  pollSyncBadge.t = setTimeout(pollSyncBadge, 1500);
+  clearTimeout(pollNavBadges.t);
+  pollNavBadges.t = setTimeout(pollNavBadges, 1500);
 });
 
 const Sync = () => {
@@ -1424,7 +1508,7 @@ const App = () => {
 };
 
 document.getElementById("nav").innerHTML = Object.keys(routes)
-  .map((r) => `<a class="nav-link py-1 px-3" href="#/${r}" data-r="${r}">${r}</a>`)
+  .map((r) => `<a href="#/${r}" data-r="${r}">${r}</a>`)
   .join("");
 document.getElementById("theme-toggle").onclick = () => {
   const el = document.documentElement;
