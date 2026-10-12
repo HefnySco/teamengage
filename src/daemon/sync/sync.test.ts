@@ -116,6 +116,40 @@ describe("fetch-before-claim (SY-0001)", () => {
     expect(wsrA.store.idx.claims.has("WS-0001")).toBe(false);
   });
 
+  it("a foreign claim released locally but unpushed says 'commit+push'", async () => {
+    // machine B claims WS-0003 and pushes
+    writeFileSync(
+      join(plansB, "items", "WS", "WS-0003.md"),
+      "---\nid: WS-0003\ntype: task\ntitle: three\nstatus: ready\nversion: 1\ntargets: [\"@self:src/c.ts\"]\n---\n",
+    );
+    writeFileSync(
+      join(plansB, "claims", "WS-0003.yaml"),
+      claimToYaml(claim({ item: "WS-0003", holder: "gemini@laptop#b3", machine: "laptop", targets: ["@self:src/c.ts"] })),
+    );
+    execFileSync("git", ["add", "-A"], { cwd: plansB });
+    execFileSync("git", ["commit", "-m", "claim ws-0003"], { cwd: plansB });
+    execFileSync("git", ["push"], { cwd: plansB });
+
+    // a fresh machine G clones the remote (not behind), then the human
+    // releases B's claim on G: the claim file is deleted locally — staged,
+    // never pushed
+    const plansG = join(home, "g", ".teamengage");
+    mkdirSync(join(home, "g"), { recursive: true });
+    execFileSync("git", ["clone", remote, plansG]);
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: plansG });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: plansG });
+    const wsG = resolveWorkspace(join(plansG, ".."), { home });
+    const storeG = new PlansStore(wsG, "machine-g");
+    await storeG.init();
+    const opsG = new WorkspaceOps({ ws: wsG, store: storeG }, new SessionRegistry("machine-g"), undefined, home);
+    rmSync(join(plansG, "claims", "WS-0003.yaml"));
+    execFileSync("git", ["add", "-A"], { cwd: plansG });
+    storeG.idx.setClaim(null, "WS-0003");
+
+    const session = (await opsG.hello("claude")).session;
+    await expect(opsG.claim("WS-0003", session)).rejects.toThrow(/commit\+push/);
+  });
+
   it("offline (no remote) → claim proceeds marked unsynced", async () => {
     const local = join(home, "c", ".teamengage");
     seedPlans(local);

@@ -82,8 +82,10 @@ export async function remoteClaims(plansDir: string, ref?: string): Promise<Clai
  * fetch-before-claim hook (SY-0001, manual mode). When the plans repo has a
  * reachable remote, fetched claims/ are checked for the same item or
  * overlapping targets; a hit refuses the claim with "pull first" — the local
- * copy is stale by definition. Offline → claim proceeds, marked unsynced.
- * In `auto` mode the pull/push policy replaces this hook entirely.
+ * copy is stale by definition. When the remote claim was already released on
+ * this machine (deleted locally, not pushed) the refusal instead tells the
+ * agent to ask the human to commit+push. Offline → claim proceeds, marked
+ * unsynced. In `auto` mode the pull/push policy replaces this hook entirely.
  */
 export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Promise<void> {
   if (wsr.ws.config.sync !== "manual") return;
@@ -94,6 +96,17 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
   }
   const remote = await remoteClaims(wsr.ws.plansDir);
   const roots = resourceRoots(wsr.ws);
+  // A remote claim missing from the local index while the upstream is already
+  // an ancestor of HEAD was released on this machine (deleted locally, not
+  // pushed) — pulling can never clear it; the human must commit+push first.
+  const upstream = await upstreamRef(wsr.ws.plansDir);
+  const behind = upstream
+    ? (await aheadBehind(wsr.ws.plansDir, upstream).catch(() => ({ ahead: 0, behind: 0 }))).behind
+    : 0;
+  const advice = (rc: Claim) =>
+    upstream && behind === 0 && !wsr.store.idx.claims.has(rc.item)
+      ? "released locally — ask the human to commit+push the task folder"
+      : "pull first";
   for (const rc of remote) {
     if (rc.conflicted) continue;
     // our own released-but-unpushed claim: deleted locally, still on remote —
@@ -101,7 +114,7 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
     if (rc.machine === wsr.store.machine && !wsr.store.idx.claims.has(rc.item)) continue;
     if (rc.item === claim.item) {
       throw new ClaimRefusedError(
-        `claimed on ${rc.machine} by ${rc.holder} — pull first`,
+        `claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)}`,
         rc.holder,
         rc.machine,
       );
@@ -109,7 +122,7 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
     const o = targetsOverlap(claim.targets, rc.targets, roots);
     if (o.overlap) {
       throw new ClaimRefusedError(
-        `target ${o.via?.[0]} claimed on ${rc.machine} by ${rc.holder} — pull first`,
+        `target ${o.via?.[0]} claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)}`,
         rc.holder,
         rc.machine,
         o.via?.[0],

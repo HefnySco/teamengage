@@ -5,7 +5,8 @@ Multi-machine coordination through the plans repo's git remote
 
 - `sync.ts` — fetch-before-claim in `manual` mode: when the remote is
   reachable, fetched `claims/` are checked for the same item or overlapping
-  targets and a hit refuses the claim with "pull first" (offline → claim
-  proceeds, marked `unsynced`). Post-pull reconciliation marks loser claims
+  targets and a hit refuses the claim with "pull first" — or "released
+  locally, commit+push" when the claim was deleted on this machine but not
+  pushed (offline → claim proceeds, marked `unsynced`). Post-pull reconciliation marks loser claims
   `conflicted`. `handoffStatus`/`handoffLines` produce the machine-handoff
   report `hello` shows — e.g. `plans behind upstream — STOP`.

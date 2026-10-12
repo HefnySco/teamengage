@@ -26,7 +26,8 @@
     "daemon": "node dist/daemon/main.js",
     "autorun": "bash scripts/service.sh install",
     "restart": "bash scripts/service.sh restart",
-    "ui": "node dist/cli/main.js ui"
+    "ui": "node dist/cli/main.js ui",
+    "help": "node dist/cli/main.js --help"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
