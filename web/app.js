@@ -749,6 +749,7 @@ const Domains = () => {
 };
 
 // ---- Graph (UI-0003) ----------------------------------------------------------
+const ZOOM_MIN = 0.2, ZOOM_MAX = 16;
 const Graph = ({ onOpen }) => {
   const domains = useDomains();
   // q / status / domain / linked, remembered per tab like the board search
@@ -842,7 +843,7 @@ const Graph = ({ onOpen }) => {
     const ox = e.clientX - r.left - (parseFloat(st.paddingLeft) || 0);
     const oy = e.clientY - r.top - (parseFloat(st.paddingTop) || 0);
     const z1 = zoomRef.current;
-    const z2 = Math.min(4, Math.max(0.2, +(z1 * (e.deltaY < 0 ? 1.25 : 1 / 1.25)).toFixed(2)));
+    const z2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +(z1 * (e.deltaY < 0 ? 1.25 : 1 / 1.25)).toFixed(2)));
     if (z2 === z1) return;
     zoomAnchor.current = { ox, oy, cx: (v.scrollLeft + ox) / z1, cy: (v.scrollTop + oy) / z1 };
     applyZoom(z2);
@@ -879,11 +880,11 @@ const Graph = ({ onOpen }) => {
     </div>
     <div class="graph-wrap">
       <div class="graph-tools btn-group btn-group-sm">
-        <button class="btn btn-outline-secondary bg-body" title="zoom out" disabled=${zoom <= 0.2}
-          onClick=${() => applyZoom(Math.max(0.2, +(zoomRef.current / 1.25).toFixed(2)))}>−</button>
+        <button class="btn btn-outline-secondary bg-body" title="zoom out" disabled=${zoom <= ZOOM_MIN}
+          onClick=${() => applyZoom(Math.max(ZOOM_MIN, +(zoomRef.current / 1.25).toFixed(2)))}>−</button>
         <button class="btn btn-outline-secondary bg-body" title="reset zoom" onClick=${() => applyZoom(1)}>${Math.round(zoom * 100)}%</button>
-        <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= 4}
-          onClick=${() => applyZoom(Math.min(4, +(zoomRef.current * 1.25).toFixed(2)))}>+</button>
+        <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= ZOOM_MAX}
+          onClick=${() => applyZoom(Math.min(ZOOM_MAX, +(zoomRef.current * 1.25).toFixed(2)))}>+</button>
       </div>
       <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }}
         onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
