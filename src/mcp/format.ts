@@ -32,11 +32,18 @@ export function itemLine(it: {
   claim?: { holder: string; machine: string };
   ready?: boolean;
   blocked?: boolean;
+  plan_state?: string;
+  plan_progress?: { done: number; total: number };
 }): string {
   const flags: string[] = [];
   if (it.claim) flags.push(`held:${it.claim.holder}`);
   if (it.blocked) flags.push("blocked");
   else if (it.ready) flags.push("ready");
+  if (it.plan_state) {
+    flags.push(
+      `plan:${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0}`,
+    );
+  }
   const suffix = flags.length ? `  ${flags.join(" ")}` : "";
   const tags = it.meta.domains?.length ? `  ${it.meta.domains.map((d) => `#${d}`).join(" ")}` : "";
   return `${it.meta.id} ${it.meta.status} "${it.meta.title}"${tags}${suffix}`;

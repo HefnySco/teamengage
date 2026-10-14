@@ -86,6 +86,10 @@ beforeAll(async () => {
       `---\nid: ${id}\ntype: task\ntitle: task ${n}\nstatus: ready\nversion: 1\ntargets: ["@self:src/f${n}.ts"]\n---\n\n## Summary\nx\n`,
     );
   }
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0004.md"),
+    `---\nid: WS-0004\ntype: epic\ntitle: epic 4\nstatus: ready\nversion: 1\n---\n\n## Summary\nplan\n`,
+  );
   for (const a of [
     ["init", "-b", "main"],
     ["config", "user.email", "t@t"],
@@ -214,6 +218,28 @@ describe("plain-HTTP agent API", () => {
     // WS-0001 is held by the live gemini-cli session from the full-loop test
     const h = await call("POST", "/agent/hello", { body: { agent: "gemini-cli" } });
     expect(h.text).not.toContain("WS-0001");
+  });
+
+  it("epics are plans: next skips them; claim and close_plan are refused", async () => {
+    const guide = await call("GET", "/agent");
+    for (const tool of ["close_plan", "reopen_plan"]) {
+      expect(guide.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
+    }
+    const t = await hello("epic-check");
+    const next = await call("GET", "/agent/next?limit=10", { token: t });
+    expect(next.text).not.toContain("WS-0004");
+    const claim = await call("POST", "/agent/claim/WS-0004", { token: t });
+    expect(claim.status).toBe(409);
+    expect(claim.text).toContain("epics are plans");
+    // close_plan is human-only — an agent session is refused
+    const close = await call("POST", "/agent/close_plan/WS-0004", { token: t });
+    expect(close.status).toBe(403);
+    expect(close.text).toContain("human-only");
+    // brief still works — epics are readable, just not claimable
+    const brief = await call("GET", "/agent/brief/WS-0004", { token: t });
+    expect(brief.status).toBe(200);
+    expect(brief.text).toContain("WS-0004");
+    expect(brief.text).toContain("plan:");
   });
 });
 

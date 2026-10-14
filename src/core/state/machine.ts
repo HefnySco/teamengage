@@ -62,6 +62,13 @@ export type Action =
   /** Human bookmarks an item (any status, even claimed); a different colour re-stars it. */
   | { type: "star"; color?: StarColor }
   | { type: "unstar" }
+  /**
+   * Human closes a plan (epic): no more parts are coming — plan_state turns
+   * active, then done when every part finishes. Status is untouched.
+   */
+  | { type: "close_plan" }
+  /** Human reopens a closed plan (epic) — more parts may still be added. */
+  | { type: "reopen_plan" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -181,6 +188,9 @@ export function transition(
 
     case "claim": {
       if (from !== "ready") fail(from, action.type);
+      if (meta.type === "epic") {
+        throw new ClaimRefusedError("epics are plans — claim their tasks");
+      }
       if (meta.archived) throw new InvalidTransitionError("cannot claim: item is archived — unarchive first", from, "claim");
       if (actor.kind === "daemon") throw new ForbiddenError("daemon cannot claim");
       if (ctx.depsDone === false) {
@@ -415,6 +425,40 @@ export function transition(
       out.meta.updated = meta.updated; // a bookmark isn't an edit — keeps the card's place in date-sorted views
       out.events.push(ev(actor, stamp, meta.id, "unstar", from, from));
       out.log.push(`- ${stamp} ${who} unstarred (status ${from})`);
+      return out;
+    }
+
+    case "close_plan": {
+      requireHuman(actor, action.type);
+      if (meta.type !== "epic") {
+        throw new InvalidTransitionError(
+          `cannot close_plan: ${meta.id} is a ${meta.type}, not an epic`,
+          from,
+          action.type,
+        );
+      }
+      if (meta.plan_closed)
+        throw new InvalidTransitionError("plan is already closed", from, action.type);
+      out.meta.plan_closed = true;
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
+      out.log.push(`- ${stamp} ${who} closed the plan — no more parts expected`);
+      return out;
+    }
+
+    case "reopen_plan": {
+      requireHuman(actor, action.type);
+      if (meta.type !== "epic") {
+        throw new InvalidTransitionError(
+          `cannot reopen_plan: ${meta.id} is a ${meta.type}, not an epic`,
+          from,
+          action.type,
+        );
+      }
+      if (!meta.plan_closed)
+        throw new InvalidTransitionError("plan is not closed", from, action.type);
+      out.meta.plan_closed = false;
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
+      out.log.push(`- ${stamp} ${who} reopened the plan`);
       return out;
     }
 

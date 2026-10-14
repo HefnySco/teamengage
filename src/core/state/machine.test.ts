@@ -244,6 +244,57 @@ describe("archive", () => {
   });
 });
 
+describe("close_plan / reopen_plan (epics)", () => {
+  const epic = (status: Status, closed = false) =>
+    ItemMeta.parse({
+      id: "EP-0001",
+      type: "epic",
+      title: "p",
+      status,
+      plan_closed: closed || undefined,
+    });
+
+  it("toggles plan_closed without touching the status", () => {
+    for (const s of ["draft", "ready", "in_progress", "waiting", "in_review", "done"] as Status[]) {
+      const r = transition(epic(s), { type: "close_plan" }, human, ctx());
+      expect(r.meta.status).toBe(s);
+      expect(r.meta.plan_closed).toBe(true);
+      const back = transition(r.meta, { type: "reopen_plan" }, human, ctx());
+      expect(back.meta.status).toBe(s);
+      expect(back.meta.plan_closed).toBe(false);
+    }
+  });
+
+  it("agents, non-epics, and wrong flag states are refused", () => {
+    expect(() => transition(epic("ready"), { type: "close_plan" }, agent, ctx())).toThrow(
+      ForbiddenError,
+    );
+    expect(() => transition(epic("ready", true), { type: "reopen_plan" }, agent, ctx())).toThrow(
+      ForbiddenError,
+    );
+    expect(() => transition(item("ready"), { type: "close_plan" }, human, ctx())).toThrow(
+      /not an epic/,
+    );
+    expect(() => transition(item("ready"), { type: "reopen_plan" }, human, ctx())).toThrow(
+      /not an epic/,
+    );
+    expect(() => transition(epic("ready", true), { type: "close_plan" }, human, ctx())).toThrow(
+      /already closed/,
+    );
+    expect(() => transition(epic("ready"), { type: "reopen_plan" }, human, ctx())).toThrow(
+      /not closed/,
+    );
+  });
+
+  it("an epic can never be claimed — epics are plans", () => {
+    for (const a of [agent, human] as Actor[]) {
+      expect(() =>
+        transition(epic("ready"), { type: "claim", claim: claimOf() }, a, ctx({ depsDone: true })),
+      ).toThrow(/epics are plans/);
+    }
+  });
+});
+
 describe("star", () => {
   it("bookmarks any status without touching it — even claimed items", () => {
     for (const s of ["draft", "ready", "hold", "in_progress", "waiting", "in_review", "done", "dropped"] as Status[]) {

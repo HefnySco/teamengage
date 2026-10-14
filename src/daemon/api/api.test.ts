@@ -600,3 +600,54 @@ describe("change_answer", () => {
     expect(log).toContain(`changed answer ${own[0].meta.id}: "a" → "b, after all"`);
   });
 });
+
+describe("plan tracking (epics)", () => {
+  it("next skips epics, claim refuses them; close_plan → active → done; reopen goes back", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "epic", title: "Plan P" },
+        { type: "task", title: "P part 1", parent: "#0" },
+      ],
+      human,
+    );
+    const [epic, t1] = ids;
+    await ops.approve(epic);
+    await ops.approve(t1);
+    // a ready epic is never offered to agents and can't be claimed
+    expect(ops.next(50).map((i) => i.meta.id)).not.toContain(epic);
+    const s = ctx.sessions.hello("plan-agent");
+    await expect(ops.claim(epic, s)).rejects.toThrow(/epics are plans/);
+    expect(store.idx.planState(epic)).toBe("decomposing");
+    expect(store.idx.planProgress(epic)).toEqual({ done: 0, total: 1 });
+    // closing is human-only: an agent actor is refused
+    await expect(ops.closePlan(epic, s)).rejects.toThrow(/human-only/);
+    const r = await api(`/api/items/${epic}/close_plan`, { method: "POST" });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { meta: { plan_closed?: boolean } }).meta.plan_closed).toBe(true);
+    expect(store.idx.planState(epic)).toBe("active");
+    // the board JSON carries plan fields on epics
+    const list = (await (await api("/api/items?type=epic")).json()) as Array<{
+      id: string;
+      plan_state?: string;
+      plan_progress?: { done: number; total: number };
+    }>;
+    const row = list.find((i) => i.id === epic)!;
+    expect(row.plan_state).toBe("active");
+    expect(row.plan_progress).toEqual({ done: 0, total: 1 });
+    // the part finishes → the plan is done
+    await ops.complete(t1);
+    expect(store.idx.planState(epic)).toBe("done");
+    // reopen → back to decomposing (closed flag off again)
+    const rr = await api(`/api/items/${epic}/reopen_plan`, { method: "POST" });
+    expect(rr.status).toBe(200);
+    expect(store.idx.planState(epic)).toBe("decomposing");
+    // close_plan on a non-epic fails cleanly
+    const bad = await api(`/api/items/${t1}/close_plan`, { method: "POST" });
+    expect(bad.status).toBe(400);
+  });
+});

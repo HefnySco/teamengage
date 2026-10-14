@@ -186,6 +186,8 @@ blocked  = derived: any depends_on not done (in_review counts as done
 dropped  = human only; ──undrop──▶ draft (re-approval required)
 change_answer = human only, any status but done/dropped: revise the item's latest answer
            (same decision id, version +1, old → new in the Log)
+close_plan = human only, epic: sets plan_closed — a flag, not a status
+           (reopen_plan clears it; plan_state below is derived)
 done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mistake;
            the item goes through approve → claim again)
 ```
@@ -217,6 +219,16 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   marker with no workflow effect: it works in any status — even while
   claimed — hides nothing, and never feeds `next` ordering (that stays
   `priority`-driven).
+- A **plan** is an epic; its parts are the items whose `parent` points at
+  it (sub-plans are epics too, so it nests). `plan_closed` is the only
+  stored flag — the human sets it (close plan / reopen plan on the item
+  page) when no more parts are coming. `plan_state` is **derived, never
+  stored**: `draft` with no children, `decomposing` until closed, `active`
+  while any descendant is unfinished, `done` when every descendant is
+  done/dropped and every sub-plan is itself done (parent cycles count as
+  not done). `plan_progress` is finished/total over non-epic descendants;
+  archived parts still count. Epics are plans, not work — `next` skips
+  them and `claim` answers "epics are plans — claim their tasks".
 - **Delete** (`te delete <ID> --yes`, delete in the UI) removes an item from
   TeamEngage, not from disk: the tracking file goes, the event log keeps a
   `delete` record, and in overlay mode the task file stays as plain Markdown
@@ -226,7 +238,8 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   drop (decided against, still listed) and archive (hidden, restorable).
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
   `undrop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
-  `star`/`unstar`, and `release` of someone else's claim.
+  `star`/`unstar`, `close_plan`/`reopen_plan`, and `release` of someone
+  else's claim.
 - `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
   any non-done item straight to `done` — for work finished outside
   TeamEngage. No review and no merge: a claim is released, branches are kept.

@@ -107,6 +107,7 @@ export class WorkspaceOps {
     const d = domain ? normalizeDomain(domain) : undefined;
     return this.index
       .readyItems()
+      .filter((i) => i.meta.type !== "epic") // epics are plans — agents claim their tasks
       .filter((i) => !d || i.meta.domains.includes(d))
       .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
       .slice(0, limit);
@@ -290,6 +291,9 @@ export class WorkspaceOps {
     session: Session,
   ): Promise<{ claim: Claim; version: number; resumed: Array<{ resource: string; branch: string }> }> {
     const it = this.item(id);
+    if (it.meta.type === "epic") {
+      throw new ClaimRefusedError("epics are plans — claim their tasks");
+    }
     const mine = it.claim;
     if (mine) {
       throw new ClaimRefusedError(
@@ -689,6 +693,22 @@ export class WorkspaceOps {
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });
+  }
+
+  /**
+   * Close a plan (epic): no more parts are coming. plan_state turns `active`,
+   * then `done` when every descendant finishes. Human-only — an agent actor
+   * is refused by the state machine.
+   */
+  async closePlan(id: string, actor: Session | "human" = "human") {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "close_plan" });
+  }
+
+  /** Reopen a closed plan — more parts may still be added. Human-only. */
+  async reopenPlan(id: string, actor: Session | "human" = "human") {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "reopen_plan" });
   }
 
   async humanClaim(id: string) {

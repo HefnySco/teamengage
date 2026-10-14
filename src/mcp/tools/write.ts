@@ -174,6 +174,47 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "close_plan",
+    {
+      description:
+        "Close a plan (epic): no more parts coming — plan_state turns active, then done when every part finishes. Human-only; agents are refused.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.closePlan(id, s);
+        return okText(`plan closed ${id}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reopen_plan",
+    {
+      description: "Reopen a closed plan (epic) — more parts may still be added. Human-only; agents are refused.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.reopenPlan(id, s);
+        return okText(`plan reopened ${id}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "propose",
     {
       description:

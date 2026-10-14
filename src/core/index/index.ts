@@ -41,6 +41,9 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
   return words.every((w) => hay.includes(w));
 }
 
+/** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
+export type PlanState = "draft" | "decomposing" | "active" | "done";
+
 export interface IndexedItem {
   meta: ItemMeta;
   sections: Section[];
@@ -55,6 +58,10 @@ export interface IndexedItem {
   /** status ready ∧ not blocked ∧ not claimed */
   ready: boolean;
   turn: Turn;
+  /** epics only: derived plan lifecycle (undefined on non-epics) */
+  plan_state?: PlanState;
+  /** epics only: finished/total over all non-epic descendants */
+  plan_progress?: { done: number; total: number };
   /** set when the file can't be parsed — index keeps it, validator reports it */
   invalid?: string;
 }
@@ -280,6 +287,11 @@ export class Index {
       it.turn = turnOf(it.meta.status);
       it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim;
     }
+    // plan lifecycle for epics (children are already built above)
+    for (const it of this.items.values()) {
+      it.plan_state = this.planState(it.meta.id);
+      it.plan_progress = this.planProgress(it.meta.id);
+    }
   }
 
   /** Change the review_unblocks rule and re-derive blocked/ready. */
@@ -290,6 +302,60 @@ export class Index {
 
   get(id: string): IndexedItem | undefined {
     return this.items.get(id);
+  }
+
+  /**
+   * An epic's derived plan lifecycle: `draft` while it has no children,
+   * `decomposing` until the human sets `plan_closed`, then `active` while any
+   * part is unfinished and `done` when every descendant is finished —
+   * non-epics done/dropped, sub-plans closed and themselves finished.
+   * Archived descendants still count. Undefined for non-epics.
+   */
+  planState(id: string): PlanState | undefined {
+    const it = this.items.get(id);
+    if (!it || it.meta.type !== "epic") return undefined;
+    if (it.children.length === 0) return "draft";
+    if (it.meta.plan_closed !== true) return "decomposing";
+    return this.planFinished(id, new Set([id])) ? "done" : "active";
+  }
+
+  /** `{done, total}` over all non-epic descendants; done counts done+dropped. */
+  planProgress(id: string): { done: number; total: number } | undefined {
+    const it = this.items.get(id);
+    if (!it || it.meta.type !== "epic") return undefined;
+    let done = 0;
+    let total = 0;
+    const visited = new Set([id]);
+    const stack = [...it.children];
+    for (let cid = stack.pop(); cid !== undefined; cid = stack.pop()) {
+      if (visited.has(cid)) continue; // parent cycle — don't loop
+      visited.add(cid);
+      const c = this.items.get(cid);
+      if (!c) continue;
+      if (c.meta.type === "epic") {
+        stack.push(...c.children);
+      } else {
+        total += 1;
+        if (c.meta.status === "done" || c.meta.status === "dropped") done += 1;
+      }
+    }
+    return { done, total };
+  }
+
+  /** Every descendant finished — a revisited id means a parent cycle → not done. */
+  private planFinished(id: string, visited: Set<string>): boolean {
+    for (const cid of this.items.get(id)?.children ?? []) {
+      if (visited.has(cid)) return false;
+      visited.add(cid);
+      const c = this.items.get(cid);
+      if (!c) continue;
+      const finished =
+        c.meta.type === "epic"
+          ? c.meta.plan_closed === true && this.planFinished(cid, visited)
+          : c.meta.status === "done" || c.meta.status === "dropped";
+      if (!finished) return false;
+    }
+    return true;
   }
 
   /** Ready items, best first: priority asc, then oldest created. */

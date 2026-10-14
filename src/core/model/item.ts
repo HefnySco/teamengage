@@ -75,6 +75,11 @@ export const ItemMeta = z
     /** the human's watch marker — board ★ colour, no workflow effect; unset = not starred */
     star_color: StarColor.optional(),
     starred_at: z.string().optional(),
+    /**
+     * epic only: the human closed the plan — no more parts are coming.
+     * plan_state stays derived (see Index.planState), never stored.
+     */
+    plan_closed: z.boolean().optional(),
   })
   .passthrough();
 export type ItemMeta = z.infer<typeof ItemMeta>;

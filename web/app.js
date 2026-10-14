@@ -70,11 +70,6 @@ const route = () => location.hash.replace(/^#\/?/, "") || "inbox";
 // ---- shared bits ------------------------------------------------------------
 const STALE_MS = 24 * 3600 * 1000;
 const staleClaim = (c) => !c.conflicted && Date.now() - Date.parse(c.last_seen ?? c.claimed_at) > STALE_MS;
-const ClaimBadges = ({ c }) => html`
-  ${c.conflicted && html`<span class="badge text-bg-danger ms-1">conflicted</span>`}
-  ${c.unsynced && html`<span class="badge text-bg-warning ms-1">unsynced</span>`}
-  ${staleClaim(c) && html`<span class="badge text-bg-warning ms-1">stale</span>`}
-`;
 // domain colours, fetched once and refreshed on change (chips everywhere use them)
 let domainColors = {};
 const domainListeners = new Set();
@@ -117,6 +112,19 @@ const DomainChips = ({ ds, onClick, active }) =>
   (ds ?? []).length ? html`<span class="d-inline-flex flex-wrap gap-1">${ds.map((d) => html`<${DomainChip} key=${d} d=${d} onClick=${onClick} active=${active === d} />`)}</span>` : null;
 
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
+// an epic's derived plan lifecycle (plan_state) — draft → decomposing → active → done
+const PLAN_BADGE = {
+  draft: "text-bg-secondary",
+  decomposing: "text-bg-info",
+  active: "text-bg-warning",
+  done: "text-bg-success",
+};
+const PlanBadge = ({ i }) => {
+  if (!i.plan_state) return null;
+  const p = `${i.plan_progress?.done ?? 0}/${i.plan_progress?.total ?? 0}`;
+  return html`<span class="badge ${PLAN_BADGE[i.plan_state] ?? "text-bg-secondary"}"
+    title="plan ${i.plan_state} — ${p} parts finished">plan ${i.plan_state} ${p}</span>`;
+};
 
 // bootstrap-icons glyphs, inlined (no icon font dependency)
 const ArchiveIcon = () => html`
@@ -577,6 +585,7 @@ const Board = ({ onOpen }) => {
                   <div class="bcard" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="bcard-top">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
+                      ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
                       <span class="bcard-x">
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
                           onClick=${(e) => {
@@ -1092,6 +1101,7 @@ const ItemView = ({ id }) => {
     <div class="item-bar d-flex align-items-center gap-2">
       <span class="id">${it.meta.id}</span>
       <${Badge} s=${it.meta.status} />
+      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="item-bar-title text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap">
@@ -1102,6 +1112,8 @@ const ItemView = ({ id }) => {
         ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
         ${it.claim && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
         ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}>undrop</button>`}
+        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="no more parts are coming — the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}>close plan</button>`}
+        ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}>reopen plan</button>`}
         ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
         ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
         <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>

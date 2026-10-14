@@ -131,6 +131,75 @@ describe("Index", () => {
   });
 });
 
+describe("plan_state and plan_progress (epics)", () => {
+  it("draft → decomposing → active → done as children appear, close, and finish", async () => {
+    writeItem("PL-0001", { type: "epic" });
+    let idx = await Index.load(plans);
+    expect(idx.planState("PL-0001")).toBe("draft");
+    expect(idx.get("PL-0001")!.plan_state).toBe("draft");
+    expect(idx.planProgress("PL-0001")).toEqual({ done: 0, total: 0 });
+
+    writeItem("PL-0002", { parent: "PL-0001" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0001")).toBe("decomposing");
+    expect(idx.planProgress("PL-0001")).toEqual({ done: 0, total: 1 });
+
+    writeItem("PL-0001", { type: "epic", plan_closed: "true" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0001")).toBe("active");
+
+    writeItem("PL-0002", { parent: "PL-0001", status: "done" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0001")).toBe("done");
+    expect(idx.planProgress("PL-0001")).toEqual({ done: 1, total: 1 });
+  });
+
+  it("non-epics have no plan fields; old epics without plan_closed still load", async () => {
+    const idx = await Index.load(plans);
+    expect(idx.planState("GL-0001")).toBeUndefined();
+    expect(idx.get("GL-0001")!.plan_state).toBeUndefined();
+    expect(idx.planProgress("GL-0001")).toBeUndefined();
+  });
+
+  it("nested: a plan isn't done until sub-plans are closed and their parts finish", async () => {
+    writeItem("PL-0010", { type: "epic", plan_closed: "true" }); // plan A
+    writeItem("PL-0011", { type: "epic", parent: "PL-0010" }); // sub-plan B
+    writeItem("PL-0012", { parent: "PL-0011" }); // task T
+    let idx = await Index.load(plans);
+    expect(idx.planState("PL-0010")).toBe("active"); // B not closed yet
+    expect(idx.planState("PL-0011")).toBe("decomposing");
+
+    writeItem("PL-0011", { type: "epic", parent: "PL-0010", plan_closed: "true" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0010")).toBe("active"); // T not done yet
+
+    writeItem("PL-0012", { parent: "PL-0011", status: "done" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0011")).toBe("done");
+    expect(idx.planState("PL-0010")).toBe("done");
+    // progress counts non-epic descendants only — B isn't a part itself
+    expect(idx.planProgress("PL-0010")).toEqual({ done: 1, total: 1 });
+  });
+
+  it("dropped and archived children count as finished", async () => {
+    writeItem("PL-0020", { type: "epic", plan_closed: "true" });
+    writeItem("PL-0021", { parent: "PL-0020", status: "dropped" });
+    writeItem("PL-0022", { parent: "PL-0020", status: "done", archived: "true" });
+    const idx = await Index.load(plans);
+    expect(idx.planState("PL-0020")).toBe("done");
+    expect(idx.planProgress("PL-0020")).toEqual({ done: 2, total: 2 });
+  });
+
+  it("a parent cycle reports not done instead of hanging", async () => {
+    writeItem("PL-0030", { type: "epic", plan_closed: "true", parent: "PL-0031" });
+    writeItem("PL-0031", { type: "epic", plan_closed: "true", parent: "PL-0030" });
+    const idx = await Index.load(plans);
+    expect(idx.planState("PL-0030")).toBe("active");
+    expect(idx.planState("PL-0031")).toBe("active");
+    expect(idx.planProgress("PL-0030")).toEqual({ done: 0, total: 0 });
+  });
+});
+
 describe("500-item fixture", () => {
   it("loads in < 300ms", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-big-"));

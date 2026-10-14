@@ -90,7 +90,23 @@ describe("MCP tools (MC-0001/2/3)", () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
-      ["ask", "brief", "claim", "graph", "hello", "log", "next", "note", "propose", "query", "release", "simple", "submit"].sort(),
+      [
+        "ask",
+        "brief",
+        "claim",
+        "close_plan",
+        "graph",
+        "hello",
+        "log",
+        "next",
+        "note",
+        "propose",
+        "query",
+        "release",
+        "reopen_plan",
+        "simple",
+        "submit",
+      ].sort(),
     );
   });
 

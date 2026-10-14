@@ -62,6 +62,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         blocked: i.blocked,
         ready: i.ready,
         turn: i.turn,
+        ...(i.meta.type === "epic"
+          ? { plan_state: i.plan_state, plan_progress: i.plan_progress }
+          : {}),
       }));
     } catch (e) {
       return sendErr(reply, e);
@@ -371,6 +374,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     return ops.setUnblocksOn(id, on as "review" | "done" | "default");
   });
   act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
+  act("close_plan", (ops, id) => ops.closePlan(id));
+  act("reopen_plan", (ops, id) => ops.reopenPlan(id));
 
   // ---- domains vocabulary --------------------------------------------------
   const route = (method: "GET" | "POST", path: string, fn: (ops: WorkspaceOps, req: { params: unknown; body: unknown; query: unknown }) => Promise<unknown>) =>

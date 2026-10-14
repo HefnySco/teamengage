@@ -109,6 +109,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const lines: string[] = [
           `${it.meta.id} ${it.meta.status}${it.meta.archived ? " [archived]" : ""} "${it.meta.title}" v${it.meta.version}`,
         ];
+        if (it.meta.type === "epic" && it.plan_state) {
+          lines.push(
+            `plan: ${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0} — epics are plans; work their children, not this item`,
+          );
+        }
         if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
