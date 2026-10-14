@@ -626,6 +626,41 @@ const Board = ({ onOpen }) => {
 
 // ---- Plans ---------------------------------------------------------------------
 // epics as a tree: plan → sub-plans → tasks, with plan_state, progress and deps
+// PlanBar/PlanNode live at module scope: defined inside Plans they would be new
+// component types every render, so each SSE-driven refetch would unmount/remount
+// the whole tree — replacing the DOM under the cursor and eating clicks
+const PlanBar = ({ p }) => {
+  const total = p?.total ?? 0;
+  const pct = total ? Math.round(((p?.done ?? 0) * 100) / total) : 0;
+  return html`<div class="progress flex-shrink-0" style=${{ width: "6rem", height: "0.45rem" }} title="${p?.done ?? 0}/${total} parts finished">
+    <div class="progress-bar bg-success" style=${{ width: `${pct}%` }}></div></div>`;
+};
+const PlanNode = ({ i, depth, tree }) => {
+  const isPlan = i.type === "epic";
+  const isOpen = isPlan && tree.isOpenOf(i, depth);
+  const children = tree.kids.get(i.id) ?? [];
+  const shown = tree.words.length ? children.filter(tree.subtreeMatches) : children;
+  return html`
+    <div>
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+        onClick=${() => tree.onOpen(i.id)}>
+        <span style=${{ width: "1rem", textAlign: "center" }} title=${isPlan ? (isOpen ? "collapse" : "expand") : ""}
+          onClick=${(e) => {
+            if (!isPlan) return;
+            e.stopPropagation(); // fold, don't open the item
+            tree.setOpen({ ...tree.open, [i.id]: !isOpen });
+          }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
+        <span class="id text-nowrap">${i.id}</span>
+        ${isPlan ? html`<${PlanBadge} i=${i} />` : html`<${Badge} s=${i.status} />`}
+        <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
+        ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
+        ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
+        ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
+        ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
+      </div>
+      ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
+    </div>`;
+};
 const Plans = ({ onOpen }) => {
   const { data } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.plans.q"));
@@ -670,38 +705,7 @@ const Plans = ({ onOpen }) => {
   };
   const isOpenOf = (i, depth) => open[i.id] ?? (depth === 0 || words.length > 0);
   const setAll = (v) => setOpen(Object.fromEntries(data.filter((i) => i.type === "epic").map((i) => [i.id, v])));
-  const Bar = ({ p }) => {
-    const total = p?.total ?? 0;
-    const pct = total ? Math.round(((p?.done ?? 0) * 100) / total) : 0;
-    return html`<div class="progress flex-shrink-0" style=${{ width: "6rem", height: "0.45rem" }} title="${p?.done ?? 0}/${total} parts finished">
-      <div class="progress-bar bg-success" style=${{ width: `${pct}%` }}></div></div>`;
-  };
-  const Node = ({ i, depth }) => {
-    const isPlan = i.type === "epic";
-    const isOpen = isPlan && isOpenOf(i, depth);
-    const children = kids.get(i.id) ?? [];
-    const shown = words.length ? children.filter(subtreeMatches) : children;
-    return html`
-      <div>
-        <div class="d-flex align-items-center gap-2 py-1 border-bottom" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
-          onClick=${() => onOpen(i.id)}>
-          <span style=${{ width: "1rem", textAlign: "center" }} title=${isPlan ? (isOpen ? "collapse" : "expand") : ""}
-            onClick=${(e) => {
-              if (!isPlan) return;
-              e.stopPropagation(); // fold, don't open the item
-              setOpen({ ...open, [i.id]: !isOpen });
-            }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
-          <span class="id text-nowrap">${i.id}</span>
-          ${isPlan ? html`<${PlanBadge} i=${i} />` : html`<${Badge} s=${i.status} />`}
-          <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
-          ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
-          ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
-          ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
-          ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${Bar} p=${i.plan_progress} /></span>`}
-        </div>
-        ${isOpen && shown.map((c) => html`<${Node} key=${c.id} i=${c} depth=${depth + 1} />`)}
-      </div>`;
-  };
+  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
@@ -717,7 +721,7 @@ const Plans = ({ onOpen }) => {
       <span class="text-secondary small">${visible.length} of ${roots.length} plan(s)</span>
     </div>
     <div class="card card-body py-1">
-      ${visible.map((r) => html`<${Node} key=${r.id} i=${r} depth=${0} />`)}
+      ${visible.map((r) => html`<${PlanNode} key=${r.id} i=${r} depth=${0} tree=${tree} />`)}
       ${!visible.length && html`<div class="text-secondary py-2">no plans${words.length ? " match the search" : ""}</div>`}
     </div>
   `;
