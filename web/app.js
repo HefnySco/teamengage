@@ -624,6 +624,105 @@ const Board = ({ onOpen }) => {
   `;
 };
 
+// ---- Plans ---------------------------------------------------------------------
+// epics as a tree: plan → sub-plans → tasks, with plan_state, progress and deps
+const Plans = ({ onOpen }) => {
+  const { data } = useApi("/api/items");
+  const [q, setQ] = useState(() => loadSearch("te.plans.q"));
+  const [showDone, setShowDoneState] = useState(() => loadSearch("te.plans.done") === "1");
+  const [open, setOpenState] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("te.plans.open") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  if (!data) return html`<p class="text-secondary">loading…</p>`;
+  const setOpen = (next) => {
+    setOpenState(next);
+    try {
+      localStorage.setItem("te.plans.open", JSON.stringify(next));
+    } catch {
+      /* storage blocked — fold state just isn't remembered */
+    }
+  };
+  const items = new Map(data.map((i) => [i.id, i]));
+  const kids = new Map();
+  for (const i of data) {
+    if (!i.parent || !items.has(i.parent)) continue;
+    if (!kids.has(i.parent)) kids.set(i.parent, []);
+    kids.get(i.parent).push(i);
+  }
+  // tasks first, then sub-plans — each in id order
+  for (const list of kids.values()) list.sort((a, b) => (a.type === "epic") - (b.type === "epic") || byId(a, b));
+  const roots = data.filter((i) => i.type === "epic" && !(i.parent && items.has(i.parent))).sort((a, b) => byCreated(b, a));
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // a plan matches when it or any descendant matches the search
+  const subtreeMatches = (i) => matches(i, words) || (kids.get(i.id) ?? []).some(subtreeMatches);
+  const visible = roots.filter((r) => (showDone || r.plan_state !== "done") && (!words.length || subtreeMatches(r)));
+  const setSearch = (v) => {
+    setQ(v);
+    saveSearch("te.plans.q", v);
+  };
+  const setShowDone = (v) => {
+    setShowDoneState(v);
+    saveSearch("te.plans.done", v ? "1" : "");
+  };
+  const isOpenOf = (i, depth) => open[i.id] ?? (depth === 0 || words.length > 0);
+  const setAll = (v) => setOpen(Object.fromEntries(data.filter((i) => i.type === "epic").map((i) => [i.id, v])));
+  const Bar = ({ p }) => {
+    const total = p?.total ?? 0;
+    const pct = total ? Math.round(((p?.done ?? 0) * 100) / total) : 0;
+    return html`<div class="progress flex-shrink-0" style=${{ width: "6rem", height: "0.45rem" }} title="${p?.done ?? 0}/${total} parts finished">
+      <div class="progress-bar bg-success" style=${{ width: `${pct}%` }}></div></div>`;
+  };
+  const Node = ({ i, depth }) => {
+    const isPlan = i.type === "epic";
+    const isOpen = isPlan && isOpenOf(i, depth);
+    const children = kids.get(i.id) ?? [];
+    const shown = words.length ? children.filter(subtreeMatches) : children;
+    return html`
+      <div>
+        <div class="d-flex align-items-center gap-2 py-1 border-bottom" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+          onClick=${() => onOpen(i.id)}>
+          <span style=${{ width: "1rem", textAlign: "center" }} title=${isPlan ? (isOpen ? "collapse" : "expand") : ""}
+            onClick=${(e) => {
+              if (!isPlan) return;
+              e.stopPropagation(); // fold, don't open the item
+              setOpen({ ...open, [i.id]: !isOpen });
+            }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
+          <span class="id text-nowrap">${i.id}</span>
+          ${isPlan ? html`<${PlanBadge} i=${i} />` : html`<${Badge} s=${i.status} />`}
+          <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
+          ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
+          ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
+          ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
+          ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${Bar} p=${i.plan_progress} /></span>`}
+        </div>
+        ${isOpen && shown.map((c) => html`<${Node} key=${c.id} i=${c} depth=${depth + 1} />`)}
+      </div>`;
+  };
+  return html`
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Plans</h2>
+      <${SearchBox}
+        style=${{ maxWidth: "24rem" }}
+        placeholder="search plans and their tasks…"
+        value=${q}
+        onChange=${setSearch}
+        autofocus
+      />
+      <button class="tbtn ${showDone ? "primary" : ""}" title="also show finished plans" onClick=${() => setShowDone(!showDone)}>done plans</button>
+      <span class="seg"><button onClick=${() => setAll(true)}>expand all</button><button onClick=${() => setAll(false)}>collapse all</button></span>
+      <span class="text-secondary small">${visible.length} of ${roots.length} plan(s)</span>
+    </div>
+    <div class="card card-body py-1">
+      ${visible.map((r) => html`<${Node} key=${r.id} i=${r} depth=${0} />`)}
+      ${!visible.length && html`<div class="text-secondary py-2">no plans${words.length ? " match the search" : ""}</div>`}
+    </div>
+  `;
+};
+
 // ---- Archive -------------------------------------------------------------------
 // archived items keep their status; they only leave the board, inbox, graph and next
 const Archive = ({ onOpen }) => {
@@ -1509,7 +1608,7 @@ const Sync = () => {
 };
 
 // ---- shell ------------------------------------------------------------------------
-const routes = { inbox: Inbox, board: Board, graph: Graph, activity: Activity, sync: Sync, domains: Domains, archive: Archive };
+const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, domains: Domains, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

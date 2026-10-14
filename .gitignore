@@ -10,3 +10,5 @@ web/dist/
 
 # local-only skills (machine-specific, not shipped)
 skills/te-analysis/
+.playwright-mcp/
+
