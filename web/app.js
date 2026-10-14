@@ -642,7 +642,7 @@ const PlanNode = ({ i, depth, tree }) => {
   const shown = tree.words.length ? children.filter(tree.subtreeMatches) : children;
   return html`
     <div>
-      <div class="d-flex align-items-center gap-2 py-1 border-bottom" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
         onClick=${() => tree.onOpen(i.id)}>
         <span style=${{ width: "1rem", textAlign: "center" }} title=${isPlan ? (isOpen ? "collapse" : "expand") : ""}
           onClick=${(e) => {
@@ -657,6 +657,11 @@ const PlanNode = ({ i, depth, tree }) => {
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
+        ${isPlan && html`<span class="acts"><button class="tbtn" title="open this plan's dependency graph"
+          onClick=${(e) => {
+            e.stopPropagation(); // the row itself opens the item
+            nav(`graph/${i.id}`);
+          }}>graph</button></span>`}
       </div>
       ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
@@ -871,14 +876,17 @@ const Domains = () => {
 
 // ---- Graph (UI-0003) ----------------------------------------------------------
 const ZOOM_MIN = 0.2, ZOOM_MAX = 16;
-const Graph = ({ onOpen }) => {
+const Graph = ({ onOpen, id }) => {
   const domains = useDomains();
-  // q / status / domain / linked, remembered per tab like the board search
+  const blank = { q: "", status: "", domain: "", linked: false };
+  // q / status / domain / linked, remembered per tab like the board search;
+  // a plan-scoped graph (id) starts blank — a stored filter would hide the subtree
   const [f, setF] = useState(() => {
+    if (id) return blank;
     try {
-      return { q: "", status: "", domain: "", linked: false, ...JSON.parse(sessionStorage.getItem("te.graph.f") ?? "{}") };
+      return { ...blank, ...JSON.parse(sessionStorage.getItem("te.graph.f") ?? "{}") };
     } catch {
-      return { q: "", status: "", domain: "", linked: false };
+      return blank;
     }
   });
   const [applied, setApplied] = useState(f);
@@ -886,9 +894,25 @@ const Graph = ({ onOpen }) => {
   const [zoom, setZoom] = useState(1);
   const [src, setSrc] = useState("");
   const [count, setCount] = useState(null);
+  // same component stays mounted between #/graph and #/graph/<id> — reset the
+  // filters on scope switch (scoped edits never overwrite the saved ones)
+  useEffect(() => {
+    setF(
+      id
+        ? blank
+        : (() => {
+            try {
+              return { ...blank, ...JSON.parse(sessionStorage.getItem("te.graph.f") ?? "{}") };
+            } catch {
+              return blank;
+            }
+          })(),
+    );
+  }, [id]);
   const update = (patch) => {
     const next = { ...f, ...patch };
     setF(next);
+    if (id) return;
     try {
       sessionStorage.setItem("te.graph.f", JSON.stringify(next));
     } catch {
@@ -902,6 +926,7 @@ const Graph = ({ onOpen }) => {
   }, [f]);
   useEffect(() => {
     const p = new URLSearchParams();
+    if (id) p.set("under", id);
     if (applied.q.trim()) p.set("q", applied.q.trim());
     if (applied.status) p.set("status", applied.status);
     if (applied.domain) p.set("domain", applied.domain);
@@ -920,7 +945,7 @@ const Graph = ({ onOpen }) => {
     return () => {
       live = false;
     };
-  }, [applied]);
+  }, [applied, id]);
   const filtering = f.q.trim() || f.status || f.domain;
   // drag anywhere pans the scrollable view; a press that moves <5px still counts as a click (opens the item)
   const viewRef = useRef(null);
@@ -981,6 +1006,8 @@ const Graph = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
       <h2 class="h4 mb-0 me-2">Graph</h2>
+      ${id && html`<span class="badge text-bg-secondary" title="graph scoped to this plan and its parts">
+        plan ${id} <a href="#/graph" class="text-reset ms-1 text-decoration-none" title="back to the full graph">×</a></span>`}
       <${SearchBox} style=${{ maxWidth: "22rem" }} value=${f.q} onChange=${(v) => update({ q: v })}
         placeholder="search id, title, project, file, #domain…" />
       <select class="form-select form-select-sm w-auto" value=${f.status} onChange=${(e) => update({ status: e.target.value })}>
@@ -1621,10 +1648,12 @@ const App = () => {
     return () => removeEventListener("hashchange", f);
   }, []);
   const [name, itemId] = r.split("/");
-  const View = itemId ? ItemView : (routes[name] ?? Inbox);
+  // a known route name wins even with a second segment (#/graph/<plan>) —
+  // only unknown names like `item/<id>` fall through to the item page
+  const View = routes[name] ?? (itemId ? ItemView : Inbox);
   useEffect(() => {
     document.querySelectorAll("#nav a").forEach((a) =>
-      a.classList.toggle("active", a.dataset.r === (itemId ? "items" : name)));
+      a.classList.toggle("active", a.dataset.r === (routes[name] ? name : "items")));
   });
   const onOpen = (id) => nav(`item/${id}`);
   return html`<${View} onOpen=${onOpen} id=${itemId} />`;

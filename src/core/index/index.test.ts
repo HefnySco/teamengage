@@ -197,6 +197,21 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planState("PL-0030")).toBe("active");
     expect(idx.planState("PL-0031")).toBe("active");
     expect(idx.planProgress("PL-0030")).toEqual({ done: 0, total: 0 });
+    // descendants() is cycle-safe too — each id appears once, the cycle just stops
+    expect(idx.descendants("PL-0030").sort()).toEqual(["PL-0031"]);
+  });
+
+  it("descendants collects children recursively, self excluded", async () => {
+    writeItem("PL-0040", { type: "epic" });
+    writeItem("PL-0041", { type: "epic", parent: "PL-0040" });
+    writeItem("PL-0042", { parent: "PL-0041" });
+    writeItem("PL-0043", { parent: "PL-0040" });
+    writeItem("PL-0044", {}); // unrelated
+    const idx = await Index.load(plans);
+    expect(idx.descendants("PL-0040").sort()).toEqual(["PL-0041", "PL-0042", "PL-0043"]);
+    expect(idx.descendants("PL-0041")).toEqual(["PL-0042"]);
+    expect(idx.descendants("PL-0044")).toEqual([]);
+    expect(idx.descendants("PL-9999")).toEqual([]);
   });
 });
 

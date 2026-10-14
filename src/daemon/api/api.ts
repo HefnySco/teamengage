@@ -101,6 +101,16 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         domain: q.domain || undefined,
         q: q.q || undefined,
       };
+      // under=<id>: the plan's own subtree — a root-search would also pull in
+      // the epic's ancestors and dependents, which is not the plan's graph
+      if (q.under) {
+        const root = ops.item(q.under).meta.id;
+        const scope = new Set([root, ...ops.descendants(root)]);
+        return {
+          count: ops.query(filter).filter((i) => scope.has(i.meta.id)).length,
+          mermaid: ops.graph({ roots: [...scope], depth: 0, filter, maxNodes: 80 }),
+        };
+      }
       // linked=1: the matches plus everything one step away (deps, dependents,
       // parent/children), whatever their status or text
       if (q.linked === "1" && (filter.q || filter.domain || filter.status || filter.project)) {

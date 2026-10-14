@@ -274,6 +274,11 @@ export class WorkspaceOps {
     return renderMermaid(this.index, opts);
   }
 
+  /** All descendant ids of an item (children recursively, parent-cycle safe). */
+  descendants(id: string): string[] {
+    return this.index.descendants(id);
+  }
+
   findings(): Finding[] {
     return [
       ...validate(this.index, {

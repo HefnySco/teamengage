@@ -570,6 +570,31 @@ describe("graph search", () => {
     expect(linked.count).toBe(1);
     for (const id of ids) expect(linked.mermaid).toContain(node(id)); // dep + dependent come along
   });
+
+  it("under=<epic> scopes the graph to the plan subtree — no ancestors or outside dependents", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "epic", title: "outer plan" },
+        { type: "epic", title: "sub plan", parent: "#0" },
+        { type: "task", title: "sub part", parent: "#1" },
+        { type: "task", title: "outside dependent", depends_on: ["#2"] },
+      ],
+      human,
+    );
+    const node = (id: string) => id.replace("-", "_");
+    const g = async (qs: string) => (await (await api(`/api/graph?${qs}`)).json()) as { mermaid: string; count: number };
+
+    const r = await g(`under=${ids[1]}`);
+    expect(r.count).toBe(2); // the sub-plan and its part — not the outer plan, not dependents
+    expect(r.mermaid).toContain(node(ids[1]));
+    expect(r.mermaid).toContain(node(ids[2]));
+    expect(r.mermaid).not.toContain(node(ids[0]));
+    expect(r.mermaid).not.toContain(node(ids[3]));
+    // a bad id is a clean 404, not an empty chart
+    expect((await api(`/api/graph?under=NOPE-1`)).status).toBe(404);
+  });
 });
 
 describe("change_answer", () => {

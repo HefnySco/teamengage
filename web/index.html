@@ -126,6 +126,9 @@
       .triage-li .id-cell > span { flex: none; display: inline-flex; align-items: center; }
       .triage-li .acts { display: flex; gap: .3rem; justify-self: end; opacity: 0; transition: opacity .12s; }
       .triage-li:hover .acts, .triage-li:focus-within .acts { opacity: 1; }
+      /* plans rows reuse the same reveal-on-hover pattern for their "graph" action */
+      .plan-li .acts { display: flex; gap: .3rem; opacity: 0; transition: opacity .12s; }
+      .plan-li:hover .acts, .plan-li:focus-within .acts { opacity: 1; }
       .triage-st { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; color: var(--bs-secondary-color); white-space: nowrap; }
       .triage-st::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; background: var(--st, #6c757d); }
       .triage-sev { font-size: .64rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-warning); white-space: nowrap; }

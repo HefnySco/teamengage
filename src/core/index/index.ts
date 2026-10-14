@@ -342,6 +342,20 @@ export class Index {
     return { done, total };
   }
 
+  /** All descendant ids — children recursively; a parent cycle just stops, never loops. */
+  descendants(id: string): string[] {
+    const seen = new Set([id]);
+    const out: string[] = [];
+    const stack = [...(this.items.get(id)?.children ?? [])];
+    for (let cid = stack.pop(); cid !== undefined; cid = stack.pop()) {
+      if (seen.has(cid)) continue;
+      seen.add(cid);
+      out.push(cid);
+      stack.push(...(this.items.get(cid)?.children ?? []));
+    }
+    return out;
+  }
+
   /** Every descendant finished — a revisited id means a parent cycle → not done. */
   private planFinished(id: string, visited: Set<string>): boolean {
     for (const cid of this.items.get(id)?.children ?? []) {
