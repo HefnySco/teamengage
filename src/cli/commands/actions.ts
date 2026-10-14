@@ -210,3 +210,29 @@ export async function renumberCmd(args: string[], home?: string): Promise<number
   process.stdout.write(`${oldId} → ${newId}\n`);
   return 0;
 }
+
+/**
+ * `te reparent <ID> <PARENT>` — make <ID> a part of the plan <PARENT>
+ * (usually an epic); `te reparent <ID> --off` clears the parent.
+ */
+export async function reparentCmd(args: string[], home?: string): Promise<number> {
+  const off = args.includes("--off");
+  const [id, parent] = positional(args.filter((a) => a !== "--off"));
+  if (!id || (!parent && !off)) {
+    process.stderr.write("usage: te reparent <ID> <PARENT|--off>\n");
+    return 2;
+  }
+  // uppercase the id part only — a `ws:` workspace prefix stays as written
+  const ref = (r: string) => {
+    const i = r.indexOf(":");
+    return i === -1 ? r.toUpperCase() : `${r.slice(0, i)}:${r.slice(i + 1).toUpperCase()}`;
+  };
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/reparent${wsQ(args)}`,
+    { parent: off ? null : ref(parent!) },
+    home,
+  )) as { parent?: string };
+  process.stdout.write(`${id.toUpperCase()} → parent ${r.parent ?? "cleared"}\n`);
+  return 0;
+}

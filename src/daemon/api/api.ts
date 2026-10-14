@@ -373,6 +373,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     if (!["review", "done", "default"].includes(on)) throw new TeError("USAGE", "unblocks needs {on: review|done|default}");
     return ops.setUnblocksOn(id, on as "review" | "done" | "default");
   });
+  act("reparent", (ops, id, b) => {
+    const p = b.parent;
+    return ops.setParent(id, p === undefined || p === null || p === "" ? undefined : String(p));
+  });
   act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
   act("close_plan", (ops, id) => ops.closePlan(id));
   act("reopen_plan", (ops, id) => ops.reopenPlan(id));

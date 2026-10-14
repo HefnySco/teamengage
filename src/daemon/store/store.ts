@@ -802,6 +802,34 @@ export class PlansStore {
     });
   }
 
+  /** Set or clear an item's parent (plan membership). Reference validation lives in ops. */
+  setParent(id: string, parent: string | undefined, actor: Actor): Promise<{ parent?: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      if (it.meta.parent === parent) return { parent };
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const what = parent
+        ? `parent: ${parent}${it.meta.parent ? ` (was ${it.meta.parent})` : ""}`
+        : `parent cleared (was ${it.meta.parent})`;
+      await this.rewriteItem(
+        id,
+        (m) => {
+          const next = { ...m } as ItemMeta;
+          if (parent) next.parent = parent;
+          else delete next.parent;
+          return next;
+        },
+        [`- ${now} ${who} ${what}`],
+      );
+      await this.commitPaths([it.path], `te: ${id} ${what}`);
+      return { parent };
+    });
+  }
+
   /** Set an item's domains (normalized; unknown names are added to the vocabulary). */
   setDomains(id: string, domains: string[], actor: Actor): Promise<{ domains: string[]; added: string[] }> {
     return this.enqueue(async () => {

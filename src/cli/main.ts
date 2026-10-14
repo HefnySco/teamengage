@@ -29,6 +29,7 @@ import {
   releaseCmd,
   rollbackCmd,
   renumberCmd,
+  reparentCmd,
 } from "./commands/actions.js";
 
 function version(): string {
@@ -64,6 +65,7 @@ commands:
   draft <ID> [reason] send a ready, held or done item back to draft
   done <ID> [note]    mark done from any status (no review, no merge)
   renumber <OLD> <NEW>
+  reparent <ID> <PARENT|--off>   set or clear an item's parent epic (plan membership)
   rollback <ID> [--yes]  restore claim snapshots onto live targets
   import <folder|file>  import a Markdown task folder (or one task file)
   mcp        stdio MCP shim (auto-starts the daemon)
@@ -176,6 +178,8 @@ async function main(argv: string[]): Promise<number> {
       return rollbackCmd(rest, home);
     case "renumber":
       return renumberCmd(rest, home);
+    case "reparent":
+      return reparentCmd(rest, home);
     case "import":
       return importCmd(rest, home);
     case "mcp": {

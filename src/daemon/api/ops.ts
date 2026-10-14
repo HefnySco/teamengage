@@ -13,7 +13,7 @@ import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import { StarColor, type Status } from "../../core/model/item.js";
-import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError } from "../../core/model/errors.js";
+import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
@@ -688,6 +688,45 @@ export class WorkspaceOps {
   async setUnblocksOn(id: string, on: "review" | "done" | "default") {
     this.item(id);
     return this.store.setUnblocksOn(id, on === "default" ? undefined : on, this.actorFor("human"));
+  }
+
+  /**
+   * Human: set or clear an item's parent epic (`undefined` clears). Validates
+   * the ref, existence (local index or linked workspace), self-parenting and
+   * ancestor cycles — including chains that cross a linked workspace.
+   */
+  async setParent(id: string, parent: string | undefined) {
+    this.item(id);
+    if (parent !== undefined) {
+      const parsed = parseItemRef(parent); // throws ValidationError on bad refs
+      const wsName = this.wsr.ws.config.name;
+      if (parsed.workspace === undefined) this.item(parsed.id);
+      else if (parsed.workspace !== wsName && this.links?.statusOf(parent) === undefined) {
+        throw new NotFoundError(`parent ${parent} not found`);
+      }
+      // refuse a parent cycle: walk the new ancestor chain (local + linked)
+      const seen = new Set<string>();
+      let cur: { workspace?: string; id: string } | undefined = parsed;
+      while (cur) {
+        const key = `${cur.workspace ?? ""}:${cur.id}`;
+        if (seen.has(key)) break;
+        seen.add(key);
+        const here = cur.workspace === undefined || cur.workspace === wsName;
+        if (here && cur.id === id) {
+          throw new ValidationError(`parent cycle: ${id} is an ancestor of ${parent}`);
+        }
+        const anc = here
+          ? this.index.get(cur.id)?.meta.parent
+          : this.links?.index(cur.workspace!)?.get(cur.id)?.meta.parent;
+        if (!anc) break;
+        try {
+          cur = parseItemRef(anc);
+        } catch {
+          break;
+        }
+      }
+    }
+    return this.store.setParent(id, parent, this.actorFor("human"));
   }
 
   async undrop(id: string) {
