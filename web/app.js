@@ -446,13 +446,15 @@ const matches = (i, words) => {
     .toLowerCase();
   return words.every((w) => hay.includes(w));
 };
-// board card order: date = last touched (updated, else created), name = title — id breaks ties
+// board card order: created = creation date, updated = last touched (updated, else created), name = title — id breaks ties
 const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
+const byCreated = (a, b) => (a.created ?? "").localeCompare(b.created ?? "") || byId(a, b);
+const byUpdated = (a, b) => (b.updated ?? b.created ?? "").localeCompare(a.updated ?? a.created ?? "") || byId(a, b);
 const SORTS = {
-  "id-asc": byId,
-  "id-desc": (a, b) => byId(b, a),
-  "date-desc": (a, b) => (b.updated ?? b.created ?? "").localeCompare(a.updated ?? a.created ?? "") || byId(a, b),
-  "date-asc": (a, b) => (a.updated ?? a.created ?? "").localeCompare(b.updated ?? b.created ?? "") || byId(a, b),
+  "created-asc": byCreated,
+  "created-desc": (a, b) => byCreated(b, a),
+  "updated-desc": byUpdated,
+  "updated-asc": (a, b) => byUpdated(b, a),
   "name-asc": (a, b) => (a.title ?? "").localeCompare(b.title ?? "") || byId(a, b),
   "name-desc": (a, b) => (b.title ?? "").localeCompare(a.title ?? "") || byId(a, b),
 };
@@ -510,8 +512,8 @@ const Board = ({ onOpen }) => {
     setStarredOnlyState(v);
     saveSearch("te.board.starred", v ? "1" : "");
   };
-  // id ↑↓ | date ↓↑ | AZ — clicking the active field flips its direction
-  const eff = sort || "id-asc";
+  // created ↑↓ | updated ↓↑ | AZ — clicking the active field flips its direction
+  const eff = SORTS[sort] ? sort : "created-asc";
   const sortSeg = (field, label) => {
     const on = eff.startsWith(field);
     const desc = eff.endsWith("desc");
@@ -519,7 +521,7 @@ const Board = ({ onOpen }) => {
       field === "name" && on ? (desc ? "Z→A" : "A→Z")
       : on ? `${label} ${desc ? "↓" : "↑"}`
       : label;
-    const next = !on ? `${field}-${field === "date" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
+    const next = !on ? `${field}-${field === "updated" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
     return html`<button class=${on ? "on" : ""} title="order cards inside each column" onClick=${() => setSort(next)}>${text}</button>`;
   };
   const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
@@ -537,7 +539,7 @@ const Board = ({ onOpen }) => {
         onKeyDown=${(e) => e.key === "Enter" && hits.length === 1 && onOpen(hits[0].id)}
         autofocus
       />
-      <span class="seg">${sortSeg("id", "id")}${sortSeg("date", "date")}${sortSeg("name", "AZ")}</span>
+      <span class="seg">${sortSeg("created", "created")}${sortSeg("updated", "updated")}${sortSeg("name", "AZ")}</span>
       <button class="tbtn ${starredOnly ? "primary" : ""}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       ${(words.length > 0 || domain || starredOnly) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
@@ -551,7 +553,7 @@ const Board = ({ onOpen }) => {
     <div class="board-cols">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
-        if (SORTS[sort]) items.sort(SORTS[sort]);
+        if (SORTS[eff]) items.sort(SORTS[eff]);
         // empty columns collapse to a thin strip (mockup sample 3)
         if (items.length === 0) return html`
           <div class="board-col collapsed" key=${s}>
