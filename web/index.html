@@ -145,6 +145,11 @@
       .seg button { border: 0; background: transparent; padding: 0 .6rem; height: 1.65rem; color: var(--bs-secondary-color); cursor: pointer; font-size: .75rem; font-variant-numeric: tabular-nums; }
       .seg button + button { border-left: 1px solid var(--bs-border-color); }
       .seg button.on { background: var(--bs-secondary-bg); color: var(--bs-body-color); }
+      /* search fields: × clear button inside the box (native one is webkit-only) */
+      .search-box { position: relative; display: inline-flex; align-items: center; }
+      .search-box input { padding-right: 1.55rem; }
+      .search-box input::-webkit-search-cancel-button { display: none; }
+      .search-box .clear { position: absolute; right: .25rem; }
     </style>
   </head>
   <body>

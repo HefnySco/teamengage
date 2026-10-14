@@ -135,6 +135,20 @@ const STAR_TEXT = { yellow: "text-warning", red: "text-danger", green: "text-suc
 const STAR_BTN = { yellow: "btn-warning", red: "btn-danger", green: "btn-success", blue: "btn-primary" };
 const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset → yellow; blue → undefined (unstar)
 
+// search field with a × clear button inside (the native type=search one is webkit-only)
+const SearchBox = ({ value, onChange, onKeyDown, ...props }) => html`
+  <span class="search-box">
+    <input type="search" class="form-control form-control-sm" ...${props} value=${value}
+      onInput=${(e) => onChange(e.target.value)}
+      onKeyDown=${(e) => {
+        if (e.key === "Escape") onChange("");
+        onKeyDown?.(e);
+      }} />
+    ${value && html`<button type="button" class="icon-btn clear" title="clear search" tabIndex=${-1}
+      onMouseDown=${(e) => e.preventDefault()}
+      onClick=${(e) => { onChange(""); e.currentTarget.previousElementSibling.focus(); }}>×</button>`}
+  </span>`;
+
 // IDs (XX-0000) inside free text become item links
 const ID_TOKEN = /\b([A-Z][A-Z0-9]*-\d+)\b/;
 const LinkedText = ({ text, onOpen }) =>
@@ -382,10 +396,8 @@ const Inbox = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
-      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "24rem" }}
-        placeholder="search id, title, project, file, text…" value=${q}
-        onInput=${(e) => setSearch(e.target.value)}
-        onKeyDown=${(e) => e.key === "Escape" && setSearch("")} />
+      <${SearchBox} style=${{ maxWidth: "24rem" }} value=${q} onChange=${setSearch}
+        placeholder="search id, title, project, file, text…" />
       ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}</span>`}
       ${!empty && html`
         <span class="seg ms-auto">
@@ -517,17 +529,12 @@ const Board = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Board</h2>
-      <input
-        type="search"
-        class="form-control form-control-sm"
+      <${SearchBox}
         style=${{ maxWidth: "24rem" }}
         placeholder="search id, title, project, file…"
         value=${q}
-        onInput=${(e) => setSearch(e.target.value)}
-        onKeyDown=${(e) => {
-          if (e.key === "Escape") setSearch("");
-          if (e.key === "Enter" && hits.length === 1) onOpen(hits[0].id);
-        }}
+        onChange=${setSearch}
+        onKeyDown=${(e) => e.key === "Enter" && hits.length === 1 && onOpen(hits[0].id)}
         autofocus
       />
       <span class="seg">${sortSeg("id", "id")}${sortSeg("date", "date")}${sortSeg("name", "AZ")}</span>
@@ -623,8 +630,8 @@ const Archive = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Archive</h2>
-      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "24rem" }}
-        placeholder="search id, title, project, file…" value=${q} onInput=${(e) => setQ(e.target.value)} />
+      <${SearchBox} style=${{ maxWidth: "24rem" }} value=${q} onChange=${setQ}
+        placeholder="search id, title, project, file…" />
       <span class="text-secondary small">${hits.length} of ${data.length} archived</span>
     </div>
     ${data.length === 0 && html`<p class="text-secondary">nothing archived — use "archive" on an item page</p>`}
@@ -860,10 +867,8 @@ const Graph = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
       <h2 class="h4 mb-0 me-2">Graph</h2>
-      <input type="search" class="form-control form-control-sm" style=${{ maxWidth: "22rem" }}
-        placeholder="search id, title, project, file, #domain…" value=${f.q}
-        onInput=${(e) => update({ q: e.target.value })}
-        onKeyDown=${(e) => e.key === "Escape" && update({ q: "" })} />
+      <${SearchBox} style=${{ maxWidth: "22rem" }} value=${f.q} onChange=${(v) => update({ q: v })}
+        placeholder="search id, title, project, file, #domain…" />
       <select class="form-select form-select-sm w-auto" value=${f.status} onChange=${(e) => update({ status: e.target.value })}>
         <option value="">all statuses</option>
         ${STATUSES.map((st) => html`<option value=${st}>${st}</option>`)}
