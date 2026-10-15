@@ -105,7 +105,10 @@ function collect(index: Index, opts: MermaidOpts): Set<string> {
 
 export function renderMermaid(index: Index, opts: MermaidOpts = {}): string {
   const max = opts.maxNodes ?? 40;
-  const all = [...collect(index, opts)].sort();
+  const all = [...collect(index, opts)];
+  // a scoped walk visits nearest-first — keep that order so the cap folds the
+  // periphery into '+N more', not whatever ids happen to sort last
+  if (!opts.roots?.length) all.sort();
   const shown = all.slice(0, max);
   const hidden = all.length - shown.length;
   const shownSet = new Set(shown);
