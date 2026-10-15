@@ -155,14 +155,14 @@ const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset →
 
 // search field with a × clear button inside (the native type=search one is webkit-only)
 const SearchBox = ({ value, onChange, onKeyDown, ...props }) => html`
-  <span class="search-box">
+  <span class="search-box position-relative d-inline-flex align-items-center">
     <input type="search" class="form-control form-control-sm" ...${props} value=${value}
       onInput=${(e) => onChange(e.target.value)}
       onKeyDown=${(e) => {
         if (e.key === "Escape") onChange("");
         onKeyDown?.(e);
       }} />
-    ${value && html`<button type="button" class="icon-btn clear" title="clear search" tabIndex=${-1}
+    ${value && html`<button type="button" class="icon-btn position-absolute end-0 me-1" title="clear search" tabIndex=${-1}
       onMouseDown=${(e) => e.preventDefault()}
       onClick=${(e) => { onChange(""); e.currentTarget.previousElementSibling.focus(); }}>×</button>`}
   </span>`;
@@ -265,7 +265,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
   const [open, setOpen] = useState(false);
   return html`
     <div class="triage-li">
-      <span class="id-cell">
+      <span class="id-cell d-flex align-items-center gap-1">
         <a class="item id" onClick=${() => onOpen(q.id)}>${q.id}</a>
         ${item?.star_color && html`<span class="${STAR_TEXT[item.star_color]}" title="starred ${item.star_color}"><${StarIcon} filled /></span>`}
       </span>
@@ -273,7 +273,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
       <span class="t text-secondary" title=${q.question?.text}>${(q.question?.text ?? item?.title ?? "").replace(/\s+/g, " ")}</span>
       <${DomainTags} ds=${item?.domains} />
       <span class="acts">
-        <button class="tbtn ${open ? "" : "primary"}" onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
+        <button class="btn btn-sm py-0 ${open ? "btn-outline-secondary" : "btn-primary"}" onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
       </span>
       ${open && html`
         <div class="triage-detail">
@@ -290,6 +290,7 @@ const Inbox = ({ onOpen }) => {
   const { data: all } = useApi("/api/items?archived=all");
   const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
   const [kind, setKind] = useState("all");
+  const [sort, setSortState] = useState(() => loadSearch("te.inbox.sort"));
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const byId = Object.fromEntries((all ?? []).map((i) => [i.id, i]));
   const title = (id) => byId[id]?.title ?? "";
@@ -303,18 +304,35 @@ const Inbox = ({ onOpen }) => {
     !words.length ||
     matches(byId[id] ?? { id }, words) ||
     words.every((w) => extra.filter(Boolean).join(" ").toLowerCase().includes(w));
+  // rows of different shapes share the board's comparators: each maps to its
+  // item (a finding with none gets a pseudo-item so it still orders by name);
+  // no picked sort = keep the server's order
+  const effSort = SORTS[sort] ? sort : "";
+  const itemOf = {
+    questions: (x) => byId[x.id] ?? { id: x.id },
+    drafts: (id) => byId[id] ?? { id },
+    reviews: (id) => byId[id] ?? { id },
+    claims: (c) => byId[c.item] ?? { id: c.item },
+    findings: (f) => byId[f.item] ?? { id: f.item ?? "", title: f.message ?? f.path ?? "" },
+  };
+  const sortRows = (key, arr) =>
+    effSort ? [...arr].sort((a, b) => SORTS[effSort](itemOf[key](a), itemOf[key](b))) : arr;
   const view = {
-    questions: data.questions.filter((x) => hit(x.id, x.question?.text)),
-    drafts: data.drafts.filter((id) => hit(id)),
-    reviews: data.reviews.filter((id) => hit(id)),
-    claims: data.claims.filter((c) => hit(c.item, c.holder, c.machine)),
-    findings: data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind)),
+    questions: sortRows("questions", data.questions.filter((x) => hit(x.id, x.question?.text))),
+    drafts: sortRows("drafts", data.drafts.filter((id) => hit(id))),
+    reviews: sortRows("reviews", data.reviews.filter((id) => hit(id))),
+    claims: sortRows("claims", data.claims.filter((c) => hit(c.item, c.holder, c.machine))),
+    findings: sortRows("findings", data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind))),
   };
   const total = data.questions.length + data.drafts.length + data.reviews.length + data.claims.length + data.findings.length;
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.inbox.q", v);
+  };
+  const setSort = (v) => {
+    setSortState(v);
+    saveSearch("te.inbox.sort", v);
   };
   const act = async (id, action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
@@ -329,7 +347,7 @@ const Inbox = ({ onOpen }) => {
 
   // one dense line per thing that needs you; actions reveal on hover
   const idCell = (id) => html`
-    <span class="id-cell">
+    <span class="id-cell d-flex align-items-center gap-1">
       <a class="item id" onClick=${() => onOpen(id)}>${id}</a>
       ${byId[id]?.star_color && html`<span class="${STAR_TEXT[byId[id].star_color]}" title="starred ${byId[id].star_color}"><${StarIcon} filled /></span>`}
     </span>`;
@@ -362,7 +380,7 @@ const Inbox = ({ onOpen }) => {
               ${title(c.item)} <span class="text-secondary">· held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
             </span>
             <${DomainTags} ds=${byId[c.item]?.domains} />
-            <span class="acts"><button class="tbtn" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></span>
+            <span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></span>
           </div>`,
       ),
     },
@@ -374,8 +392,8 @@ const Inbox = ({ onOpen }) => {
           id,
           html`<${InboxStatus} s="in_review" />`,
           claimNote(id),
-          html`<button class="tbtn primary" onClick=${() => act(id, "accept")}>accept</button>
-            <button class="tbtn ghost danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
+          html`<button class="btn btn-sm py-0 btn-primary" onClick=${() => act(id, "accept")}>accept</button>
+            <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
         ),
       ),
     },
@@ -389,7 +407,7 @@ const Inbox = ({ onOpen }) => {
             <span class="triage-sev ${f.severity === "error" ? "err" : ""}">${f.severity ?? "warning"}</span>
             <span class="t text-secondary" title=${f.message}><${LinkedText} text=${f.message} onOpen=${onOpen} /></span>
             <span></span>
-            <span class="acts">${f.item && html`<button class="tbtn ghost" onClick=${() => onOpen(f.item)}>open</button>`}</span>
+            <span class="acts">${f.item && html`<button class="btn btn-sm py-0 text-secondary" onClick=${() => onOpen(f.item)}>open</button>`}</span>
           </div>`,
       ),
     },
@@ -401,9 +419,9 @@ const Inbox = ({ onOpen }) => {
           id,
           html`<${InboxStatus} s="draft" />`,
           claimNote(id),
-          html`<button class="tbtn primary" onClick=${() => act(id, "approve")}>approve</button>
-            <button class="tbtn ghost" onClick=${() => act(id, "complete", { note: "already done" })}>done</button>
-            <button class="tbtn ghost danger" onClick=${() => askThen(id, "drop", "drop reason")}>drop</button>`,
+          html`<button class="btn btn-sm py-0 btn-primary" onClick=${() => act(id, "approve")}>approve</button>
+            <button class="btn btn-sm py-0 text-secondary" onClick=${() => act(id, "complete", { note: "already done" })}>done</button>
+            <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "drop", "drop reason")}>drop</button>`,
         ),
       ),
     },
@@ -417,11 +435,12 @@ const Inbox = ({ onOpen }) => {
       <${SearchBox} style=${{ maxWidth: "24rem" }} value=${q} onChange=${setSearch}
         placeholder="search id, title, project, file, text…" />
       ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}</span>`}
+      <${SortSeg} eff=${effSort} onSort=${setSort} title="order rows inside each group" />
       ${!empty && html`
-        <span class="seg ms-auto">
-          <button class=${effKind === "all" ? "on" : ""} onClick=${() => setKind("all")}>All ${shown}</button>
+        <span class="btn-group btn-group-sm ms-auto" role="group">
+          <button class="btn btn-outline-secondary${effKind === "all" ? " active" : ""}" onClick=${() => setKind("all")}>All ${shown}</button>
           ${groups.map(
-            (g) => g.n > 0 && html`<button key=${g.key} class=${effKind === g.key ? "on" : ""} onClick=${() => setKind(g.key)}>${g.label} ${g.n}</button>`,
+            (g) => g.n > 0 && html`<button key=${g.key} class="btn btn-outline-secondary${effKind === g.key ? " active" : ""}" onClick=${() => setKind(g.key)}>${g.label} ${g.n}</button>`,
           )}
         </span>`}
     </div>
@@ -475,6 +494,22 @@ const SORTS = {
   "updated-asc": (a, b) => byUpdated(b, a),
   "name-asc": (a, b) => (a.title ?? "").localeCompare(b.title ?? "") || byId(a, b),
   "name-desc": (a, b) => (b.title ?? "").localeCompare(a.title ?? "") || byId(a, b),
+};
+// the order control — created ↑↓ | updated ↓↑ | AZ; clicking the active field
+// flips its direction. Shared by the board (cards inside each column) and the
+// inbox (rows inside each group); an empty eff means "keep the server's order"
+const SortSeg = ({ eff, onSort, title }) => {
+  const btn = (field, label) => {
+    const on = eff.startsWith(field);
+    const desc = eff.endsWith("desc");
+    const text =
+      field === "name" && on ? (desc ? "Z→A" : "A→Z")
+      : on ? `${label} ${desc ? "↓" : "↑"}`
+      : label;
+    const next = !on ? `${field}-${field === "updated" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
+    return html`<button class="btn btn-outline-secondary${on ? " active" : ""}" title=${title} onClick=${() => onSort(next)}>${text}</button>`;
+  };
+  return html`<span class="btn-group btn-group-sm" role="group">${btn("created", "created")}${btn("updated", "updated")}${btn("name", "AZ")}</span>`;
 };
 
 const Board = ({ onOpen }) => {
@@ -530,18 +565,7 @@ const Board = ({ onOpen }) => {
     setStarredOnlyState(v);
     saveSearch("te.board.starred", v ? "1" : "");
   };
-  // created ↑↓ | updated ↓↑ | AZ — clicking the active field flips its direction
   const eff = SORTS[sort] ? sort : "created-asc";
-  const sortSeg = (field, label) => {
-    const on = eff.startsWith(field);
-    const desc = eff.endsWith("desc");
-    const text =
-      field === "name" && on ? (desc ? "Z→A" : "A→Z")
-      : on ? `${label} ${desc ? "↓" : "↑"}`
-      : label;
-    const next = !on ? `${field}-${field === "updated" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
-    return html`<button class=${on ? "on" : ""} title="order cards inside each column" onClick=${() => setSort(next)}>${text}</button>`;
-  };
   const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
   const domTag = ([d, n]) => html`
     <span key=${d} class="triage-tag clickable ${domain === d ? "on" : ""}" title="show only #${d} (click again to clear)"
@@ -557,15 +581,15 @@ const Board = ({ onOpen }) => {
         onKeyDown=${(e) => e.key === "Enter" && hits.length === 1 && onOpen(hits[0].id)}
         autofocus
       />
-      <span class="seg">${sortSeg("created", "created")}${sortSeg("updated", "updated")}${sortSeg("name", "AZ")}</span>
-      <button class="tbtn ${starredOnly ? "primary" : ""}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
+      <${SortSeg} eff=${eff} onSort=${setSort} title="order cards inside each column" />
+      <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       ${(words.length > 0 || domain || starredOnly) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
-    ${domEntries.length > 0 && html`<div class="board-filters">
-      <span class="lbl">Domains</span>
+    ${domEntries.length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
+      <span class="small text-body-tertiary me-1">Domains</span>
       ${(domShowAll ? domEntries : domEntries.slice(0, 12)).map(domTag)}
       ${!domShowAll && domEntries.length > 12 && html`<span class="triage-tag clickable" onClick=${() => setDomShowAll(true)}>+${domEntries.length - 12} more</span>`}
-      <span class="faint">${untagged} untagged</span>
+      <span class="small text-body-tertiary">${untagged} untagged</span>
       ${domain && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setDomain(domain)}>clear</button>`}
     </div>`}
     <div class="board-cols">
@@ -582,7 +606,7 @@ const Board = ({ onOpen }) => {
             <div class="col-hd">
               <${InboxStatus} s=${s} label=${s.replace("_", " ")} />
               <span class="n">${items.length}</span>
-              ${s === "done" && items.some((i) => !i.claim) && html`<button class="icon-btn x"
+              ${s === "done" && items.some((i) => !i.claim) && html`<button class="icon-btn ms-auto"
                 title="archive every done card shown (respects the search)"
                 onClick=${() => {
                   const ids = items.filter((i) => !i.claim).map((i) => i.id);
@@ -592,11 +616,11 @@ const Board = ({ onOpen }) => {
             <div class="col-body">
               ${items.map(
                 (i) => html`
-                  <div class="bcard" key=${i.id} onClick=${() => onOpen(i.id)}>
-                    <div class="bcard-top">
+                  <div class="card bcard p-2" key=${i.id} onClick=${() => onOpen(i.id)}>
+                    <div class="d-flex align-items-center gap-1">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
-                      <span class="bcard-x">
+                      <span class="ms-auto d-flex">
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
                           onClick=${(e) => {
                             e.stopPropagation(); // don't open the item
@@ -612,7 +636,7 @@ const Board = ({ onOpen }) => {
                     </div>
                     <div class="bcard-title">${i.title}</div>
                     ${((i.domains ?? []).length > 0 || i.claim || i.blocked || i.updated || i.created) && html`
-                      <div class="bcard-meta">
+                      <div class="bcard-meta d-flex align-items-center gap-1 flex-wrap">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
@@ -669,7 +693,7 @@ const PlanNode = ({ i, depth, tree }) => {
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
-        ${isPlan && html`<span class="acts"><button class="tbtn" title="open this plan's dependency graph"
+        ${isPlan && html`<span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" title="open this plan's dependency graph"
           onClick=${(e) => {
             e.stopPropagation(); // the row itself opens the item
             nav(`graph/${i.id}`);
@@ -733,8 +757,8 @@ const Plans = ({ onOpen }) => {
         onChange=${setSearch}
         autofocus
       />
-      <button class="tbtn ${showDone ? "primary" : ""}" title="also show finished plans" onClick=${() => setShowDone(!showDone)}>done plans</button>
-      <span class="seg"><button onClick=${() => setAll(true)}>expand all</button><button onClick=${() => setAll(false)}>collapse all</button></span>
+      <button class="btn btn-sm ${showDone ? "btn-primary" : "btn-outline-secondary"}" title="also show finished plans" onClick=${() => setShowDone(!showDone)}>done plans</button>
+      <span class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" onClick=${() => setAll(true)}>expand all</button><button class="btn btn-outline-secondary" onClick=${() => setAll(false)}>collapse all</button></span>
       <span class="text-secondary small">${visible.length} of ${roots.length} plan(s)</span>
     </div>
     <div class="card card-body py-1">
@@ -872,7 +896,7 @@ const Domains = () => {
         <button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onClick=${() => setPick(Object.fromEntries(sugg.map((x) => [x.id, !Object.values(pick).every(Boolean)])))}>toggle all</button>
         <button class="btn btn-sm btn-primary py-0" onClick=${apply}>apply selected</button>
       </div>
-      <ul class="list-group list-group-flush scroll-list">
+      <ul class="list-group list-group-flush overflow-y-auto" style=${{ maxHeight: "46vh" }}>
         ${sugg.length === 0 && html`<li class="list-group-item text-secondary small">nothing to suggest — add keywords to domains first</li>`}
         ${sugg.map((x) => html`<li class="list-group-item small d-flex gap-2 align-items-center" key=${x.id}>
           <input type="checkbox" checked=${!!pick[x.id]} onChange=${(e) => setPick({ ...pick, [x.id]: e.target.checked })} />
@@ -1137,7 +1161,7 @@ const parseLog = (body) =>
 const History = ({ entries }) => html`
   <div class="card mt-3">
     <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
-    <ul class="list-group list-group-flush scroll-list">
+    <ul class="list-group list-group-flush overflow-y-auto" style=${{ maxHeight: "46vh" }}>
       ${entries.length === 0 && html`<li class="list-group-item text-secondary small">no history yet</li>`}
       ${[...entries].reverse().map(
         (e, i) => html`
@@ -1314,12 +1338,12 @@ const ItemView = ({ id }) => {
   const history = parseLog(sec("log"));
   const last = history.at(-1);
   return html`
-    <div class="item-bar d-flex align-items-center gap-2">
+    <div class="sticky-top bg-body border-bottom py-1 mb-2 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
       <span class="id flex-shrink-0">${it.meta.id}</span>
       <${Badge} s=${it.meta.status} />
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
-      <span class="item-bar-title text-secondary" title=${it.meta.title}>${it.meta.title}</span>
+      <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
         ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}>approve</button>`}
         ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}>resume</button>`}
@@ -1432,7 +1456,7 @@ const Activity = () => {
     <div class="mb-2">
       <input class="form-control form-control-sm w-auto" placeholder="filter machine / agent / item / action" value=${filter} onInput=${(e) => setFilter(e.target.value)} />
     </div>
-    <div class="card card-body act-log" ref=${listRef}>
+    <div class="card card-body overflow-y-auto" ref=${listRef} style=${{ maxHeight: "70vh" }}>
       ${shown.map((e, i) => html`
         <div class="evt" key=${i}>
           ${e.ts.slice(11, 19)} <span class="text-secondary">${e.machine}</span> ${e.actor}
@@ -1603,9 +1627,9 @@ const PlansGit = () => {
     ${g.remotes.length > 0 && html`
     <div class="row">
       <div class="col-md-6">
-        <div class="card mb-3 h-100 dir-pull">
-          <div class="card-header py-2 d-flex align-items-center gap-2">
-            <span class="dir-glyph">⇩</span>
+        <div class="card mb-3 h-100">
+          <div class="card-header py-2 d-flex align-items-center gap-2 border-bottom border-primary border-2">
+            <span class="fs-5 lh-1 text-primary">⇩</span>
             <div><b>Pull</b><div class="small text-secondary">other machines → this one</div></div>
             <div class="ms-auto d-flex align-items-center gap-1">${rp?.fetched === false && html`<span class="text-warning" title="fetch failed — counts are last-known">⚠</span>`}${pullState}</div>
           </div>
@@ -1628,14 +1652,14 @@ const PlansGit = () => {
                 );
                 if (ok) run("pull", "/api/plans-git/pull", { remote: pullR, stash: true });
               }}>stash → pull → unstash</button>`}
-            <div class="dir-foot">fetch + fast-forward only — never writes to the remote</div>
+            <div class="small text-secondary mt-2">fetch + fast-forward only — never writes to the remote</div>
           </div>
         </div>
       </div>
       <div class="col-md-6">
-        <div class="card mb-3 h-100 dir-push">
-          <div class="card-header py-2 d-flex align-items-center gap-2">
-            <span class="dir-glyph">⇧</span>
+        <div class="card mb-3 h-100">
+          <div class="card-header py-2 d-flex align-items-center gap-2 border-bottom border-success border-2">
+            <span class="fs-5 lh-1 text-success">⇧</span>
             <div><b>Commit & Push</b><div class="small text-secondary">this machine → other machines</div></div>
             <div class="ms-auto d-flex align-items-center gap-1">${rs?.fetched === false && html`<span class="text-warning" title="fetch failed — counts are last-known">⚠</span>`}${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}${pushState}</div>
           </div>
@@ -1668,8 +1692,8 @@ const PlansGit = () => {
                 }}>${busy === "push" ? "pushing…" : `↑ Commit & Push to ${pushR}`}</button>
             </div>
             ${g.changes.length > 0 && html`<details class="mt-2"><summary class="small text-secondary">${g.changes.length} uncommitted change(s) in the task folder</summary>
-              <ul class="small mb-0 scroll-list">${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
-            <div class="dir-foot">commits only the task folder · refuses while behind the chosen remote</div>
+              <ul class="small mb-0 overflow-y-auto" style=${{ maxHeight: "46vh" }}>${g.changes.slice(0, 200).map((c) => html`<li><code>${c.status}</code> ${c.path}</li>`)}</ul></details>`}
+            <div class="small text-secondary mt-2">commits only the task folder · refuses while behind the chosen remote</div>
           </div>
         </div>
       </div>
@@ -1715,12 +1739,12 @@ const Sync = () => {
     </div>
     ${s.unsyncedClaims.length > 0 && html`<div class="alert alert-warning py-2">unsynced claims: ${s.unsyncedClaims.join(", ")}</div>`}
     <h3 class="h6 mt-3">Merged, not pushed</h3>
-    <div class="list-group scroll-list">
+    <div class="list-group overflow-y-auto" style=${{ maxHeight: "46vh" }}>
       ${s.notPushed.map((d) => html`<div class="list-group-item"><span class="id">${d.item}</span> ${d.resource} <span class="text-secondary">${d.merge_commit.slice(0, 12)}</span></div>`)}
       ${!s.notPushed.length && html`<div class="list-group-item text-secondary">nothing pending</div>`}
     </div>
     <h3 class="h6 mt-3">Detected pushes</h3>
-    <div class="list-group scroll-list">
+    <div class="list-group overflow-y-auto" style=${{ maxHeight: "46vh" }}>
       ${s.pushed.map((d) => html`<div class="list-group-item"><span class="id">${d.item}</span> ${d.resource} → ${d.remotes.join(", ")}</div>`)}
       ${!s.pushed.length && html`<div class="list-group-item text-secondary">none seen yet</div>`}
     </div>
@@ -1749,7 +1773,7 @@ const App = () => {
 };
 
 document.getElementById("nav").innerHTML = Object.keys(routes)
-  .map((r) => `<a href="#/${r}" data-r="${r}">${r}</a>`)
+  .map((r) => `<a href="#/${r}" data-r="${r}" class="nav-link d-flex align-items-center gap-1 small fw-medium">${r}</a>`)
   .join("");
 document.getElementById("theme-toggle").onclick = () => {
   const el = document.documentElement;
