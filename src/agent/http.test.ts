@@ -87,6 +87,10 @@ beforeAll(async () => {
     );
   }
   writeFileSync(
+    join(plans, "items", "WS", "WS-0005.md"),
+    `---\nid: WS-0005\ntype: task\ntitle: reviewable task\nstatus: ready\nversion: 1\ntargets: ["@self:src/f5.ts"]\n---\n\n## Summary\nx\n`,
+  );
+  writeFileSync(
     join(plans, "items", "WS", "WS-0004.md"),
     `---\nid: WS-0004\ntype: epic\ntitle: epic 4\nstatus: ready\nversion: 1\n---\n\n## Summary\nplan\n`,
   );
@@ -218,6 +222,70 @@ describe("plain-HTTP agent API", () => {
     // WS-0001 is held by the live gemini-cli session from the full-loop test
     const h = await call("POST", "/agent/hello", { body: { agent: "gemini-cli" } });
     expect(h.text).not.toContain("WS-0001");
+  });
+
+  it("AI peer review: a second session reviews a submission, bounces broken work, capped at 2 in a row", async () => {
+    // the guide knows the tools
+    const guide = await call("GET", "/agent");
+    for (const tool of ["review", "bounce"]) {
+      expect(guide.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
+    }
+    const holder = await hello("worker");
+    const reviewer = await hello("auditor");
+    expect((await call("POST", "/agent/claim/WS-0005", { token: holder })).text).toMatch(
+      /^claimed/,
+    );
+    expect(
+      (await call("POST", "/agent/submit/WS-0005", { token: holder, body: { tests: "1 passed" } }))
+        .text,
+    ).toMatch(/^in_review/);
+    // the holder may not review its own submission
+    const own = await call("POST", "/agent/review/WS-0005", {
+      token: holder,
+      body: { verdict: "ok" },
+    });
+    expect(own.status).toBe(403);
+    expect(own.text).toContain("own submission");
+    // a reviewer records a verdict — advisory, the item stays in review
+    const ok = await call("POST", "/agent/review/WS-0005", {
+      token: reviewer,
+      body: { verdict: "ok", note: "evidence checks out" },
+    });
+    expect(ok.text.trim()).toBe("reviewed WS-0005: ok");
+    expect((await call("GET", "/agent/brief/WS-0005", { token: reviewer })).text).toContain(
+      "in_review",
+    );
+    // broken work bounces back to the holder (claim kept, holder resubmits)
+    for (let n = 1; n <= 2; n++) {
+      const bounced = await call("POST", "/agent/bounce/WS-0005", {
+        token: reviewer,
+        body: { reason: `tests red (${n})` },
+      });
+      expect(bounced.status).toBe(200);
+      const resubmit = await call("POST", "/agent/submit/WS-0005", {
+        token: holder,
+        body: { notes: "fixed" },
+      });
+      expect(resubmit.text).toMatch(/^in_review/);
+    }
+    // third bounce in a row: refused — the human must review now
+    const capped = await call("POST", "/agent/bounce/WS-0005", {
+      token: reviewer,
+      body: { reason: "still red" },
+    });
+    expect(capped.status).toBe(403);
+    expect(capped.text).toContain("AI bounces");
+    // a verdict is still welcome once capped
+    expect(
+      (
+        await call("POST", "/agent/review/WS-0005", {
+          token: reviewer,
+          body: { verdict: "issues", note: "still red" },
+        })
+      ).text.trim(),
+    ).toBe("reviewed WS-0005: issues");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(dirty()).toBe("");
   });
 
   it("epics are plans: next skips them; claim and close_plan are refused", async () => {

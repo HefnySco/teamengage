@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { turnOf } from "../model/item.js";
-import { transition, type Actor, type TransitionCtx } from "./machine.js";
+import { transition, type Actor, type TransitionCtx, MAX_AI_BOUNCES } from "./machine.js";
 import { ItemMeta, type Status } from "../model/item.js";
 import type { Claim } from "../model/claim.js";
 import {
@@ -36,6 +36,8 @@ describe("every arrow in DESIGN §5", () => {
     ["draft →approve_plan→ ready", "draft", human, { type: "approve_plan" }, "ready", {}],
     ["ready →claim→ in_progress", "ready", agent, { type: "claim", claim: claimOf() }, "in_progress", { depsDone: true }],
     ["in_progress →submit→ in_review", "in_progress", agent, { type: "submit" }, "in_review", { claim: claimOf() }],
+    ["in_review →review→ in_review", "in_review", agent2, { type: "review", verdict: "ok" }, "in_review", { claim: claimOf() }],
+    ["in_review →bounce→ in_progress", "in_review", agent2, { type: "bounce", reason: "tests fail" }, "in_progress", { claim: claimOf() }],
     ["in_review →accept→ done", "in_review", human, { type: "accept" }, "done", {}],
     ["in_review →reject→ in_progress", "in_review", human, { type: "reject", reason: "no" }, "in_progress", {}],
     ["in_progress →ask→ waiting", "in_progress", agent, { type: "ask", question: { text: "?", asked_by: agent.session, asked_at: NOW } }, "waiting", { claim: claimOf() }],
@@ -90,6 +92,13 @@ describe("every non-arrow is rejected", () => {
     ["in_progress", agent, { type: "complete" }, { claim: claimOf() }], // human-only
     ["dropped", agent, { type: "claim", claim: claimOf() }, {}],
     ["waiting", agent, { type: "submit" }, { claim: claimOf() }],
+    ["in_progress", agent2, { type: "review", verdict: "ok" }, { claim: claimOf() }], // only a submission is reviewable
+    ["in_review", agent, { type: "review", verdict: "ok" }, { claim: claimOf() }], // never your own submission
+    ["in_review", human, { type: "review", verdict: "ok" }, {}], // agent-only
+    ["in_review", daemon, { type: "bounce", reason: "x" }, {}], // agent-only
+    ["in_progress", agent2, { type: "bounce", reason: "x" }, { claim: claimOf() }],
+    ["in_review", agent, { type: "bounce", reason: "x" }, { claim: claimOf() }], // never your own submission
+    ["in_review", agent2, { type: "bounce", reason: "x" }, { claim: claimOf(), priorBounces: 2 }], // cap
     ["in_review", agent, { type: "accept" }, {}], // human-only
     ["in_progress", agent, { type: "approve_plan" }, { claim: claimOf() }],
     ["draft", human, { type: "submit" }, {}],
@@ -97,7 +106,7 @@ describe("every non-arrow is rejected", () => {
   ];
   it.each(cases)("%s + %o → error", (from, actor, action, extra) => {
     expect(() => transition(item(from), action, actor, ctx(extra))).toThrow(
-      /human-only|cannot|held by/i,
+      /human-only|agent-only|cannot|held by|own submission|AI bounces/i,
     );
   });
 });
@@ -206,6 +215,68 @@ describe("effects", () => {
   it("human releasing someone else's claim logs the takeover", () => {
     const r = transition(item("in_progress"), { type: "release", note: "stale" }, human, ctx({ claim: claimOf() }));
     expect(r.log[0]).toContain("was claude-code@desktop#a1f3");
+  });
+});
+
+describe("review / bounce (AI peer review of a submission)", () => {
+  it("review records the marker without touching status or turn; latest wins", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues", note: "acceptance 2 fails locally" },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.status).toBe("in_review");
+    expect(turnOf(r.meta.status)).toBe("human");
+    expect(r.effects).toEqual([]); // advisory: nothing to merge or clean up
+    expect(r.meta.ai_review).toEqual({
+      verdict: "issues",
+      reviewed_by: agent2.session,
+      reviewed_at: NOW,
+      note: "acceptance 2 fails locally",
+    });
+    expect(r.sectionWrites).toEqual([
+      { heading: "Review", text: `- ${NOW} ${agent2.session} issues: acceptance 2 fails locally\n` },
+    ]);
+    const again = transition(
+      r.meta,
+      { type: "review", verdict: "ok", note: "fixed and rerun" },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(again.meta.ai_review.verdict).toBe("ok");
+  });
+
+  it("submit clears a stale review — a fresh submission starts unreviewed", () => {
+    const meta = { ...item("in_progress"), ai_review: { verdict: "ok", reviewed_by: agent2.session, reviewed_at: NOW } };
+    const r = transition(meta, { type: "submit" }, agent, ctx({ claim: claimOf() }));
+    expect(r.meta.ai_review).toBeUndefined();
+  });
+
+  it("bounce keeps the claim with the holder, flags issues, logs the reason", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "bounce", reason: "tests red" },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([]); // no claim delete — the holder keeps fixing
+    expect(r.meta.ai_review).toEqual({
+      verdict: "issues",
+      reviewed_by: agent2.session,
+      reviewed_at: NOW,
+      note: "tests red",
+    });
+    expect(r.log[0]).toContain("ai-bounced submission: tests red");
+    expect(r.events[0]).toMatchObject({ action: "bounce", from: "in_review", to: "in_progress", note: "tests red" });
+  });
+
+  it("bounces are capped: MAX_AI_BOUNCES allowed, the next one is refused", () => {
+    const at = (priorBounces: number) =>
+      transition(item("in_review"), { type: "bounce", reason: "again" }, agent2, ctx({ claim: claimOf(), priorBounces }));
+    for (let n = 0; n < MAX_AI_BOUNCES; n++) expect(at(n).meta.status).toBe("in_progress");
+    expect(() => at(MAX_AI_BOUNCES)).toThrow(/AI bounces/);
   });
 });
 

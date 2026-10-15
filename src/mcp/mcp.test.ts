@@ -92,6 +92,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
     expect(names).toEqual(
       [
         "ask",
+        "bounce",
         "brief",
         "claim",
         "close_plan",
@@ -104,6 +105,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "query",
         "release",
         "reopen_plan",
+        "review",
         "simple",
         "submit",
       ].sort(),

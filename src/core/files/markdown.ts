@@ -38,6 +38,7 @@ const META_KEY_ORDER = [
   "star_color",
   "starred_at",
   "question",
+  "ai_review",
 ];
 
 const CONFLICT_RE = /^(<{7}|={7}|>{7})( |$)/m;

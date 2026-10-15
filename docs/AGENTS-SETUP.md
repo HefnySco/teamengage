@@ -50,7 +50,9 @@ Run `te agents-md` and paste the output into whichever file your agent reads:
 
 The snippet tells agents: `hello` once per session → `next` → `brief` →
 `claim` → `log`/`ask` → `submit`. Agents may not set `ready`/`done` — the
-human decides.
+human decides. A second session may peer-review a submission
+(`query status=in_review` → `review`, or `bounce` to send broken work back
+to its holder, max 2 in a row); accept/reject stay human-only.
 
 ## Multiple machines
 

@@ -30,6 +30,9 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
 - **You stay in the loop, not in the way.** Agents *ask* instead of guessing
   (the question lands in your inbox) and *submit* with evidence; you accept,
   reject, hold, or mark key tasks that block until accepted.
+- **A second opinion before yours.** Another AI session can *review* a
+  submission (verdict + note, shown on the card) or *bounce* broken work
+  back to its holder — accept stays yours.
 - **Plans that read like a storyboard.** Board, dependency graph, domains
   (`#mavlink`, `#webclient`…) as hashtags, Markdown rendered, full History.
 - **Rules agents actually follow.** Plain HTTP for any agent (`curl`, no MCP

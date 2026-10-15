@@ -30,6 +30,19 @@ export const Question = z.object({
 });
 export type Question = z.infer<typeof Question>;
 
+/**
+ * Latest AI peer review of a submission (review/bounce by an agent session
+ * that is not the holder). Advisory only: the human still accepts.
+ */
+export const AiReview = z.object({
+  verdict: z.enum(["ok", "issues"]),
+  /** reviewing session id (`agent@machine#hex`) */
+  reviewed_by: z.string(),
+  reviewed_at: z.string(),
+  note: z.string().optional(),
+});
+export type AiReview = z.infer<typeof AiReview>;
+
 /** The board ★ colours (bootstrap warning/danger/success/primary). */
 export const StarColor = z.enum(["yellow", "red", "green", "blue"]);
 export type StarColor = z.infer<typeof StarColor>;
@@ -63,6 +76,11 @@ export const ItemMeta = z
     /** overlay mode: companion `.simple.md`, relative to the workspace root */
     simple_source: z.string().optional(),
     question: Question.optional(),
+    /**
+     * Latest AI review of the current submission; cleared on every `submit`
+     * (a new submission starts unreviewed). Shown as a triage badge in review.
+     */
+    ai_review: AiReview.optional(),
     /**
      * When this item's dependents may start: "done" = a key task, they wait
      * for acceptance; "review" = once it is submitted. Unset → workspace

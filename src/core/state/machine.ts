@@ -1,5 +1,5 @@
 import type { Claim } from "../model/claim.js";
-import type { ItemMeta, Question, StarColor, Status } from "../model/item.js";
+import type { AiReview, ItemMeta, Question, StarColor, Status } from "../model/item.js";
 import type { Event } from "../model/event.js";
 import {
   ForbiddenError,
@@ -36,6 +36,17 @@ export type Action =
       note?: string;
       evidence?: { commits?: string[]; tests?: string; notes?: string };
     }
+  /**
+   * A second agent session records a peer review of the submission
+   * (advisory: no status change, the human still accepts). Not the holder.
+   */
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string }
+  /**
+   * A second agent session bounces a broken submission back to its holder
+   * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
+   * a row the item stays in review for the human (record a review instead).
+   */
+  | { type: "bounce"; reason: string }
   | { type: "accept" }
   | { type: "reject"; reason?: string }
   | { type: "drop"; reason?: string }
@@ -79,6 +90,8 @@ export interface TransitionCtx {
   claim?: Claim | null;
   /** Whether all depends_on items are done (needed for claim). */
   depsDone?: boolean;
+  /** AI bounces this item already took since the last human action (bounce cap). */
+  priorBounces?: number;
 }
 
 export type Effect =
@@ -101,6 +114,9 @@ export interface TransitionResult {
 
 const TERMINAL: Status[] = ["done", "dropped"];
 
+/** After this many consecutive AI bounces the item stays in review for the human. */
+export const MAX_AI_BOUNCES = 2;
+
 function fail(from: Status, action: string): never {
   throw new InvalidTransitionError(`cannot ${action} from ${from}`, from, action);
 }
@@ -108,6 +124,19 @@ function fail(from: Status, action: string): never {
 function requireHuman(actor: Actor, action: string): void {
   if (actor.kind !== "human") {
     throw new ForbiddenError(`${action} is a human-only action`);
+  }
+}
+
+/**
+ * Peer review of a submission is a *second opinion*: agent-only, and never
+ * the holder — reviewing your own work would just manufacture a trust marker.
+ */
+function requireReviewer(actor: Actor, ctx: TransitionCtx, action: string): void {
+  if (actor.kind !== "agent") {
+    throw new ForbiddenError(`${action} is an agent-only action (the human has accept/reject)`);
+  }
+  if (ctx.claim && ctx.claim.holder === actor.session) {
+    throw new ForbiddenError(`${action}: the holder may not review its own submission`);
   }
 }
 
@@ -276,6 +305,7 @@ export function transition(
       requireHolder(actor, ctx, action.type);
       if (from !== "in_progress") fail(from, action.type);
       set("in_review", action.note);
+      delete out.meta.ai_review; // a fresh submission starts unreviewed
       out.log.push(`- ${stamp} ${who} submitted for review${action.note ? `: ${action.note}` : ""}`);
       if (action.evidence) {
         const lines: string[] = [];
@@ -284,6 +314,44 @@ export function transition(
         if (action.evidence.notes) lines.push(`- ${action.evidence.notes}`);
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
       }
+      return out;
+    }
+
+    case "review": {
+      requireReviewer(actor, ctx, action.type);
+      if (from !== "in_review") fail(from, action.type);
+      out.meta.ai_review = {
+        verdict: action.verdict,
+        reviewed_by: actor.session,
+        reviewed_at: ctx.now,
+        ...(action.note ? { note: action.note } : {}),
+      };
+      const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
+      out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
+      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}`);
+      out.sectionWrites.push({ heading: "Review", text: `- ${stamp} ${who} ${verdict}\n` });
+      return out;
+    }
+
+    case "bounce": {
+      requireReviewer(actor, ctx, action.type);
+      if (from !== "in_review") fail(from, action.type);
+      if ((ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES) {
+        throw new ForbiddenError(
+          `bounce: ${ctx.priorBounces} AI bounces already — the human must review now (record a review verdict instead)`,
+        );
+      }
+      set("in_progress", action.reason);
+      out.meta.ai_review = {
+        verdict: "issues",
+        reviewed_by: actor.session,
+        reviewed_at: ctx.now,
+        note: action.reason,
+      };
+      out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason}`);
+      out.sectionWrites.push({ heading: "Review", text: `- ${stamp} ${who} bounced: ${action.reason}\n` });
+      // the claim is kept on purpose: the holder has the context and the
+      // worktree, so it fixes and resubmits (like the human's reject)
       return out;
     }
 

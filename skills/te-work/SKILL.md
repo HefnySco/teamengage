@@ -132,7 +132,31 @@ curl -s -X POST $B/submit/GL-0019 -H "$H" -d '{
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
 
-## 8. Giving it back
+## 8. Reviewing someone else's submission
+
+The human may ask you to review what another session submitted (a second
+opinion before they accept). List what is waiting, then read the brief, the
+Evidence and the task file, and actually run the acceptance checks:
+
+```bash
+curl -s "$B/query?status=in_review" -H "$H"
+curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","note":"acceptance 1–3 rerun locally, all green"}'
+```
+
+- `verdict` is `ok` or `issues`; the `note` is what the human reads to
+  accept quickly or dig in — be specific, "looks fine" is worth nothing.
+- A broken submission goes back to its holder (claim kept — they fix and
+  resubmit); the `reason` is what they see:
+
+  ```bash
+  curl -s -X POST $B/bounce/GL-0019 -H "$H" -d '{"reason":"acceptance 2 fails: restart counter never resets"}'
+  ```
+
+- Never review or bounce **your own** submission. After 2 bounces in a row
+  the task stays in review for the human — record a `review` verdict
+  instead of bouncing again.
+
+## 9. Giving it back
 
 Can't finish (blocked, out of time, wrong approach)? Release it with what
 you learned so the next agent starts from there:
@@ -144,6 +168,7 @@ curl -s -X POST $B/release/GL-0019 -H "$H" -d '{"note":"blocked: needs firmware 
 ## Never
 
 - mark a task done, approve, or accept — the human does;
+- review or bounce your own submission — second opinions only;
 - `git push`, or move files (into `done/` or anywhere);
 - edit files under `Tasks/.teamengage/` or a task's `te:` line;
 - start without a claim, or keep working after `ask` until it is answered;

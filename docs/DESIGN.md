@@ -181,6 +181,11 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
   └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
                        ready|hold|done ──to_draft──▶ draft
+review  = agent only, in_review, never the holder: records an advisory
+          verdict on the submission (ai_review; status untouched)
+bounce  = agent only, in_review, never the holder: ──▶ in_progress, claim
+          kept — the holder fixes and resubmits; capped at 2 in a row,
+          then the item stays in review and only a verdict may be recorded
 blocked  = derived: any depends_on not done (in_review counts as done
            unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
@@ -219,6 +224,14 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   marker with no workflow effect: it works in any status — even while
   claimed — hides nothing, and never feeds `next` ordering (that stays
   `priority`-driven).
+- `ai_review` is the latest **AI peer review** of the current submission —
+  written by `review`/`bounce` from an agent session that is *not* the
+  holder (a self-review would only manufacture a trust marker): verdict
+  `ok|issues`, reviewer session, date, note. Pure triage hint for the
+  human's review queue (badge on board cards, marker in the inbox, banner
+  on the item page); never a gate — `accept`/`reject` stay human-only and
+  the turn stays the human's. `submit` clears it (a fresh submission starts
+  unreviewed); `bounce` sets it to `issues` with the bounce reason.
 - A **plan** is an epic; its parts are the items whose `parent` points at
   it (sub-plans are epics too, so it nests). `plan_closed` is the only
   stored flag — the human sets it (close plan / reopen plan on the item
@@ -363,6 +376,8 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `log(id, note)` | Progress note (also updates `last_seen`). |
 | `ask(id, question, options?)` | Raise question → item `waiting`, turn → human. |
 | `submit(id, evidence)` | Commits/tests/notes → `in_review`. |
+| `review(id, verdict, note?)` | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched. |
+| `bounce(id, reason)` | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human. |
 | `propose(items[])` | Create `draft` items/edges (a plan for the human to approve). |
 | `query(filter)` | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains). |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph. |
@@ -370,7 +385,8 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 Plus a generated instruction snippet (`teamengage agents-md`) to drop into
 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`: "call `hello`, then `next`, always
 `claim` before editing code, work only in returned worktrees, `ask` instead of
-guessing, `submit` — never mark done, never push."
+guessing, `submit` — never mark done, never push. Review only others'
+submissions; accept stays with the human."
 
 ## 8. Human interface
 

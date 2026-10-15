@@ -156,6 +156,8 @@ export class PlansStore {
       guard?: () => void | Promise<void>;
       /** bump claim.last_seen in the same write+commit (used by log). */
       touchClaim?: boolean;
+      /** AI bounces since the last human action — evaluated inside the queue (bounce cap). */
+      priorBounces?: () => number | Promise<number>;
     } = {},
   ): Promise<PerformResult> {
     return this.enqueue(async () => {
@@ -173,7 +175,12 @@ export class PlansStore {
       const doc = parseItemFile(await readFile(absPath, "utf8"), absPath);
       const claim = this.index.claims.get(id) ?? null;
       const now = new Date().toISOString();
-      const tr = transition(doc.meta, action, actor, { now, claim, depsDone: ctx.depsDone });
+      const tr = transition(doc.meta, action, actor, {
+        now,
+        claim,
+        depsDone: ctx.depsDone,
+        priorBounces: ctx.priorBounces ? await ctx.priorBounces() : undefined,
+      });
 
       const newMeta = { ...tr.meta, version: expectedVersion + 1 };
       const writes: Array<{ rel: string; content: string }> = [];

@@ -103,6 +103,11 @@ server "teamengage" if your IDE has it configured — same tools, same rules.
 You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
 
+Reviewing (a second session, never the holder): query status=in_review lists
+submissions; review <id> {verdict: ok|issues, note} records your verdict for
+the human, bounce <id> {reason} sends broken work back to its holder (max 2
+in a row). Accept/reject stay human-only.
+
 ## ${AUTHORING_RULES}`;
 
 // `te … | head` closes stdout early — that's not an error, just stop quietly

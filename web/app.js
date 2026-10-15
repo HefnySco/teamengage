@@ -288,6 +288,13 @@ const Inbox = ({ onOpen }) => {
     const c = byId[id]?.claim;
     return c ? html` <span class="text-secondary">· ${c.holder.split("@")[0]}@${c.machine} ${ago(c.claimed_at)}</span>` : null;
   };
+  // AI review marker for review rows — reviewed items are a quick accept, flagged ones need a look
+  const aiNote = (id) => {
+    const r = byId[id]?.ai_review;
+    if (!r) return null;
+    return html` <span class="${r.verdict === "ok" ? "text-success" : "text-danger-emphasis"}"
+      title=${`AI review: ${r.verdict} — ${r.reviewed_by}${r.note ? `\n${r.note}` : ""}`}>AI ${r.verdict === "ok" ? "✓" : "✗"}</span>`;
+  };
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (id, ...extra) =>
     !words.length ||
@@ -363,7 +370,7 @@ const Inbox = ({ onOpen }) => {
         itemRow(
           id,
           html`<${InboxStatus} s="in_review" />`,
-          claimNote(id),
+          html`${claimNote(id)}${aiNote(id)}`,
           html`<button class="tbtn primary" onClick=${() => act(id, "accept")}>accept</button>
             <button class="tbtn ghost danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
         ),
@@ -601,10 +608,13 @@ const Board = ({ onOpen }) => {
                       </span>
                     </div>
                     <div class="bcard-title">${i.title}</div>
-                    ${((i.domains ?? []).length > 0 || i.claim || i.blocked || i.updated || i.created) && html`
+                    ${((i.domains ?? []).length > 0 || i.claim || i.blocked || i.ai_review || i.updated || i.created) && html`
                       <div class="bcard-meta">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
+                        ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
+                          title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
+                          AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
                             <span class="av" title=${`${i.claim.holder}@${i.claim.machine} · claimed ${ago(i.claim.claimed_at)} ago`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
@@ -1283,6 +1293,11 @@ const ItemView = ({ id }) => {
     </div>
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
       <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
+    </div>`}
+    ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-warning"} py-2 px-2 small mb-2">
+      <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
+      <span class="text-secondary">— peer-reviewed by ${it.meta.ai_review.reviewed_by} · ${ago(it.meta.ai_review.reviewed_at)} ago · advisory, the accept is still yours</span>
+      ${it.meta.ai_review.note && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
     </div>`}
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from ${it.meta.question.asked_by}</span>` : ""}

@@ -7,8 +7,9 @@ import { okText, errFrom, type ToolResult } from "../format.js";
 import { opsFor, needSession, isToolResult } from "./read.js";
 
 /**
- * Write tools (DESIGN §7): claim, release, log, ask, submit, propose.
- * All mutations go through the store — serialized, CAS-checked, committed.
+ * Write tools (DESIGN §7): claim, release, log, ask, submit, review, bounce,
+ * propose. All mutations go through the store — serialized, CAS-checked,
+ * committed.
  */
 
 export function registerWriteTools(
@@ -167,6 +168,56 @@ export function registerWriteTools(
         if (isToolResult(o)) return o;
         await o.submit(id, s, { commits, tests, notes });
         return okText(`in_review ${id}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "review",
+    {
+      description:
+        "Peer-review a submission as a different session than the holder (find them: query status=in_review). " +
+        "Read the task file, the Evidence section and the actual diff/tests first, then record verdict ok|issues with a specific note. " +
+        "Advisory marker only — it never changes status; the human still accepts. Never review your own submission.",
+      inputSchema: {
+        id: z.string(),
+        verdict: z.enum(["ok", "issues"]),
+        note: z.string().optional(),
+      },
+    },
+    async ({ id, verdict, note }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.review(id, s, verdict, note);
+        return okText(`reviewed ${id}: ${verdict}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "bounce",
+    {
+      description:
+        "Reviewer only (not the holder): send a broken submission back to its holder — in_review → in_progress, " +
+        "the claim is kept so the holder fixes and resubmits. reason is required and goes to the holder. " +
+        "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead.",
+      inputSchema: { id: z.string(), reason: z.string() },
+    },
+    async ({ id, reason }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.bounce(id, s, reason);
+        return okText(`bounced ${id} → in_progress (holder fixes and resubmits)`);
       } catch (e) {
         return errFrom(e);
       }

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { resolveSource, stripFrontmatter } from "../../core/files/source.js";
 import {
   normalizeDomain,
@@ -445,6 +446,62 @@ export class WorkspaceOps {
       type: "submit",
       evidence: ev,
     });
+  }
+
+  /**
+   * AI peer review of a submission: a second agent session (never the
+   * holder) records verdict ok|issues + note. Pure annotation — the item
+   * stays `in_review`, the human still accepts. Find submissions with
+   * `query status=in_review`.
+   */
+  async review(id: string, session: Session, verdict: "ok" | "issues", note?: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "review",
+      verdict,
+      note,
+    });
+  }
+
+  /**
+   * AI bounce: a reviewer session sends a broken submission back to its
+   * holder (in_progress, claim kept — like the human's reject, but capped).
+   */
+  async bounce(id: string, session: Session, reason: string) {
+    const it = this.item(id);
+    return this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor(session),
+      { type: "bounce", reason },
+      { priorBounces: () => this.aiBouncesSinceHumanTouch(id) },
+    );
+  }
+
+  /**
+   * Bounces by AI reviewers this item took since anything else happened to
+   * it — the holder's fix/submit cycle in between doesn't count, but any
+   * human/daemon action or a new claim starts a fresh cycle (loop guard).
+   * Best-effort: reads the merged event streams, so a machine behind on
+   * pull may miss the most recent bounces from other machines.
+   */
+  private async aiBouncesSinceHumanTouch(id: string): Promise<number> {
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
+    let bounces = 0;
+    for (const e of [...r.events].reverse()) {
+      if (e.item !== id) continue;
+      if (e.action === "bounce") {
+        bounces++;
+        continue;
+      }
+      // the holder's own line of work between bounces
+      if (e.action === "submit" || e.action === "log" || e.action === "review" || e.action === "ask") {
+        continue;
+      }
+      break;
+    }
+    return bounces;
   }
 
   /** `te rollback` — restore claim snapshots back onto live targets (RS-0006/7). */

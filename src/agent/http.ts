@@ -116,6 +116,9 @@ RULES
   3. claim before touching code; work only in the paths brief/claim return.
   4. ask instead of guessing; submit with evidence. Never mark work done.
      Never git push. The human approves, answers, and accepts.
+  5. A session that is NOT the holder may review submissions (query
+     status=in_review): review records your verdict for the human, bounce
+     sends broken work back to the holder. Never review your own submission.
 
 AUTHORING
 ${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
