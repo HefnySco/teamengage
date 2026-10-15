@@ -59,7 +59,9 @@
       .st-done { --st: #198754; } .st-dropped { --st: #dc3545; }
       /* board: flat columns — a dot names the status; empty columns collapse to a strip */
       .board-cols { display: flex; gap: .75rem; overflow-x: auto; padding-bottom: .4rem; align-items: flex-start; }
-      .board-col { flex: 0 0 14.25rem; display: flex; flex-direction: column; min-height: 16rem; }
+      /* min-width:0 keeps the column pinned to its basis — a wide card meta row would
+         otherwise push it wider (flex items default to min-content) */
+      .board-col { flex: 0 0 14.25rem; min-width: 0; display: flex; flex-direction: column; min-height: 16rem; }
       .board-col.collapsed { flex: 0 0 2.1rem; min-height: 0; }
       .board-col.collapsed .col-hd { writing-mode: vertical-rl; height: auto; padding: .6rem 0; margin-bottom: 0; }
       .col-hd { display: flex; align-items: center; gap: .45rem; height: 1.75rem; padding: 0 .25rem; margin-bottom: .4rem; font-size: .75rem; font-weight: 600; }
@@ -75,8 +77,8 @@
       .bcard-x { margin-left: auto; display: flex; gap: .1rem; }
       .bcard .icon-btn { opacity: 0; transition: opacity .12s; }
       .bcard:hover .icon-btn, .bcard:focus-within .icon-btn, .bcard .icon-btn.on { opacity: 1; }
-      .bcard-title { font-size: .8rem; line-height: 1.35; margin-bottom: .35rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-      .bcard-meta { display: flex; align-items: center; gap: .4rem; font-size: .7rem; color: var(--bs-tertiary-color); }
+      .bcard-title { font-size: .8rem; line-height: 1.35; margin-bottom: .35rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+      .bcard-meta { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; font-size: .7rem; color: var(--bs-tertiary-color); }
       .av { width: 1rem; height: 1rem; border-radius: 50%; background: var(--bs-secondary-bg); color: var(--bs-secondary-color); display: inline-grid; place-items: center; font-size: .56rem; font-weight: 600; border: 1px solid var(--bs-border-color); }
       .icon-btn { width: 1.35rem; height: 1.35rem; display: inline-grid; place-items: center; border: 0; border-radius: .25rem; color: var(--bs-tertiary-color); background: transparent; cursor: pointer; padding: 0; }
       .icon-btn:hover { background: var(--bs-secondary-bg); color: var(--bs-body-color); }
@@ -100,11 +102,20 @@
       /* graph: a scrollable zoom canvas; nodes open items on click */
       .graph-wrap { position: relative; }
       .graph-tools { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
-      .graph-view { overflow: auto; max-height: calc(100vh - 12rem); }
-      .graph-view svg { transform: scale(var(--zoom, 1)); transform-origin: top left; }
+      .graph-view { overflow: auto; height: calc(100vh - 12rem); }
+      /* zoom sizes a wrapper around the svg — a transform would grow it only
+         visually, leaving nothing scrollable; flex:none because .card is a
+         column flex box that would shrink the wrapper back to the view height */
+      .graph-zoom { flex: none; width: calc(100% * var(--zoom, 1)); height: calc(100% * var(--zoom, 1)); }
+      .graph-zoom svg { display: block; width: 100%; height: 100%; max-width: none !important; }
       .graph-view .node, .graph-view .node * { cursor: pointer; }
       .graph-view { cursor: grab; }
       .graph-view.dragging, .graph-view.dragging * { cursor: grabbing !important; user-select: none; }
+      /* minimap under the zoom tools: whole-graph overview + the visible window */
+      .graph-mini { position: absolute; top: 2.6rem; right: .5rem; z-index: 2; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: .35rem; overflow: hidden; cursor: crosshair; opacity: .92; touch-action: none; }
+      .graph-mini .mini-svg { position: absolute; top: 0; left: 0; transform-origin: top left; pointer-events: none; }
+      .graph-mini .mini-svg svg { display: block; width: 100%; height: 100%; }
+      .graph-mini .vp { position: absolute; border: 1.5px solid var(--bs-primary); background: rgba(13, 110, 253, .12); pointer-events: none; }
       /* sync: pull (blue, left) / push (green, right) direction panels */
       .dir-pull .card-header { border-bottom: 2px solid var(--bs-primary); }
       .dir-push .card-header { border-bottom: 2px solid var(--bs-success); }
@@ -113,10 +124,13 @@
       .dir-push .dir-glyph { color: var(--bs-success); }
       .dir-foot { font-size: .75rem; color: var(--bs-secondary-color); margin-top: .6rem; }
       /* inbox: one dense triage list — group headers, one line per item, actions on hover */
-      .triage { background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: .5rem; overflow-x: auto; }
-      .triage-group { display: flex; align-items: center; gap: .5rem; padding: .3rem .75rem; background: var(--bs-tertiary-bg); border-bottom: 1px solid var(--bs-border-color); font-size: .72rem; font-weight: 600; color: var(--bs-secondary-color); text-transform: uppercase; letter-spacing: .04em; min-width: 42rem; }
+      /* the list itself is the grid and each row subgrids it, so the tag and action
+         columns share one width across every row instead of sizing per row */
+      .triage { display: grid; grid-template-columns: 5.6rem 6.4rem minmax(0, 1fr) auto auto; column-gap: .75rem; padding: 0 .75rem; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: .5rem; overflow-x: auto; }
+      .triage > div { display: contents; }
+      .triage-group { grid-column: 1 / -1; margin: 0 -.75rem; display: flex; align-items: center; gap: .5rem; padding: .3rem .75rem; background: var(--bs-tertiary-bg); border-bottom: 1px solid var(--bs-border-color); font-size: .72rem; font-weight: 600; color: var(--bs-secondary-color); text-transform: uppercase; letter-spacing: .04em; min-width: 42rem; }
       .triage-group .n { font-weight: 500; color: var(--bs-tertiary-color); text-transform: none; font-variant-numeric: tabular-nums; }
-      .triage-li { display: grid; grid-template-columns: 5.6rem 6.4rem minmax(0, 1fr) auto auto; align-items: center; gap: .75rem; min-height: 2.2rem; padding: .25rem .75rem; border-bottom: 1px solid var(--bs-border-color-translucent); min-width: 42rem; font-size: .8rem; }
+      .triage-li { grid-column: 1 / -1; margin: 0 -.75rem; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 2.2rem; padding: .25rem .75rem; border-bottom: 1px solid var(--bs-border-color-translucent); min-width: 42rem; font-size: .8rem; }
       .triage-li:last-child { border-bottom: 0; }
       .triage-li:hover, .triage-li:focus-within { background: var(--bs-secondary-bg); }
       .triage-li .id-cell, .triage-li .id, .triage-li .t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

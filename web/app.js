@@ -131,6 +131,16 @@ const ArchiveIcon = () => html`
   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M0 2a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1v7.5a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 1 12.5V5a1 1 0 0 1-1-1zm2 3v7.5A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5V5zm13-3H1v2h14zM5 7.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/>
   </svg>`;
+const GraphIcon = () => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M4.9 4.6 11.3 7.5M4.9 11.4l6.4-2.9" stroke="currentColor" stroke-width="1.1" fill="none"/>
+    <circle cx="3.5" cy="3.5" r="2.2"/><circle cx="13" cy="8" r="2.2"/><circle cx="3.5" cy="12.5" r="2.2"/>
+  </svg>`;
+const TrashIcon = () => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+    <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+  </svg>`;
 const StarIcon = ({ filled }) => html`
   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
     ${filled
@@ -878,6 +888,65 @@ const Domains = () => {
 
 // ---- Graph (UI-0003) ----------------------------------------------------------
 const ZOOM_MIN = 0.2, ZOOM_MAX = 16;
+// minimap pinned under the zoom tools — the same svg scaled down, with a box
+// over the visible window; click/drag pans the view so a deep zoom can't get lost
+const MINI_W = 160, MINI_H = 120;
+const MiniMap = ({ view, svg, zoom }) => {
+  const boxRef = useRef(null);
+  const dragging = useRef(false);
+  const [m, setM] = useState(null); // { s, w, h, natW, natH, vp: {l,t,w,h} }
+  useEffect(() => {
+    const v = view.current;
+    const el = v?.querySelector("svg");
+    if (!v || !el) return setM(null);
+    const update = () => {
+      // the svg is laid out at zoom scale — rect/zoom is its size at rest
+      // (SVGElement has no offsetWidth; no transforms are in play so the
+      // rect's size is the layout box)
+      const r = el.getBoundingClientRect();
+      const natW = r.width / zoom, natH = r.height / zoom;
+      const s = Math.min(MINI_W / natW, MINI_H / natH);
+      const mapW = natW * s, mapH = natH * s;
+      // the window rect is fraction-mapped: where the scroll offsets sit inside
+      // their ranges maps to where the box sits inside the mini image
+      const w = Math.min(mapW, (v.clientWidth / v.scrollWidth) * mapW);
+      const h = Math.min(mapH, (v.clientHeight / v.scrollHeight) * mapH);
+      const fx = v.scrollWidth > v.clientWidth ? v.scrollLeft / (v.scrollWidth - v.clientWidth) : 0;
+      const fy = v.scrollHeight > v.clientHeight ? v.scrollTop / (v.scrollHeight - v.clientHeight) : 0;
+      setM({ s, w: mapW, h: mapH, natW, natH, vp: { l: fx * (mapW - w), t: fy * (mapH - h), w, h } });
+    };
+    update();
+    v.addEventListener("scroll", update);
+    const ro = new ResizeObserver(update);
+    ro.observe(v);
+    return () => {
+      v.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [svg, zoom]);
+  if (!m) return null;
+  // a tap/drag inside the map centres the visible window on that point
+  const jump = (e) => {
+    const v = view.current, box = boxRef.current?.getBoundingClientRect();
+    if (!v || !box) return;
+    const nx = (e.clientX - box.left) / m.s / m.natW;
+    const ny = (e.clientY - box.top) / m.s / m.natH;
+    v.scrollLeft = Math.max(0, Math.min(v.scrollWidth - v.clientWidth, nx * v.scrollWidth - v.clientWidth / 2));
+    v.scrollTop = Math.max(0, Math.min(v.scrollHeight - v.clientHeight, ny * v.scrollHeight - v.clientHeight / 2));
+  };
+  const end = () => (dragging.current = false);
+  return html`
+    <div ref=${boxRef} class="graph-mini" style=${{ width: m.w, height: m.h }} title="overview — click or drag to move the view"
+      onPointerDown=${(e) => {
+        dragging.current = true;
+        boxRef.current.setPointerCapture(e.pointerId);
+        jump(e);
+      }}
+      onPointerMove=${(e) => dragging.current && jump(e)} onPointerUp=${end} onPointerCancel=${end}>
+      <div class="mini-svg" style=${{ width: m.natW, height: m.natH, transform: `scale(${m.s})` }} dangerouslySetInnerHTML=${{ __html: svg }} />
+      <div class="vp" style=${{ left: m.vp.l, top: m.vp.t, width: m.vp.w, height: m.vp.h }} />
+    </div>`;
+};
 const Graph = ({ onOpen, id }) => {
   const domains = useDomains();
   const blank = { q: "", status: "", domain: "", linked: false };
@@ -1034,7 +1103,8 @@ const Graph = ({ onOpen, id }) => {
         <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= ZOOM_MAX}
           onClick=${() => applyZoom(Math.min(ZOOM_MAX, +(zoomRef.current * 1.25).toFixed(2)))}>+</button>
       </div>
-      <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }} dangerouslySetInnerHTML=${{ __html: svg }}
+      <${MiniMap} view=${viewRef} svg=${svg} zoom=${zoom} />
+      <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }}
         onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
         onWheel=${wheelZoom}
         onClick=${(e) => {
@@ -1043,7 +1113,9 @@ const Graph = ({ onOpen, id }) => {
           const el = document.elementFromPoint(e.clientX, e.clientY) ?? e.target;
           const id = el?.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
           if (id) onOpen(id[0].replace("_", "-"));
-        }} />
+        }}>
+        <div class="graph-zoom" dangerouslySetInnerHTML=${{ __html: svg }} />
+      </div>
     </div>
     <details class="mt-2"><summary class="text-secondary">mermaid source</summary><pre class="card card-body small">${src}</pre></details>
   `;
@@ -1227,16 +1299,28 @@ const ItemView = ({ id }) => {
     if (reason !== null) act(action, { reason });
   };
   const TABS = ["simple", "technical", "evidence"];
+  // "graph" like the plans-page action: an epic opens its plan subtree
+  // (#/graph/<id>); a task opens the full graph searched on its id with
+  // + linked on — itself plus everything one step away
+  const openGraph = () => {
+    if (it.meta.type === "epic") return nav(`graph/${id}`);
+    try {
+      sessionStorage.setItem("te.graph.f", JSON.stringify({ q: id, status: "", domain: "", linked: true }));
+    } catch {
+      /* storage blocked — the graph still opens, just unfiltered */
+    }
+    nav("graph");
+  };
   const history = parseLog(sec("log"));
   const last = history.at(-1);
   return html`
     <div class="item-bar d-flex align-items-center gap-2">
-      <span class="id">${it.meta.id}</span>
+      <span class="id flex-shrink-0">${it.meta.id}</span>
       <${Badge} s=${it.meta.status} />
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="item-bar-title text-secondary" title=${it.meta.title}>${it.meta.title}</span>
-      <div class="d-flex gap-2 ms-auto flex-nowrap">
+      <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
         ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}>approve</button>`}
         ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}>resume</button>`}
         ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
@@ -1248,22 +1332,25 @@ const ItemView = ({ id }) => {
         ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}>reopen plan</button>`}
         ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
         ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
-        <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>
-        ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
         ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}>unarchive</button>`}
-        ${!it.claim && html`<button class="btn btn-sm btn-danger" onClick=${async () => {
-          const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
-            (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-          if (!confirm(msg)) return;
-          const reason = prompt("reason (optional)");
-          if (reason === null) return;
-          try {
-            await post(`/api/items/${id}/delete`, { reason });
-            nav("board");
-          } catch (e) {
-            alert(e.message);
-          }
-        }}>delete</button>`}
+        <div class="d-flex gap-1 flex-nowrap">
+          <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>
+          <button class="btn btn-sm btn-outline-secondary" title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"} onClick=${openGraph}><${GraphIcon} /></button>
+          ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></button>`}
+          ${!it.claim && html`<button class="btn btn-sm btn-outline-danger" title="delete — remove tracking, keep the task file" onClick=${async () => {
+            const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
+              (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
+            if (!confirm(msg)) return;
+            const reason = prompt("reason (optional)");
+            if (reason === null) return;
+            try {
+              await post(`/api/items/${id}/delete`, { reason });
+              nav("board");
+            } catch (e) {
+              alert(e.message);
+            }
+          }}><${TrashIcon} /></button>`}
+        </div>
       </div>
     </div>
     <div class="text-secondary small mb-2">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</div>
