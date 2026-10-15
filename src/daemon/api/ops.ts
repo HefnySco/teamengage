@@ -302,11 +302,20 @@ export class WorkspaceOps {
     }
     const mine = it.claim;
     if (mine) {
-      throw new ClaimRefusedError(
-        `already claimed by ${mine.holder} on ${mine.machine}`,
-        mine.holder,
-        mine.machine,
-      );
+      // takeover: an AI-flagged submission (in_review + issues) stays
+      // claimed to its machine — another session here may pick the fix up.
+      // The state machine makes the final call.
+      const takeover =
+        it.meta.status === "in_review" &&
+        it.meta.ai_review?.verdict === "issues" &&
+        mine.machine === session.machine;
+      if (!takeover) {
+        throw new ClaimRefusedError(
+          `already claimed by ${mine.holder} on ${mine.machine}`,
+          mine.holder,
+          mine.machine,
+        );
+      }
     }
     const now = new Date().toISOString();
     const claim: Claim = {
@@ -332,7 +341,7 @@ export class WorkspaceOps {
       { type: "claim", claim },
       {
         depsDone: this.depsDone(it),
-        guard: this.overlapGuard(it.meta.targets, roots),
+        guard: this.overlapGuard(it.meta.targets, roots, id),
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release
@@ -353,10 +362,11 @@ export class WorkspaceOps {
   }
 
   /** Overlap check that runs inside the store's serialized write queue. */
-  private overlapGuard(targets: string[], roots = resourceRoots(this.wsr.ws)) {
+  private overlapGuard(targets: string[], roots = resourceRoots(this.wsr.ws), except_item?: string) {
     return () => {
       for (const c of this.index.claims.values()) {
         if (c.conflicted) continue;
+        if (c.item === except_item) continue; // an item's own claim can't conflict with it (takeover)
         const o = targetsOverlap(targets, c.targets, roots);
         if (o.overlap) {
           throw new ClaimRefusedError(
@@ -454,12 +464,19 @@ export class WorkspaceOps {
    * stays `in_review`, the human still accepts. Find submissions with
    * `query status=in_review`.
    */
-  async review(id: string, session: Session, verdict: "ok" | "issues", note?: string) {
+  async review(
+    id: string,
+    session: Session,
+    verdict: "ok" | "issues",
+    note?: string,
+    summary?: string,
+  ) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "review",
       verdict,
       note,
+      summary,
     });
   }
 
@@ -467,13 +484,13 @@ export class WorkspaceOps {
    * AI bounce: a reviewer session sends a broken submission back to its
    * holder (in_progress, claim kept — like the human's reject, but capped).
    */
-  async bounce(id: string, session: Session, reason: string) {
+  async bounce(id: string, session: Session, reason: string, summary?: string) {
     const it = this.item(id);
     return this.store.perform(
       id,
       it.meta.version,
       this.actorFor(session),
-      { type: "bounce", reason },
+      { type: "bounce", reason, summary },
       { priorBounces: () => this.aiBouncesSinceHumanTouch(id) },
     );
   }
@@ -832,7 +849,7 @@ export class WorkspaceOps {
       { type: "claim", claim },
       // a human claim locks paths against agents — it must not trample a
       // live agent claim either
-      { guard: this.overlapGuard(it.meta.targets) },
+      { guard: this.overlapGuard(it.meta.targets, undefined, id) },
     );
     try {
       const { resumed } = await setupWork(this.wsr.ws, id, claim, this.home);

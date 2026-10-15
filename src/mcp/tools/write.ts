@@ -24,7 +24,8 @@ export function registerWriteTools(
     "claim",
     {
       description:
-        "Take an item: writes the claim file, locks targets, sets up worktrees/snapshots.",
+        "Take an item: writes the claim file, locks targets, sets up worktrees/snapshots. " +
+        "On an in_review item with an AI 'issues' verdict this takes the claim over — same machine only.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {
@@ -179,21 +180,24 @@ export function registerWriteTools(
     {
       description:
         "Peer-review a submission as a different session than the holder (find them: query status=in_review). " +
-        "Read the task file, the Evidence section and the actual diff/tests first, then record verdict ok|issues with a specific note. " +
+        "Read the task file, the Evidence section and the actual diff/tests first, then record verdict ok|issues " +
+        "with summary (one plain-English sentence for the human — what the verdict means, no jargon) " +
+        "and a specific note for whoever fixes it (findings with file:line). " +
         "Advisory marker only — it never changes status; the human still accepts. Never review your own submission.",
       inputSchema: {
         id: z.string(),
         verdict: z.enum(["ok", "issues"]),
+        summary: z.string(),
         note: z.string().optional(),
       },
     },
-    async ({ id, verdict, note }) => {
+    async ({ id, verdict, summary, note }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.review(id, s, verdict, note);
+        await o.review(id, s, verdict, note, summary);
         return okText(`reviewed ${id}: ${verdict}`);
       } catch (e) {
         return errFrom(e);
@@ -206,17 +210,18 @@ export function registerWriteTools(
     {
       description:
         "Reviewer only (not the holder): send a broken submission back to its holder — in_review → in_progress, " +
-        "the claim is kept so the holder fixes and resubmits. reason is required and goes to the holder. " +
+        "the claim is kept so the holder fixes and resubmits. reason is required and goes to the holder; " +
+        "summary is required too — one plain-English sentence for the human, no jargon. " +
         "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead.",
-      inputSchema: { id: z.string(), reason: z.string() },
+      inputSchema: { id: z.string(), reason: z.string(), summary: z.string() },
     },
-    async ({ id, reason }) => {
+    async ({ id, reason, summary }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.bounce(id, s, reason);
+        await o.bounce(id, s, reason, summary);
         return okText(`bounced ${id} → in_progress (holder fixes and resubmits)`);
       } catch (e) {
         return errFrom(e);

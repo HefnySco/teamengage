@@ -111,6 +111,73 @@ describe("every non-arrow is rejected", () => {
   });
 });
 
+describe("claim takeover of an AI-flagged submission", () => {
+  const flagged = (): ItemMeta => ({
+    ...item("in_review"),
+    ai_review: { verdict: "issues", reviewed_by: agent2.session, reviewed_at: NOW, note: "x" },
+  });
+  const takeoverClaim = claimOf(agent2.session);
+  const reviewCtx = (c: Partial<TransitionCtx> = {}) =>
+    ctx({ claim: claimOf(), depsDone: true, ...c });
+
+  it("another session on the same machine takes the claim over", () => {
+    const r = transition(flagged(), { type: "claim", claim: takeoverClaim }, agent2, reviewCtx());
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([
+      { type: "write_claim", claim: takeoverClaim },
+      { type: "setup_work" },
+    ]);
+    expect(r.log[0]).toMatch(/took over the fix \(was claude-code@desktop#a1f3\)$/);
+  });
+
+  it("the holder itself re-claims to fix the findings", () => {
+    const r = transition(flagged(), { type: "claim", claim: claimOf() }, agent, reviewCtx());
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.log[0]).toMatch(/took over the fix$/);
+  });
+
+  it("the AI review marker stays until resubmit", () => {
+    const r = transition(flagged(), { type: "claim", claim: takeoverClaim }, agent2, reviewCtx());
+    expect(r.meta.ai_review?.verdict).toBe("issues");
+  });
+
+  it("refused across machines — the worktree is local", () => {
+    const remote: Actor = { kind: "agent", session: "claude-code@laptop#b2c4", machine: "laptop" };
+    const remoteClaim = { ...takeoverClaim, holder: remote.session, machine: "laptop" };
+    expect(() =>
+      transition(flagged(), { type: "claim", claim: remoteClaim }, remote, reviewCtx()),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("an ok verdict is not takeable — nothing to fix", () => {
+    const ok: ItemMeta = {
+      ...flagged(),
+      ai_review: { verdict: "ok", reviewed_by: agent2.session, reviewed_at: NOW },
+    };
+    expect(() =>
+      transition(ok, { type: "claim", claim: takeoverClaim }, agent2, reviewCtx()),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("no AI review → in_review stays unclaimable", () => {
+    expect(() =>
+      transition(item("in_review"), { type: "claim", claim: takeoverClaim }, agent2, reviewCtx()),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("no claim → nothing to take over", () => {
+    expect(() =>
+      transition(flagged(), { type: "claim", claim: takeoverClaim }, agent2, ctx({ depsDone: true })),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("claim takeover is agent-only", () => {
+    expect(() =>
+      transition(flagged(), { type: "claim", claim: claimOf("human") }, human, reviewCtx()),
+    ).toThrow(InvalidTransitionError);
+  });
+});
+
 describe("complete (human marks done from any status)", () => {
   it("releases a claim but keeps branches, never merges, clears the question", () => {
     const meta = { ...item("waiting"), question: { text: "?", asked_by: agent.session, asked_at: NOW } };
@@ -245,6 +312,44 @@ describe("review / bounce (AI peer review of a submission)", () => {
       ctx({ claim: claimOf() }),
     );
     expect(again.meta.ai_review.verdict).toBe("ok");
+  });
+
+  it("review with summary: human line first, technical note kept for the fixer", () => {
+    const r = transition(
+      item("in_review"),
+      {
+        type: "review",
+        verdict: "issues",
+        summary: "The restart flag is ignored — it goes back for fixes.",
+        note: "acceptance 2 fails locally",
+      },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review).toEqual({
+      verdict: "issues",
+      reviewed_by: agent2.session,
+      reviewed_at: NOW,
+      note: "acceptance 2 fails locally",
+      summary: "The restart flag is ignored — it goes back for fixes.",
+    });
+    expect(r.sectionWrites).toEqual([
+      {
+        heading: "Review",
+        text: `- ${NOW} ${agent2.session} issues — The restart flag is ignored — it goes back for fixes. (acceptance 2 fails locally)\n`,
+      },
+    ]);
+  });
+
+  it("bounce with summary stores it on the marker", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "bounce", reason: "tests red", summary: "The tests are failing." },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.summary).toBe("The tests are failing.");
+    expect(r.sectionWrites[0].text).toContain("bounced — The tests are failing. (tests red)");
   });
 
   it("submit clears a stale review — a fresh submission starts unreviewed", () => {

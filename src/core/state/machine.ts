@@ -39,14 +39,16 @@ export type Action =
   /**
    * A second agent session records a peer review of the submission
    * (advisory: no status change, the human still accepts). Not the holder.
+   * `summary` is the plain-English line for the human; `note` the technical
+   * detail for whoever fixes it.
    */
-  | { type: "review"; verdict: AiReview["verdict"]; note?: string }
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string }
   /**
    * A second agent session bounces a broken submission back to its holder
    * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
    * a row the item stays in review for the human (record a review instead).
    */
-  | { type: "bounce"; reason: string }
+  | { type: "bounce"; reason: string; summary?: string }
   | { type: "accept" }
   | { type: "reject"; reason?: string }
   | { type: "drop"; reason?: string }
@@ -216,7 +218,17 @@ export function transition(
     }
 
     case "claim": {
-      if (from !== "ready") fail(from, action.type);
+      // takeover: an AI-flagged submission (in_review + issues) can be
+      // picked up for the fix by any agent on the claim's machine — the
+      // holder re-claims or a fresh session takes the claim over. The
+      // worktree is machine-local, so cross-machine takeover stays refused.
+      const takeover =
+        from === "in_review" &&
+        meta.ai_review?.verdict === "issues" &&
+        actor.kind === "agent" &&
+        !!ctx.claim &&
+        ctx.claim.machine === actor.machine;
+      if (from !== "ready" && !takeover) fail(from, action.type);
       if (meta.type === "epic") {
         throw new ClaimRefusedError("epics are plans — claim their tasks");
       }
@@ -225,7 +237,7 @@ export function transition(
       if (ctx.depsDone === false) {
         throw new InvalidTransitionError("cannot claim: dependencies not done", from, "claim");
       }
-      if (ctx.claim) {
+      if (ctx.claim && !takeover) {
         throw new ClaimRefusedError(
           `already claimed by ${ctx.claim.holder} on ${ctx.claim.machine}`,
           ctx.claim.holder,
@@ -233,7 +245,11 @@ export function transition(
         );
       }
       set("in_progress");
-      out.log.push(`- ${stamp} ${who} claimed`);
+      out.log.push(
+        takeover
+          ? `- ${stamp} ${who} took over the fix${ctx.claim!.holder !== who ? ` (was ${ctx.claim!.holder})` : ""}`
+          : `- ${stamp} ${who} claimed`,
+      );
       out.effects.push({ type: "write_claim", claim: action.claim });
       out.effects.push({ type: "setup_work" });
       return out;
@@ -325,11 +341,18 @@ export function transition(
         reviewed_by: actor.session,
         reviewed_at: ctx.now,
         ...(action.note ? { note: action.note } : {}),
+        ...(action.summary ? { summary: action.summary } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
       out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
       out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}`);
-      out.sectionWrites.push({ heading: "Review", text: `- ${stamp} ${who} ${verdict}\n` });
+      // the Review section reads for the human first: summary, detail after
+      out.sectionWrites.push({
+        heading: "Review",
+        text: action.summary
+          ? `- ${stamp} ${who} ${action.verdict} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
+          : `- ${stamp} ${who} ${verdict}\n`,
+      });
       return out;
     }
 
@@ -347,9 +370,15 @@ export function transition(
         reviewed_by: actor.session,
         reviewed_at: ctx.now,
         note: action.reason,
+        ...(action.summary ? { summary: action.summary } : {}),
       };
       out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason}`);
-      out.sectionWrites.push({ heading: "Review", text: `- ${stamp} ${who} bounced: ${action.reason}\n` });
+      out.sectionWrites.push({
+        heading: "Review",
+        text: action.summary
+          ? `- ${stamp} ${who} bounced — ${action.summary} (${action.reason})\n`
+          : `- ${stamp} ${who} bounced: ${action.reason}\n`,
+      });
       // the claim is kept on purpose: the holder has the context and the
       // worktree, so it fixes and resubmits (like the human's reject)
       return out;

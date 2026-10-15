@@ -39,7 +39,10 @@ export const AiReview = z.object({
   /** reviewing session id (`agent@machine#hex`) */
   reviewed_by: z.string(),
   reviewed_at: z.string(),
+  /** technical detail for whoever fixes it (file:line, what broke) */
   note: z.string().optional(),
+  /** one plain-English sentence for the human — what the verdict means */
+  summary: z.string().optional(),
 });
 export type AiReview = z.infer<typeof AiReview>;
 

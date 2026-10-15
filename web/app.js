@@ -1,5 +1,6 @@
 import "bootstrap/dist/css/bootstrap.min.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
+import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import htm from "htm";
@@ -153,6 +154,42 @@ const STAR_TEXT = { yellow: "text-warning", red: "text-danger", green: "text-suc
 const STAR_BTN = { yellow: "btn-warning", red: "btn-danger", green: "btn-success", blue: "btn-primary" };
 const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset → yellow; blue → undefined (unstar)
 
+// one <path> (or several) per glyph — same inline convention as the icons above
+const glyph = (paths) => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" class="me-1" style="vertical-align:-.125em">
+    ${paths.map((d) => html`<path d=${d} />`)}
+  </svg>`;
+const CheckIcon = () => glyph(["M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"]);
+const CheckCircleIcon = () => glyph([
+  "M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16",
+  "M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05",
+]);
+const XCircleIcon = () => glyph([
+  "M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16",
+  "M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708",
+]);
+const XIcon = () => glyph(["M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"]);
+const UnlockIcon = () => glyph(["M11 1a2 2 0 0 0-2 2v4a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h5V3a3 3 0 0 1 6 0v4a.5.5 0 0 1-1 0V3a2 2 0 0 0-2-2M3 8a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z"]);
+const LockIcon = () => glyph(["M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM5 8h6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1"]);
+const PlayIcon = () => glyph(["m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"]);
+const PauseIcon = () => glyph(["M5.5 3.5A1.5 1.5 0 0 1 7 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5m5 0A1.5 1.5 0 0 1 12 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5"]);
+const PencilIcon = () => glyph([
+  "M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z",
+  "M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z",
+]);
+const UndoIcon = () => glyph([
+  "M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 0 0 8 2z",
+  "M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466",
+]);
+const PlusSquareIcon = () => glyph([
+  "M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2z",
+  "M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4",
+]);
+const CheckSquareIcon = () => glyph([
+  "M3 14.5A1.5 1.5 0 0 1 1.5 13V3A1.5 1.5 0 0 1 3 1.5h8a.5.5 0 0 1 0 1H3a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5V8a.5.5 0 0 1 1 0v5a1.5 1.5 0 0 1-1.5 1.5z",
+  "m8.354 10.354 7-7a.5.5 0 0 0-.708-.708L8 9.293 5.354 6.646a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0",
+]);
+
 // search field with a × clear button inside (the native type=search one is webkit-only)
 const SearchBox = ({ value, onChange, onKeyDown, ...props }) => html`
   <span class="search-box position-relative d-inline-flex align-items-center">
@@ -194,9 +231,9 @@ function useApi(path, deps = []) {
 // the answer; nothing is sent until "answer" is pressed and confirmed
 const AnswerBox = ({ id, opts, onAnswer }) => {
   const [text, setText] = useState("");
-  const submit = () => {
+  const submit = async () => {
     const answer = text.trim();
-    if (answer && confirm(`Answer ${id ?? "this question"} with:\n\n${answer}`)) onAnswer(answer);
+    if (answer && (await confirmDialog("answer this question", `Answer ${id ?? "this question"} with:\n\n${answer}`, { ok: "answer" }))) onAnswer(answer);
   };
   return html`
     <div class="d-flex gap-2 flex-wrap align-items-center">
@@ -212,10 +249,10 @@ const AnswerBox = ({ id, opts, onAnswer }) => {
 // a recorded answer; the item's latest one can be revised until the item is closed
 const DecisionCard = ({ d, canChange, onChange }) => {
   const [text, setText] = useState(null);
-  const save = () => {
+  const save = async () => {
     const answer = (text ?? "").trim();
     if (!answer || answer === d.meta.title) return setText(null);
-    if (confirm(`Change answer ${d.meta.id}\n\nfrom: ${d.meta.title}\nto:   ${answer}`)) {
+    if (await confirmDialog(`change answer ${d.meta.id}`, `from: ${d.meta.title}\nto:   ${answer}`, { ok: "change" })) {
       onChange(answer);
       setText(null);
     }
@@ -273,7 +310,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
       <span class="t text-secondary" title=${q.question?.text}>${(q.question?.text ?? item?.title ?? "").replace(/\s+/g, " ")}</span>
       <${DomainTags} ds=${item?.domains} />
       <span class="acts">
-        <button class="btn btn-sm py-0 ${open ? "btn-outline-secondary" : "btn-primary"}" onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
+        <button class="btn btn-sm py-0 ${open ? "btn-outline-secondary" : "btn-primary"}" disabled=${item && item.status !== "waiting"} title=${item && item.status !== "waiting" ? "questions can only be answered while the item is waiting" : ""} onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
       </span>
       ${open && html`
         <div class="triage-detail">
@@ -342,12 +379,12 @@ const Inbox = ({ onOpen }) => {
     saveSearch("te.inbox.sort", v);
   };
   const act = async (id, action, body) => {
-    await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
+    await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
   };
   // a cancelled prompt (null) aborts the action — only OK fires it
-  const askThen = (id, action, label) => {
-    const reason = prompt(label);
+  const askThen = async (id, action, label) => {
+    const reason = await promptDialog(label);
     if (reason !== null) act(id, action, { reason });
   };
   const empty = !total;
@@ -387,7 +424,9 @@ const Inbox = ({ onOpen }) => {
               ${title(c.item)} <span class="text-secondary">· held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
             </span>
             <${DomainTags} ds=${byId[c.item]?.domains} />
-            <span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => act(c.item, "release", { note: "resolve" })}>release</button></span>
+            <span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" disabled=${byId[c.item] ? !canRelease(byId[c.item].status) : false} title=${byId[c.item] ? releaseTitle(byId[c.item].status) : "release the claim"} onClick=${async () => {
+              if (await confirmDialog(`release the claim on ${c.item}?`, `held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act(c.item, "release", { note: "resolve" });
+            }}>release</button></span>
           </div>`,
       ),
     },
@@ -399,7 +438,9 @@ const Inbox = ({ onOpen }) => {
           id,
           html`<${InboxStatus} s="in_review" />`,
           html`${claimNote(id)}${aiNote(id)}`,
-          html`<button class="btn btn-sm py-0 btn-primary" onClick=${() => act(id, "accept")}>accept</button>
+          html`<button class="btn btn-sm py-0 btn-primary" onClick=${async () => {
+            if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act(id, "accept");
+          }}>accept</button>
             <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
         ),
       ),
@@ -539,7 +580,7 @@ const Board = ({ onOpen }) => {
       try {
         await post(`/api/items/${id}/archive`, { reason: "archived from the board" });
       } catch (e) {
-        alert(`${id}: ${e.message}`);
+        toast(`${id}: ${e.message}`);
       }
     }
     reload();
@@ -550,7 +591,7 @@ const Board = ({ onOpen }) => {
     try {
       await post(`/api/items/${i.id}/${next ? "star" : "unstar"}`, next ? { color: next } : {});
     } catch (e) {
-      alert(`${i.id}: ${e.message}`);
+      toast(`${i.id}: ${e.message}`);
     }
     reload();
   };
@@ -627,9 +668,9 @@ const Board = ({ onOpen }) => {
               <span class="n">${items.length}</span>
               ${s === "done" && items.some((i) => !i.claim) && html`<button class="icon-btn ms-auto"
                 title="archive every done card shown (respects the search)"
-                onClick=${() => {
+                onClick=${async () => {
                   const ids = items.filter((i) => !i.claim).map((i) => i.id);
-                  if (confirm(`Archive ${ids.length} done item(s)${words.length ? " matching the search" : ""}?\nThey move to the archive page and can be unarchived.`)) archive(ids);
+                  if (await confirmDialog(`archive ${ids.length} done item(s)?`, `They move to the archive page and can be unarchived.${words.length ? " (search-matched only)" : ""}`, { ok: "archive" })) archive(ids);
                 }}><${ArchiveIcon} /></button>`}
             </div>
             <div class="col-body">
@@ -659,7 +700,7 @@ const Board = ({ onOpen }) => {
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
-                          title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
+                          title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
                           AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
@@ -801,7 +842,7 @@ const Archive = ({ onOpen }) => {
     (b.archived_at ?? "").localeCompare(a.archived_at ?? ""),
   );
   const unarchive = async (id) => {
-    await post(`/api/items/${id}/unarchive`).catch((e) => alert(e.message));
+    await post(`/api/items/${id}/unarchive`).catch((e) => toast(e.message));
     reload();
   };
   return html`
@@ -841,24 +882,24 @@ const Domains = () => {
       refreshDomains();
       return r;
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     }
   };
   const edit = async (r, field, label) => {
     const cur = field === "keywords" ? (r.keywords ?? []).join(", ") : (r[field] ?? "");
-    const v = prompt(`${label} for #${r.name}`, cur);
+    const v = await promptDialog(`${label} for #${r.name}`, { value: cur });
     if (v === null) return;
     await call("/api/domains", { name: r.name, [field]: field === "keywords" ? v.split(",").map((x) => x.trim()).filter(Boolean) : v });
   };
   const rename = async (r) => {
-    const to = prompt(`Rename #${r.name} to… (an existing domain = merge into it)`, r.name);
+    const to = await promptDialog(`rename #${r.name} to…`, { label: "an existing domain name merges into it", value: r.name });
     if (!to || to === r.name) return;
     const exists = (rows ?? []).some((x) => x.name === to.toLowerCase());
-    if (exists && !confirm(`#${to} exists — merge #${r.name} (${r.count} item(s)) into it?`)) return;
+    if (exists && !(await confirmDialog(`merge #${r.name} into #${to}?`, `#${to} already exists — #${r.name} (${r.count} item(s)) merges into it.`, { ok: "merge" }))) return;
     await call(`/api/domains/${encodeURIComponent(r.name)}/rename`, { to });
   };
   const del = async (r) => {
-    if (!confirm(`Delete #${r.name}? It is removed from ${r.count + r.archived} item(s).`)) return;
+    if (!(await confirmDialog(`delete #${r.name}?`, `It is removed from ${r.count + r.archived} item(s).`, { ok: "delete", danger: true }))) return;
     await call(`/api/domains/${encodeURIComponent(r.name)}/delete`, {});
   };
   const loadSuggest = async () => {
@@ -870,7 +911,7 @@ const Domains = () => {
     const ids = Object.entries(pick).filter(([, v]) => v).map(([k]) => k);
     if (!ids.length) return;
     const r = await call("/api/domains/suggest/apply", { ids });
-    if (r) alert(`added ${r.added} tag(s) on ${r.items} item(s)`);
+    if (r) toast(`added ${r.added} tag(s) on ${r.items} item(s)`, "success");
     setSugg(null);
   };
   if (!rows) return html`<p class="text-secondary">loading…</p>`;
@@ -1186,6 +1227,14 @@ const parseLog = (body) =>
 const whoKind = (w) => (w === "human" ? "human" : ["daemon", "watch", "reconcile"].includes(w) ? "daemon" : "agent");
 const whoCls = (w) => `who-${whoKind(w)}`;
 
+// release is only a valid transition from in_progress/waiting — anything
+// else (e.g. in_review) is refused by the state machine
+const canRelease = (status) => status === "in_progress" || status === "waiting";
+const releaseTitle = (status) =>
+  canRelease(status)
+    ? "release the claim — work is kept, the item goes back to ready"
+    : "a claim can only be released while work is in progress or waiting";
+
 const History = ({ entries }) => html`
   <div class="card mt-3">
     <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
@@ -1278,7 +1327,7 @@ const Notes = ({ id, text, onAdded }) => {
       setDraft("");
       onAdded();
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     } finally {
       setBusy(false);
     }
@@ -1320,7 +1369,7 @@ const DomainEditor = ({ id, ds, onChanged }) => {
       onChanged();
       refreshDomains();
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     }
   };
   const add = () => {
@@ -1357,19 +1406,19 @@ const ItemView = ({ id }) => {
   useEffect(() => setTab(null), [id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
-  const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n)?.body.trim() ?? "";
+  const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n.toLowerCase())?.body.trim() ?? "";
   // open on the plain-English tab only when the item has one
   const tab = picked ?? (b.source?.simple?.text || sec("simple") ? "simple" : "technical");
   const act = async (action, body) => {
-    await post(`/api/items/${id}/${action}`, body).catch((e) => alert(e.message));
+    await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
   };
   // the answer the human gave on this item (its latest decision) - changeable until the item is closed
   const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
     .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
   // a cancelled prompt (null) aborts the action — only OK fires it
-  const askThen = (action, label) => {
-    const reason = prompt(label);
+  const askThen = async (action, label) => {
+    const reason = await promptDialog(label);
     if (reason !== null) act(action, { reason });
   };
   const TABS = ["simple", "technical", "evidence"];
@@ -1395,33 +1444,33 @@ const ItemView = ({ id }) => {
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
-        ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}>approve</button>`}
-        ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}>resume</button>`}
-        ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}>hold</button>`}
-        ${(it.meta.status === "ready" || it.meta.status === "hold" || it.meta.status === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", it.meta.status === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${it.meta.status === "done" ? "reopen" : "to draft"}</button>`}
-        ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${() => act("accept")}>accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}>reject</button>`}
-        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("release", { note: "released by human" })}>release claim</button>`}
-        ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}>undrop</button>`}
-        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="no more parts are coming — the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}>close plan</button>`}
-        ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}>reopen plan</button>`}
-        ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${() => { const note = prompt("mark done — note (optional)"); if (note !== null) act("complete", { note }); }}>mark done</button>`}
-        ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
-        ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}>unarchive</button>`}
+        ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}><${CheckIcon} />approve</button>`}
+        ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}><${PlayIcon} />resume</button>`}
+        ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} />hold</button>`}
+        ${(it.meta.status === "ready" || it.meta.status === "hold" || it.meta.status === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", it.meta.status === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${it.meta.status === "done" ? html`<${UndoIcon} />reopen` : html`<${PencilIcon} />to draft`}</button>`}
+        ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} />accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} />reject</button>`}
+        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" disabled=${!canRelease(it.meta.status)} title=${releaseTitle(it.meta.status)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} />release claim</button>`}
+        ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}><${UndoIcon} />undrop</button>`}
+        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="no more parts are coming — the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} />close plan</button>`}
+        ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} />reopen plan</button>`}
+        ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} />mark done</button>`}
+        ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}><${XIcon} />drop</button>`}
+        ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}><${UndoIcon} />unarchive</button>`}
         <div class="d-flex gap-1 flex-nowrap">
           <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>
           <button class="btn btn-sm btn-outline-secondary" title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"} onClick=${openGraph}><${GraphIcon} /></button>
           ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></button>`}
           ${!it.claim && html`<button class="btn btn-sm btn-outline-danger" title="delete — remove tracking, keep the task file" onClick=${async () => {
-            const msg = `Delete ${it.meta.id} from TeamEngage?\n\nIts tracking and history entry go away. ` +
+            const msg = `Its tracking and history entry go away. ` +
               (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-            if (!confirm(msg)) return;
-            const reason = prompt("reason (optional)");
+            if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
+            const reason = await promptDialog("delete reason", { label: "reason (optional)" });
             if (reason === null) return;
             try {
               await post(`/api/items/${id}/delete`, { reason });
               nav("board");
             } catch (e) {
-              alert(e.message);
+              toast(e.message);
             }
           }}><${TrashIcon} /></button>`}
         </div>
@@ -1448,7 +1497,8 @@ const ItemView = ({ id }) => {
     ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
       <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · advisory, the accept is still yours</span>
-      ${it.meta.ai_review.note && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
+      ${it.meta.ai_review.summary && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.summary) }} />`}
+      ${it.meta.ai_review.note && html`<div class="md-view mt-1 text-secondary" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
     </div>`}
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}
@@ -1597,6 +1647,17 @@ const PlansGit = () => {
   const pushR = names.includes(pushTo) ? pushTo : (g.defaultRemote ?? names[0] ?? "");
   const rp = g.remotes.find((r) => r.name === pullR);
   const rs = g.remotes.find((r) => r.name === pushR);
+  // scenario flags — enable only the commands that can actually succeed.
+  // diverged (ahead>0 AND behind>0) can't fast-forward or push → terminal only.
+  // unverified counts (fetched !== true) keep commands enabled — each action
+  // re-fetches server-side, so a last-known "0" may still turn out pullable.
+  const syncR = g.defaultRemote ?? g.remotes[0]?.name;
+  const sd = g.remotes.find((r) => r.name === syncR);
+  const diverged = (r) => Boolean(r?.ref && r.behind > 0 && r.ahead > 0);
+  const pullable = Boolean(rp?.ref) && !diverged(rp) && (rp.behind > 0 || rp.fetched !== true);
+  const pushable = Boolean(rs) && rs.behind === 0 && (g.changes.length > 0 || !rs.ref || rs.ahead > 0);
+  const syncable = Boolean(sd?.ref) && !diverged(sd) && (sd.behind > 0 || sd.ahead > 0 || g.changes.length > 0 || sd.fetched !== true);
+  const div = [rp, rs, sd].find(diverged); // the diverged remote the alert explains
   // per-direction status: pull only cares about `behind`; push about uncommitted + `ahead` (blocked while `behind`).
   // green = verified this call; ⚠ only when a fetch was tried and failed — an unasked remote stays neutral
   const okBadge = (r, text) =>
@@ -1607,18 +1668,22 @@ const PlansGit = () => {
         : html`<span class="badge text-bg-secondary">${text}</span>`;
   const pullState = !rp?.ref
     ? html`<span class="small text-secondary">no ${g.branch} there</span>`
-    : rp.behind > 0
-      ? html`<span class="badge text-bg-warning">↓ ${rp.behind} to pull</span>`
-      : okBadge(rp, "nothing to pull");
+    : diverged(rp)
+      ? html`<span class="badge text-bg-danger">diverged ↑${rp.ahead} ↓${rp.behind}</span>`
+      : rp.behind > 0
+        ? html`<span class="badge text-bg-warning">↓ ${rp.behind} to pull</span>`
+        : okBadge(rp, "nothing to pull");
   const pushState = !rs?.ref
     ? html`<span class="small text-secondary">no ${g.branch} there</span>`
-    : rs.behind > 0
-      ? html`<span class="badge text-bg-warning">↓ ${rs.behind} — pull first</span>`
-      : rs.ahead > 0
-        ? html`<span class="badge text-bg-info">↑ ${rs.ahead} to push</span>`
-        : g.changes.length
-          ? null // the "N uncommitted" badge already says what needs doing
-          : okBadge(rs, "nothing to push");
+    : diverged(rs)
+      ? html`<span class="badge text-bg-danger">diverged — terminal only</span>`
+      : rs.behind > 0
+        ? html`<span class="badge text-bg-warning">↓ ${rs.behind} — pull first</span>`
+        : rs.ahead > 0
+          ? html`<span class="badge text-bg-info">↑ ${rs.ahead} to push</span>`
+          : g.changes.length
+            ? null // the "N uncommitted" badge already says what needs doing
+            : okBadge(rs, "nothing to push");
   const state = (r) =>
     !r.ref ? html`<span class="text-secondary">no ${g.branch} there</span>`
     : !r.ahead && !r.behind ? okBadge(r, "in sync")
@@ -1633,17 +1698,22 @@ const PlansGit = () => {
         <b>Task folder git</b>
         <span class="badge text-bg-secondary">branch ${g.branch ?? "?"}</span>
         ${g.changes.length > 0 && html`<span class="badge text-bg-primary">${g.changes.length} uncommitted</span>`}
-        ${g.remotes.length > 0 && html`<button class="btn btn-sm btn-outline-primary ms-auto py-0 px-2" disabled=${!!busy}
-          title="fetch → pull (stashing local changes) → commit the task folder → push"
-          onClick=${() => {
-            const ok = confirm(
-              `Sync now — ${g.defaultRemote ?? g.remotes[0]?.name}\n\n` +
-                `1. fetch + fast-forward pull${g.changes.length ? ` (stashing ${g.changes.length} local change(s) first)` : ""}\n` +
+        ${g.remotes.length > 0 && html`<button class="btn btn-sm btn-outline-primary ms-auto py-0 px-2" disabled=${!!busy || !syncable}
+          title=${!sd?.ref
+            ? `${syncR} has no branch ${g.branch} — Commit & Push creates it`
+            : diverged(sd)
+              ? `diverged from ${syncR} — needs a terminal rebase/merge (steps below)`
+              : "fetch → pull (stashing local changes) → commit the task folder → push"}
+          onClick=${async () => {
+            const ok = await confirmDialog(
+              `sync now — ${syncR}`,
+              `1. fetch + fast-forward pull${g.changes.length ? ` (stashing ${g.changes.length} local change(s) first)` : ""}\n` +
                 `2. commit the task folder\n` +
                 `3. push\n\n` +
-                `message: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}\n\nProceed?`,
+                `message: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}`,
+              { ok: "sync" },
             );
-            if (ok) run("syncnow", "/api/plans-git/sync-now", { remote: g.defaultRemote, message: msg });
+            if (ok) run("syncnow", "/api/plans-git/sync-now", { remote: syncR, message: msg });
           }}>${busy === "syncnow" ? "syncing…" : "⟳ sync now"}</button>`}
         <button class="btn btn-sm btn-link ${g.remotes.length ? "" : "ms-auto "}py-0" onClick=${() => load(true)}>check remotes</button>
       </div>
@@ -1653,6 +1723,23 @@ const PlansGit = () => {
           <dt class="col-sm-3 col-lg-2">task folder</dt><dd class="col-sm-9 col-lg-10 mb-1"><code>${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}</code>
             <span class="text-secondary">— the only path Pull / Commit & Push touch</span></dd>
         </dl>
+        ${div && html`<div class="alert alert-warning small py-2 px-2 mb-2">
+          <b>Diverged from ${div.name}</b> — you have ${div.ahead} local commit(s) ${div.name} doesn't, and it has ${div.behind} you don't.
+          Fast-forward and push are impossible, so the buttons stay disabled until a terminal rebase/merge:
+          <pre class="mb-1 mt-1 p-2 bg-body-tertiary rounded">${[
+            `cd ${g.repo}`,
+            ...(g.changes.length
+              ? [`git stash push -u -m "wip" -- "${g.scope}"   # set uncommitted task-folder changes aside`]
+              : []),
+            `git pull --rebase ${div.name} ${g.branch}   # replay your commits on top of ${div.name}'s`,
+            `# conflicts? edit → git add <file> → git rebase --continue   (or: git rebase --abort)`,
+            ...(g.changes.length
+              ? [`git stash pop   # restore the task-folder changes`]
+              : []),
+            `git push ${div.name} HEAD:${g.branch}`,
+          ].join("\n")}</pre>
+          prefer a merge? <code>git pull ${div.name} ${g.branch}</code> works too — once ${div.name}/${g.branch} is an ancestor of HEAD the buttons re-enable
+        </div>`}
         ${g.remotes.length === 0 && html`<p class="small text-secondary mb-0">no remotes — add one in a terminal: git remote add origin ${"<url>"}</p>`}
         ${g.remotes.length > 0 && html`<details class="small mb-2"><summary class="text-secondary">${g.remotes.length} remote(s)</summary>
           <div class="table-responsive"><table class="table table-sm align-middle small mb-0 mt-1">
@@ -1694,16 +1781,23 @@ const PlansGit = () => {
               ${remoteSelect(pullR, choose("te.sync.pull", setPullFrom))}
             </div>
             <div class="small mt-1 text-break"><code class="small text-secondary">${rp?.fetchUrl ?? ""}</code></div>
-            <button class="btn btn-sm btn-outline-primary w-100 mt-2" disabled=${!!busy}
-              title="fetch from this remote and fast-forward — brings in the other machines' work"
+            <button class="btn btn-sm btn-outline-primary w-100 mt-2" disabled=${!!busy || !pullable}
+              title=${!rp?.ref
+                ? `${pullR} has no branch ${g.branch} yet`
+                : diverged(rp)
+                  ? `diverged from ${pullR} — needs a terminal rebase/merge (steps above)`
+                  : rp.behind === 0 && rp.fetched === true
+                    ? `verified up to date with ${pullR}`
+                    : "fetch from this remote and fast-forward — brings in the other machines' work"}
               onClick=${() => run("pull", "/api/plans-git/pull", { remote: pullR })}>${busy === "pull" ? "pulling…" : `↓ Pull${rp?.behind ? ` (${rp.behind})` : ""} from ${pullR}`}</button>
-            ${g.changes.length > 0 && html`<button class="btn btn-sm btn-link w-100 py-0" disabled=${!!busy}
+            ${g.changes.length > 0 && html`<button class="btn btn-sm btn-link w-100 py-0" disabled=${!!busy || !pullable}
               title="stash the task folder's uncommitted changes, pull, then unstash — pop conflicts keep the stash for a terminal"
-              onClick=${() => {
-                const ok = confirm(
-                  `Stash → pull → unstash\n\n` +
-                    `stash ${g.changes.length} local change(s) in the task folder, pull from ${pullR}, then unstash.\n` +
-                    `Conflicts on unstash stay in the worktree for a terminal — the stash is kept.\n\nProceed?`,
+              onClick=${async () => {
+                const ok = await confirmDialog(
+                  "stash → pull → unstash",
+                  `stash ${g.changes.length} local change(s) in the task folder, pull from ${pullR}, then unstash.\n` +
+                    `Conflicts on unstash stay in the worktree for a terminal — the stash is kept.`,
+                  { ok: "pull" },
                 );
                 if (ok) run("pull", "/api/plans-git/pull", { remote: pullR, stash: true });
               }}>stash → pull → unstash</button>`}
@@ -1730,18 +1824,25 @@ const PlansGit = () => {
               <button class="btn btn-sm btn-outline-success" disabled=${!!busy || !g.changes.length}
                 title="commit every change in the task folder locally (no push)"
                 onClick=${() => run("commit", "/api/plans-git/commit", { message: msg })}>${busy === "commit" ? "committing…" : `Commit${g.changes.length ? ` (${g.changes.length})` : ""}`}</button>
-              <button class="btn btn-sm btn-success flex-grow-1" disabled=${!!busy || (rs?.behind ?? 0) > 0 || (!g.changes.length && rs?.ref && !rs?.ahead)}
-                title=${(rs?.behind ?? 0) > 0 ? `pull from ${pushR} first` : `commit every change in the task folder and push to ${pushR}`}
-                onClick=${() => {
-                  const ok = confirm(
-                    `Commit & Push\n\n` +
-                      `repository:   ${g.repo}\n` +
+              <button class="btn btn-sm btn-success flex-grow-1" disabled=${!!busy || !pushable}
+                title=${diverged(rs)
+                  ? `diverged from ${pushR} — needs a terminal rebase/merge (steps above)`
+                  : (rs?.behind ?? 0) > 0
+                    ? `pull from ${pushR} first`
+                    : !pushable && rs?.ref && !rs?.ahead && !g.changes.length
+                      ? `nothing to push to ${pushR}`
+                      : `commit every change in the task folder and push to ${pushR}`}
+                onClick=${async () => {
+                  const ok = await confirmDialog(
+                    `commit & push — ${pushR}`,
+                    `repository:   ${g.repo}\n` +
                       `task folder:  ${g.scope === "." ? g.repo : `${g.repo}/${g.scope}`}\n` +
                       `branch:       ${g.branch}\n` +
                       `remote:       ${pushR} → ${rs?.pushUrl ?? "?"}\n\n` +
                       `${g.changes.length ? `commit ${g.changes.length} change(s) in the task folder` : "no new changes to commit"}` +
                       `${rs?.ahead ? `, push ${rs.ahead} existing commit(s)` : ""}` +
-                      `\nmessage: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}\n\nProceed?`,
+                      `\nmessage: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}`,
+                    { ok: "commit & push" },
                   );
                   if (ok) run("push", "/api/plans-git/push", { message: msg, remote: pushR });
                 }}>${busy === "push" ? "pushing…" : `↑ Commit & Push to ${pushR}`}</button>
@@ -1754,7 +1855,7 @@ const PlansGit = () => {
       </div>
     </div>`}
     ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mb-3">${note.text}</div>`}
-    <p class="small text-secondary mb-0">Pull only fast-forwards; Commit & Push commits only the task folder and refuses while behind the chosen remote — anything else needs a terminal.</p>
+    <p class="small text-secondary mb-0">Pull only fast-forwards and stays disabled while verified-up-to-date or diverged; Commit & Push stays disabled while behind — diverged history gets terminal steps above, never an automatic merge.</p>
   `;
 };
 
@@ -1824,7 +1925,7 @@ const App = () => {
       a.classList.toggle("active", a.dataset.r === (routes[name] ? name : "items")));
   });
   const onOpen = (id) => nav(`item/${id}`);
-  return html`<${View} onOpen=${onOpen} id=${itemId} />`;
+  return html`<${View} onOpen=${onOpen} id=${itemId} /><${DialogHost} />`;
 };
 
 document.getElementById("nav").innerHTML = Object.keys(routes)

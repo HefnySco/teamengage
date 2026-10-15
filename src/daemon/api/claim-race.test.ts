@@ -79,3 +79,46 @@ describe("claim serialization (MC-0003)", () => {
     await expect(ops.claim(held[0], s3)).rejects.toThrow(/claimed/i);
   });
 });
+
+describe("takeover of an AI-flagged submission", () => {
+  it("claim on in_review+issues moves the claim to another local session", async () => {
+    const holder = (await ops.hello("holder")).session;
+    const reviewer = (await ops.hello("rev")).session;
+    const fixer = (await ops.hello("fix")).session;
+
+    await ops.claim("WS-0003", holder);
+    await ops.submit("WS-0003", holder);
+    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet");
+
+    // a session from another machine may not take over — worktrees are local
+    const remote = {
+      id: "other@laptop#0001",
+      agent: "other",
+      machine: "laptop",
+      connected_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+    };
+    await expect(ops.claim("WS-0003", remote)).rejects.toThrow(/claimed|cannot claim/i);
+
+    // a fresh session on the same machine takes the claim and the worktree
+    const { claim } = await ops.claim("WS-0003", fixer);
+    expect(claim.holder).toBe(fixer.id);
+    const idx = wsr.store.idx;
+    expect(idx.items.get("WS-0003")!.meta.status).toBe("in_progress");
+    expect(idx.claims.get("WS-0003")!.holder).toBe(fixer.id);
+    // the AI verdict stays visible until the fix is resubmitted
+    expect(idx.items.get("WS-0003")!.meta.ai_review?.verdict).toBe("issues");
+
+    // fix → resubmit → in_review again, marker cleared
+    await ops.submit("WS-0003", fixer);
+    expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
+    expect(idx.items.get("WS-0003")!.meta.ai_review).toBeUndefined();
+  });
+
+  it("an ok verdict is not takeable", async () => {
+    const reviewer = (await ops.hello("rev2")).session;
+    const third = (await ops.hello("third")).session;
+    await ops.review("WS-0003", reviewer, "ok", "verified");
+    await expect(ops.claim("WS-0003", third)).rejects.toThrow(/claimed|cannot claim/i);
+  });
+});

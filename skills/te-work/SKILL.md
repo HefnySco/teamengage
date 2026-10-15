@@ -70,6 +70,10 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 
 - Refused (`claimed on … by …`, target locked) → do **not** work on it.
   Report who holds it and pick something else only if the human agrees.
+- Exception: an `in_review` item with an `issues` AI verdict can be claimed
+  on the claim's machine — the claim and worktree move to you, so fix the
+  findings there and `submit` again. Any other `in_review`/`held` item stays
+  off-limits.
 - The reply may return worktree paths — work there, not in the main checkout.
 - Work only inside what `**Touches:**` / the claim names. Something outside
   that is needed → `ask` first.

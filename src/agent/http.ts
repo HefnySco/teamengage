@@ -119,6 +119,10 @@ RULES
   5. A session that is NOT the holder may review submissions (query
      status=in_review): review records your verdict for the human, bounce
      sends broken work back to the holder. Never review your own submission.
+     Both need a summary — one plain-English sentence for the human.
+  6. An in_review item with an "issues" verdict can be claimed by any
+     session on the claim's machine — the claim and worktree move to you,
+     so fix and submit again. Cross-machine takeover is refused.
 
 AUTHORING
 ${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}

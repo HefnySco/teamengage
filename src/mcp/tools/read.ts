@@ -111,7 +111,12 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         ];
         if (it.meta.ai_review) {
           const r = it.meta.ai_review;
-          lines.push(`ai_review: ${r.verdict} by ${r.reviewed_by}${r.note ? ` — ${r.note}` : ""}`);
+          const detail = r.summary
+            ? ` — ${r.summary}${r.note ? ` | ${r.note}` : ""}`
+            : r.note
+              ? ` — ${r.note}`
+              : "";
+          lines.push(`ai_review: ${r.verdict} by ${r.reviewed_by}${detail}`);
         }
         if (it.meta.type === "epic" && it.plan_state) {
           lines.push(

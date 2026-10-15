@@ -113,6 +113,9 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
     // it must not refuse a fresh claim (the deletion just isn't pushed yet)
     if (rc.machine === wsr.store.machine && !wsr.store.idx.claims.has(rc.item)) continue;
     if (rc.item === claim.item) {
+      // our own machine's claim on this item is authoritative locally —
+      // it can never conflict with a takeover of that same claim
+      if (rc.machine === wsr.store.machine) continue;
       throw new ClaimRefusedError(
         `claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)}`,
         rc.holder,

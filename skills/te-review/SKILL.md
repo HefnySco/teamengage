@@ -44,9 +44,9 @@ curl -s "$B/query?status=in_review" -H "$H"
   waiting", list the queue and pick one (say which).
 - `held:<agent>` is the **submitter**. If it is your own session — skip it;
   you can never review your own submission (the daemon refuses).
-- You do **not** claim the item — an `in_review` item cannot be claimed and
-  does not need to be. Everything you do is read-only, plus one `review` or
-  `bounce` call at the end.
+- You do **not** claim the item just to review it — everything you do is
+  read-only, plus one `review` or `bounce` call at the end. (To fix an
+  AI-flagged submission yourself, see "take over the fix" below.)
 - An item already showing `ai_review:` in its brief was reviewed once — your
   verdict would replace the marker, so only re-review if you actually re-check
   everything. Don't stack opinions.
@@ -108,16 +108,20 @@ Judge the **logic**:
 
 ```bash
 curl -s -X POST $B/review/GL-0019 -H "$H" \
-  -d '{"verdict":"ok","note":"acceptance 1–3 verified; restarted with --debug twice, counter survives; ctest 4/4 green on the claim branch; diff confined to **Touches:**"}'
+  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","note":"acceptance 1–3 verified; restarted with --debug twice, counter survives; ctest 4/4 green on the claim branch; diff confined to **Touches:**"}'
 ```
 
-- `ok` — verified, ready for the human to accept. The note is the whole value:
-  what you ran, what passed, over which diff. `"looks fine"` tells the human
-  nothing.
+- `summary` is **required** — one plain-English sentence for the human, no
+  jargon: what the verdict means. _"The fix works but error reporting was
+  left out"_, not _"missing stderr propagation in run()"_. It is what the
+  human reads on the item page.
+- `note` is the technical detail for whoever fixes it — what you ran, what
+  passed, over which diff. `"looks fine"` tells nobody anything.
+- `ok` — verified, ready for the human to accept.
 - `issues` — verified concerns the human should weigh before deciding (or
-  checks you couldn't run). Number the findings, worst first, each with
-  file:line or commit, so whoever fixes it doesn't redo your analysis. The
-  item stays in review.
+  checks you couldn't run). Number the findings in `note`, worst first, each
+  with file:line or commit, so whoever fixes it doesn't redo your analysis.
+  The item stays in review.
 - "The code is right but the task was wrong" → say exactly that — it is the
   human's call, not yours to fix silently.
 
@@ -126,14 +130,22 @@ ignored — goes back to the holder rather than leaving the human to reject it:
 
 ```bash
 curl -s -X POST $B/bounce/GL-0019 -H "$H" \
-  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run"}'
+  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes."}'
 ```
+
+`summary` is required on bounce too — the human reads it in `## Review`.
 
 `bounce` moves the item to `in_progress` **keeping the same claim** — the
 holder reads the reason in `brief`/`## Review`, fixes, and `submit`s again.
 Write the reason for the holder: specific, actionable. After two bounces in a
 row a third is refused — the item stays in review and the human decides; just
 record a `review` verdict.
+
+To **take over the fix** instead of sending it back: record the `issues`
+verdict, then `claim` the item. An `in_review` item with an `issues` verdict
+can be claimed by any session on the claim's machine — the claim and its
+worktree move to you, so you continue on the same branch and `submit` again.
+Cross-machine takeover is refused; there it stays `bounce`.
 
 Tell the human the outcome: _"GL-0019 reviewed ok"_ or _"GL-0019 bounced —
 acceptance 2 unimplemented"_.
@@ -142,6 +154,6 @@ acceptance 2 unimplemented"_.
 
 - review or bounce **your own** submission — refused anyway; second opinions only;
 - accept, reject, or treat your verdict as a status — it changes nothing; the human accepts;
-- claim the task or touch its worktree while reviewing — found a bug → `bounce`/`issues`, the holder fixes;
+- claim the task or touch its worktree just to review — found a bug → `bounce`/`issues`, the holder fixes (or take over: `issues` verdict, then `claim` on the same machine);
 - edit `.teamengage/` files or a task's `te:` line; never `git push`;
 - rubber-stamp — a verdict without verification degrades the marker for everyone.

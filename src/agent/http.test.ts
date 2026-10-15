@@ -239,17 +239,28 @@ describe("plain-HTTP agent API", () => {
       (await call("POST", "/agent/submit/WS-0005", { token: holder, body: { tests: "1 passed" } }))
         .text,
     ).toMatch(/^in_review/);
+    // summary is required — a review without it is a usage error, not a marker
+    const noSummary = await call("POST", "/agent/review/WS-0005", {
+      token: reviewer,
+      body: { verdict: "ok" },
+    });
+    expect(noSummary.status).toBe(400);
+    expect(noSummary.text).toContain("summary");
     // the holder may not review its own submission
     const own = await call("POST", "/agent/review/WS-0005", {
       token: holder,
-      body: { verdict: "ok" },
+      body: { verdict: "ok", summary: "looks fine" },
     });
     expect(own.status).toBe(403);
     expect(own.text).toContain("own submission");
     // a reviewer records a verdict — advisory, the item stays in review
     const ok = await call("POST", "/agent/review/WS-0005", {
       token: reviewer,
-      body: { verdict: "ok", note: "evidence checks out" },
+      body: {
+        verdict: "ok",
+        summary: "The change does what the task asked.",
+        note: "evidence checks out",
+      },
     });
     expect(ok.text.trim()).toBe("reviewed WS-0005: ok");
     expect((await call("GET", "/agent/brief/WS-0005", { token: reviewer })).text).toContain(
@@ -259,7 +270,7 @@ describe("plain-HTTP agent API", () => {
     for (let n = 1; n <= 2; n++) {
       const bounced = await call("POST", "/agent/bounce/WS-0005", {
         token: reviewer,
-        body: { reason: `tests red (${n})` },
+        body: { reason: `tests red (${n})`, summary: `The tests are failing (${n}).` },
       });
       expect(bounced.status).toBe(200);
       const resubmit = await call("POST", "/agent/submit/WS-0005", {
@@ -271,7 +282,7 @@ describe("plain-HTTP agent API", () => {
     // third bounce in a row: refused — the human must review now
     const capped = await call("POST", "/agent/bounce/WS-0005", {
       token: reviewer,
-      body: { reason: "still red" },
+      body: { reason: "still red", summary: "The tests still fail." },
     });
     expect(capped.status).toBe(403);
     expect(capped.text).toContain("AI bounces");
@@ -280,7 +291,11 @@ describe("plain-HTTP agent API", () => {
       (
         await call("POST", "/agent/review/WS-0005", {
           token: reviewer,
-          body: { verdict: "issues", note: "still red" },
+          body: {
+            verdict: "issues",
+            summary: "The tests still fail.",
+            note: "still red",
+          },
         })
       ).text.trim(),
     ).toBe("reviewed WS-0005: issues");

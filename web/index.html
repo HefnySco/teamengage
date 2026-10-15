@@ -9,6 +9,15 @@
     <style>
       /* teamengage-specific bits on top of bootstrap */
       .id { font-family: ui-monospace, monospace; font-weight: 600; }
+      /* disabled actions keep pointer events (the title tooltip needs them —
+         clicks stay suppressed by the attribute) and go neutral grey on
+         hover instead of holding the accent colour */
+      .btn:disabled { pointer-events: auto; cursor: not-allowed; }
+      .btn:disabled:hover {
+        color: var(--bs-secondary-color);
+        background-color: var(--bs-secondary-bg);
+        border-color: var(--bs-border-color);
+      }
       .badge-review { background: #6f42c1; color: #fff; }
       .badge-hold { background: #6d4c41; color: #fff; }
       /* formatted task markdown */
