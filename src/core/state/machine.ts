@@ -156,7 +156,7 @@ export function transition(
 ): TransitionResult {
   const from = meta.status;
   const out: TransitionResult = {
-    meta: { ...meta, updated: ctx.now.slice(0, 10) },
+    meta: { ...meta, updated: ctx.now },
     log: [],
     events: [],
     effects: [],

@@ -168,7 +168,7 @@ export class PlansWatcher {
         const doc = parseItemFile(text, path);
         // human edit accepted: bump version, write back as actor human
         doc.meta.version += 1;
-        doc.meta.updated = new Date().toISOString().slice(0, 10);
+        doc.meta.updated = new Date().toISOString();
         const out = serializeMarkdown(doc);
         await writeFileAtomic(path, out);
         this.markOwnWrite(path, out);

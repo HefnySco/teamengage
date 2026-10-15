@@ -601,17 +601,19 @@ const Board = ({ onOpen }) => {
                       </span>
                     </div>
                     <div class="bcard-title">${i.title}</div>
-                    ${((i.domains ?? []).length > 0 || i.claim || i.blocked) && html`
+                    ${((i.domains ?? []).length > 0 || i.claim || i.blocked || i.updated || i.created) && html`
                       <div class="bcard-meta">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
-                        ${i.claim && html`<span class="d-inline-flex align-items-center gap-1 ms-auto">
-                          <span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
-                          ${ago(i.claim.claimed_at)}
-                          ${i.claim.conflicted && html`<span class="text-danger">conflict</span>`}
-                          ${i.claim.unsynced && html`<span class="text-warning-emphasis">unsynced</span>`}
-                          ${staleClaim(i.claim) && html`<span class="text-warning-emphasis">stale</span>`}
-                        </span>`}
+                        <span class="d-inline-flex align-items-center gap-1 ms-auto">
+                          ${i.claim && html`
+                            <span class="av" title=${`${i.claim.holder}@${i.claim.machine} · claimed ${ago(i.claim.claimed_at)} ago`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
+                            ${i.claim.conflicted && html`<span class="text-danger">conflict</span>`}
+                            ${i.claim.unsynced && html`<span class="text-warning-emphasis">unsynced</span>`}
+                            ${staleClaim(i.claim) && html`<span class="text-warning-emphasis">stale</span>`}
+                          `}
+                          ${(i.updated ?? i.created) && html`<span title=${`updated ${i.updated ?? i.created}`}>${ago(i.updated ?? i.created)}</span>`}
+                        </span>
                       </div>`}
                   </div>
                 `,

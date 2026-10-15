@@ -300,7 +300,7 @@ export class PlansStore {
       const writes: Array<{ rel: string; content: string }> = [];
       const taskWrites: Array<{ abs: string; content: string }> = [];
       const taken = new Map<string, number[]>(); // folder+prefix → numbers used in this batch
-      const now = new Date().toISOString().slice(0, 10);
+      const now = new Date().toISOString();
       // `#N` in depends_on / parent = the N-th item of this batch (0-based),
       // so one propose call can carry a whole plan; only earlier items
       const local = (ref: string, at: number): string => {
@@ -462,7 +462,7 @@ export class PlansStore {
           .map((i) => (overlay ? i.meta.source : i.meta.imported_from))
           .filter((x): x is string => Boolean(x)),
       );
-      const now = new Date().toISOString().slice(0, 10);
+      const now = new Date().toISOString();
       const created: string[] = [];
       const skipped: string[] = [];
       const writes: Array<{ rel: string; content: string }> = [];
@@ -580,7 +580,7 @@ export class PlansStore {
         ...doc.meta,
         ...(opts.metaPatch ?? {}),
         version: doc.meta.version + 1,
-        updated: new Date().toISOString().slice(0, 10),
+        updated: new Date().toISOString(),
       } as ItemMeta;
       await this.writeItemDoc(absPath, doc.raw.text, meta, [], [
         { heading: opts.heading, text: opts.lines.join("\n") + "\n" },
@@ -616,7 +616,7 @@ export class PlansStore {
           ...doc.meta,
           ...patch,
           version: doc.meta.version + 1,
-          updated: now.slice(0, 10),
+          updated: now,
         } as ItemMeta;
         const lines = Object.entries(patch).map(([k, v]) => `- ${now} human moved ${k} → ${v as string}`);
         await this.writeItemDoc(absPath, doc.raw.text, meta, lines);
@@ -765,7 +765,7 @@ export class PlansStore {
     const doc = parseItemFile(await readFile(abs, "utf8"), abs);
     const next = patch({ ...doc.meta });
     if (!next) return false;
-    const meta = { ...next, version: doc.meta.version + 1, updated: new Date().toISOString().slice(0, 10) } as ItemMeta;
+    const meta = { ...next, version: doc.meta.version + 1, updated: new Date().toISOString() } as ItemMeta;
     await this.writeItemDoc(abs, doc.raw.text, meta, lines);
     await this.index.upsertFile(abs);
     return true;
@@ -951,7 +951,7 @@ export class PlansStore {
       const absItem = join(this.ws.plansDir, it.path);
       const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
       const now = new Date().toISOString();
-      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now.slice(0, 10) } as ItemMeta;
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
       let path = it.path;
       const sectionWrites: Array<{ heading: string; text: string }> = [];
       if (this.ws.config.mode === "overlay" && doc.meta.source) {
@@ -993,7 +993,7 @@ export class PlansStore {
       const block = `**${now.slice(0, 16).replace("T", " ")} · ${who}**\n\n${note}\n`;
       const absItem = join(this.ws.plansDir, it.path);
       const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
-      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now.slice(0, 10) } as ItemMeta;
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
       let path = it.path;
       const sectionWrites: Array<{ heading: string; text: string }> = [];
       if (this.ws.config.mode === "overlay" && doc.meta.source) {
