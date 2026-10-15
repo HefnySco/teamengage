@@ -65,19 +65,22 @@ Agents create tasks with `propose`; in a task-folder workspace it writes
 `<project>/TASK-NN-<slug>.md` from the standard template
 ([TASK-FORMAT.md](TASK-FORMAT.md), `te template`).
 
-Two skills (Claude Code and Devin use the same `SKILL.md` format), both
+Skills (Claude Code and Devin use the same `SKILL.md` format), all
 curl-only, no MCP needed:
 
 - `skills/te-work/` — implement / continue / pick up a task: hello → brief →
   claim → log / ask → submit with evidence, release if blocked.
+- `skills/te-review/` — peer-review another session's submission: verify the
+  work, record an advisory verdict, or bounce it back to the holder.
 - `skills/te-plan/` — break a goal into tasks with one `propose` call.
 - `skills/te-tag/` — tag untagged tasks with domains by reading them
   (`te domains untagged`, plan for the human's OK, `te tag`).
+- `skills/te-analysis/` — read-only analysis of the task bank.
 
 Install by linking them into the agent's skills folder:
 
 ```bash
-ln -s "$PWD/skills/te-work" "$PWD/skills/te-plan" "$PWD/skills/te-tag" ~/.claude/skills/
+ln -s "$PWD/skills/te-work" "$PWD/skills/te-review" "$PWD/skills/te-plan" "$PWD/skills/te-tag" "$PWD/skills/te-analysis" ~/.claude/skills/
 ```
 
 ## Enforcing the rules (when instructions aren't enough)
