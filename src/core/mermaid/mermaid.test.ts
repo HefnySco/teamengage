@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Index } from "../index/index.js";
-import { renderMermaid } from "./mermaid.js";
+import { renderMermaid, type MermaidOpts } from "./mermaid.js";
 
 let dir: string;
 let plans: string;
@@ -65,6 +65,17 @@ describe("renderMermaid", () => {
     expect(out).toContain('+2 more');
   });
 
+  it("scoped cap keeps BFS order — the root survives, the periphery folds", () => {
+    // GL-0003 <- GL-0002 <- {GL-0001, TE-0001}: alphabetical order would cut the
+    // searched root itself; BFS order drops the two furthest nodes instead
+    const out = renderMermaid(idx, { roots: ["GL-0003"], maxNodes: 2 });
+    expect(out).toContain("GL_0003");
+    expect(out).toContain("GL_0002");
+    expect(out).toContain("+2 more");
+    expect(out).not.toContain("GL_0001[");
+    expect(out).not.toContain("TE_0001");
+  });
+
   it("filters by status", () => {
     const out = renderMermaid(idx, { filter: { status: "done" } });
     expect(out).toContain("GL_0001");
@@ -88,7 +99,7 @@ describe("renderMermaid", () => {
       { roots: ["TE-0001"] },
       { filter: { status: "in_progress" } },
       { maxNodes: 2 },
-    ]) {
+    ] satisfies MermaidOpts[]) {
       const parsed = await mermaid.parse(renderMermaid(idx, opts));
       expect(parsed.diagramType).toBe("flowchart-v2");
     }
