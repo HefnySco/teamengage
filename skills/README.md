@@ -7,6 +7,7 @@ plain HTTP.
 | Skill | Use |
 |---|---|
 | `te-work/` | Implement / continue / pick up a task: hello → claim → log/ask → submit. |
+| `te-review/` | Review a submitted task (`in_review`): read the diff, judge the logic against acceptance, post a verdict note. |
 | `te-plan/` | Break a goal into new tasks with a single `propose` call. |
 | `te-tag/` | Tag untagged tasks with domains: propose a plan, get the human's OK, apply. |
 

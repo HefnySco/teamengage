@@ -213,19 +213,20 @@ not treated as tasks), then commit both files.
 
 ### Skills (recommended)
 
-Three skills ship in `skills/`, same `SKILL.md` format for Claude Code and
+Four skills ship in `skills/`, same `SKILL.md` format for Claude Code and
 Devin:
 
 | Skill | Use |
 |---|---|
 | `te-work` | implement / continue / pick up a task (hello → claim → log/ask → submit) |
+| `te-review` | review a submitted task (`in_review`) — read the diff, judge the logic, post a verdict note |
 | `te-plan` | break a goal into tasks with one `propose` call |
 | `te-tag` | tag untagged tasks with domains (plan → human's OK → apply) |
 
 ```bash
 mkdir -p ~/.claude/skills
-ln -s ~/teamengage/skills/te-work ~/teamengage/skills/te-plan ~/teamengage/skills/te-tag ~/.claude/skills/
-# Devin: link the same three folders into the Devin skills folder (~/.config/devin/skills/)
+ln -s ~/teamengage/skills/te-work ~/teamengage/skills/te-review ~/teamengage/skills/te-plan ~/teamengage/skills/te-tag ~/.claude/skills/
+# Devin: link the same four folders into the Devin skills folder (~/.config/devin/skills/)
 ```
 
 ### Claude Code guard (recommended)
