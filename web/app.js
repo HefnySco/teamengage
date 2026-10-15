@@ -525,6 +525,8 @@ const Board = ({ onOpen }) => {
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
   const [sort, setSortState] = useState(() => loadSearch("te.board.sort"));
   const [starredOnly, setStarredOnlyState] = useState(() => loadSearch("te.board.starred") === "1");
+  // AI-review filter: "" = all, "ok" = only approved, "issues" = only flagged
+  const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
   const [domShowAll, setDomShowAll] = useState(false);
   const setDomain = (d) => {
     const v = d === domain ? "" : d; // clicking the active domain clears it
@@ -556,7 +558,8 @@ const Board = ({ onOpen }) => {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
-  const hits = words.length ? inStar.filter((i) => matches(i, words)) : inStar;
+  const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
+  const hits = words.length ? inAi.filter((i) => matches(i, words)) : inAi;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -571,6 +574,12 @@ const Board = ({ onOpen }) => {
   const setStarredOnly = (v) => {
     setStarredOnlyState(v);
     saveSearch("te.board.starred", v ? "1" : "");
+  };
+  // cycles all → ok → issues → all
+  const setAiFilter = () => {
+    const v = { "": "ok", ok: "issues", issues: "" }[aiFilter];
+    setAiFilterState(v);
+    saveSearch("te.board.ai", v);
   };
   const eff = SORTS[sort] ? sort : "created-asc";
   const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
@@ -590,7 +599,10 @@ const Board = ({ onOpen }) => {
       />
       <${SortSeg} eff=${eff} onSort=${setSort} title="order cards inside each column" />
       <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
-      ${(words.length > 0 || domain || starredOnly) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
+        title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
+        onClick=${setAiFilter}>${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
+      ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
     ${domEntries.length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
       <span class="small text-body-tertiary me-1">Domains</span>
@@ -771,7 +783,7 @@ const Plans = ({ onOpen }) => {
       <span class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" onClick=${() => setAll(true)}>expand all</button><button class="btn btn-outline-secondary" onClick=${() => setAll(false)}>collapse all</button></span>
       <span class="text-secondary small">${visible.length} of ${roots.length} plan(s)</span>
     </div>
-    <div class="card card-body py-1">
+    <div class="card card-body py-1 dense">
       ${visible.map((r) => html`<${PlanNode} key=${r.id} i=${r} depth=${0} tree=${tree} />`)}
       ${!visible.length && html`<div class="text-secondary py-2">no plans${words.length ? " match the search" : ""}</div>`}
     </div>
@@ -800,7 +812,7 @@ const Archive = ({ onOpen }) => {
       <span class="text-secondary small">${hits.length} of ${data.length} archived</span>
     </div>
     ${data.length === 0 && html`<p class="text-secondary">nothing archived — use "archive" on an item page</p>`}
-    <div class="list-group">
+    <div class="list-group dense">
       ${hits.map(
         (i) => html`
           <div class="list-group-item d-flex align-items-center gap-2 flex-wrap" key=${i.id}>
@@ -1168,6 +1180,12 @@ const parseLog = (body) =>
       return m ? { ts: m[1], who: m[2], text: m[3] } : { text: l.replace(/^-\s*/, "") };
     });
 
+// author tag colour: `human` is written literally, `daemon` marks daemon
+// writes, `watch`/`reconcile` are daemon-side notices, anything else is an
+// agent session id (agent@machine#hex)
+const whoKind = (w) => (w === "human" ? "human" : ["daemon", "watch", "reconcile"].includes(w) ? "daemon" : "agent");
+const whoCls = (w) => `who-${whoKind(w)}`;
+
 const History = ({ entries }) => html`
   <div class="card mt-3">
     <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
@@ -1177,7 +1195,7 @@ const History = ({ entries }) => html`
         (e, i) => html`
           <li class="list-group-item small" key=${i}>
             ${e.ts && html`<span class="text-secondary me-2" title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span>`}
-            ${e.who && html`<b class="me-1">${e.who}</b>`}
+            ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}
             <span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
           </li>
         `,
@@ -1203,7 +1221,7 @@ const Deps = ({ deps }) => html`
             ${d.pending && html` <span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
             ${e.text && html`<div class="text-secondary mt-1">
               ${e.ts && html`<span title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span> `}
-              ${e.who && html`<b class="me-1">${e.who}</b>`}<span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
+              ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}<span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
             </div>`}
           </li>
         `;
@@ -1232,6 +1250,22 @@ const MdBox = ({ text, view }) =>
     ? html`<div class="card card-body"><pre class="mb-0">${text}</pre></div>`
     : html`<div class="card card-body md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`;
 
+// a daemon-written note starts with `**YYYY-MM-DD HH:MM · who**`; text before
+// the first such line is something typed into the file without an author
+const NOTE_HEAD = /^\*\*(\d{4}-\d\d-\d\d \d\d:\d\d) · (\S+)\*\*$/;
+const parseNotes = (body) => {
+  const blocks = [];
+  let fence = false;
+  for (const line of body.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    const m = fence ? null : NOTE_HEAD.exec(line.trim());
+    if (m) blocks.push({ ts: m[1], who: m[2], md: "" });
+    else if (blocks.length) blocks.at(-1).md += "\n" + line;
+    else blocks.push({ md: line });
+  }
+  return blocks.map((b) => ({ ...b, md: b.md.trim() })).filter((b) => b.who || b.md);
+};
+
 // notes: the task file's ## Notes, shown formatted, plus a multi-line field to add one
 const Notes = ({ id, text, onAdded }) => {
   const [draft, setDraft] = useState("");
@@ -1249,12 +1283,18 @@ const Notes = ({ id, text, onAdded }) => {
       setBusy(false);
     }
   };
+  const blocks = parseNotes(text ?? "");
   return html`
     <div class="card mt-3">
       <div class="card-header py-2"><b>Notes</b> <span class="text-secondary small">kept in the task file's ## Notes — agents see them too</span></div>
       <div class="card-body">
-        ${text
-          ? html`<div class="md-view mb-3" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`
+        ${blocks.length
+          ? html`<div class="mb-3">${blocks.map((b, i) => html`
+              <div class="note${b.who ? ` note-${whoKind(b.who)}` : ""}" key=${i}>
+                ${b.who && html`<div class="note-by"><b class=${whoCls(b.who)}>${b.who}</b> <span class="text-secondary">· ${b.ts}</span></div>`}
+                ${b.md && html`<div class="md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.md) }} />`}
+              </div>`)}
+            </div>`
           : html`<p class="text-secondary small mb-2">no notes yet</p>`}
         <textarea class="form-control form-control-sm" rows="4" placeholder="add a note — markdown welcome; Ctrl+Enter to save"
           value=${draft} onInput=${(e) => setDraft(e.target.value)}
@@ -1403,15 +1443,15 @@ const ItemView = ({ id }) => {
       </div>
     </div>
     ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
-      <span class="text-secondary">latest:</span> ${last.who && html`<b>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
+      <span class="text-secondary">latest:</span> ${last.who && html`<b class=${whoCls(last.who)}>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
     </div>`}
-    ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-warning"} py-2 px-2 small mb-2">
+    ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
-      <span class="text-secondary">— peer-reviewed by ${it.meta.ai_review.reviewed_by} · ${ago(it.meta.ai_review.reviewed_at)} ago · advisory, the accept is still yours</span>
+      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · advisory, the accept is still yours</span>
       ${it.meta.ai_review.note && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
     </div>`}
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
-      <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from ${it.meta.question.asked_by}</span>` : ""}
+      <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}
       <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
       ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} id=${id} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
     </div>`}
@@ -1474,8 +1514,8 @@ const Activity = () => {
     <div class="card card-body overflow-y-auto" ref=${listRef} style=${{ maxHeight: "70vh" }}>
       ${shown.map((e, i) => html`
         <div class="evt" key=${i}>
-          ${e.ts.slice(11, 19)} <span class="text-secondary">${e.machine}</span> ${e.actor}
-          <b>${e.action}</b> ${e.item} <span class="text-secondary">${e.from ? `${e.from}→${e.to}` : ""}</span>
+          ${e.ts.slice(11, 19)} <span class="text-secondary">${e.machine}</span>${" "}
+          <b class=${whoCls(e.actor)}>${e.actor}</b> <b>${e.action}</b> ${e.item} <span class="text-secondary">${e.from ? `${e.from}→${e.to}` : ""}</span>
           ${e.note && html` — <i>${e.note}</i>`}
         </div>
       `)}
@@ -1585,7 +1625,7 @@ const PlansGit = () => {
     : html`${r.behind > 0 && html`<span class="badge text-bg-warning me-1">↓ ${r.behind} to pull</span>`}${r.ahead > 0 && html`<span class="badge text-bg-info">↑ ${r.ahead} to push</span>`}`;
   const remoteSelect = (value, onChange) => html`
     <select class="form-select form-select-sm w-auto" value=${value} onChange=${(e) => onChange(e.target.value)}>
-      ${g.remotes.map((r) => html`<option value=${r.name}>${r.name}${r.name === g.defaultRemote ? " (upstream)" : ""}</option>`)}
+      ${g.remotes.map((r) => html`<option value=${r.name}>${r.name}${r.name === g.defaultRemote ? ` (upstream of ${g.branch})` : ""}</option>`)}
     </select>`;
   return html`
     <div class="card mb-3">
@@ -1619,7 +1659,7 @@ const PlansGit = () => {
             <thead><tr><th>remote</th><th>fetch</th><th>push</th><th>${g.branch}</th></tr></thead>
             <tbody>
               ${g.remotes.map((r) => html`<tr key=${r.name}>
-                <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream)</span>` : ""}${r.fetched === false ? html` <span class="text-warning" title="fetch failed — counts are last-known">⚠</span>` : ""}</td>
+                <td><b>${r.name}</b>${r.name === g.defaultRemote ? html` <span class="text-secondary">(upstream of ${g.branch})</span>` : ""}${r.fetched === false ? html` <span class="text-warning" title="fetch failed — counts are last-known">⚠</span>` : ""}</td>
                 <td><code class="small">${r.fetchUrl}</code></td>
                 <td>${r.pushUrl === r.fetchUrl ? html`<span class="text-secondary">same</span>` : html`<code class="small">${r.pushUrl}</code>`}</td>
                 <td>${state(r)}</td>

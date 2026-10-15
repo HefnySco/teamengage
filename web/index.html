@@ -85,6 +85,20 @@
       a.item { cursor: pointer; text-decoration: none; }
       /* item page: fixed label column next to editable fields */
       .item-lbl { display: inline-block; width: 4.6rem; flex: none; }
+      /* who wrote it: the human is blue, an agent session green, the daemon quiet grey —
+         light mode needs the mid-tone palette; *-text-emphasis is near-black there */
+      .who-human { color: var(--bs-primary); }
+      .who-agent { color: var(--bs-success); }
+      .who-daemon { color: var(--bs-secondary-color); }
+      [data-bs-theme="dark"] .who-human { color: var(--bs-primary-text-emphasis); }
+      [data-bs-theme="dark"] .who-agent { color: var(--bs-success-text-emphasis); }
+      /* notes: the author's colour runs down the left edge of their block */
+      .note { border-left: .18rem solid var(--bs-border-color); padding-left: .7rem; margin-bottom: .9rem; }
+      .note-human { border-left-color: var(--bs-primary); }
+      .note-agent { border-left-color: var(--bs-success); }
+      [data-bs-theme="dark"] .note-human { border-left-color: var(--bs-primary-text-emphasis); }
+      [data-bs-theme="dark"] .note-agent { border-left-color: var(--bs-success-text-emphasis); }
+      .note-by { font-size: .72rem; margin-bottom: .15rem; }
       /* graph: a scrollable zoom canvas; nodes open items on click */
       .graph-wrap { position: relative; }
       .graph-tools { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
@@ -102,6 +116,8 @@
       .graph-mini .mini-svg { position: absolute; top: 0; left: 0; transform-origin: top left; pointer-events: none; }
       .graph-mini .mini-svg svg { display: block; width: 100%; height: 100%; }
       .graph-mini .vp { position: absolute; border: 1.5px solid var(--bs-primary); background: rgba(13, 110, 253, .12); pointer-events: none; }
+      /* the inbox's row size, reused by the plans tree and the archive list */
+      .dense { font-size: .8rem; }
       /* inbox: one dense triage list — group headers, one line per item, actions on hover */
       /* the list itself is the grid and each row subgrids it, so the tag and action
          columns share one width across every row instead of sizing per row */
