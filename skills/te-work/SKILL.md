@@ -76,7 +76,9 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   off-limits.
 - The reply may return worktree paths — work there, not in the main checkout.
 - Work only inside what `**Touches:**` / the claim names. Something outside
-  that is needed → `ask` first.
+  that is needed → `ask` first. Never widen the task's own Touches or
+  acceptance: extra work becomes a new task via `propose`, with
+  `depends_on` set to this one, for the human to approve.
 
 ## 5. Work
 

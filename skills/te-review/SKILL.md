@@ -93,7 +93,9 @@ Judge the **logic**:
   behind?
 - **Scope.** The diff should implement what the task says and stay inside
   `**Touches:**`. Drive-by refactors and unrelated cleanups widen what must
-  be reviewed — flag them.
+  be reviewed — flag them. Changes outside Touches are an `issues` finding;
+  if that work is genuinely needed, the fix is a new dependent task
+  (`propose`, `depends_on` = this one), never a wider Touches on this task.
 - **Tests as claims.** Green tests can still assert the wrong thing. When an
   acceptance item says "verify X", check the test exercises X, not that a
   test exists. Spot-check a test run only when the diff gives you a reason
@@ -145,7 +147,9 @@ To **take over the fix** instead of sending it back: record the `issues`
 verdict, then `claim` the item. An `in_review` item with an `issues` verdict
 can be claimed by any session on the claim's machine — the claim and its
 worktree move to you, so you continue on the same branch and `submit` again.
-Cross-machine takeover is refused; there it stays `bounce`.
+Cross-machine takeover is refused; there it stays `bounce`. Taking over
+fixes the submission within its approved scope — the task's Touches and
+acceptance don't change. Anything wider → `propose` a dependent task.
 
 Tell the human the outcome: _"GL-0019 reviewed ok"_ or _"GL-0019 bounced —
 acceptance 2 unimplemented"_.

@@ -35,7 +35,7 @@ export function isToolResult(x: unknown): x is ToolResult {
 
 /** One line every session sees, whatever its instruction files say. */
 export const HELLO_RULES =
-  "rules: claim before code · new tasks only via propose · never edit te: lines or .teamengage/, never move files to done/ · task-file edits additive + log · never push · ask, don't guess · review only others' submissions, never your own";
+  "rules: claim before code · new tasks only via propose · never edit te: lines or .teamengage/, never move files to done/ · task-file edits additive + log · never push · scope is the human's — wider work → propose a dependent task · ask, don't guess · review only others' submissions, never your own";
 
 export function registerReadTools(server: McpServer, binding: AgentBinding, ctx: DaemonCtx): void {
   server.registerTool(

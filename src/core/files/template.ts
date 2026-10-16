@@ -121,6 +121,10 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
 - Notes worth keeping in a task: note <id> {text} (appends to its "## Notes").
   Other edits to existing task files: additive only (e.g. new "## Acceptance"
   items), each recorded with log.
+- Scope is the human's. Never widen a task's "**Touches:**" or rewrite its
+  acceptance — not while working, reviewing or taking over a fix. Work that
+  needs more → propose a new task that depends on the original (its own
+  Touches + acceptance); the human approves it and it is reviewed on its own.
 `;
 
 /** What `te template` prints: the standard, as a filled-in example. */
