@@ -39,12 +39,30 @@ export const AiReview = z.object({
   /** reviewing session id (`agent@machine#hex`) */
   reviewed_by: z.string(),
   reviewed_at: z.string(),
+  /** reviewer session's declared model tier */
+  reviewer_tier: z.enum(["light", "standard", "heavy"]).optional(),
   /** technical detail for whoever fixes it (file:line, what broke) */
   note: z.string().optional(),
   /** one plain-English sentence for the human — what the verdict means */
   summary: z.string().optional(),
 });
 export type AiReview = z.infer<typeof AiReview>;
+
+/**
+ * Model tier — how capable an agent must be to work an item (light ≈ Haiku,
+ * standard ≈ Sonnet, heavy ≈ Opus). Sessions declare theirs at hello; an
+ * item's tier is the minimum that may claim it (unset = anyone).
+ */
+export const Tier = z.enum(["light", "standard", "heavy"]);
+export type Tier = z.infer<typeof Tier>;
+export const TIERS: Tier[] = ["light", "standard", "heavy"];
+export function tierRank(t: Tier | undefined): number {
+  return t ? TIERS.indexOf(t) : -1;
+}
+/** One tier up (heavy stays heavy). */
+export function nextTier(t: Tier): Tier {
+  return TIERS[Math.min(TIERS.indexOf(t) + 1, TIERS.length - 1)];
+}
 
 /** The board ★ colours (bootstrap warning/danger/success/primary). */
 export const StarColor = z.enum(["yellow", "red", "green", "blue"]);
@@ -93,6 +111,14 @@ export const ItemMeta = z
     /** hidden from board/inbox/graph/next; status kept underneath (archive page) */
     archived: z.boolean().optional(),
     archived_at: z.string().optional(),
+    /** minimum model tier that may claim it (unset = any); raised on escalation */
+    tier: Tier.optional(),
+    /** failed attempts so far — AI bounces + handoffs (drives escalation) */
+    attempts: z.number().int().min(0).optional(),
+    /** tier of the agent session that proposed it (light-authored drafts need vetting) */
+    authored_tier: Tier.optional(),
+    /** a stronger session checked a light-authored draft (`vet ok`) */
+    vetted_by: z.string().optional(),
     /** the human's watch marker — board ★ colour, no workflow effect; unset = not starred */
     star_color: StarColor.optional(),
     /** autonomy: solo — the human stopped auto-accept for this submission (cleared on submit) */

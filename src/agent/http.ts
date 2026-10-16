@@ -123,11 +123,18 @@ RULES
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,
      so fix and submit again. Cross-machine takeover is refused.
+  7. Declare your model tier at hello: light (Haiku-class), standard
+     (Sonnet-class) or heavy (Opus-class). Items above your tier are hidden
+     from next and refused on claim. When stuck — same error twice, no new
+     progress — STOP and call handoff (problem, tried, state, next): the
+     claim is released and a fresh session continues from your note. Bounces
+     and handoffs count as attempts; the tier goes up after escalate_after
+     of them, and at max_attempts the item waits for the human.
 
 AUTHORING
 ${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
 SESSION
-  curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
+  curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>","tier":"standard"}'
     → first line: "token <TOKEN>"; send it on every later call:
   -H "X-TE-Session: <TOKEN>"
   Keep the token for the whole task. After a daemon restart, call hello again:

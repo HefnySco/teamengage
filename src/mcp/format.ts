@@ -28,7 +28,7 @@ export function errFrom(e: unknown): ToolResult {
 
 /** `GL-0013 in_progress agent "title" [claimed by x]` — the one-line item form. */
 export function itemLine(it: {
-  meta: { id: string; status: string; title: string; domains?: string[] };
+  meta: { id: string; status: string; title: string; domains?: string[]; tier?: string; attempts?: number };
   claim?: { holder: string; machine: string };
   ready?: boolean;
   blocked?: boolean;
@@ -36,6 +36,8 @@ export function itemLine(it: {
   plan_progress?: { done: number; total: number };
 }): string {
   const flags: string[] = [];
+  if (it.meta.tier) flags.push(`tier:${it.meta.tier}`);
+  if (it.meta.attempts) flags.push(`attempts:${it.meta.attempts}`);
   if (it.claim) flags.push(`held:${it.claim.holder}`);
   if (it.blocked) flags.push("blocked");
   else if (it.ready) flags.push("ready");

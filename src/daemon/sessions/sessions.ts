@@ -22,7 +22,7 @@ export class SessionRegistry {
    * client process (sent by the `te mcp` shim) — agents are local (DESIGN
    * §6.4), so its liveness tells us whether the session survived a crash.
    */
-  hello(agent: string, pid?: number): Session {
+  hello(agent: string, pid?: number, tier?: Session["tier"]): Session {
     const now = new Date().toISOString();
     const session: Session = {
       id: `${agent}@${this.machine}#${randomBytes(2).toString("hex")}`,
@@ -31,6 +31,7 @@ export class SessionRegistry {
       connected_at: now,
       last_seen: now,
       ...(pid ? { pid } : {}),
+      ...(tier ? { tier } : {}),
     };
     this.sessions.set(session.id, session);
     return session;

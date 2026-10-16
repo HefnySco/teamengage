@@ -78,6 +78,13 @@ export const WorkspaceConfig = z
     autonomy: z.enum(["strict", "solo"]).default("strict"),
     /** solo: delay between an `ok` peer review and the daemon's auto-accept. */
     auto_accept_after: z.string().default("30m"),
+    /**
+     * Failed attempts (AI bounces + handoffs) after which an item's tier is
+     * raised one step, so a stronger model takes it (light → standard → heavy).
+     */
+    escalate_after: z.number().int().min(1).default(2),
+    /** After this many failed attempts the item is put on hold for the human. */
+    max_attempts: z.number().int().min(1).default(5),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */

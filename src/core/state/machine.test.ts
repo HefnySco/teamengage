@@ -500,3 +500,90 @@ describe("star", () => {
     expect(() => transition(item("ready"), { type: "unstar" }, human, ctx())).toThrow(/not starred/);
   });
 });
+
+describe("model tiers, attempts and handoff", () => {
+  const light: Actor = { ...agent, tier: "light" };
+  const heavy: Actor = { ...agent2, tier: "heavy" };
+  const withMeta = (status: Status, extra: Partial<ItemMeta>) => ({ ...item(status), ...extra });
+  const esc = { after: 2, max: 5 };
+
+  it("refuses a claim below the item's tier", () => {
+    expect(() =>
+      transition(withMeta("ready", { tier: "standard" }), { type: "claim", claim: claimOf() }, light, ctx({ depsDone: true })),
+    ).toThrow(ClaimRefusedError);
+    const r = transition(withMeta("ready", { tier: "standard" }), { type: "claim", claim: claimOf() }, heavy, ctx({ depsDone: true }));
+    expect(r.meta.status).toBe("in_progress");
+  });
+
+  it("handoff releases the claim, writes ## Handoff and counts an attempt", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "handoff", problem: "TypeError at x.ts:3", tried: "a, b", next: "try c" },
+      light,
+      ctx({ claim: { ...claimOf(), tier: "light" }, escalation: esc }),
+    );
+    expect(r.meta.status).toBe("ready");
+    expect(r.meta.attempts).toBe(1);
+    expect(r.meta.tier).toBeUndefined();
+    expect(r.effects.map((e) => e.type)).toEqual(["delete_claim", "cleanup_work"]);
+    expect(r.sectionWrites[0].heading).toBe("Handoff");
+    expect(r.sectionWrites[0].text).toContain("**Next:** try c");
+  });
+
+  it("the second failed attempt escalates the tier one step past the holder", () => {
+    const r = transition(
+      withMeta("in_progress", { attempts: 1 }),
+      { type: "handoff", problem: "p", tried: "t" },
+      light,
+      ctx({ claim: { ...claimOf(), tier: "light" }, escalation: esc }),
+    );
+    expect(r.meta.tier).toBe("standard");
+    const r2 = transition(
+      withMeta("in_progress", { attempts: 3, tier: "standard" }),
+      { type: "handoff", problem: "p", tried: "t" },
+      agent,
+      ctx({ claim: claimOf(), escalation: esc }),
+    );
+    expect(r2.meta.tier).toBe("heavy");
+  });
+
+  it("at max_attempts the item is held for the human", () => {
+    const r = transition(
+      withMeta("in_progress", { attempts: 4 }),
+      { type: "handoff", problem: "p", tried: "t" },
+      agent,
+      ctx({ claim: claimOf(), escalation: esc }),
+    );
+    expect(r.meta.status).toBe("hold");
+  });
+
+  it("an escalating bounce releases a holder that is now under-tier", () => {
+    const r = transition(
+      withMeta("in_review", { attempts: 1 }),
+      { type: "bounce", reason: "wrong logic" },
+      heavy,
+      ctx({ claim: { ...claimOf(), tier: "light" }, escalation: esc }),
+    );
+    expect(r.meta.status).toBe("ready");
+    expect(r.meta.tier).toBe("standard");
+    expect(r.effects.map((e) => e.type)).toContain("delete_claim");
+    const keep = transition(item("in_review"), { type: "bounce", reason: "x" }, heavy, ctx({ claim: claimOf(), escalation: esc }));
+    expect(keep.meta.status).toBe("in_progress");
+    expect(keep.effects).toEqual([]);
+  });
+
+  it("vet needs a session above the draft's author tier", () => {
+    const d = withMeta("draft", { authored_tier: "light" });
+    expect(() => transition(d, { type: "vet", verdict: "ok" }, light, ctx())).toThrow(ForbiddenError);
+    const r = transition(d, { type: "vet", verdict: "ok" }, heavy, ctx());
+    expect(r.meta.vetted_by).toBe(heavy.session);
+    expect(r.meta.status).toBe("draft");
+  });
+
+  it("set_tier is human-only and can reset attempts", () => {
+    expect(() => transition(item("ready"), { type: "set_tier", tier: "heavy" }, agent, ctx())).toThrow(ForbiddenError);
+    const r = transition(withMeta("hold", { attempts: 5 }), { type: "set_tier", tier: "heavy", reset: true }, human, ctx());
+    expect(r.meta.tier).toBe("heavy");
+    expect(r.meta.attempts).toBeUndefined();
+  });
+});

@@ -20,7 +20,7 @@ curl -s $B            # full protocol + examples, if you need it
 ## 1. Start a session
 
 ```bash
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>","tier":"<light|standard|heavy>"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
 
@@ -31,7 +31,15 @@ Read every line `hello` prints before going on:
 | `plans behind … — STOP` | Stop. Ask the human to pull the Tasks repo, then `hello` again. |
 | `resume: GL-0019` | You already hold that task (earlier session) — continue it, don't claim another. |
 | `held on laptop: …` | That task is being worked on elsewhere — leave it. |
-| `rules: …` | The rules. They are enforced. |
+| `rules: …` / `tiers: …` | The rules. They are enforced. |
+| `to vet (light-authored drafts): …` | Drafts a light-tier model wrote. If the human asked you to, check them with `vet` (see te-plan §8). |
+
+**Tier.** Declare the model class you are running on: `light` (Haiku-class),
+`standard` (Sonnet-class) or `heavy` (Opus-class). Be honest — `next` then
+only offers tasks you are allowed to take, and `claim` refuses tasks above
+your tier. A `brief` line `tier: … · N failed attempt(s)` means others
+already tried: read `handoff notes:` and `## Review` **before** anything else
+and don't repeat what they ruled out.
 
 Keep `$T` for the whole task. After a daemon restart, `hello` again — your
 claims come back to the new session.
@@ -164,6 +172,33 @@ curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","note":"acceptance
 - Never review or bounce **your own** submission. After 2 bounces in a row
   the task stays in review for the human — record a `review` verdict
   instead of bouncing again.
+
+## 8b. Stuck? Stop and hand off — don't spiral
+
+You are **stuck** when any of these is true:
+
+- the same error came back twice after you "fixed" it;
+- many tool calls since the last new passing test or real progress;
+- you are about to "try another approach" for the third time.
+
+Then stop editing. Write down what you know and hand the task to a fresh
+session — a clean context with your note beats a long one full of failed
+tries:
+
+```bash
+curl -s -X POST $B/handoff/GL-0019 -H "$H" -d '{
+  "problem":"de_mavlink build fails: undefined ref to MissionState::reset (exact error)",
+  "tried":"1) added reset() to header — linker still fails; 2) rebuilt from clean — same",
+  "state":"branch te/GL-0019, mission.cpp changed, unit tests 12/14 pass",
+  "next":"reset() may be in a source file missing from CMakeLists — check SRCS"}'
+```
+
+The claim is released (your branch is kept) and the task goes back to
+`ready`; your note lands in `## Handoff`. Every handoff and every bounce is
+one failed **attempt**: after `escalate_after` (default 2) the task's tier
+goes up a step so a stronger model takes it, and at `max_attempts`
+(default 5) it goes on hold for the human. After a handoff **end this
+task** — don't claim it again in the same session.
 
 ## 9. Giving it back
 

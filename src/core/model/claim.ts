@@ -23,6 +23,8 @@ export const Claim = z
     conflicted: z.boolean().optional(),
     unsynced: z.boolean().optional(),
     note: z.string().optional(),
+    /** holder session's model tier, when declared */
+    tier: z.enum(["light", "standard", "heavy"]).optional(),
     /** resource name → working path handed to the claimant (worktree, ssh path). */
     paths: z.record(z.string()).optional(),
   })

@@ -289,6 +289,17 @@ ln -s ~/teamengage/skills/te-work ~/teamengage/skills/te-review ~/teamengage/ski
 # Devin: link the same folders into the Devin skills folder (~/.config/devin/skills/)
 ```
 
+### Model-tiered team (optional)
+
+`team/` holds six Claude Code subagents (Haiku dispatcher and first reviewer,
+Sonnet planner/coder/reviewer, Opus architect) that declare model tiers at
+`hello`; TeamEngage then gates claims by tier and escalates stuck tasks.
+See `team/README.md`.
+
+```bash
+mkdir -p ~/.claude/agents && ln -s ~/teamengage/team/{scout,sketch,atlas,forge,lens,judge}.md ~/.claude/agents/
+```
+
 ### Claude Code guard (recommended)
 
 Enforces the rules even when an agent ignores the instructions (no hand

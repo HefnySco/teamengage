@@ -13,7 +13,7 @@ import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
-import { StarColor, type Status } from "../../core/model/item.js";
+import { StarColor, tierRank, type Status } from "../../core/model/item.js";
 import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
@@ -64,8 +64,8 @@ export class WorkspaceOps {
 
   // ---- sessions ---------------------------------------------------------
 
-  async hello(agent: string, pid?: number): Promise<{ session: Session; resume: Claim[] }> {
-    const session = this.sessions.hello(agent, pid);
+  async hello(agent: string, pid?: number, tier?: Session["tier"]): Promise<{ session: Session; resume: Claim[] }> {
+    const session = this.sessions.hello(agent, pid, tier);
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
     // (Dead = transport closed, client process gone, or minted before a
@@ -82,7 +82,7 @@ export class WorkspaceOps {
       return { kind: "human", session: "human", machine: this.wsr.store.machine };
     }
     this.sessions.touch(session.id);
-    return { kind: "agent", session: session.id, machine: session.machine };
+    return { kind: "agent", session: session.id, machine: session.machine, ...(session.tier ? { tier: session.tier } : {}) };
   }
 
   private depsDone(it: IndexedItem): boolean {
@@ -101,7 +101,12 @@ export class WorkspaceOps {
 
   // ---- reads ------------------------------------------------------------
 
-  next(limit = 3, domain?: string): IndexedItem[] {
+  /**
+   * `tier`: the asking session's tier — items needing more are left out, and
+   * items at exactly that tier come first (a heavy agent isn't handed light work
+   * while heavy work waits).
+   */
+  next(limit = 3, domain?: string, tier?: Session["tier"]): IndexedItem[] {
     const claimedTargets = [...this.index.claims.values()]
       .filter((c) => !c.conflicted)
       .flatMap((c) => c.targets);
@@ -111,6 +116,10 @@ export class WorkspaceOps {
       .filter((i) => i.meta.type !== "epic") // epics are plans — agents claim their tasks
       .filter((i) => !d || i.meta.domains.includes(d))
       .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
+      .filter((i) => !tier || !i.meta.tier || tierRank(i.meta.tier) <= tierRank(tier))
+      .map((i, n) => ({ i, n, k: tier && i.meta.tier === tier ? 0 : 1 }))
+      .sort((a, b) => a.k - b.k || a.n - b.n)
+      .map((x) => x.i)
       .slice(0, limit);
   }
 
@@ -332,6 +341,7 @@ export class WorkspaceOps {
       claimed_at: now,
       last_seen: now,
       paths: await plannedPaths(this.wsr.ws, id, it.meta.targets),
+      ...(session.tier ? { tier: session.tier } : {}),
     };
     // SY-0001: shrink the double-claim race — fetch plans repo and check
     // remote claims before writing ours (manual sync mode). The local
@@ -491,13 +501,50 @@ export class WorkspaceOps {
    */
   async bounce(id: string, session: Session, reason: string, summary?: string) {
     const it = this.item(id);
+    const claim = it.claim;
     return this.store.perform(
       id,
       it.meta.version,
       this.actorFor(session),
       { type: "bounce", reason, summary },
       { priorBounces: () => this.aiBouncesSinceHumanTouch(id) },
-    );
+    ).then(async (r) => {
+      if (claim && r.meta.status !== "in_progress") {
+        await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+      }
+      return r;
+    });
+  }
+
+  /**
+   * The holder is stuck: record problem / tried / state / next in the task's
+   * ## Handoff, release the claim (branches kept) so a fresh session — or a
+   * stronger tier after escalate_after attempts — picks it up from the note.
+   */
+  async handoff(id: string, session: Session, h: { problem: string; tried: string; state?: string; next?: string }) {
+    const it = this.item(id);
+    const claim = it.claim;
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), { type: "handoff", ...h });
+    if (claim) await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    return r;
+  }
+
+  /** A stronger session checks a light-authored draft; under solo an `ok` approves it. */
+  async vet(id: string, session: Session, verdict: "ok" | "issues", note?: string) {
+    const it = this.item(id);
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), { type: "vet", verdict, note });
+    if (verdict === "ok" && this.wsr.ws.config.autonomy === "solo") {
+      await this.store.perform(id, r.meta.version, this.daemonActor(), { type: "approve_plan" });
+      await this.store.annotate(id, { heading: "Log", lines: ["- auto-approved after vet ok (autonomy: solo)"] });
+      return { ...r, approved: true };
+    }
+    return { ...r, approved: false };
+  }
+
+  /** Human: set or clear the tier an item needs; `reset` zeroes its attempts. */
+  async setTier(id: string, tier?: Session["tier"], reset = false) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "set_tier", tier, reset });
   }
 
   /**
@@ -562,6 +609,7 @@ export class WorkspaceOps {
       touches?: string[];
       simple?: string;
       domains?: string[];
+      tier?: "light" | "standard" | "heavy";
     }>,
     actor: Session | "human",
   ) {
@@ -577,6 +625,7 @@ export class WorkspaceOps {
       for (const id of r.ids) {
         const it = this.index.items.get(id);
         if (!it || it.meta.type === "epic" || !it.meta.depends_on.length) continue;
+        if (it.meta.authored_tier === "light") continue; // a stronger session vets it first
         const known = it.meta.depends_on.every((ref) => {
           try {
             const dep = this.index.items.get(parseItemRef(ref).id);
@@ -625,6 +674,7 @@ export class WorkspaceOps {
       m.unblocks_on === "done" ||
       m.archived ||
       m.auto_accept_off ||
+      (m.tier === "heavy" && rv.reviewer_tier === "light") ||
       it.claim?.actor === "human"
     ) {
       return undefined;

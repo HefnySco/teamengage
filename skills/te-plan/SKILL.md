@@ -19,7 +19,7 @@ Plain HTTP with curl — no MCP needed:
 
 ```bash
 B=http://127.0.0.1:4747/agent
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>","tier":"<light|standard|heavy>"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
 
@@ -98,6 +98,19 @@ units or firmware.
 human and other agents what this task will change. Be as narrow as you can
 honestly be (`droneengage_mavlink: src/mission/**`, not the whole repo).
 
+## 5b. Tier — who should do it
+
+Give each task the **least capable model that can do it well** — it saves
+tokens, and the tier only goes up when attempts fail:
+
+| `tier` | Typical work |
+|---|---|
+| `light` | mechanical, one file, exact instructions (rename, add a field, wire a flag, docs) |
+| `standard` | a normal feature or fix across a few files — the default for coding |
+| `heavy` | cross-cutting design, subtle concurrency/protocol logic, a task that already failed twice |
+
+Leave it unset only when any model will do.
+
 ## 6. Propose
 
 One call with the whole plan. Over HTTP:
@@ -108,7 +121,7 @@ curl -s -X POST $B/propose -H "$H" -d '{
     { "type": "epic", "project": "global", "title": "Mission re-run support",
       "summary": "Flying the same mission twice must behave like the first run." },
     { "project": "global", "parent": "#0", "depends_on": ["GL-0019"],
-      "title": "TASK-14 — Clear latched events when a mission restarts",
+      "title": "TASK-14 — Clear latched events when a mission restarts", "tier": "standard",
       "summary": "When restart is detected (GL-0019), clear latched module events so the second run fires them again.",
       "touches": ["droneengage_mavlink: src/mission/**", "droneengage_comm: src/de_mission/**"],
       "acceptance": [
@@ -118,7 +131,7 @@ curl -s -X POST $B/propose -H "$H" -d '{
       ],
       "simple": "If you fly the same mission again, the drone's add-ons react again." },
     { "project": "global", "parent": "#0", "depends_on": ["#1"],
-      "title": "TASK-15 — Report restarts to the web client",
+      "title": "TASK-15 — Report restarts to the web client", "tier": "light",
       "touches": ["droneengage_webclient_react: src/js/mission/**"],
       "acceptance": ["the mission panel shows 'run 2' after a restart (manual check with SITL)",
                      "npm test passes in droneengage_webclient_react"] }
@@ -178,3 +191,18 @@ When restart is detected (GL-0019), clear latched module events so the second ru
 
 plus `TASK-14-clear-latched-events-when-a-mission-restarts.simple.md` with
 the plain-English line.
+
+## 8. Vetting a light-authored draft
+
+Drafts proposed by a `light`-tier session (hello lists them as `to vet`)
+wait for a stronger session — even under `autonomy: solo`. When asked to
+pick them up: read each one; fix what is wrong by proposing a corrected
+task or adding to its `## Acceptance` (additive), then
+
+```bash
+curl -s -X POST $B/vet/GL-0031 -H "$H" -d '{"verdict":"ok","note":"acceptance checkable, tier standard right"}'
+# or {"verdict":"issues","note":"acceptance 2 can't be tested — needs a concrete check"}
+```
+
+Under `solo` an `ok` approves it (→ ready); otherwise it marks it vetted for
+the human.

@@ -22,7 +22,7 @@ daemon is not running, tell the user and stop.
 
 ```bash
 B=http://127.0.0.1:4747/agent
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review","tier":"<light|standard|heavy>"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
 
@@ -141,8 +141,22 @@ curl -s -X POST $B/bounce/GL-0019 -H "$H" \
 
 `summary` is required on bounce too — the human reads it in `## Review`.
 
+**A bounce must name the acceptance item it fails** ("acceptance 2: …") or
+a concrete break (test red, crash, Touches violated). Style, naming or "I'd
+have done it differently" is not a bounce — put it in a `review ok` note.
+
+**Light-tier reviewers (Haiku-class).** You check the logic against the
+acceptance criteria. Don't approve what you can't judge: when the change
+touches concurrency, security/auth, data formats or migrations, or the item
+is `tier: heavy`, record `review issues` with
+`"note":"needs a standard-tier review: <why>"` instead of `ok` — a stronger
+reviewer picks it up. (A light `ok` on a heavy task is never auto-accepted.)
+
 `bounce` moves the item to `in_progress` **keeping the same claim** — the
 holder reads the reason in `brief`/`## Review`, fixes, and `submit`s again.
+Each bounce counts as a failed attempt: when it escalates the task above the
+holder's tier, the claim is released instead (`→ ready`) and a stronger
+agent takes it; at `max_attempts` the task waits for the human.
 Write the reason for the holder: specific, actionable. After two bounces in a
 row a third is refused — the item stays in review and the human decides; just
 record a `review` verdict.

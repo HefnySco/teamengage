@@ -180,6 +180,7 @@ export class PlansStore {
         claim,
         depsDone: ctx.depsDone,
         priorBounces: ctx.priorBounces ? await ctx.priorBounces() : undefined,
+        escalation: { after: this.ws.config.escalate_after, max: this.ws.config.max_attempts },
       });
 
       const newMeta = { ...tr.meta, version: expectedVersion + 1 };
@@ -293,6 +294,7 @@ export class PlansStore {
       touches?: string[];
       simple?: string;
       domains?: string[];
+      tier?: "light" | "standard" | "heavy";
     }>,
     actor: Actor,
   ): Promise<{ ids: string[]; files: string[] }> {
@@ -373,6 +375,8 @@ export class PlansStore {
           depends_on: d.depends_on ?? [],
           parent: d.parent,
           domains: normalizeDomains(d.domains ?? []),
+          ...(d.tier ? { tier: d.tier } : {}),
+          ...(actor.kind === "agent" && actor.tier ? { authored_tier: actor.tier } : {}),
           priority: 2,
           version: 1,
           created: now,

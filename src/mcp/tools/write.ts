@@ -212,7 +212,8 @@ export function registerWriteTools(
         "Reviewer only (not the holder): send a broken submission back to its holder — in_review → in_progress, " +
         "the claim is kept so the holder fixes and resubmits. reason is required and goes to the holder; " +
         "summary is required too — one plain-English sentence for the human, no jargon. " +
-        "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead.",
+        "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
+        "Each bounce is a failed attempt: on escalation past the holder's tier the claim is released for a stronger agent.",
       inputSchema: { id: z.string(), reason: z.string(), summary: z.string() },
     },
     async ({ id, reason, summary }) => {
@@ -221,8 +222,71 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.bounce(id, s, reason, summary);
-        return okText(`bounced ${id} → in_progress (holder fixes and resubmits)`);
+        const r = await o.bounce(id, s, reason, summary);
+        const m = r.meta;
+        const where =
+          m.status === "in_progress"
+            ? "in_progress (holder fixes and resubmits)"
+            : m.status === "ready"
+              ? `ready — escalated to tier ${m.tier}, claim released`
+              : `${m.status} — out of attempts, the human decides`;
+        return okText(`bounced ${id} → ${where} (attempt ${m.attempts ?? 0})`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "handoff",
+    {
+      description:
+        "Holder only, when stuck (same error twice, no progress, circling): STOP and hand the item to a fresh session. " +
+        "problem = what fails (exact error); tried = what you attempted and why each failed; state = branch/files/what passes now; " +
+        "next = your best guess for the next step. Written to ## Handoff, claim released (branches kept) → ready. " +
+        "Counts as a failed attempt: after escalate_after attempts the tier goes up; at max_attempts it waits for the human.",
+      inputSchema: {
+        id: z.string(),
+        problem: z.string(),
+        tried: z.string(),
+        state: z.string().optional(),
+        next: z.string().optional(),
+      },
+    },
+    async ({ id, problem, tried, state, next }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.handoff(id, s, { problem, tried, state, next });
+        const m = r.meta;
+        return okText(
+          `handed off ${id} → ${m.status} (attempt ${m.attempts ?? 0}${m.tier ? `, tier ${m.tier}` : ""}) — end this task now`,
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "vet",
+    {
+      description:
+        "Check a draft proposed by a light-tier session (hello lists them) — you must be a higher tier. " +
+        "Read it: is the scope clear, acceptance checkable, Touches right, tier sensible? verdict ok|issues with a note. " +
+        "Under autonomy: solo an ok approves it (→ ready); otherwise it marks it vetted for the human.",
+      inputSchema: { id: z.string(), verdict: z.enum(["ok", "issues"]), note: z.string().optional() },
+    },
+    async ({ id, verdict, note }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.vet(id, s, verdict, note);
+        return okText(`vetted ${id}: ${verdict}${r.approved ? " → ready (autonomy: solo)" : ""}`);
       } catch (e) {
         return errFrom(e);
       }
@@ -277,7 +341,9 @@ export function registerWriteTools(
         "Create draft items for the human to approve (agents cannot set other statuses). " +
         "In a task-folder workspace each item becomes <project>/TASK-NN-<slug>.md (epics: PHASE-NN-…) " +
         "from the standard template — give acceptance criteria an agent can check and the repos/paths it touches. " +
-        "depends_on/parent may use #N for the N-th (0-based) earlier item of the same call.",
+        "depends_on/parent may use #N for the N-th (0-based) earlier item of the same call. " +
+        "tier = the least capable model that can do it (light: mechanical/one-file; standard: normal feature/fix; heavy: cross-cutting/design-heavy). " +
+        "Drafts proposed by a light-tier session wait for a stronger session's vet.",
       inputSchema: {
         items: z.array(
           z.object({
@@ -292,6 +358,8 @@ export function registerWriteTools(
             touches: z.array(z.string()).optional(),
             simple: z.string().optional(),
             domains: z.array(z.string()).optional(),
+            /** minimum model tier to claim it: light | standard | heavy */
+            tier: z.enum(["light", "standard", "heavy"]).optional(),
           }),
         ),
       },

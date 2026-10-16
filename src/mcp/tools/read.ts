@@ -41,27 +41,36 @@ export const HELLO_RULES =
 export const SOLO_RULES =
   "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts; key tasks, drop/delete and pushing stay the human's";
 
+/** Model tiers: what a session declares at hello, and what it may then do. */
+export const TIER_RULES =
+  "tiers: declare yours at hello (light|standard|heavy) · you can't claim an item above your tier · stuck (same error twice, no progress)? STOP and handoff with problem/tried/state/next — a fresh session continues from your note · every bounce or handoff is an attempt; after escalate_after attempts the item's tier goes up, at max_attempts it waits for the human";
+
 export function registerReadTools(server: McpServer, binding: AgentBinding, ctx: DaemonCtx): void {
   server.registerTool(
     "hello",
     {
       description:
-        "Register a session; returns session id, machine, workspace summary, claims to resume.",
-      inputSchema: { agent: z.string(), workspace: z.string().optional() },
+        "Register a session; returns session id, machine, workspace summary, claims to resume. " +
+        "tier: your model class — light (Haiku-class), standard (Sonnet-class), heavy (Opus-class).",
+      inputSchema: {
+        agent: z.string(),
+        workspace: z.string().optional(),
+        tier: z.enum(["light", "standard", "heavy"]).optional(),
+      },
     },
-    async ({ agent, workspace }) => {
+    async ({ agent, workspace, tier }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
         // a repeat hello on this connection replaces the old session —
         // retire it so its claims rebind instead of looking "live"
         if (binding.session) ctx.sessions.disconnect(binding.session.id);
-        const { session, resume } = await ops.hello(agent, binding.clientPid);
+        const { session, resume } = await ops.hello(agent, binding.clientPid, tier);
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };
         const lines = [
-          `session ${session.id} on ${session.machine}`,
+          `session ${session.id} on ${session.machine}${session.tier ? ` tier ${session.tier}` : ""}`,
           `workspace ${ws.name} items:${counts.items} ready:${counts.ready}`,
         ];
         if (resume.length) {
@@ -69,6 +78,13 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         }
         lines.push(...handoffLines(await handoffStatus(ops.wsr)));
         lines.push(HELLO_RULES);
+        lines.push(TIER_RULES);
+        if (session.tier && session.tier !== "light") {
+          const vet = [...ops.index.items.values()].filter(
+            (i) => i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by && !i.meta.archived,
+          );
+          if (vet.length) lines.push(`to vet (light-authored drafts): ${vet.map((i) => i.meta.id).join(", ")}`);
+        }
         if (ws.config.autonomy === "solo") lines.push(SOLO_RULES);
         return okText(lines.join("\n"));
       } catch (e) {
@@ -87,7 +103,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
-        const items = ops.next(limit ?? 3, domain);
+        const items = ops.next(limit ?? 3, domain, binding.session?.tier);
         if (!items.length) return okText("nothing ready");
         return okText(items.map(itemLine).join("\n"));
       } catch (e) {
@@ -128,6 +144,12 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
             `plan: ${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0} — epics are plans; work their children, not this item`,
           );
         }
+        if (it.meta.tier || it.meta.attempts) {
+          lines.push(`tier: ${it.meta.tier ?? "any"}${it.meta.attempts ? ` · ${it.meta.attempts} failed attempt(s) — read ## Handoff / ## Review first` : ""}`);
+        }
+        if (it.meta.authored_tier) lines.push(`authored by a ${it.meta.authored_tier}-tier session${it.meta.vetted_by ? ` · vetted by ${it.meta.vetted_by}` : " · not vetted yet"}`);
+        const handoff = sec("Handoff");
+        if (handoff) lines.push(`handoff notes:\n${handoff}`);
         if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);

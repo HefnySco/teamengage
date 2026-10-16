@@ -97,6 +97,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "claim",
         "close_plan",
         "graph",
+        "handoff",
         "hello",
         "log",
         "next",
@@ -108,6 +109,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "review",
         "simple",
         "submit",
+        "vet",
       ].sort(),
     );
   });

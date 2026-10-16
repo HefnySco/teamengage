@@ -377,6 +377,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("star", (ops, id, b) => ops.star(id, b.color === undefined ? undefined : String(b.color)));
   act("unstar", (ops, id) => ops.unstar(id));
   act("stop-auto-accept", (ops, id) => ops.stopAutoAccept(id));
+  act("tier", (ops, id, b) => {
+    const t = b.tier === undefined || b.tier === null || b.tier === "any" ? undefined : String(b.tier);
+    if (t !== undefined && !["light", "standard", "heavy"].includes(t)) {
+      throw new TeError("USAGE", "tier must be light|standard|heavy|any");
+    }
+    return ops.setTier(id, t as "light" | "standard" | "heavy" | undefined, b.reset === true);
+  });
   act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("simple", (ops, id, b) => ops.simple(id, "human", String(b.text ?? "")));
   act("note", (ops, id, b) => ops.note(id, "human", String(b.text ?? "")));

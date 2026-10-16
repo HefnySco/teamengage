@@ -24,6 +24,7 @@ import {
   starCmd,
   unstarCmd,
   unholdCmd,
+  tierCmd,
   draftCmd,
   doneCmd,
   releaseCmd,
@@ -58,6 +59,7 @@ commands:
   undrop <ID>         restore a dropped item back to draft
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
   unhold <ID>         release a hold → ready
+  tier <ID> <t> [--reset]  model tier needed: light|standard|heavy|any; --reset zeroes attempts
   key <ID> [--review|--off]   key task: dependents wait for its acceptance
   archive <ID> [reason] / unarchive <ID>   hide / restore an item (status kept)
   star <ID> [yellow|red|green|blue] / unstar <ID>   bookmark an item (board ★)
@@ -171,6 +173,8 @@ async function main(argv: string[]): Promise<number> {
       return unstarCmd(rest, home);
     case "unhold":
       return unholdCmd(rest, home);
+    case "tier":
+      return tierCmd(rest, home);
     case "draft":
       return draftCmd(rest, home);
     case "done":

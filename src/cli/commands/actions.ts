@@ -149,6 +149,19 @@ export async function keyCmd(args: string[], home?: string): Promise<number> {
   return 0;
 }
 
+/**
+ * `te tier <ID> light|standard|heavy|any [--reset]` — the least capable model
+ * tier that may claim it; `--reset` zeroes its failed attempts.
+ */
+export async function tierCmd(args: string[], home?: string): Promise<number> {
+  const [id, tier] = positional(args.filter((a) => a !== "--reset"));
+  if (!id || !tier || !["light", "standard", "heavy", "any"].includes(tier)) {
+    process.stderr.write("usage: te tier <ID> light|standard|heavy|any [--reset]\n");
+    return 2;
+  }
+  return act("tier", [id, ...args.filter((a) => a.startsWith("--") && a !== "--reset")], { tier, reset: args.includes("--reset") }, home);
+}
+
 /** `te unhold <ID>` — release a hold → ready. */
 export const unholdCmd = (args: string[], home?: string) => act("unhold", args, {}, home);
 

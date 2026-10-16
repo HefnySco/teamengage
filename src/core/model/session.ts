@@ -10,6 +10,8 @@ export const Session = z
     last_seen: z.string(),
     /** PID of the local client process (the `te mcp` shim) — liveness probe. */
     pid: z.number().int().positive().optional(),
+    /** declared model tier (light|standard|heavy); unset = not tier-limited */
+    tier: z.enum(["light", "standard", "heavy"]).optional(),
   })
   .passthrough();
 export type Session = z.infer<typeof Session>;

@@ -1,5 +1,6 @@
 import type { Claim } from "../model/claim.js";
-import type { AiReview, ItemMeta, Question, StarColor, Status } from "../model/item.js";
+import type { AiReview, ItemMeta, Question, StarColor, Status, Tier } from "../model/item.js";
+import { nextTier, tierRank } from "../model/item.js";
 import type { Event } from "../model/event.js";
 import {
   ForbiddenError,
@@ -19,6 +20,8 @@ export interface Actor {
   /** Session id (`agent@machine#hex`) or `human`/`daemon`. */
   session: string;
   machine: string;
+  /** declared model tier of an agent session (unset = not tier-limited) */
+  tier?: Tier;
 }
 
 export type Action =
@@ -49,6 +52,19 @@ export type Action =
    * a row the item stays in review for the human (record a review instead).
    */
   | { type: "bounce"; reason: string; summary?: string }
+  /**
+   * The holder is stuck: it stops, writes down the problem, what it tried
+   * and where it left off, and gives the item back for a fresh session
+   * (claim released, branches kept). Counts as a failed attempt.
+   */
+  | { type: "handoff"; problem: string; tried: string; state?: string; next?: string }
+  /**
+   * A session stronger than the draft's author checks a light-authored
+   * draft. Annotation only; under solo the daemon approves an `ok`.
+   */
+  | { type: "vet"; verdict: "ok" | "issues"; note?: string }
+  /** Human sets (or clears) the model tier an item needs; reset clears attempts. */
+  | { type: "set_tier"; tier?: Tier; reset?: boolean }
   | { type: "accept" }
   | { type: "reject"; reason?: string }
   | { type: "drop"; reason?: string }
@@ -94,6 +110,8 @@ export interface TransitionCtx {
   depsDone?: boolean;
   /** AI bounces this item already took since the last human action (bounce cap). */
   priorBounces?: number;
+  /** workspace escalate_after / max_attempts (defaults 2 / 5) */
+  escalation?: { after: number; max: number };
 }
 
 export type Effect =
@@ -118,6 +136,28 @@ const TERMINAL: Status[] = ["done", "dropped"];
 
 /** After this many consecutive AI bounces the item stays in review for the human. */
 export const MAX_AI_BOUNCES = 2;
+
+/**
+ * One more failed attempt (AI bounce or handoff). Every `after` attempts the
+ * item's tier goes up a step; at `max` it is held for the human.
+ */
+function recordFailure(
+  meta: ItemMeta,
+  out: TransitionResult,
+  ctx: TransitionCtx,
+): { held: boolean; escalated?: Tier } {
+  const attempts = (meta.attempts ?? 0) + 1;
+  out.meta.attempts = attempts;
+  const after = ctx.escalation?.after ?? 2;
+  const max = ctx.escalation?.max ?? 5;
+  if (attempts >= max) return { held: true };
+  if (attempts % after !== 0) return { held: false };
+  const base = meta.tier ?? ctx.claim?.tier ?? "standard";
+  const up = nextTier(base);
+  if (tierRank(up) <= tierRank(meta.tier)) return { held: false };
+  out.meta.tier = up;
+  return { held: false, escalated: up };
+}
 
 function fail(from: Status, action: string): never {
   throw new InvalidTransitionError(`cannot ${action} from ${from}`, from, action);
@@ -247,6 +287,11 @@ export function transition(
       if (ctx.depsDone === false) {
         throw new InvalidTransitionError("cannot claim: dependencies not done", from, "claim");
       }
+      if (meta.tier && actor.tier && tierRank(actor.tier) < tierRank(meta.tier)) {
+        throw new ClaimRefusedError(
+          `needs a ${meta.tier}-tier agent (you are ${actor.tier})${meta.attempts ? ` — ${meta.attempts} failed attempt(s) so far` : ""}`,
+        );
+      }
       if (ctx.claim && !takeover) {
         throw new ClaimRefusedError(
           `already claimed by ${ctx.claim.holder} on ${ctx.claim.machine}`,
@@ -350,6 +395,7 @@ export function transition(
       out.meta.ai_review = {
         verdict: action.verdict,
         reviewed_by: actor.session,
+        ...(actor.tier ? { reviewer_tier: actor.tier } : {}),
         reviewed_at: ctx.now,
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
@@ -375,15 +421,28 @@ export function transition(
           `bounce: ${ctx.priorBounces} AI bounces already — the human must review now (record a review verdict instead)`,
         );
       }
-      set("in_progress", action.reason);
+      const f = recordFailure(meta, out, ctx);
+      // escalated past the holder, or out of attempts → the claim goes;
+      // otherwise the holder keeps it and fixes (it has the context)
+      const outgrown = !!f.escalated && !!ctx.claim?.tier && tierRank(ctx.claim.tier) < tierRank(f.escalated);
+      if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.reason}`);
+      else if (outgrown) set("ready", action.reason);
+      else set("in_progress", action.reason);
+      if (f.held || outgrown) {
+        out.effects.push({ type: "delete_claim" });
+        out.effects.push({ type: "cleanup_work", keepBranches: true });
+      }
       out.meta.ai_review = {
         verdict: "issues",
+        ...(actor.tier ? { reviewer_tier: actor.tier } : {}),
         reviewed_by: actor.session,
         reviewed_at: ctx.now,
         note: action.reason,
         ...(action.summary ? { summary: action.summary } : {}),
       };
-      out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason}`);
+      out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason} (attempt ${out.meta.attempts})`);
+      if (f.escalated) out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);
+      if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
       out.sectionWrites.push({
         heading: "Review",
         text: action.summary
@@ -392,6 +451,58 @@ export function transition(
       });
       // the claim is kept on purpose: the holder has the context and the
       // worktree, so it fixes and resubmits (like the human's reject)
+      return out;
+    }
+
+    case "handoff": {
+      requireHolder(actor, ctx, action.type);
+      if (from !== "in_progress") fail(from, action.type);
+      if (actor.kind !== "agent") throw new ForbiddenError("handoff is for agent sessions (the human has release)");
+      const f = recordFailure(meta, out, ctx);
+      if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.problem}`);
+      else set("ready", action.problem);
+      out.effects.push({ type: "delete_claim" });
+      out.effects.push({ type: "cleanup_work", keepBranches: true });
+      const lines = [
+        `### ${stamp} ${who}${actor.tier ? ` (${actor.tier})` : ""} — attempt ${out.meta.attempts}`,
+        `- **Problem:** ${action.problem}`,
+        `- **Tried:** ${action.tried}`,
+        ...(action.state ? [`- **State:** ${action.state}`] : []),
+        ...(action.next ? [`- **Next:** ${action.next}`] : []),
+      ];
+      out.sectionWrites.push({ heading: "Handoff", text: lines.join("\n") + "\n" });
+      out.log.push(`- ${stamp} ${who} handed off (attempt ${out.meta.attempts}): ${action.problem}`);
+      if (f.escalated) out.log.push(`- ${stamp} escalated → tier ${f.escalated}`);
+      if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
+      return out;
+    }
+
+    case "vet": {
+      if (actor.kind !== "agent") throw new ForbiddenError("vet is an agent-only action (the human approves)");
+      if (from !== "draft") fail(from, action.type);
+      if (!meta.authored_tier) {
+        throw new InvalidTransitionError("vet: only drafts proposed by a tiered (light) session need vetting", from, action.type);
+      }
+      if (tierRank(actor.tier) <= tierRank(meta.authored_tier)) {
+        throw new ForbiddenError(`vet needs a session above ${meta.authored_tier} tier (declare tier at hello)`);
+      }
+      if (action.verdict === "ok") out.meta.vetted_by = actor.session;
+      const text = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
+      out.events.push(ev(actor, stamp, meta.id, "vet", from, from, text));
+      out.log.push(`- ${stamp} ${who} vetted ${text}`);
+      out.sectionWrites.push({ heading: "Review", text: `- ${stamp} ${who} vet ${text}\n` });
+      return out;
+    }
+
+    case "set_tier": {
+      requireHuman(actor, action.type);
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      if (action.tier) out.meta.tier = action.tier;
+      else delete out.meta.tier;
+      if (action.reset) delete out.meta.attempts;
+      const what = `${action.tier ?? "any"}${action.reset ? ", attempts reset" : ""}`;
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from, what));
+      out.log.push(`- ${stamp} ${who} set tier ${what}`);
       return out;
     }
 

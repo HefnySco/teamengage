@@ -91,6 +91,10 @@ beforeAll(async () => {
     `---\nid: WS-0005\ntype: task\ntitle: reviewable task\nstatus: ready\nversion: 1\ntargets: ["@self:src/f5.ts"]\n---\n\n## Summary\nx\n`,
   );
   writeFileSync(
+    join(plans, "items", "WS", "WS-0006.md"),
+    `---\nid: WS-0006\ntype: task\ntitle: tiered task\nstatus: ready\nversion: 1\ntier: standard\ntargets: ["@self:src/f6.ts"]\n---\n\n## Summary\nx\n`,
+  );
+  writeFileSync(
     join(plans, "items", "WS", "WS-0004.md"),
     `---\nid: WS-0004\ntype: epic\ntitle: epic 4\nstatus: ready\nversion: 1\n---\n\n## Summary\nplan\n`,
   );
@@ -122,6 +126,32 @@ afterAll(async () => {
   await watcher.close();
   await daemon.close();
   rmSync(home, { recursive: true, force: true });
+
+  it("tiers: hidden/refused below tier; a stuck holder hands off and a fresh session reads the note", async () => {
+    const light = (await call("POST", "/agent/hello", { body: { agent: "scout", tier: "light" } })).text;
+    expect(light).toMatch(/tier light/);
+    const lt = /^token (\S+)/.exec(light)![1];
+    expect((await call("GET", "/agent/next?limit=20", { token: lt })).text).not.toContain("WS-0006");
+    const refused = await call("POST", "/agent/claim/WS-0006", { token: lt });
+    expect(refused.status).toBe(409);
+    expect(refused.text).toContain("standard-tier");
+    const st = /^token (\S+)/.exec(
+      (await call("POST", "/agent/hello", { body: { agent: "forge", tier: "standard" } })).text,
+    )![1];
+    expect((await call("GET", "/agent/next?limit=20", { token: st })).text.split("\n")[0]).toContain("WS-0006");
+    expect((await call("POST", "/agent/claim/WS-0006", { token: st })).text).toMatch(/^claimed/);
+    const h = await call("POST", "/agent/handoff/WS-0006", {
+      token: st,
+      body: { problem: "build fails: X undefined", tried: "renamed import", next: "check the barrel export" },
+    });
+    expect(h.text).toMatch(/^handed off WS-0006 → ready \(attempt 1, tier standard\)/);
+    const st2 = /^token (\S+)/.exec(
+      (await call("POST", "/agent/hello", { body: { agent: "forge", tier: "standard" } })).text,
+    )![1];
+    const brief = (await call("GET", "/agent/brief/WS-0006", { token: st2 })).text;
+    expect(brief).toContain("1 failed attempt");
+    expect(brief).toContain("check the barrel export");
+  });
 });
 
 describe("plain-HTTP agent API", () => {
