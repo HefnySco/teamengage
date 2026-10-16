@@ -62,6 +62,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         blocked: i.blocked,
         ready: i.ready,
         turn: i.turn,
+        auto_accept_at: ops.autoAcceptAt(i),
         ...(i.meta.type === "epic"
           ? { plan_state: i.plan_state, plan_progress: i.plan_progress }
           : {}),
@@ -375,9 +376,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("unarchive", (ops, id) => ops.unarchive(id));
   act("star", (ops, id, b) => ops.star(id, b.color === undefined ? undefined : String(b.color)));
   act("unstar", (ops, id) => ops.unstar(id));
+  act("stop-auto-accept", (ops, id) => ops.stopAutoAccept(id));
   act("delete", (ops, id, b) => ops.deleteItem(id, b.reason ? String(b.reason) : undefined));
   act("simple", (ops, id, b) => ops.simple(id, "human", String(b.text ?? "")));
   act("note", (ops, id, b) => ops.note(id, "human", String(b.text ?? "")));
+  act("delnote", (ops, id, b) => {
+    if (!b.ts || !b.who) throw new TeError("USAGE", "delnote needs {ts, who}");
+    return ops.removeNote(id, {
+      ts: String(b.ts),
+      who: String(b.who),
+      ...(b.body !== undefined ? { body: String(b.body) } : {}),
+    });
+  });
   act("unblocks", (ops, id, b) => {
     const on = String(b.on ?? "default");
     if (!["review", "done", "default"].includes(on)) throw new TeError("USAGE", "unblocks needs {on: review|done|default}");

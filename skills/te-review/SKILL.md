@@ -119,7 +119,11 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   human reads on the item page.
 - `note` is the technical detail for whoever fixes it — what you ran, what
   passed, over which diff. `"looks fine"` tells nobody anything.
-- `ok` — verified, ready for the human to accept.
+- `ok` — verified, ready for the human to accept. Under `autonomy: solo`
+  (the `hello` rules line says so) an `ok` is **not** advisory only: the
+  daemon accepts and merges the submission after `auto_accept_after`
+  unless the human steps in. Give `ok` only when you actually ran the
+  acceptance checks; when in doubt, `issues`.
 - `issues` — verified concerns the human should weigh before deciding (or
   checks you couldn't run). Number the findings in `note`, worst first, each
   with file:line or commit, so whoever fixes it doesn't redo your analysis.

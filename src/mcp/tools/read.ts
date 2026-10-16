@@ -37,6 +37,10 @@ export function isToolResult(x: unknown): x is ToolResult {
 export const HELLO_RULES =
   "rules: claim before code · new tasks only via propose · never edit te: lines or .teamengage/, never move files to done/ · task-file edits additive + log · never push · scope is the human's — wider work → propose a dependent task · ask, don't guess · review only others' submissions, never your own";
 
+/** Extra line under `autonomy: solo` (one human / small team). */
+export const SOLO_RULES =
+  "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts; key tasks, drop/delete and pushing stay the human's";
+
 export function registerReadTools(server: McpServer, binding: AgentBinding, ctx: DaemonCtx): void {
   server.registerTool(
     "hello",
@@ -65,6 +69,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         }
         lines.push(...handoffLines(await handoffStatus(ops.wsr)));
         lines.push(HELLO_RULES);
+        if (ws.config.autonomy === "solo") lines.push(SOLO_RULES);
         return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);

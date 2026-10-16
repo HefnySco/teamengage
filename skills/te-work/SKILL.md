@@ -78,7 +78,10 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 - Work only inside what `**Touches:**` / the claim names. Something outside
   that is needed → `ask` first. Never widen the task's own Touches or
   acceptance: extra work becomes a new task via `propose`, with
-  `depends_on` set to this one, for the human to approve.
+  `depends_on` set to this one, for the human to approve. (If `hello`
+  prints `autonomy: solo`, such a follow-up lands `ready` at once — the
+  propose reply lists it under `ready`; it is still a separate task, never
+  folded into this one.)
 
 ## 5. Work
 

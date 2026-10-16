@@ -67,6 +67,17 @@ export const WorkspaceConfig = z
      * that depend on it. `false`: only done/dropped unblock.
      */
     review_unblocks: z.boolean().default(true),
+    /**
+     * How much agents may move work forward on their own. `strict`: every
+     * plan needs the human's approve and every submission the human's accept.
+     * `solo` (one human / small team): an agent's follow-up task (proposed
+     * with depends_on an existing item) lands ready, and a submission with
+     * an `ok` peer review is accepted by the daemon after auto_accept_after
+     * unless the human acts first. Key tasks are never auto-accepted.
+     */
+    autonomy: z.enum(["strict", "solo"]).default("strict"),
+    /** solo: delay between an `ok` peer review and the daemon's auto-accept. */
+    auto_accept_after: z.string().default("30m"),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */

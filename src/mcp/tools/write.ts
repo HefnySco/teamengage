@@ -302,11 +302,12 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const { ids, files } = await o.propose(items, s);
+        const { ids, files, ready } = await o.propose(items, s);
         return okText(
-          files.length
+          (files.length
             ? ids.map((id, i) => `proposed ${id} → ${files[i]}`).join("\n")
-            : `proposed ${ids.join(", ")}`,
+            : `proposed ${ids.join(", ")}`) +
+            (ready.length ? `\nready (autonomy: solo): ${ready.join(", ")}` : ""),
         );
       } catch (e) {
         return errFrom(e);

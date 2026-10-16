@@ -130,6 +130,16 @@ function requireHuman(actor: Actor, action: string): void {
 }
 
 /**
+ * Human, or the daemon acting for the human under `autonomy: solo` (the
+ * daemon only does so through the solo paths in ops — never on an agent's say).
+ */
+function requireHumanOrDaemon(actor: Actor, action: string): void {
+  if (actor.kind !== "human" && actor.kind !== "daemon") {
+    throw new ForbiddenError(`${action} is a human-only action`);
+  }
+}
+
+/**
  * Peer review of a submission is a *second opinion*: agent-only, and never
  * the holder — reviewing your own work would just manufacture a trust marker.
  */
@@ -210,7 +220,7 @@ export function transition(
     }
 
     case "approve_plan": {
-      requireHuman(actor, action.type);
+      requireHumanOrDaemon(actor, action.type);
       if (from !== "draft") fail(from, action.type);
       set("ready");
       out.log.push(`- ${stamp} ${who} approved plan`);
@@ -322,6 +332,7 @@ export function transition(
       if (from !== "in_progress") fail(from, action.type);
       set("in_review", action.note);
       delete out.meta.ai_review; // a fresh submission starts unreviewed
+      delete out.meta.auto_accept_off; // …and is eligible for auto-accept again
       out.log.push(`- ${stamp} ${who} submitted for review${action.note ? `: ${action.note}` : ""}`);
       if (action.evidence) {
         const lines: string[] = [];
@@ -385,7 +396,7 @@ export function transition(
     }
 
     case "accept": {
-      requireHuman(actor, action.type);
+      requireHumanOrDaemon(actor, action.type);
       if (from !== "in_review") fail(from, action.type);
       set("done");
       out.log.push(`- ${stamp} ${who} accepted`);

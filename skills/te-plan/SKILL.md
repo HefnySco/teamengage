@@ -143,6 +143,10 @@ Field notes:
 
 - Everything you propose is a **draft**. Tell the human the ids and the
   order you suggest approving them; they approve, reorder or drop.
+  Exception — `autonomy: solo` (shown by `hello`): a task whose
+  `depends_on` names an existing task lands `ready` (the reply lists it
+  under `ready`). Epics and tasks with no dependency stay drafts. Say which
+  landed ready so the human knows agents can pick them up now.
 - Do not claim your own drafts, edit the `te:` line, or move files.
 - Later refinements to a proposed file: additive only (`## Acceptance`,
   `## Notes`), each recorded with `log`. To execute tasks, see te-work.

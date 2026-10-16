@@ -205,3 +205,65 @@ describe("appendNote", () => {
     expect(appendNote("# T\r\n## Notes\r\n", "n")).toBe("# T\r\n## Notes\r\n\r\nn\r\n");
   });
 });
+
+describe("removeNote", () => {
+  const H1 = "**2026-01-01 10:00 · human**";
+  const H2 = "**2026-01-02 11:00 · human**";
+  const HA = "**2026-01-02 11:00 · agent-x**";
+  const file = `# T\n\n## Notes\n\n${H1}\n\nfirst\n\n${H2}\n\nsecond\n\n## Log\nx\n`;
+
+  it("removes the matching block and keeps the rest verbatim", async () => {
+    const { removeNote } = await import("./source.js");
+    expect(removeNote(file, { ts: "2026-01-01 10:00", who: "human" })).toBe(
+      `# T\n\n## Notes\n\n${H2}\n\nsecond\n\n## Log\nx\n`,
+    );
+    // last block: one blank separator stays before the next section
+    expect(removeNote(file, { ts: "2026-01-02 11:00", who: "human" })).toBe(
+      `# T\n\n## Notes\n\n${H1}\n\nfirst\n\n## Log\nx\n`,
+    );
+  });
+
+  it("matches author too — same minute notes by different authors", async () => {
+    const { removeNote } = await import("./source.js");
+    const two = `# T\n\n## Notes\n\n${H2}\n\nhuman words\n\n${HA}\n\nagent words\n`;
+    expect(removeNote(two, { ts: "2026-01-02 11:00", who: "agent-x" })).toBe(
+      `# T\n\n## Notes\n\n${H2}\n\nhuman words\n`,
+    );
+  });
+
+  it("body disambiguates same-minute notes by one author; without it they are ambiguous", async () => {
+    const { removeNote } = await import("./source.js");
+    const dup = `# T\n\n## Notes\n\n${H1}\n\nkeep me\n\n${H1}\n\nremove me\n`;
+    const n = { ts: "2026-01-01 10:00", who: "human" };
+    expect(removeNote(dup, n)).toBeUndefined();
+    expect(removeNote(dup, { ...n, body: "remove me" })).toBe(`# T\n\n## Notes\n\n${H1}\n\nkeep me\n`);
+    expect(removeNote(dup, { ...n, body: "not there" })).toBeUndefined();
+  });
+
+  it("returns undefined without a Notes section or a matching block", async () => {
+    const { removeNote } = await import("./source.js");
+    const n = { ts: "2026-01-01 10:00", who: "human" };
+    expect(removeNote("# T\n\n## Log\nx\n", n)).toBeUndefined();
+    expect(removeNote(file, { ts: "2026-01-01 10:00", who: "nobody" })).toBeUndefined();
+    expect(removeNote(file, { ts: "1999-01-01 00:00", who: "human" })).toBeUndefined();
+  });
+
+  it("ignores header lookalikes inside fenced code and unauthored text stays", async () => {
+    const { removeNote } = await import("./source.js");
+    const tricky = `# T\n\n## Notes\n\n${H1}\n\n\`\`\`\n${H2}\n\`\`\`\n`;
+    expect(removeNote(tricky, { ts: "2026-01-02 11:00", who: "human" })).toBeUndefined();
+    expect(removeNote(tricky, { ts: "2026-01-01 10:00", who: "human" })).toBe("# T\n\n## Notes\n");
+    const preamble = `# T\n\n## Notes\n\nhand typed\n\n${H1}\n\nfirst\n`;
+    expect(removeNote(preamble, { ts: "2026-01-01 10:00", who: "human" })).toBe(
+      "# T\n\n## Notes\n\nhand typed\n",
+    );
+  });
+
+  it("keeps CRLF line endings", async () => {
+    const { removeNote } = await import("./source.js");
+    const crlf = `# T\r\n\r\n## Notes\r\n\r\n${H1}\r\n\r\nfirst\r\n\r\n${H2}\r\n\r\nsecond\r\n`;
+    expect(removeNote(crlf, { ts: "2026-01-02 11:00", who: "human" })).toBe(
+      `# T\r\n\r\n## Notes\r\n\r\n${H1}\r\n\r\nfirst\r\n`,
+    );
+  });
+});

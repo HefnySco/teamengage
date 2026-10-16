@@ -5,7 +5,7 @@
 > together on shared plans — concurrently, without corrupting each other's
 > tasks or each other's code.
 
-Status: **draft v0.3** (2026-10-08)
+Status: **v0.4** (2026-10-16)
 
 ---
 
@@ -100,6 +100,8 @@ prefix: DE                       # workspace-level items: DE-0001…
 plans: Tasks                     # plans repo path (default: .teamengage)
 sync: manual                     # manual | auto  (§6.5)
 stale_after: 24h                 # inactive agent claim → flagged stale
+autonomy: strict                 # strict | solo  (§5 — solo: fewer human gates)
+auto_accept_after: 30m           # solo: ok peer review → daemon accepts after this
 projects:
   mission_planner: { prefix: MP }
   global:          { prefix: GL }
@@ -177,8 +179,9 @@ updated: 2026-10-08
 ```
 draft ──approve_plan──▶ ready ──claim──▶ in_progress ──submit──▶ in_review ──accept──▶ done
   ▲                       ▲                │    │                    │
-  │                       │                │    └─ask──▶ waiting ────┘ (answer → in_progress)
-  └──────── reject ───────┴──── release ◀──┘                         reject → in_progress
+  │                       │                │    └─ask──▶ waiting ────┘ │
+  └──────── reject ───────┼──── release ◀──┘                          │
+                          └───────────────── release ◀─────────────────┘
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
                        ready|hold|done ──to_draft──▶ draft
 review  = agent only, in_review, never the holder: records an advisory
@@ -186,6 +189,19 @@ review  = agent only, in_review, never the holder: records an advisory
 bounce  = agent only, in_review, never the holder: ──▶ in_progress, claim
           kept — the holder fixes and resubmits; capped at 2 in a row,
           then the item stays in review and only a verdict may be recorded
+withdraw = holder only, in_review ──▶ in_progress, claim kept: the
+          submitter pulls its submission back to keep working before the
+          human looks at it
+takeover = claim on in_review carrying an `issues` verdict: any agent
+          session on the claim's machine takes claim and worktree over
+          ──▶ in_progress (cross-machine refused — worktrees are
+          machine-local, §6.3)
+release  = in_progress|waiting ──▶ ready as before; on in_review it also
+          means "submission back to the pool": claim dropped, branches
+          kept. The holder may release its own claim anywhere; an agent
+          session may release someone else's in_review claim only on the
+          claim's machine and must say why (note required, recorded under
+          ## Review). Releasing another machine's claim stays human-only.
 blocked  = derived: any depends_on not done (in_review counts as done
            unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
@@ -252,7 +268,8 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
   `undrop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
   `star`/`unstar`, `close_plan`/`reopen_plan`, and `release` of someone
-  else's claim.
+  else's claim — except an agent may release an `in_review` claim held on
+  its own machine (see `release` above).
 - `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
   any non-done item straight to `done` — for work finished outside
   TeamEngage. No review and no merge: a claim is released, branches are kept.
@@ -261,7 +278,25 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   conflict as a log note.
 - The human can `claim` too: held by `human`, `next` skips it, targets locked
   against agents until released.
-- Agents may *create* items, but only as `draft` (plans and wishes need a human yes).
+- Agents may *create* items, but only as `draft` (plans and wishes need a human yes)
+  — unless the workspace runs `autonomy: solo`, below.
+- `autonomy` (workspace.yaml, default `strict`) sets how many human gates
+  there are. `solo` is for one human or a small team:
+  - an agent's proposal that `depends_on` an existing, non-dropped item (a
+    fix or follow-up of known work) is approved by the daemon and lands
+    `ready`; epics and free-standing proposals stay drafts, and so does
+    anything the human proposes;
+  - a submission whose latest peer review is `ok` is accepted by the daemon
+    once the review is older than `auto_accept_after` (default `30m`) — the
+    same local merge, never a push. Board cards and the item page show a
+    ⏱ countdown; the human stops it with **stop auto-accept** (that
+    submission only — `auto_accept_off`, cleared by the next submit), by
+    rejecting, or by making it a key task (🔑 — key tasks are never
+    auto-accepted); a resubmit, bounce or `issues` verdict resets the clock. Archived items
+    and human claims are skipped.
+  Everything else stays human-only in both modes: pushing, drop/undrop,
+  delete, archive, star, hold, close_plan, change_answer, and releasing
+  another machine's claim. `hello` adds an `autonomy: solo` rules line.
 
 ## 6. Concurrency — the core
 
@@ -372,7 +407,9 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `hello(agent, workspace?)` | Register session; returns session id, machine, workspace summary, any claims this agent should resume. |
 | `next(limit=3)` | Ready, unclaimed items whose targets are free, best first. |
 | `brief(id)` | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path). |
-| `claim(id)` / `release(id, note)` | Take / give back an item (+ target locks, worktrees, snapshots). |
+| `claim(id)` | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only. |
+| `release(id, note)` | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |
+| `withdraw(id)` | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept. |
 | `log(id, note)` | Progress note (also updates `last_seen`). |
 | `ask(id, question, options?)` | Raise question → item `waiting`, turn → human. |
 | `submit(id, evidence)` | Commits/tests/notes → `in_review`. |
@@ -473,8 +510,8 @@ Content is never copied: `brief` reads the task file live.
 | 7 | Claim lifetime | No auto-expiry. Inactive claims become *stale* (default 24h) and only the human releases them. |
 | 8 | SSH snapshots | Yes: snapshot before claim, diff as evidence, `te rollback`. |
 | 9 | Plans repo sync | `manual` by default; daemon only does a read-only `fetch` to detect remote claims before claiming. `auto` stays available per workspace (§6.5). |
-
 | 10 | Existing task folders | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each. |
+| 11 | Human gates for a solo human | `autonomy: solo` (opt-in): agent follow-ups land ready, `ok`-reviewed submissions auto-accept after a delay; `strict` stays the default (§5). |
 
 ## 13. Open questions
 

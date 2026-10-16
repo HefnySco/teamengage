@@ -24,6 +24,7 @@ import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
 import { parseDuration } from "../core/model/workspace.js";
 import { reconcile } from "./sync/sync.js";
+import { WorkspaceOps } from "./api/ops.js";
 
 
 /** Default agent-facing port — a stable URL for `GET /agent`. */
@@ -130,6 +131,19 @@ async function main(): Promise<number | undefined> {
       }
     },
   });
+  // autonomy: solo — accept submissions whose ok review has aged past
+  // auto_accept_after (strict workspaces return nothing)
+  const autoTimer = setInterval(() => {
+    for (const [name, wsr] of ctx.workspaces) {
+      new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home)
+        .autoAccept()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accepted ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accept failed: ${err.message}` }));
+    }
+  }, 60_000);
+  autoTimer.unref();
   process.stdout.write(
     `teamengaged ${machine} listening at ${handle.url} (${ctx.workspaces.size} workspace(s))\n` +
       `agents: ${handle.url}/agent\n` +

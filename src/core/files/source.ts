@@ -102,6 +102,75 @@ export function appendNote(text: string, block: string): string {
   return [...lines.slice(0, end), "", ...add, ...(after.length ? ["", ...after] : [""])].join(eol);
 }
 
+/** Header of a daemon-written note block: `**YYYY-MM-DD HH:MM · who**`. */
+const NOTE_HEADER = /^\*\*(\d{4}-\d\d-\d\d \d\d:\d\d) · (\S+)\*\*\s*$/;
+
+/**
+ * Remove one daemon-written note block — its `**ts · who**` header through
+ * the line before the next header or the section end — from the file's
+ * `## Notes` section (the same block `appendNote` wrote). `body`, when
+ * given, disambiguates two notes by the same author in the same minute.
+ * Returns the new text, or `undefined` when there is no such block.
+ */
+export function removeNote(text: string, note: { ts: string; who: string; body?: string }): string | undefined {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  // the last ## Notes outside fences, and where it ends (same scan as appendNote)
+  let inFence = false;
+  let notesAt = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (/^##\s+notes\s*$/i.test(l)) notesAt = i;
+  });
+  if (notesAt === -1) return undefined;
+  const end = headings.find((h) => h > notesAt) ?? lines.length;
+  // note headers inside the section (a body may hold a fence with lookalikes)
+  const heads: number[] = [];
+  inFence = false;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence || i <= notesAt || i >= end) return;
+    if (NOTE_HEADER.test(l.trim())) heads.push(i);
+  });
+  const cand = heads.filter((h) => {
+    const m = NOTE_HEADER.exec(lines[h].trim())!;
+    return m[1] === note.ts && m[2] === note.who;
+  });
+  if (!cand.length) return undefined;
+  let h = cand[0];
+  if (cand.length > 1) {
+    if (note.body === undefined) return undefined;
+    const want = note.body.trim();
+    const hit = cand.find((c) =>
+      lines.slice(c + 1, heads.find((x) => x > c) ?? end).join("\n").trim() === want,
+    );
+    if (hit === undefined) return undefined;
+    h = hit;
+  }
+  // drop [h, next header | section end); the blank line before h stays as the separator
+  const blockEnd = heads.find((x) => x > h) ?? end;
+  const kept = [...lines.slice(0, h), ...lines.slice(blockEnd)];
+  const end2 = end - (blockEnd - h);
+  // tidy: collapse blank runs inside the section, single blank before what follows
+  const sec: string[] = [];
+  for (const l of kept.slice(notesAt + 1, end2)) {
+    if (l.trim() === "" && sec.length && sec[sec.length - 1].trim() === "") continue;
+    sec.push(l);
+  }
+  while (sec.length && sec[sec.length - 1].trim() === "") sec.pop();
+  const tail = kept.slice(end2);
+  const tailHasContent = tail.some((l) => l.trim() !== "");
+  const out = [
+    ...kept.slice(0, notesAt + 1),
+    ...sec,
+    ...(tailHasContent ? ["", ...tail] : tail.slice(-1)),
+  ].join(eol);
+  return text.endsWith("\n") && !out.endsWith(eol) ? out + eol : out;
+}
+
 /** Workspace-relative path with `/` separators — the same on every machine. */
 export function toSourcePath(root: string, abs: string): string {
   return relative(root, abs).split(sep).join("/");

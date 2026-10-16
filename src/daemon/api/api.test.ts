@@ -412,6 +412,27 @@ describe("notes (standard workspace)", () => {
     const notes = store.idx.get(ids[0])!.sections.find((s) => s.heading === "Notes")!.body;
     expect(notes).toMatch(/· human\*\*\n\nline 1\nline 2/);
   });
+
+  it("delnote removes the block identified by its ts · who header", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const { ids } = await store.createItems([{ type: "task", title: "std note rm" }], { kind: "human", session: "human", machine: "test" });
+    const post = (p: string, body: unknown) =>
+      api(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await post(`/api/items/${ids[0]}/note`, { text: "keep me" })).status).toBe(200);
+    expect((await post(`/api/items/${ids[0]}/note`, { text: "remove me" })).status).toBe(200);
+    const body = store.idx.get(ids[0])!.sections.find((s) => s.heading === "Notes")!.body;
+    const heads = [...body.matchAll(/^\*\*(\d{4}-\d\d-\d\d \d\d:\d\d) · (\S+)\*\*$/gm)];
+    expect(heads.length).toBe(2);
+    const r = await post(`/api/items/${ids[0]}/delnote`, { ts: heads[1][1], who: heads[1][2], body: "remove me" });
+    expect(r.status).toBe(200);
+    const after = store.idx.get(ids[0])!.sections.find((s) => s.heading === "Notes")!.body;
+    expect(after).toContain("keep me");
+    expect(after).not.toContain("remove me");
+    // deleting a note that isn't there → 404-ish error, section untouched
+    const r2 = await post(`/api/items/${ids[0]}/delnote`, { ts: "1999-01-01 00:00", who: "human" });
+    expect(r2.status).not.toBe(200);
+    expect(store.idx.get(ids[0])!.sections.find((s) => s.heading === "Notes")!.body).toContain("keep me");
+  });
 });
 
 describe("review_unblocks: a dependency in review lets dependents start", () => {
@@ -674,5 +695,78 @@ describe("plan tracking (epics)", () => {
     // close_plan on a non-epic fails cleanly
     const bad = await api(`/api/items/${t1}/close_plan`, { method: "POST" });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe("autonomy: solo", () => {
+  it("follow-ups land ready, ok reviews auto-accept after the delay; strict is unchanged", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "Base work" }], human);
+    const [base] = ids;
+    await ops.approve(base);
+    const agent = ctx.sessions.hello("solo-agent");
+
+    // strict (default): agent proposals stay drafts, nothing auto-accepts
+    const strict = await ops.propose([{ title: "Strict fix", depends_on: [base] }], agent);
+    expect(strict.ready).toEqual([]);
+    expect(store.idx.get(strict.ids[0])!.meta.status).toBe("draft");
+
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.auto_accept_after = "30m";
+    try {
+      const p = await ops.propose(
+        [
+          { title: "Fix of base", depends_on: [base] },
+          { title: "Free-standing idea" },
+          { type: "epic", title: "Big plan", depends_on: [base] },
+        ],
+        agent,
+      );
+      const [fix, free, epic] = p.ids;
+      expect(p.ready).toEqual([fix]);
+      expect(store.idx.get(fix)!.meta.status).toBe("ready");
+      expect(store.idx.get(free)!.meta.status).toBe("draft");
+      expect(store.idx.get(epic)!.meta.status).toBe("draft");
+      // a human's own proposal is never auto-approved
+      const hp = await ops.propose([{ title: "Human fix", depends_on: [base] }], "human");
+      expect(store.idx.get(hp.ids[0])!.meta.status).toBe("draft");
+
+      // auto-accept: only after an ok review has aged past the delay
+      await ops.claim(base, agent);
+      await ops.submit(base, agent, { notes: "done" });
+      const reviewer = ctx.sessions.hello("solo-reviewer");
+      expect(ops.autoAcceptDue()).not.toContain(base); // unreviewed
+      await ops.review(base, reviewer, "issues", "broken");
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
+      await ops.review(base, reviewer, "ok");
+      expect(ops.autoAcceptDue()).not.toContain(base); // too fresh
+      // key tasks wait for the human
+      await ops.setUnblocksOn(base, "done");
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
+      await ops.setUnblocksOn(base, "default");
+      // the countdown reaches the UI: list + brief carry the deadline
+      const listed = (await (await api(`/api/items?status=in_review`)).json()) as Array<{ id: string; auto_accept_at?: string }>;
+      expect(listed.find((i) => i.id === base)?.auto_accept_at).toBeTruthy();
+      expect((await ops.brief(base)).autoAcceptAt).toBeTruthy();
+      // the human stops it for this submission
+      expect((await api(`/api/items/${base}/stop-auto-accept`, { method: "POST" })).status).toBe(200);
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
+      // a resubmit re-arms it
+      await ops.bounce(base, reviewer, "one more pass");
+      await ops.submit(base, agent, {});
+      await ops.review(base, reviewer, "ok");
+      expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(base);
+      expect(store.idx.get(base)!.meta.status).toBe("done");
+
+      // strict again: an aged ok review is left for the human
+      wsr.ws.config.autonomy = "strict";
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).toEqual([]);
+    } finally {
+      wsr.ws.config.autonomy = "strict";
+    }
   });
 });

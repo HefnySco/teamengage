@@ -94,6 +94,45 @@
       a.item { cursor: pointer; text-decoration: none; }
       /* item page: fixed label column next to editable fields */
       .item-lbl { display: inline-block; width: 4.6rem; flex: none; }
+      /* item page: dependency chain strip — the "first concern" line.
+         left edge takes the item's status colour (.st-*) */
+      .chain { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; padding: .3rem .65rem; margin-top: .5rem;
+               border-left: 3px solid var(--st, var(--bs-border-color)); background: var(--bs-tertiary-bg);
+               border-radius: 0 .3rem .3rem 0; font-size: .83rem; }
+      .chain .sep { color: var(--bs-tertiary-color); }
+      /* unblocks policy as a quiet radio line (not a button group) */
+      .pol-r { display: inline-flex; gap: .85rem; align-items: center; }
+      .pol-r label { display: inline-flex; align-items: center; gap: .3rem; margin: 0; cursor: pointer; color: var(--bs-secondary-color); white-space: nowrap; }
+      .pol-r label.on { color: var(--bs-body-color); }
+      .pol-r input { margin: 0; }
+      /* details disclosure: one quiet line that opens a panel */
+      details.disc { margin-top: .45rem; }
+      details.disc > summary, details.sec > summary { list-style: none; }
+      details.disc > summary::-webkit-details-marker, details.sec > summary::-webkit-details-marker { display: none; }
+      .disc-bar { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; font-size: .8rem; color: var(--bs-tertiary-color); cursor: pointer; user-select: none; }
+      .disc-bar:hover .disc-t { color: var(--bs-body-color); }
+      .disc-bar .caret, details.sec > summary .caret { color: var(--bs-tertiary-color); font-size: .68rem; width: .75rem; }
+      .disc-bar .caret::before, details.sec > summary .caret::before { content: "▸"; }
+      details[open] > summary .caret::before { content: "▾"; }
+      .disc-panel { margin-top: .4rem; padding: .6rem .8rem; background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color-translucent); border-radius: .35rem; }
+      /* collapsed sections (notes / dependencies / history): a card the summary opens */
+      details.sec { margin-top: .6rem; }
+      details.sec > summary { display: flex; align-items: center; gap: .5rem; padding: .45rem .75rem; cursor: pointer;
+                              background: var(--bs-secondary-bg); border: 1px solid var(--bs-border-color-translucent); border-radius: .45rem; font-size: .86rem; }
+      details.sec[open] > summary { border-radius: .45rem .45rem 0 0; }
+      details.sec > summary:hover { color: var(--bs-emphasis-color); }
+      details.sec > .sec-bd { border: 1px solid var(--bs-border-color-translucent); border-top: 0; border-radius: 0 0 .45rem .45rem; background: var(--bs-body-bg); padding: .75rem; }
+      /* content view switcher: plain links, active is bold+underlined */
+      .vtabs { display: flex; gap: 1rem; align-items: baseline; }
+      .vtabs a { color: var(--bs-secondary-color); font-size: .86rem; cursor: pointer; text-decoration: none; padding-bottom: 2px; }
+      .vtabs a:hover { color: var(--bs-body-color); }
+      .vtabs a.on { color: var(--bs-body-color); font-weight: 600; border-bottom: 2px solid var(--bs-primary); }
+      /* the ⋯ overflow menu (bootstrap styled; shown/hidden by hand — no bootstrap js,
+         so -end alignment needs an explicit right anchor or the menu overflows) */
+      .menu-pop { position: relative; }
+      .menu-pop .dropdown-menu { display: block; right: 0; left: auto; }
+      .menu-pop .dropdown-item { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+      .menu-pop .dropdown-item .hint { color: var(--bs-tertiary-color); font-size: .72rem; }
       /* who wrote it: the human is blue, an agent session green, the daemon quiet grey —
          light mode needs the mid-tone palette; *-text-emphasis is near-black there */
       .who-human { color: var(--bs-primary); }

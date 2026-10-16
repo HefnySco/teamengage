@@ -65,6 +65,13 @@ const ago = (ts) => {
   return `${(s / 86400) | 0}d`;
 };
 
+// time left until an ISO timestamp, for countdowns ("in 12m", "due")
+const untilText = (ts) => {
+  const s = (Date.parse(ts) - Date.now()) / 1000;
+  if (s <= 60) return "due";
+  return `in ${ago(new Date(Date.now() - s * 1000).toISOString())}`;
+};
+
 const nav = (route) => (location.hash = "#/" + route);
 const route = () => location.hash.replace(/^#\/?/, "") || "inbox";
 
@@ -151,7 +158,6 @@ const StarIcon = ({ filled }) => html`
 // the ★ flips through the bootstrap colours; undefined means unstarred
 const STAR_CYCLE = ["yellow", "red", "green", "blue"];
 const STAR_TEXT = { yellow: "text-warning", red: "text-danger", green: "text-success", blue: "text-primary" };
-const STAR_BTN = { yellow: "btn-warning", red: "btn-danger", green: "btn-success", blue: "btn-primary" };
 const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset → yellow; blue → undefined (unstar)
 
 // one <path> (or several) per glyph — same inline convention as the icons above
@@ -702,6 +708,7 @@ const Board = ({ onOpen }) => {
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
                           title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
                           AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}</span>`}
+                        ${i.auto_accept_at && html`<span class="badge text-bg-warning" title=${`autonomy: solo — the daemon accepts this at ${new Date(i.auto_accept_at).toLocaleString()} unless you act (stop it on the item page)`}>⏱ ${untilText(i.auto_accept_at)}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
                             <span class="av" title=${`${i.claim.holder}@${i.claim.machine} · claimed ${ago(i.claim.claimed_at)} ago`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
@@ -1236,47 +1243,41 @@ const releaseTitle = (status) =>
     : "a claim can only be released while work is in progress or waiting";
 
 const History = ({ entries }) => html`
-  <div class="card mt-3">
-    <div class="card-header py-2"><b>History</b> <span class="text-secondary small">newest first — notes and reasons</span></div>
-    <ul class="list-group list-group-flush overflow-y-auto" style=${{ maxHeight: "46vh" }}>
-      ${entries.length === 0 && html`<li class="list-group-item text-secondary small">no history yet</li>`}
-      ${[...entries].reverse().map(
-        (e, i) => html`
-          <li class="list-group-item small" key=${i}>
-            ${e.ts && html`<span class="text-secondary me-2" title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span>`}
-            ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}
-            <span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
-          </li>
-        `,
-      )}
-    </ul>
-  </div>
+  <ul class="list-group list-group-flush overflow-y-auto" style=${{ maxHeight: "46vh" }}>
+    ${entries.length === 0 && html`<li class="list-group-item text-secondary small">no history yet</li>`}
+    ${[...entries].reverse().map(
+      (e, i) => html`
+        <li class="list-group-item small" key=${i}>
+          ${e.ts && html`<span class="text-secondary me-2" title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span>`}
+          ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}
+          <span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
+        </li>
+      `,
+    )}
+  </ul>
 `;
 
 // dependencies of an item: ref, live status and the dep's latest log line
 const Deps = ({ deps }) => html`
-  <div class="card mt-3">
-    <div class="card-header py-2"><b>Dependencies</b> <span class="text-secondary small">what this task waits on</span></div>
-    <ul class="list-group list-group-flush">
-      ${deps.map((d) => {
-        const e = parseLog(d.outcome)[0] ?? {};
-        return html`
-          <li class="list-group-item small" key=${d.ref}>
-            ${d.ref.includes(":")
-              ? html`<span class="id me-2">${d.ref}</span>`
-              : html`<a class="item id me-2" onClick=${() => nav(`item/${d.ref}`)}>${d.ref}</a>`}
-            <${Badge} s=${d.status} />
-            ${d.key && html` <span title="key task — dependents wait for its acceptance">🔑</span>`}
-            ${d.pending && html` <span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
-            ${e.text && html`<div class="text-secondary mt-1">
-              ${e.ts && html`<span title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span> `}
-              ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}<span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
-            </div>`}
-          </li>
-        `;
-      })}
-    </ul>
-  </div>
+  <ul class="list-group list-group-flush">
+    ${deps.map((d) => {
+      const e = parseLog(d.outcome)[0] ?? {};
+      return html`
+        <li class="list-group-item small" key=${d.ref}>
+          ${d.ref.includes(":")
+            ? html`<span class="id me-2">${d.ref}</span>`
+            : html`<a class="item id me-2" onClick=${() => nav(`item/${d.ref}`)}>${d.ref}</a>`}
+          <${Badge} s=${d.status} />
+          ${d.key && html` <span title="key task — dependents wait for its acceptance">🔑</span>`}
+          ${d.pending && html` <span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
+          ${e.text && html`<div class="text-secondary mt-1">
+            ${e.ts && html`<span title=${e.ts}>${e.ts.slice(0, 16).replace("T", " ")} · ${ago(e.ts)} ago</span> `}
+            ${e.who && html`<b class="me-1 ${whoCls(e.who)}">${e.who}</b>`}<span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(e.text) }} />
+          </div>`}
+        </li>
+      `;
+    })}
+  </ul>
 `;
 
 // task text: formatted markdown by default, raw source on toggle (per browser)
@@ -1296,8 +1297,8 @@ const saveMdView = (v) => {
 };
 const MdBox = ({ text, view }) =>
   view === "markdown"
-    ? html`<div class="card card-body"><pre class="mb-0">${text}</pre></div>`
-    : html`<div class="card card-body md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`;
+    ? html`<pre class="mb-0">${text}</pre>`
+    : html`<div class="md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text) }} />`;
 
 // a daemon-written note starts with `**YYYY-MM-DD HH:MM · who**`; text before
 // the first such line is something typed into the file without an author
@@ -1332,27 +1333,39 @@ const Notes = ({ id, text, onAdded }) => {
       setBusy(false);
     }
   };
+  const del = async (b) => {
+    const preview = b.md.length > 140 ? `${b.md.slice(0, 140)}…` : b.md;
+    if (busy || !(await confirmDialog("delete this note?", preview, { ok: "delete", danger: true }))) return;
+    setBusy(true);
+    try {
+      await post(`/api/items/${id}/delnote`, { ts: b.ts, who: b.who, body: b.md });
+      onAdded();
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const blocks = parseNotes(text ?? "");
   return html`
-    <div class="card mt-3">
-      <div class="card-header py-2"><b>Notes</b> <span class="text-secondary small">kept in the task file's ## Notes — agents see them too</span></div>
-      <div class="card-body">
-        ${blocks.length
-          ? html`<div class="mb-3">${blocks.map((b, i) => html`
-              <div class="note${b.who ? ` note-${whoKind(b.who)}` : ""}" key=${i}>
-                ${b.who && html`<div class="note-by"><b class=${whoCls(b.who)}>${b.who}</b> <span class="text-secondary">· ${b.ts}</span></div>`}
-                ${b.md && html`<div class="md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.md) }} />`}
-              </div>`)}
-            </div>`
-          : html`<p class="text-secondary small mb-2">no notes yet</p>`}
-        <textarea class="form-control form-control-sm" rows="4" placeholder="add a note — markdown welcome; Ctrl+Enter to save"
-          value=${draft} onInput=${(e) => setDraft(e.target.value)}
-          onKeyDown=${(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) add();
-          }} />
-        <div class="d-flex justify-content-end mt-2">
-          <button class="btn btn-sm btn-primary btn-act" disabled=${!draft.trim() || busy} onClick=${add}>${busy ? "saving…" : "add note"}</button>
-        </div>
+    <div>
+      ${blocks.length
+        ? html`<div class="mb-3">${blocks.map((b, i) => html`
+            <div class="note${b.who ? ` note-${whoKind(b.who)}` : ""}" key=${i}>
+              ${b.who && html`<div class="note-by d-flex align-items-center gap-1"><b class=${whoCls(b.who)}>${b.who}</b> <span class="text-secondary">· ${b.ts}</span>
+                ${b.who === "human" && html`<button class="btn btn-sm btn-outline-danger py-0 px-1 ms-auto" title="delete this note" disabled=${busy} onClick=${() => del(b)}><${TrashIcon} /></button>`}
+              </div>`}
+              ${b.md && html`<div class="md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.md) }} />`}
+            </div>`)}
+          </div>`
+        : html`<p class="text-secondary small mb-2">no notes yet</p>`}
+      <textarea class="form-control form-control-sm" rows="4" placeholder="add a note — markdown welcome; Ctrl+Enter to save"
+        value=${draft} onInput=${(e) => setDraft(e.target.value)}
+        onKeyDown=${(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) add();
+        }} />
+      <div class="d-flex justify-content-end mt-2">
+        <button class="btn btn-sm btn-primary btn-act" disabled=${!draft.trim() || busy} onClick=${add}>${busy ? "saving…" : "add note"}</button>
       </div>
     </div>
   `;
@@ -1394,6 +1407,40 @@ const DomainEditor = ({ id, ds, onChanged }) => {
 };
 
 // ---- Item (UI-0005) ------------------------------------------------------------
+// the ⋯ overflow menu — bootstrap styled, opened/closed by hand (no bootstrap js)
+const Menu = ({ children }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  return html`<span class="menu-pop" ref=${ref}>
+    <button class="btn btn-sm btn-outline-secondary px-2 fw-bold" title="more actions" onClick=${() => setOpen(!open)}>⋯</button>
+    ${open && html`<div class="dropdown-menu dropdown-menu-end show" style=${{ minWidth: "12.5rem" }}
+      onClick=${(e) => {
+        if (!e.target.closest("[disabled]")) setOpen(false);
+      }}>${children}</div>`}
+  </span>`;
+};
+const MenuItem = ({ onClick, disabled, title, danger, hint, children }) => html`
+  <button class="dropdown-item" disabled=${disabled} title=${title} onClick=${onClick}>
+    <span class="${danger ? "text-danger" : ""} d-inline-flex align-items-center">${children}</span>
+    ${hint && html`<span class="hint">${hint}</span>`}
+  </button>`;
+const MenuSep = () => html`<hr class="dropdown-divider" />`;
+
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
   const [picked, setTab] = useState(null);
@@ -1406,6 +1453,7 @@ const ItemView = ({ id }) => {
   useEffect(() => setTab(null), [id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
+  const st = it.meta.status;
   const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n.toLowerCase())?.body.trim() ?? "";
   // open on the plain-English tab only when the item has one
   const tab = picked ?? (b.source?.simple?.text || sec("simple") ? "simple" : "technical");
@@ -1434,69 +1482,124 @@ const ItemView = ({ id }) => {
     }
     nav("graph");
   };
+  const remove = async () => {
+    const msg =
+      `Its tracking and history entry go away. ` +
+      (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
+    if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
+    const reason = await promptDialog("delete reason", { label: "reason (optional)" });
+    if (reason === null) return;
+    try {
+      await post(`/api/items/${id}/delete`, { reason });
+      nav("board");
+    } catch (e) {
+      toast(e.message);
+    }
+  };
   const history = parseLog(sec("log"));
   const last = history.at(-1);
+  const dependents = b.dependents ?? [];
+  const closed = st === "done" || st === "dropped";
+  // unblocks policy as a radio line — in the chain strip for real items;
+  // for drafts it stays one level down inside details (nothing waits on a draft)
+  const policy = it.meta.unblocks_on ?? "default";
+  const polLine = html`
+    <span class="pol-r">
+      ${[
+        ["default", `default (${b.reviewUnblocks === false ? "at acceptance" : "at review"})`],
+        ["review", "at review"],
+        ["done", "🔑 only after acceptance"],
+      ].map(
+        ([v, l]) => html`
+          <label key=${v} class=${policy === v ? "on" : ""} title="when dependents may start">
+            <input type="radio" name="unblocks-on-${id}" checked=${policy === v}
+              onChange=${() => v !== policy && act("unblocks", { on: v })} />${l}
+          </label>`,
+      )}
+    </span>`;
+  // a dep/dependent chip inside the chain strip: id link + status badge
+  const depLink = (d) => html`<span key=${d.ref} class="d-inline-flex align-items-center gap-1">
+    ${d.ref.includes(":")
+      ? html`<span class="id">${d.ref}</span>`
+      : html`<a class="item id" onClick=${() => nav(`item/${d.ref}`)}>${d.ref}</a>`}
+    <${Badge} s=${d.status} />
+    ${d.key && html`<span title="key task — dependents wait for its acceptance">🔑</span>`}
+    ${d.pending && html`<span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
+  </span>`;
+  // the ⋯ menu: bookmark/graph/archive/delete — workflow actions stay as bar buttons
+  const menuGroups = [
+    [
+      html`<${MenuItem} key="star" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} hint=${it.meta.star_color ?? undefined}
+        onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>star</${MenuItem}>`,
+      html`<${MenuItem} key="graph" title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"} onClick=${openGraph}><${GraphIcon} />open in graph</${MenuItem}>`,
+      !it.meta.archived && !it.claim &&
+        html`<${MenuItem} key="archive" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} />archive</${MenuItem}>`,
+    ].filter(Boolean),
+    [
+      !it.claim && html`<${MenuItem} key="del" danger title="delete — remove tracking, keep the task file" onClick=${remove}><${TrashIcon} />delete</${MenuItem}>`,
+    ].filter(Boolean),
+  ].filter((g) => g.length);
   return html`
-    <div class="sticky-top bg-body border-bottom py-1 mb-2 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
+    <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
       <span class="id flex-shrink-0">${it.meta.id}</span>
-      <${Badge} s=${it.meta.status} />
+      <${Badge} s=${st} />
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
-        ${it.meta.status === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}><${CheckIcon} />approve</button>`}
-        ${it.meta.status === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}><${PlayIcon} />resume</button>`}
-        ${(it.meta.status === "draft" || it.meta.status === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} />hold</button>`}
-        ${(it.meta.status === "ready" || it.meta.status === "hold" || it.meta.status === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", it.meta.status === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${it.meta.status === "done" ? html`<${UndoIcon} />reopen` : html`<${PencilIcon} />to draft`}</button>`}
-        ${it.meta.status === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} />accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} />reject</button>`}
-        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" disabled=${!canRelease(it.meta.status)} title=${releaseTitle(it.meta.status)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} />release claim</button>`}
-        ${it.meta.status === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}><${UndoIcon} />undrop</button>`}
+        ${st === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}><${CheckIcon} />approve</button>`}
+        ${st === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}><${PlayIcon} />resume</button>`}
+        ${(st === "draft" || st === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} />hold</button>`}
+        ${(st === "ready" || st === "hold" || st === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />reopen` : html`<${PencilIcon} />to draft`}</button>`}
+        ${st === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} />accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} />reject</button>`}
+        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} />release claim</button>`}
+        ${st === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}><${UndoIcon} />undrop</button>`}
         ${it.meta.type === "epic" && !it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="no more parts are coming — the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} />close plan</button>`}
         ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} />reopen plan</button>`}
-        ${it.meta.status !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} />mark done</button>`}
-        ${!["done", "dropped"].includes(it.meta.status) && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}><${XIcon} />drop</button>`}
+        ${st !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} />mark done</button>`}
+        ${!closed && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}><${XIcon} />drop</button>`}
         ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}><${UndoIcon} />unarchive</button>`}
-        <div class="d-flex gap-1 flex-nowrap">
-          <button class="btn btn-sm ${it.meta.star_color ? STAR_BTN[it.meta.star_color] : "btn-outline-secondary"}" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></button>
-          <button class="btn btn-sm btn-outline-secondary" title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"} onClick=${openGraph}><${GraphIcon} /></button>
-          ${!it.meta.archived && !it.claim && html`<button class="btn btn-sm btn-outline-secondary" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></button>`}
-          ${!it.claim && html`<button class="btn btn-sm btn-outline-danger" title="delete — remove tracking, keep the task file" onClick=${async () => {
-            const msg = `Its tracking and history entry go away. ` +
-              (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-            if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
-            const reason = await promptDialog("delete reason", { label: "reason (optional)" });
-            if (reason === null) return;
-            try {
-              await post(`/api/items/${id}/delete`, { reason });
-              nav("board");
-            } catch (e) {
-              toast(e.message);
-            }
-          }}><${TrashIcon} /></button>`}
-        </div>
+        <${Menu}>${menuGroups.map((g, i) => html`${i > 0 && html`<${MenuSep} />`}${g}`)}</${Menu}>
       </div>
     </div>
-    <div class="text-secondary small mb-2">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}</div>
-    <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
-    <div class="d-flex align-items-center gap-2 mb-2 small flex-wrap">
-      <span class="text-secondary item-lbl" title="tasks depending on this may start">unblocks</span>
-      <div class="btn-group btn-group-sm" role="group">
-        ${[
-          ["default", `default (${b.reviewUnblocks === false ? "at acceptance" : "at review"})`],
-          ["review", "at review"],
-          ["done", "🔑 only after acceptance"],
-        ].map(
-          ([v, label]) => html`<button class="btn py-0 ${(it.meta.unblocks_on ?? "default") === v ? "btn-secondary" : "btn-outline-secondary"}"
-            onClick=${() => act("unblocks", { on: v })}>${label}</button>`,
-        )}
-      </div>
+    <div class="chain st-${st}">
+      <span class="text-secondary">waits on</span>
+      ${b.deps.length === 0 ? html`<span class="text-secondary">nothing</span>` : b.deps.slice(0, 4).map(depLink)}
+      ${b.deps.length > 4 && html`<span class="text-secondary">+${b.deps.length - 4} more</span>`}
+      <span class="sep">·</span>
+      <span class="text-secondary">unblocks →</span>
+      ${dependents.length === 0 ? html`<span class="text-secondary">nothing yet</span>` : dependents.map(depLink)}
+      ${st === "draft"
+        ? html`<span class="text-secondary ms-auto">policy lives in details</span>`
+        : html`<span class="sep">·</span><span class="text-secondary">when:</span>${polLine}
+          ${st === "done" && html`<span class="text-secondary" title="done satisfies dependents under every setting — this is stored policy for a rerun">applies if reopened</span>`}`}
     </div>
-    ${last && html`<div class="alert alert-light border py-1 px-2 small mb-2">
-      <span class="text-secondary">latest:</span> ${last.who && html`<b class=${whoCls(last.who)}>${last.who}</b> `}${last.text}${last.ts && html` <span class="text-secondary">· ${ago(last.ts)} ago</span>`}
+    <details class="disc">
+      <summary class="disc-bar"><span class="caret"></span><span class="disc-t fw-semibold">details</span>
+        <span>v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${(it.meta.domains ?? []).map((d) => " #" + d).join("")}${it.claim ? ` · claim ${it.claim.holder}@${it.claim.machine}` : ""}</span>
+      </summary>
+      <div class="disc-panel">
+        <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
+        <div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">meta</span><span class="text-secondary">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${it.meta.archived ? " · archived" : ""}</span></div>
+        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the ⋯ menu</span>`}</span></div>`}
+        ${b.source && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">source</span><span class="text-secondary">${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span></div>`}
+        ${st === "draft" && html`<div class="d-flex align-items-center gap-2 small"><span class="text-secondary item-lbl">unblocks</span>${polLine}</div>`}
+      </div>
+    </details>
+    ${last && html`<div class="d-flex align-items-baseline gap-2 mt-2 small flex-wrap">
+      <span class="text-secondary">latest</span>
+      ${last.who && html`<b class=${whoCls(last.who)}>${last.who}</b>`}
+      <span class="md-inline" dangerouslySetInnerHTML=${{ __html: inlineMarkdown(last.text) }} />
+      ${last.ts && html`<span class="text-secondary">· ${ago(last.ts)} ago</span>`}
     </div>`}
     ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
-      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · advisory, the accept is still yours</span>
+      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : "advisory, the accept is still yours"}</span>
+      ${b.autoAcceptAt && html`<div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
+        <span class="badge text-bg-warning">⏱ auto-accept ${untilText(b.autoAcceptAt)}</span>
+        <span class="text-secondary">autonomy: solo — the daemon accepts (local merge, no push) unless you accept, reject or stop it</span>
+        <button class="btn btn-sm btn-outline-secondary py-0" title="keep this submission for your own accept/reject (a resubmit re-arms it)" onClick=${() => act("stop-auto-accept")}>stop auto-accept</button>
+      </div>`}
       ${it.meta.ai_review.summary && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.summary) }} />`}
       ${it.meta.ai_review.note && html`<div class="md-view mt-1 text-secondary" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
     </div>`}
@@ -1505,33 +1608,36 @@ const ItemView = ({ id }) => {
       <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
       ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} id=${id} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
     </div>`}
-    <ul class="nav nav-pills nav-fill gap-1 mb-3" style=${{ maxWidth: "30rem" }}>
-      ${TABS.map(
-        (t) => html`
-          <li class="nav-item">
-            <a class="nav-link py-1 ${tab === t ? "active" : ""}" style=${{ cursor: "pointer" }} onClick=${() => setTab(t)}>${t}</a>
-          </li>
-        `,
-      )}
-    </ul>
-    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-      ${b.source && html`<span class="text-secondary small">source ${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span>`}
-      ${(tab === "simple" || tab === "technical") && html`<button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onClick=${toggleMd}
-        title="switch between formatted text and the markdown source">${mdView === "formatted" ? "show markdown" : "show formatted"}</button>`}
+    <div class="card mt-2">
+      <div class="card-header d-flex align-items-center gap-3 py-1 flex-wrap">
+        <div class="vtabs">
+          ${TABS.map((t) => html`<a key=${t} class=${tab === t ? "on" : ""} onClick=${() => setTab(t)}>${t}</a>`)}
+        </div>
+        <span class="ms-auto d-flex align-items-center gap-3">
+          ${b.source && html`<span class="text-secondary small text-truncate d-inline-block" style=${{ maxWidth: "22rem" }} title=${b.source.path}>${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span>`}
+          ${(tab === "simple" || tab === "technical") && html`<a class="small text-nowrap" onClick=${toggleMd}
+            title="switch between formatted text and the markdown source">${mdView === "formatted" ? "⟨/⟩ markdown" : "formatted"}</a>`}
+        </span>
+      </div>
+      <div class="card-body">
+        ${tab === "simple" && html`<${MdBox} view=${mdView} text=${b.source?.simple?.text ?? (sec("Simple") || "(no simple version — ask an agent: simple <id> {text})")} />`}
+        ${tab === "technical" && html`
+          <${MdBox} view=${mdView} text=${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n\n## Acceptance\n${sec("Acceptance")}`} />
+          ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
+        `}
+        ${tab === "evidence" && html`<pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
+          ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}`}
+      </div>
     </div>
-    ${tab === "simple" && html`<${MdBox} view=${mdView} text=${b.source?.simple?.text ?? (sec("Simple") || "(no simple version — ask an agent: simple <id> {text})")} />`}
-    ${tab === "technical" && html`
-      <${MdBox} view=${mdView} text=${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n\n## Acceptance\n${sec("Acceptance")}`} />
-      ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
-    `}
-    ${tab === "evidence" && html`<div class="card card-body"><pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
-      ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}
-    </div>`}
-    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!["done", "dropped"].includes(it.meta.status) && d.meta.id === ownLast}
+    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!closed && d.meta.id === ownLast}
       onChange=${(text) => act("change_answer", { text })} />`)}
-    <${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} />
-    ${b.deps.length > 0 && html`<${Deps} deps=${b.deps} />`}
-    <${History} entries=${history} />
+    ${b.deps.length > 0 && html`
+      <details class="sec"><summary><span class="caret"></span><b>Dependencies</b><span class="text-secondary small">${b.deps.length} — what this task waits on</span></summary>
+        <div class="sec-bd"><${Deps} deps=${b.deps} /></div></details>`}
+    <details class="sec"><summary><span class="caret"></span><b>Notes</b><span class="text-secondary small">${parseNotes(b.source ? notesSection(b.source.text ?? "") : sec("notes")).length} — kept in the task file's ## Notes, agents see them too</span></summary>
+      <div class="sec-bd"><${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} /></div></details>
+    <details class="sec"><summary><span class="caret"></span><b>History</b><span class="text-secondary small">${history.length} — newest first, notes and reasons</span></summary>
+      <div class="sec-bd"><${History} entries=${history} /></div></details>
   `;
 };
 

@@ -239,7 +239,12 @@ export class WorkspaceOps {
         host: res?.config.kind === "ssh" ? res.config.host : undefined,
       };
     });
-    return { item: it, deps, decisions, targets, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks };
+    // reverse edges: the items this one unblocks (it.blocks is derived by the index)
+    const dependents = it.blocks.map((ref) => {
+      const dep = this.index.get(ref);
+      return { ref, status: dep?.meta.status ?? "unknown", archived: Boolean(dep?.meta.archived) };
+    });
+    return { item: it, deps, dependents, decisions, targets, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
   }
 
   /**
@@ -561,10 +566,93 @@ export class WorkspaceOps {
     actor: Session | "human",
   ) {
     void this.actorFor(actor);
-    return this.store.createItems(
+    const r = await this.store.createItems(
       drafts.map((d) => ({ type: d.type ?? "task", ...d })),
       this.actorFor(actor),
     );
+    // autonomy: solo — an agent's follow-up/fix of known work needs no
+    // approve: it lands ready. Epics and free-standing items stay drafts.
+    const ready: string[] = [];
+    if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
+      for (const id of r.ids) {
+        const it = this.index.items.get(id);
+        if (!it || it.meta.type === "epic" || !it.meta.depends_on.length) continue;
+        const known = it.meta.depends_on.every((ref) => {
+          try {
+            const dep = this.index.items.get(parseItemRef(ref).id);
+            return dep !== undefined && dep.meta.status !== "dropped";
+          } catch {
+            return false;
+          }
+        });
+        if (!known) continue;
+        await this.store.perform(id, it.meta.version, this.daemonActor(), { type: "approve_plan" });
+        await this.store.annotate(id, { heading: "Log", lines: ["- auto-approved: follow-up task (autonomy: solo)"] });
+        ready.push(id);
+      }
+    }
+    return { ...r, ready };
+  }
+
+  private daemonActor(): Actor {
+    return { kind: "daemon", session: "daemon", machine: this.wsr.store.machine };
+  }
+
+  /**
+   * autonomy: solo — submissions whose latest peer review is `ok` and older
+   * than auto_accept_after are accepted by the daemon (same local merge, never
+   * a push). Key tasks, archived items and human claims wait for the human;
+   * a resubmit, bounce or `issues` verdict changes ai_review and so resets it.
+   */
+  autoAcceptDue(now = Date.now()): string[] {
+    return [...this.index.items.values()]
+      .filter((it) => {
+        const at = this.autoAcceptAt(it);
+        return at !== undefined && Date.parse(at) <= now;
+      })
+      .map((it) => it.meta.id);
+  }
+
+  /** When the daemon will auto-accept this item (ISO), or undefined if it won't. */
+  autoAcceptAt(it: IndexedItem): string | undefined {
+    const cfg = this.wsr.ws.config;
+    const m = it.meta;
+    const rv = m.ai_review;
+    if (
+      cfg.autonomy !== "solo" ||
+      m.status !== "in_review" ||
+      rv?.verdict !== "ok" ||
+      m.unblocks_on === "done" ||
+      m.archived ||
+      m.auto_accept_off ||
+      it.claim?.actor === "human"
+    ) {
+      return undefined;
+    }
+    return new Date(Date.parse(rv.reviewed_at) + parseDuration(cfg.auto_accept_after)).toISOString();
+  }
+
+  /** Human: stop auto-accept for the current submission (a resubmit re-arms it). */
+  async stopAutoAccept(id: string) {
+    this.item(id);
+    await this.store.annotate(id, {
+      heading: "Log",
+      lines: [`- ${new Date().toISOString()} human stopped auto-accept`],
+      metaPatch: { auto_accept_off: true },
+    });
+    return { meta: this.item(id).meta };
+  }
+
+  async autoAccept(now = Date.now()) {
+    const done: string[] = [];
+    for (const id of this.autoAcceptDue(now)) {
+      const r = await this.accept(id, "daemon");
+      if (!r.bounced?.length) {
+        await this.store.annotate(id, { heading: "Log", lines: ["- auto-accepted after ok review (autonomy: solo)"] });
+        done.push(id);
+      }
+    }
+    return done;
   }
 
   // ---- human writes -------------------------------------------------------
@@ -610,7 +698,7 @@ export class WorkspaceOps {
     });
   }
 
-  async accept(id: string) {
+  async accept(id: string, by: "human" | "daemon" = "human"): Promise<{ meta: unknown; merged: unknown[]; bounced?: string[] }> {
     const it = this.item(id);
     // refuse early — never merge work for an item that isn't in_review
     if (it.meta.status !== "in_review") {
@@ -643,7 +731,7 @@ export class WorkspaceOps {
       }
       merged = m.merged;
     }
-    const r = await this.store.perform(id, it.meta.version, this.actorFor("human"), {
+    const r = await this.store.perform(id, it.meta.version, by === "daemon" ? this.daemonActor() : this.actorFor("human"), {
       type: "accept",
     });
     for (const g of merged) {
@@ -761,6 +849,12 @@ export class WorkspaceOps {
   async note(id: string, actor: Session | "human", text: string) {
     this.item(id);
     return this.store.addNote(id, text, this.actorFor(actor));
+  }
+
+  /** Human: remove a note block, identified by its `**ts · who**` header. */
+  async removeNote(id: string, note: { ts: string; who: string; body?: string }) {
+    this.item(id);
+    return this.store.removeNote(id, note, this.actorFor("human"));
   }
 
   /** Human: when may this item's dependents start — "done" (key task), "review", or default. */

@@ -12,7 +12,7 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag, withoutTeTag, toSourcePath, appendNote, resolveSource } from "../../core/files/source.js";
+import { withTeTag, withoutTeTag, toSourcePath, appendNote, removeNote, resolveSource } from "../../core/files/source.js";
 import { normalizeDomain, normalizeDomains, type DomainDef } from "../../core/domains/domains.js";
 
 /** keywords: trimmed, lowercase, unique. */
@@ -1018,6 +1018,47 @@ export class PlansStore {
       const summary = first.length > 80 ? `${first.slice(0, 80)}…` : first;
       await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${who} added a note: ${summary}`], sectionWrites);
       await this.commitPaths([it.path], `te: ${id} note by ${who}`);
+      if (path !== it.path) await this.stageTaskFiles([path]);
+      await this.index.upsertFile(absItem);
+      return { path };
+    });
+  }
+
+  /**
+   * Remove a daemon-written note block, identified by its `**ts · who**`
+   * header (`body` disambiguates same-minute notes by one author). Overlay →
+   * the task file's `## Notes`; standard → the item's `## Notes` section.
+   * A History line records who removed it.
+   */
+  removeNote(id: string, note: { ts: string; who: string; body?: string }, actor: Actor): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      let path = it.path;
+      let text = doc.raw.text;
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const out = removeNote(found.text, note);
+        if (out === undefined) throw new NotFoundError("note not found");
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        path = found.path;
+      } else {
+        const out = removeNote(doc.raw.text, note);
+        if (out === undefined) throw new NotFoundError("note not found");
+        text = out;
+      }
+      await this.writeItemDoc(absItem, text, meta, [`- ${now} ${who} removed a note (${note.ts} · ${note.who})`]);
+      await this.commitPaths([it.path], `te: ${id} note removed by ${who}`);
       if (path !== it.path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return { path };

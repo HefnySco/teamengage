@@ -95,6 +95,8 @@ export const ItemMeta = z
     archived_at: z.string().optional(),
     /** the human's watch marker — board ★ colour, no workflow effect; unset = not starred */
     star_color: StarColor.optional(),
+    /** autonomy: solo — the human stopped auto-accept for this submission (cleared on submit) */
+    auto_accept_off: z.boolean().optional(),
     starred_at: z.string().optional(),
     /**
      * epic only: the human closed the plan — no more parts are coming.
