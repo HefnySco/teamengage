@@ -43,6 +43,18 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
 
 ### Quick start
 
+**Let your agent install it.** Paste this into Claude Code, Devin or any
+coding agent:
+
+> Install TeamEngage for me on this machine, following the solo fast path in
+> https://github.com/HefnySco/teamengage/blob/master/AGENTS.md
+
+It asks you two questions (where your tasks live, which agents you use) and
+ends by opening the board. One machine, no git remote needed — add more
+machines later.
+
+Or by hand:
+
 ```bash
 git clone https://github.com/HefnySco/teamengage.git ~/teamengage
 cd ~/teamengage && npm run deploy                                      # deps + build + `te` on PATH
@@ -59,8 +71,9 @@ alive across logins. Skip it on non-systemd setups and use
 `npm run daemon` (foreground) instead; `npm run restart` restarts the
 service after an update.
 
-The task folder should be its own **git repository with a private remote** —
-that is how the plan is shared with your other machines. Plan data never goes
+On one machine that's all you need. To share the plan with other machines,
+make the task folder its own **git repository with a private remote** —
+that is the sync channel. Plan data never goes
 into this (the tool's) repository.
 
 **Setting it up on a machine, or asking an agent to?** Follow
