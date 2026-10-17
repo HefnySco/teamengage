@@ -287,9 +287,20 @@ export function transition(
       if (ctx.depsDone === false) {
         throw new InvalidTransitionError("cannot claim: dependencies not done", from, "claim");
       }
-      if (meta.tier && actor.tier && tierRank(actor.tier) < tierRank(meta.tier)) {
+      // a takeover fixes a flagged submission: one more failed attempt
+      // (may raise the tier — checked below — or run out: the human decides)
+      if (takeover) {
+        const f = recordFailure(meta, out, ctx);
+        if (f.held) {
+          throw new ForbiddenError(
+            `takeover: ${out.meta.attempts} failed attempts — out of attempts, the human decides`,
+          );
+        }
+      }
+      const need = out.meta.tier;
+      if (need && actor.tier && tierRank(actor.tier) < tierRank(need)) {
         throw new ClaimRefusedError(
-          `needs a ${meta.tier}-tier agent (you are ${actor.tier})${meta.attempts ? ` — ${meta.attempts} failed attempt(s) so far` : ""}`,
+          `needs a ${need}-tier agent (you are ${actor.tier})${out.meta.attempts ? ` — ${out.meta.attempts} failed attempt(s) so far` : ""}`,
         );
       }
       if (ctx.claim && !takeover) {

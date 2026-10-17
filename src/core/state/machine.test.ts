@@ -587,3 +587,25 @@ describe("model tiers, attempts and handoff", () => {
     expect(r.meta.attempts).toBeUndefined();
   });
 });
+
+describe("takeover counts as an attempt", () => {
+  const flagged = (attempts?: number): ItemMeta => ({
+    ...item("in_review"),
+    ai_review: { verdict: "issues", reviewed_by: "lens@desktop#1", reviewed_at: NOW },
+    ...(attempts ? { attempts } : {}),
+  });
+  const forge: Actor = { ...agent2, tier: "standard" };
+  const swiftClaim = { ...claimOf(), tier: "standard" as const };
+
+  it("increments attempts on takeover", () => {
+    const r = transition(flagged(), { type: "claim", claim: claimOf(forge.session) }, forge, ctx({ claim: swiftClaim, escalation: { after: 2, max: 5 } }));
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.meta.attempts).toBe(1);
+  });
+
+  it("refuses a takeover that runs out of attempts", () => {
+    expect(() =>
+      transition(flagged(4), { type: "claim", claim: claimOf(forge.session) }, forge, ctx({ claim: swiftClaim, escalation: { after: 2, max: 5 } })),
+    ).toThrow(/out of attempts/);
+  });
+});

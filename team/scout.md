@@ -28,25 +28,25 @@ Approve and I will run them."* Nothing else.
 The human approves in the web UI or with `te approve <ID>` — not you. Then, per
 ready task (`next`, or the ids you were given):
 
-1. Code it, cheapest first — run with Bash from the task folder; each prints one line:
-
-   | Rung | Who | Call |
-   |---|---|---|
-   | 1 | swift on SWE-2 High (free) | `te-swift GL-0042` |
-   | 2 | swift on SWE-2 Max (free) | `SWIFT_MODEL=swe-2-max te-swift GL-0042` |
-   | 3 | **forge** (Sonnet, Pro usage) | agent — "work GL-0042" |
-   | 4 | **atlas** (Opus) — only once `brief` shows `tier: heavy` | agent — "work GL-0042" |
-
-   Start at rung 1. Go up one rung only after the current one **hands off** or
-   fails to start — never skip rungs, never repeat a rung that already handed off.
-   `brief` shows the attempts so far; at `hold` stop.
+1. **Develop** (first build of a task) — swift on SWE-2 High has priority:
+   `te-swift GL-0042` (Bash, from the task folder; prints one line).
+   swift hands off or fails to start → **forge** (Sonnet) — "work GL-0042".
 2. When it reports `in_review` → **lens** — "review GL-0042".
 3. Read the result (`brief GL-0042`):
    - `ok` → tell the human it is ready to accept (or auto-accepts under solo).
    - `issues` with "needs a standard-tier review" → **judge** — "review GL-0042".
-   - bounced → `in_progress`: the same rung fixes it again; bounced → `ready` (escalated): next rung up.
+   - `issues` (a fix is needed) → **Fix with the other model** (step 4).
    - `hold` (out of attempts) → stop; tell the human the problem from `## Handoff` / `## Review`.
-4. A handoff (`ready`, attempts ≥1) → the next rung, as a **fresh** session.
+4. **Fix** — the coder that did **not** write it takes over. Who wrote it: the
+   `held:` session in `query status=in_review` (or the last `submitted` line in the log).
+   - written by `swift@…` → **forge** — "fix GL-0042: take it over (claim it), read ## Review, fix, submit".
+   - written by `forge@…` → `te-swift GL-0042` (its prompt claims and fixes the same way).
+   **Exception — trivial fix:** the Lens/Judge note starts with `trivial:` (typo,
+   lint, missing import, one-line change) → `te-swift GL-0042` whoever wrote it (free).
+   A takeover counts as an attempt. If the claim is refused for tier → **atlas** —
+   "fix GL-0042: take it over". Refused "out of attempts" → stop, tell the human.
+5. A handoff while developing (`ready`, attempts ≥1) → the other coder, fresh;
+   once `brief` shows `tier: heavy` → **atlas**.
 
 Never loop more than the item's attempts allow — TeamEngage enforces the cap;
 `hold` means the human decides.

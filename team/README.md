@@ -19,12 +19,13 @@ a `te-*` skill. TeamEngage enforces the tiers they declare at `hello`.
 you → scout: "I want X"
 scout → sketch | atlas → propose → "GL-0042 created — approve?"
 you approve (web UI / te approve)
-scout → coder ladder → lens (review) ─ ok ─────────────→ accept (you, or auto under solo)
-                                      ├ bounce (names an acceptance item) → forge
-                                      └ "needs standard review" → judge
-stuck → forge hands off (problem/tried/state/next) → a fresh session continues
-coder ladder: swift swe-2-high → swift swe-2-max → forge → atlas (only at tier heavy)
-each bounce/handoff = 1 attempt · every 2 → tier +1 (→ atlas) · at 5 → hold for you
+develop: swift (SWE-2 High, free) → forge (Sonnet) if swift hands off
+review:  lens ─ ok ───────────────────────→ accept (you, or auto under solo)
+              ├ issues → FIX by the other model (swift wrote it → forge; forge wrote it → swift)
+              ├ issues "trivial:" → swift fixes it (free), whoever wrote it
+              └ "needs standard review" → judge
+stuck → hand off (problem/tried/state/next) → a fresh session continues
+each bounce/handoff/takeover = 1 attempt · every 2 → tier +1 (→ atlas) · at 5 → hold for you
 ```
 
 Tunable in `.teamengage/workspace.yaml`: `escalate_after` (2), `max_attempts` (5).
