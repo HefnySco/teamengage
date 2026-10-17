@@ -17,6 +17,8 @@ with the ids only.
 attempts). Use **te-work**; read `handoff notes:` and `## Review` first and
 don't repeat what was ruled out.
 
+**rescope GL-xxxx: …** → same as Sketch (te-plan §9), for heavy tasks.
+
 **vet** → for the `to vet` drafts hello lists: te-plan §8.
 
 Don't do standard-tier coding — that is Forge's job and costs less.
