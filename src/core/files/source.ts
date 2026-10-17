@@ -79,6 +79,11 @@ export function withoutTeTag(text: string, id: string): string {
  * No such section → one is added at the end of the file. Purely additive.
  */
 export function appendNote(text: string, block: string): string {
+  return appendSection(text, "Notes", block);
+}
+
+/** Append a block to the last `## <heading>` section (added at the end if missing). */
+export function appendSection(text: string, heading: string, block: string): string {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(/\r?\n/);
   let inFence = false;
@@ -88,11 +93,11 @@ export function appendNote(text: string, block: string): string {
     if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
     if (inFence) return;
     if (/^##\s/.test(l)) headings.push(i);
-    if (/^##\s+notes\s*$/i.test(l)) notesAt = i;
+    if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(l)) notesAt = i;
   });
   const add = block.replace(/\s+$/, "").split(/\r?\n/);
   if (notesAt === -1) {
-    return [text.replace(/\s+$/, ""), "", "## Notes", "", ...add, ""].join(eol);
+    return [text.replace(/\s+$/, ""), "", `## ${heading}`, "", ...add, ""].join(eol);
   }
   const next = headings.find((h) => h > notesAt) ?? lines.length;
   // end of the section's content, ignoring its trailing blank lines
@@ -100,6 +105,33 @@ export function appendNote(text: string, block: string): string {
   while (end - 1 > notesAt && lines[end - 1].trim() === "") end--;
   const after = lines.slice(next);
   return [...lines.slice(0, end), "", ...add, ...(after.length ? ["", ...after] : [""])].join(eol);
+}
+
+/**
+ * Replace the task file's `**Touches:**` line (outside code fences). No such
+ * line → inserted after `**Depends on:**` / `**Parent:**`, else after the
+ * `# ` title, else at the top.
+ */
+export function setTouches(text: string, touches: string[]): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  const line = `**Touches:** ${touches.length ? touches.join("; ") : "TBD"}`;
+  let inFence = false;
+  let at = -1;
+  let after = -1;
+  let title = -1;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (at === -1 && /^\*\*Touches:\*\*/i.test(l)) at = i;
+    if (/^\*\*(Depends on|Parent):\*\*/i.test(l)) after = i;
+    if (title === -1 && /^#\s/.test(l)) title = i;
+  });
+  if (at !== -1) lines[at] = line;
+  else if (after !== -1) lines.splice(after + 1, 0, line);
+  else if (title !== -1) lines.splice(title + 1, 0, "", line);
+  else lines.unshift(line, "");
+  return lines.join(eol);
 }
 
 /** Header of a daemon-written note block: `**YYYY-MM-DD HH:MM · who**`. */

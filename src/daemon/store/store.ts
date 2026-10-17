@@ -12,7 +12,7 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag, withoutTeTag, toSourcePath, appendNote, removeNote, resolveSource } from "../../core/files/source.js";
+import { withTeTag, withoutTeTag, toSourcePath, appendNote, appendSection, setTouches, removeNote, resolveSource } from "../../core/files/source.js";
 import { normalizeDomain, normalizeDomains, type DomainDef } from "../../core/domains/domains.js";
 
 /** keywords: trimmed, lowercase, unique. */
@@ -28,7 +28,7 @@ import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
 import { DecisionMeta, type Event, type ItemMeta, type Question } from "../../core/model/index.js";
 import type { Claim } from "../../core/model/claim.js";
-import { ConflictError, NotFoundError, ValidationError } from "../../core/model/errors.js";
+import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
 import { writeFileAtomic } from "./atomic.js";
 import type { LoadedWorkspace } from "../../core/config/config.js";
@@ -1025,6 +1025,55 @@ export class PlansStore {
       if (path !== it.path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return { path };
+    });
+  }
+
+  /**
+   * Change a draft's scope in its task file (overlay): replace the
+   * `**Touches:**` line and/or append `## Acceptance` items. The status gate
+   * (draft only) and who may do it live in ops; this is the write.
+   */
+  rescope(
+    id: string,
+    change: { touches?: string[]; addAcceptance?: string[]; reason: string },
+    actor: Actor,
+  ): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      if (doc.meta.status !== "draft") {
+        throw new InvalidTransitionError(`rescope: ${id} is ${doc.meta.status} — only drafts can change scope`, doc.meta.status, "rescope");
+      }
+      if (this.ws.config.mode !== "overlay" || !doc.meta.source) {
+        throw new ValidationError("rescope works on task-folder (overlay) items with a task file");
+      }
+      const found = await resolveSource(this.ws.root, id, doc.meta.source);
+      if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+      let out = found.text;
+      if (change.touches) out = setTouches(out, change.touches);
+      if (change.addAcceptance?.length) {
+        const items = change.addAcceptance.map((a) => `- [ ] ${a.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`);
+        out = appendSection(out, "Acceptance", items.join("\n"));
+      }
+      const abs = join(this.ws.root, found.path);
+      await writeFileAtomic(abs, out);
+      this.onFileWrite?.(abs, out);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      const what = [
+        change.touches ? `touches → ${change.touches.join("; ")}` : "",
+        change.addAcceptance?.length ? `+${change.addAcceptance.length} acceptance` : "",
+      ].filter(Boolean).join(", ");
+      await this.writeItemDoc(absItem, doc.raw.text, meta, [`- ${now} ${who} rescoped (${what}): ${change.reason}`]);
+      await this.commitPaths([it.path], `te: ${id} rescope by ${who}`);
+      await this.stageTaskFiles([found.path]);
+      await this.index.upsertFile(absItem);
+      return { path: found.path };
     });
   }
 

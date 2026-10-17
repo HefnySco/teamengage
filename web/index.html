@@ -83,6 +83,8 @@
       .av { width: 1rem; height: 1rem; border-radius: 50%; background: var(--bs-secondary-bg); color: var(--bs-secondary-color); display: inline-grid; place-items: center; font-size: .56rem; font-weight: 600; border: 1px solid var(--bs-border-color); }
       .icon-btn { width: 1.35rem; height: 1.35rem; display: inline-grid; place-items: center; border: 0; border-radius: .25rem; color: var(--bs-tertiary-color); background: transparent; cursor: pointer; padding: 0; }
       .icon-btn:hover { background: var(--bs-secondary-bg); color: var(--bs-body-color); }
+      /* item-page action bar: icon-only buttons, all the same square size — the tooltip is the label */
+      .act-btn { width: 1.75rem; height: 1.75rem; padding: 0; display: inline-grid; place-items: center; }
       /* domain filter tags: hoverable, the active one stays highlighted */
       .triage-tag.clickable { cursor: pointer; }
       .triage-tag.clickable:hover, .triage-tag.on { color: var(--bs-body-color); }
@@ -127,12 +129,6 @@
       .vtabs a { color: var(--bs-secondary-color); font-size: .86rem; cursor: pointer; text-decoration: none; padding-bottom: 2px; }
       .vtabs a:hover { color: var(--bs-body-color); }
       .vtabs a.on { color: var(--bs-body-color); font-weight: 600; border-bottom: 2px solid var(--bs-primary); }
-      /* the ⋯ overflow menu (bootstrap styled; shown/hidden by hand — no bootstrap js,
-         so -end alignment needs an explicit right anchor or the menu overflows) */
-      .menu-pop { position: relative; }
-      .menu-pop .dropdown-menu { display: block; right: 0; left: auto; }
-      .menu-pop .dropdown-item { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-      .menu-pop .dropdown-item .hint { color: var(--bs-tertiary-color); font-size: .72rem; }
       /* who wrote it: the human is blue, an agent session green, the daemon quiet grey —
          light mode needs the mid-tone palette; *-text-emphasis is near-black there */
       .who-human { color: var(--bs-primary); }
@@ -169,7 +165,7 @@
       /* inbox: one dense triage list — group headers, one line per item, actions on hover */
       /* the list itself is the grid and each row subgrids it, so the tag and action
          columns share one width across every row instead of sizing per row */
-      .triage { display: grid; grid-template-columns: 5.6rem 6.4rem minmax(0, 1fr) auto auto; column-gap: .75rem; padding: 0 .75rem; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: .5rem; overflow-x: auto; }
+      .triage { display: grid; grid-template-columns: 5.6rem 6.4rem minmax(0, 1fr) auto auto auto; column-gap: .75rem; padding: 0 .75rem; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: .5rem; overflow-x: auto; }
       .triage > div { display: contents; }
       .triage-group { grid-column: 1 / -1; margin: 0 -.75rem; display: flex; align-items: center; gap: .5rem; padding: .3rem .75rem; background: var(--bs-tertiary-bg); border-bottom: 1px solid var(--bs-border-color); font-size: .72rem; font-weight: 600; color: var(--bs-secondary-color); text-transform: uppercase; letter-spacing: .04em; min-width: 42rem; }
       .triage-group .n { font-weight: 500; color: var(--bs-tertiary-color); text-transform: none; font-variant-numeric: tabular-nums; }
@@ -181,6 +177,7 @@
       .id-cell .item.id { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       .id-cell > span { flex: none; display: inline-flex; align-items: center; }
       .triage-li .acts { display: flex; gap: .3rem; justify-self: end; opacity: 0; transition: opacity .12s; }
+      .triage-li .age { justify-self: end; color: var(--bs-tertiary-color); font-variant-numeric: tabular-nums; }
       .triage-li:hover .acts, .triage-li:focus-within .acts { opacity: 1; }
       /* plans rows reuse the same reveal-on-hover pattern for their "graph" action */
       .plan-li .acts { display: flex; gap: .3rem; opacity: 0; transition: opacity .12s; }

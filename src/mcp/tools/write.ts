@@ -271,6 +271,35 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "rescope",
+    {
+      description:
+        "Change a DRAFT's scope — only after the human moved it back to draft (that is the go-ahead). " +
+        "touches replaces the task file's **Touches:** line (list every repo: path, old and new); " +
+        "add_acceptance appends checklist items. reason says why. Planners only (tier standard/heavy). " +
+        "It stays a draft: tell the human to approve the new scope. Never on ready/in-progress work.",
+      inputSchema: {
+        id: z.string(),
+        reason: z.string(),
+        touches: z.array(z.string()).optional(),
+        add_acceptance: z.array(z.string()).optional(),
+      },
+    },
+    async ({ id, reason, touches, add_acceptance }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.rescope(id, s, { touches, addAcceptance: add_acceptance, reason });
+        return okText(`rescoped ${id} → ${r.path} (still draft — the human approves)`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "vet",
     {
       description:

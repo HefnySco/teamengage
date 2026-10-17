@@ -206,3 +206,18 @@ curl -s -X POST $B/vet/GL-0031 -H "$H" -d '{"verdict":"ok","note":"acceptance ch
 
 Under `solo` an `ok` approves it (→ ready); otherwise it marks it vetted for
 the human.
+
+## 9. Widening a draft's scope (rescope)
+
+Scope is the human's — but when the human moves a task **back to draft**,
+that is the go-ahead to change it. One call (planner tiers only, drafts only):
+
+```bash
+curl -s -X POST $B/rescope/GL-0061 -H "$H" -d '{
+  "touches":["engine: checks.py","de_comm: src/sv_core.cpp","de_comm: tests/test_sv_core.cpp"],
+  "add_acceptance":["test_sv_core passes"],
+  "reason":"the fix needs the core filter, not only the engine check"}'
+```
+
+`touches` **replaces** the whole line — list the old paths too. `add_acceptance`
+only appends. The task stays a draft; tell the human to approve it again.

@@ -377,6 +377,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("star", (ops, id, b) => ops.star(id, b.color === undefined ? undefined : String(b.color)));
   act("unstar", (ops, id) => ops.unstar(id));
   act("stop-auto-accept", (ops, id) => ops.stopAutoAccept(id));
+  act("rescope", (ops, id, b) =>
+    ops.rescope(id, "human", {
+      touches: Array.isArray(b.touches) ? b.touches.map(String) : undefined,
+      addAcceptance: Array.isArray(b.add_acceptance) ? b.add_acceptance.map(String) : undefined,
+      reason: String(b.reason ?? "edited by the human"),
+    }),
+  );
   act("tier", (ops, id, b) => {
     const t = b.tier === undefined || b.tier === null || b.tier === "any" ? undefined : String(b.tier);
     if (t !== undefined && !["light", "standard", "heavy"].includes(t)) {

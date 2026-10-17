@@ -488,6 +488,29 @@ describe("notes", () => {
   });
 });
 
+describe("rescope", () => {
+  it("a draft's Touches is replaced and acceptance appended; anything but draft is refused", async () => {
+    const { ids, files } = await store().createItems(
+      [{ type: "task", title: "Scoped task", project: "global", touches: ["engine: checks.py"], acceptance: ["old check"] }],
+      { kind: "human", session: "human", machine: "test" },
+    );
+    const id = ids[0];
+    const post = (body: unknown) =>
+      api(`/api/items/${id}/rescope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect(
+      (await post({ touches: ["engine: checks.py", "de_comm: src/sv_core.cpp"], add_acceptance: ["new check"], reason: "needs core" })).status,
+    ).toBe(200);
+    const file = readFileSync(join(root, files[0]), "utf8");
+    expect(file).toContain("**Touches:** engine: checks.py; de_comm: src/sv_core.cpp\n");
+    expect(file).toMatch(/## Acceptance\n- \[ \] old check\n\n- \[ \] new check\n/);
+    expect(store().idx.get(id)!.sections.find((x) => x.heading === "Log")!.body).toMatch(/human rescoped .*: needs core/);
+    expect((await api(`/api/items/${id}/approve`, { method: "POST" })).status).toBe(200);
+    const late = await post({ touches: ["x: y"], reason: "too late" });
+    expect(late.status).toBe(400);
+    expect(((await late.json()) as { message: string }).message).toContain("only drafts");
+  });
+});
+
 describe("domains", () => {
   const human = { kind: "human" as const, session: "human", machine: "test" };
   const json = async (path: string, body?: unknown) => {

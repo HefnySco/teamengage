@@ -14,7 +14,7 @@ import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import { StarColor, tierRank, type Status } from "../../core/model/item.js";
-import { ClaimRefusedError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
+import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
@@ -899,6 +899,27 @@ export class WorkspaceOps {
   async note(id: string, actor: Session | "human", text: string) {
     this.item(id);
     return this.store.addNote(id, text, this.actorFor(actor));
+  }
+
+  /**
+   * Change a draft's scope (Touches line, extra acceptance). Only drafts: a
+   * human moving an item back to draft is the go-ahead to rescope it. Agents
+   * need a tier above light (the dispatcher doesn't plan); it stays a draft —
+   * the human approves the new scope.
+   */
+  async rescope(
+    id: string,
+    actor: Session | "human",
+    change: { touches?: string[]; addAcceptance?: string[]; reason: string },
+  ) {
+    this.item(id);
+    if (actor !== "human" && actor.tier === "light") {
+      throw new ForbiddenError("rescope needs a standard- or heavy-tier session (planner), not light");
+    }
+    if (!change.touches && !change.addAcceptance?.length) {
+      throw new ValidationError("rescope: give touches and/or add_acceptance");
+    }
+    return this.store.rescope(id, change, this.actorFor(actor));
   }
 
   /** Human: remove a note block, identified by its `**ts · who**` header. */

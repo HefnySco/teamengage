@@ -162,7 +162,7 @@ const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset →
 
 // one <path> (or several) per glyph — same inline convention as the icons above
 const glyph = (paths) => html`
-  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" class="me-1" style="vertical-align:-.125em">
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" style="vertical-align:-.125em">
     ${paths.map((d) => html`<path d=${d} />`)}
   </svg>`;
 const CheckIcon = () => glyph(["M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"]);
@@ -194,6 +194,10 @@ const PlusSquareIcon = () => glyph([
 const CheckSquareIcon = () => glyph([
   "M3 14.5A1.5 1.5 0 0 1 1.5 13V3A1.5 1.5 0 0 1 3 1.5h8a.5.5 0 0 1 0 1H3a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5V8a.5.5 0 0 1 1 0v5a1.5 1.5 0 0 1-1.5 1.5z",
   "m8.354 10.354 7-7a.5.5 0 0 0-.708-.708L8 9.293 5.354 6.646a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0",
+]);
+const RobotIcon = () => glyph([
+  "M6 12.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5M3 8.062C3 6.76 4.235 5.765 5.53 5.886a26.6 26.6 0 0 0 4.94 0C11.765 5.765 13 6.76 13 8.062v1.157a.93.93 0 0 1-.765.935c-.845.147-2.34.346-4.235.346s-3.39-.2-4.235-.346A.93.93 0 0 1 3 9.219zm4.542-.827a.25.25 0 0 0-.217.068l-.92.9a25 25 0 0 1-1.871-.183.25.25 0 0 0-.068.495c.55.076 1.232.149 2.02.193a.25.25 0 0 0 .189-.071l.754-.736.847 1.71a.25.25 0 0 0 .404.062l.932-.97a25 25 0 0 0 1.922-.188.25.25 0 0 0-.068-.495c-.538.074-1.207.145-1.98.189a.25.25 0 0 0-.166.076l-.754.785-.842-1.7a.25.25 0 0 0-.182-.135",
+  "M8.5 1.866a1 1 0 1 0-1 0V3h-2A4.5 4.5 0 0 0 1 7.5V8a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1v1a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1v-.5A4.5 4.5 0 0 0 10.5 3h-2zM14 7.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7.5A3.5 3.5 0 0 1 5.5 4h5A3.5 3.5 0 0 1 14 7.5",
 ]);
 
 // search field with a × clear button inside (the native type=search one is webkit-only)
@@ -302,6 +306,12 @@ const DomainTags = ({ ds, onClick, active }) => {
 const InboxStatus = ({ s, c, label }) => html`
   <span class="triage-st ${s ? `st-${s}` : ""}" style=${c ? `--st:${c}` : null}>${label ?? (s ?? "").replace("_", " ")}</span>`;
 
+// last-update duration — the right-hand column on every inbox row
+const ageCell = (i) => {
+  const t = i?.updated ?? i?.created;
+  return html`<span class="age" title=${t ? `last update ${t}` : "no update recorded"}>${t ? ago(t) : "—"}</span>`;
+};
+
 // a waiting question: one row whose "answer" button expands it in place —
 // full question markdown + the answer box
 const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
@@ -315,6 +325,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
       <${InboxStatus} s="waiting" />
       <span class="t text-secondary" title=${q.question?.text}>${(q.question?.text ?? item?.title ?? "").replace(/\s+/g, " ")}</span>
       <${DomainTags} ds=${item?.domains} />
+      ${ageCell(item)}
       <span class="acts">
         <button class="btn btn-sm py-0 ${open ? "btn-outline-secondary" : "btn-primary"}" disabled=${item && item.status !== "waiting"} title=${item && item.status !== "waiting" ? "questions can only be answered while the item is waiting" : ""} onClick=${() => setOpen(!open)}>${open ? "close" : "answer"}</button>
       </span>
@@ -376,6 +387,21 @@ const Inbox = ({ onOpen }) => {
   };
   const total = data.questions.length + data.drafts.length + data.reviews.length + data.claims.length + data.findings.length;
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
+  // the "updated" page: every item the inbox lists, deduped, stalest on top —
+  // each row shows how long since it was last touched
+  const touched = (i) => i.updated ?? i.created ?? "";
+  const updatedItems = [
+    ...new Set([
+      ...data.questions.map((x) => x.id),
+      ...data.drafts,
+      ...data.reviews,
+      ...data.claims.map((c) => c.item),
+      ...data.findings.map((f) => f.item).filter(Boolean),
+    ]),
+  ]
+    .filter((id) => hit(id))
+    .map((id) => byId[id] ?? { id })
+    .sort((a, b) => touched(a).localeCompare(touched(b)) || a.id.localeCompare(b.id, undefined, { numeric: true }));
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.inbox.q", v);
@@ -407,6 +433,7 @@ const Inbox = ({ onOpen }) => {
       ${st}
       <span class="t" title=${title(id)}>${title(id) || "—"}${extra}</span>
       <${DomainTags} ds=${byId[id]?.domains} />
+      ${ageCell(byId[id])}
       <span class="acts">${acts}</span>
     </div>`;
   const groups = [
@@ -430,6 +457,7 @@ const Inbox = ({ onOpen }) => {
               ${title(c.item)} <span class="text-secondary">· held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)}</span>
             </span>
             <${DomainTags} ds=${byId[c.item]?.domains} />
+            ${ageCell(byId[c.item])}
             <span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" disabled=${byId[c.item] ? !canRelease(byId[c.item].status) : false} title=${byId[c.item] ? releaseTitle(byId[c.item].status) : "release the claim"} onClick=${async () => {
               if (await confirmDialog(`release the claim on ${c.item}?`, `held by ${c.holder}@${c.machine} since ${ago(c.claimed_at)} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act(c.item, "release", { note: "resolve" });
             }}>release</button></span>
@@ -461,6 +489,7 @@ const Inbox = ({ onOpen }) => {
             <span class="triage-sev ${f.severity === "error" ? "err" : ""}">${f.severity ?? "warning"}</span>
             <span class="t text-secondary" title=${f.message}><${LinkedText} text=${f.message} onOpen=${onOpen} /></span>
             <span></span>
+            ${ageCell(f.item ? byId[f.item] : null)}
             <span class="acts">${f.item && html`<button class="btn btn-sm py-0 text-secondary" onClick=${() => onOpen(f.item)}>open</button>`}</span>
           </div>`,
       ),
@@ -481,7 +510,7 @@ const Inbox = ({ onOpen }) => {
     },
   ].map((g) => ({ ...g, n: g.rows.length }));
   // when the picked group runs empty (or never had anything) fall back to all
-  const effKind = groups.some((g) => g.key === kind && g.n > 0) ? kind : "all";
+  const effKind = (kind === "updated" && updatedItems.length > 0) || groups.some((g) => g.key === kind && g.n > 0) ? kind : "all";
   const shownGroups = groups.filter((g) => g.n > 0 && (effKind === "all" || g.key === effKind));
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
@@ -496,9 +525,27 @@ const Inbox = ({ onOpen }) => {
           ${groups.map(
             (g) => g.n > 0 && html`<button key=${g.key} class="btn btn-outline-secondary${effKind === g.key ? " active" : ""}" onClick=${() => setKind(g.key)}>${g.label} ${g.n}</button>`,
           )}
+          ${updatedItems.length > 0 && html`<button class="btn btn-outline-secondary${effKind === "updated" ? " active" : ""}" title="every inbox item, stalest first — how long since it was last touched" onClick=${() => setKind("updated")}>Updated ${updatedItems.length}</button>`}
         </span>`}
     </div>
-    ${shownGroups.length > 0 && html`
+    ${effKind === "updated"
+      ? html`
+          <div class="triage">
+            <div>
+              <div class="triage-group">Updated <span class="n">${updatedItems.length}</span></div>
+              ${updatedItems.map(
+                (i) => html`
+                  <div class="triage-li" key=${i.id}>
+                    ${idCell(i.id)}
+                    <${InboxStatus} s=${byId[i.id]?.status ?? ""} />
+                    <span class="t" title=${title(i.id)}>${title(i.id) || "—"}</span>
+                    <${DomainTags} ds=${i.domains} />
+                    ${ageCell(i)}
+                  </div>`,
+              )}
+            </div>
+          </div>`
+      : shownGroups.length > 0 && html`
       <div class="triage">
         ${shownGroups.map(
           (g) => html`
@@ -648,7 +695,7 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
-        onClick=${setAiFilter}>${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
+        onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
       ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
     </div>
     ${domEntries.length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
@@ -1407,39 +1454,9 @@ const DomainEditor = ({ id, ds, onChanged }) => {
 };
 
 // ---- Item (UI-0005) ------------------------------------------------------------
-// the ⋯ overflow menu — bootstrap styled, opened/closed by hand (no bootstrap js)
-const Menu = ({ children }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e) => {
-      if (!ref.current?.contains(e.target)) setOpen(false);
-    };
-    const esc = (e) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [open]);
-  return html`<span class="menu-pop" ref=${ref}>
-    <button class="btn btn-sm btn-outline-secondary px-2 fw-bold" title="more actions" onClick=${() => setOpen(!open)}>⋯</button>
-    ${open && html`<div class="dropdown-menu dropdown-menu-end show" style=${{ minWidth: "12.5rem" }}
-      onClick=${(e) => {
-        if (!e.target.closest("[disabled]")) setOpen(false);
-      }}>${children}</div>`}
-  </span>`;
-};
-const MenuItem = ({ onClick, disabled, title, danger, hint, children }) => html`
-  <button class="dropdown-item" disabled=${disabled} title=${title} onClick=${onClick}>
-    <span class="${danger ? "text-danger" : ""} d-inline-flex align-items-center">${children}</span>
-    ${hint && html`<span class="hint">${hint}</span>`}
-  </button>`;
-const MenuSep = () => html`<hr class="dropdown-divider" />`;
+// icon-only bar button — every action is the same square size; the tooltip is the label
+const ActBtn = ({ variant = "outline-secondary", title, disabled, onClick, children }) => html`
+  <button class="btn btn-sm btn-${variant} act-btn" disabled=${disabled} title=${title} onClick=${onClick}>${children}</button>`;
 
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
@@ -1526,19 +1543,9 @@ const ItemView = ({ id }) => {
     ${d.key && html`<span title="key task — dependents wait for its acceptance">🔑</span>`}
     ${d.pending && html`<span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
   </span>`;
-  // the ⋯ menu: bookmark/graph/archive/delete — workflow actions stay as bar buttons
-  const menuGroups = [
-    [
-      html`<${MenuItem} key="star" title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"} hint=${it.meta.star_color ?? undefined}
-        onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}><span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>star</${MenuItem}>`,
-      html`<${MenuItem} key="graph" title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"} onClick=${openGraph}><${GraphIcon} />open in graph</${MenuItem}>`,
-      !it.meta.archived && !it.claim &&
-        html`<${MenuItem} key="archive" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} />archive</${MenuItem}>`,
-    ].filter(Boolean),
-    [
-      !it.claim && html`<${MenuItem} key="del" danger title="delete — remove tracking, keep the task file" onClick=${remove}><${TrashIcon} />delete</${MenuItem}>`,
-    ].filter(Boolean),
-  ].filter((g) => g.length);
+  // utility buttons after the workflow ones: star/graph always enabled;
+  // archive & delete are disabled while a claim holds the item — release it first
+  const claimed = Boolean(it.claim);
   return html`
     <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
       <span class="id flex-shrink-0">${it.meta.id}</span>
@@ -1547,19 +1554,30 @@ const ItemView = ({ id }) => {
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
-        ${st === "draft" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("approve")}><${CheckIcon} />approve</button>`}
-        ${st === "hold" && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unhold")}><${PlayIcon} />resume</button>`}
-        ${(st === "draft" || st === "ready") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} />hold</button>`}
-        ${(st === "ready" || st === "hold" || st === "done") && html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />reopen` : html`<${PencilIcon} />to draft`}</button>`}
-        ${st === "in_review" && html`<button class="btn btn-sm btn-success" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} />accept</button><button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} />reject</button>`}
-        ${it.claim && html`<button class="btn btn-sm btn-outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} />release claim</button>`}
-        ${st === "dropped" && html`<button class="btn btn-sm btn-outline-primary" onClick=${() => act("undrop")}><${UndoIcon} />undrop</button>`}
-        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="no more parts are coming — the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} />close plan</button>`}
-        ${it.meta.type === "epic" && it.meta.plan_closed && html`<button class="btn btn-sm btn-outline-primary" title="more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} />reopen plan</button>`}
-        ${st !== "done" && html`<button class="btn btn-sm btn-outline-success" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} />mark done</button>`}
-        ${!closed && html`<button class="btn btn-sm btn-outline-danger" onClick=${() => askThen("drop", "drop reason")}><${XIcon} />drop</button>`}
-        ${it.meta.archived && html`<button class="btn btn-sm btn-primary" onClick=${() => act("unarchive")}><${UndoIcon} />unarchive</button>`}
-        <${Menu}>${menuGroups.map((g, i) => html`${i > 0 && html`<${MenuSep} />`}${g}`)}</${Menu}>
+        ${st === "draft" && html`<${ActBtn} variant="primary" title="approve — promote the draft to ready" onClick=${() => act("approve")}><${CheckIcon} /></${ActBtn}>`}
+        ${st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
+        ${(st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
+        ${(st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
+        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}>`}
+        ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
+        ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
+        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
+        ${it.meta.type === "epic" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
+        ${st !== "done" && html`<${ActBtn} variant="outline-success" title="mark done — complete it now, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
+        ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
+        ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}
+        <${ActBtn} title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+          onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}>
+          <span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>
+        </${ActBtn}>
+        <${ActBtn} title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"}
+          onClick=${openGraph}><${GraphIcon} /></${ActBtn}>
+        ${!it.meta.archived && html`<${ActBtn} disabled=${claimed}
+          title=${claimed ? "archive — the claim holds it; release the claim first" : "archive — file away out of the lists"}
+          onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></${ActBtn}>`}
+        <${ActBtn} variant="outline-danger" disabled=${claimed}
+          title=${claimed ? "delete — the claim holds it; release the claim first" : "delete — remove tracking, keep the task file"}
+          onClick=${remove}><${TrashIcon} /></${ActBtn}>
       </div>
     </div>
     <div class="chain st-${st}">
@@ -1581,7 +1599,7 @@ const ItemView = ({ id }) => {
       <div class="disc-panel">
         <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
         <div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">meta</span><span class="text-secondary">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${it.meta.archived ? " · archived" : ""}</span></div>
-        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the ⋯ menu</span>`}</span></div>`}
+        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the button above</span>`}</span></div>`}
         ${b.source && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">source</span><span class="text-secondary">${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span></div>`}
         ${st === "draft" && html`<div class="d-flex align-items-center gap-2 small"><span class="text-secondary item-lbl">unblocks</span>${polLine}</div>`}
       </div>

@@ -106,6 +106,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "query",
         "release",
         "reopen_plan",
+        "rescope",
         "review",
         "simple",
         "submit",
