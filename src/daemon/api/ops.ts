@@ -901,6 +901,23 @@ export class WorkspaceOps {
     return this.store.addNote(id, text, this.actorFor(actor));
   }
 
+  /** Agent asks the human to drop this item — advisory flag, status untouched. */
+  async flagDrop(id: string, session: Session, reason?: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "flag_drop",
+      reason,
+    });
+  }
+
+  /** Human dismisses a drop flag — the item stays. */
+  async unflagDrop(id: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "unflag_drop",
+    });
+  }
+
   /**
    * Change a draft's scope (Touches line, extra acceptance). Only drafts: a
    * human moving an item back to draft is the go-ahead to rescope it. Agents
@@ -922,6 +939,129 @@ export class WorkspaceOps {
     return this.store.rescope(id, change, this.actorFor(actor));
   }
 
+  /**
+   * Rewrite a draft — any field of it. Drafts only (a non-draft must be
+   * moved back to draft by the human first); agents need a planner tier.
+   * depends_on/parent refs are checked here (existence, self, cycles incl.
+   * linked workspaces); the store writes and logs. It stays a draft.
+   */
+  async editDraft(
+    id: string,
+    actor: Session | "human",
+    change: {
+      reason: string;
+      title?: string;
+      summary?: string;
+      acceptance?: string[];
+      touches?: string[];
+      depends_on?: string[];
+      parent?: string | null;
+      targets?: string[];
+      tier?: "light" | "standard" | "heavy" | null;
+      domains?: string[];
+      sections?: Record<string, string>;
+    },
+  ) {
+    this.item(id);
+    if (actor !== "human" && actor.tier === "light") {
+      throw new ForbiddenError("edit needs a standard- or heavy-tier session (planner), not light");
+    }
+    if (!change.reason?.trim()) throw new ValidationError("edit needs a reason");
+    const { reason, ...fields } = change;
+    if (!Object.values(fields).some((v) => v !== undefined)) {
+      throw new ValidationError("edit: give at least one field to change");
+    }
+    if (change.depends_on) this.assertDeps(id, change.depends_on);
+    if (change.parent) this.assertParent(id, change.parent);
+    for (const t of change.targets ?? []) parseTargetRef(t); // throws on a bad ref
+    return this.store.editDraft(id, change, this.actorFor(actor));
+  }
+
+  /** Human: replace an item's depends_on (any status). Refs + cycles checked here. */
+  async setDepends(id: string, dependsOn: string[]) {
+    this.item(id);
+    this.assertDeps(id, dependsOn);
+    return this.store.setDepends(id, dependsOn, this.actorFor("human"));
+  }
+
+  /**
+   * depends_on refs: each must parse, exist (local index or a linked
+   * workspace) and not be the item itself; and none may already depend on
+   * `id` — adding such an edge would close a dependency cycle.
+   */
+  private assertDeps(id: string, refs: string[]) {
+    const wsName = this.wsr.ws.config.name;
+    for (const r of refs) {
+      const parsed = parseItemRef(r); // throws ValidationError on bad refs
+      const here = parsed.workspace === undefined || parsed.workspace === wsName;
+      if (here && parsed.id === id) {
+        throw new ValidationError(`depends_on: ${id} may not depend on itself`);
+      }
+      if (here) this.item(parsed.id);
+      else if (this.links?.statusOf(r) === undefined) {
+        throw new NotFoundError(`dependency ${r} not found`);
+      }
+    }
+    // a new dep closes a cycle iff `id` is reachable from it via depends_on
+    const seen = new Set<string>();
+    const stack = refs.map((r) => parseItemRef(r));
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const key = `${cur.workspace ?? ""}:${cur.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const here = cur.workspace === undefined || cur.workspace === wsName;
+      if (here && cur.id === id) {
+        throw new ValidationError(`depends_on cycle: ${id} is an ancestor of ${cur.id}`);
+      }
+      const deps = here
+        ? this.index.get(cur.id)?.meta.depends_on
+        : this.links?.index(cur.workspace!)?.get(cur.id)?.meta.depends_on;
+      for (const d of deps ?? []) {
+        try {
+          stack.push(parseItemRef(d));
+        } catch {
+          /* dangling refs can't close a cycle */
+        }
+      }
+    }
+  }
+
+  /**
+   * Parent refs: must parse, exist (local index or a linked workspace), and
+   * not make `id` its own ancestor — walking the new parent's ancestor
+   * chain (local + linked) must never reach `id`.
+   */
+  private assertParent(id: string, parent: string) {
+    const parsed = parseItemRef(parent); // throws ValidationError on bad refs
+    const wsName = this.wsr.ws.config.name;
+    if (parsed.workspace === undefined || parsed.workspace === wsName) this.item(parsed.id);
+    else if (this.links?.statusOf(parent) === undefined) {
+      throw new NotFoundError(`parent ${parent} not found`);
+    }
+    // refuse a parent cycle: walk the new ancestor chain (local + linked)
+    const seen = new Set<string>();
+    let cur: { workspace?: string; id: string } | undefined = parsed;
+    while (cur) {
+      const key = `${cur.workspace ?? ""}:${cur.id}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      const here = cur.workspace === undefined || cur.workspace === wsName;
+      if (here && cur.id === id) {
+        throw new ValidationError(`parent cycle: ${id} is an ancestor of ${parent}`);
+      }
+      const anc = here
+        ? this.index.get(cur.id)?.meta.parent
+        : this.links?.index(cur.workspace!)?.get(cur.id)?.meta.parent;
+      if (!anc) break;
+      try {
+        cur = parseItemRef(anc);
+      } catch {
+        break;
+      }
+    }
+  }
+
   /** Human: remove a note block, identified by its `**ts · who**` header. */
   async removeNote(id: string, note: { ts: string; who: string; body?: string }) {
     this.item(id);
@@ -941,35 +1081,7 @@ export class WorkspaceOps {
    */
   async setParent(id: string, parent: string | undefined) {
     this.item(id);
-    if (parent !== undefined) {
-      const parsed = parseItemRef(parent); // throws ValidationError on bad refs
-      const wsName = this.wsr.ws.config.name;
-      if (parsed.workspace === undefined) this.item(parsed.id);
-      else if (parsed.workspace !== wsName && this.links?.statusOf(parent) === undefined) {
-        throw new NotFoundError(`parent ${parent} not found`);
-      }
-      // refuse a parent cycle: walk the new ancestor chain (local + linked)
-      const seen = new Set<string>();
-      let cur: { workspace?: string; id: string } | undefined = parsed;
-      while (cur) {
-        const key = `${cur.workspace ?? ""}:${cur.id}`;
-        if (seen.has(key)) break;
-        seen.add(key);
-        const here = cur.workspace === undefined || cur.workspace === wsName;
-        if (here && cur.id === id) {
-          throw new ValidationError(`parent cycle: ${id} is an ancestor of ${parent}`);
-        }
-        const anc = here
-          ? this.index.get(cur.id)?.meta.parent
-          : this.links?.index(cur.workspace!)?.get(cur.id)?.meta.parent;
-        if (!anc) break;
-        try {
-          cur = parseItemRef(anc);
-        } catch {
-          break;
-        }
-      }
-    }
+    if (parent !== undefined) this.assertParent(id, parent);
     return this.store.setParent(id, parent, this.actorFor("human"));
   }
 

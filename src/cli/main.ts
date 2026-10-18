@@ -16,6 +16,8 @@ import {
   rejectCmd,
   dropCmd,
   undropCmd,
+  unflagCmd,
+  depsCmd,
   holdCmd,
   archiveCmd,
   keyCmd,
@@ -57,6 +59,8 @@ commands:
   answer <ID> <text>
   reject | drop <ID> [reason]
   undrop <ID>         restore a dropped item back to draft
+  unflag <ID>         dismiss an agent's drop flag — the item stays
+  deps <ID> [REF…|--off]   replace an item's depends_on (--off clears)
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
   unhold <ID>         release a hold → ready
   tier <ID> <t> [--reset]  model tier needed: light|standard|heavy|any; --reset zeroes attempts
@@ -157,6 +161,10 @@ async function main(argv: string[]): Promise<number> {
       return dropCmd(rest, home);
     case "undrop":
       return undropCmd(rest, home);
+    case "unflag":
+      return unflagCmd(rest, home);
+    case "deps":
+      return depsCmd(rest, home);
     case "hold":
       return holdCmd(rest, home);
     case "archive":

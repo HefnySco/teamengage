@@ -373,6 +373,7 @@ const Inbox = ({ onOpen }) => {
     questions: (x) => byId[x.id] ?? { id: x.id },
     drafts: (id) => byId[id] ?? { id },
     reviews: (id) => byId[id] ?? { id },
+    drop_flags: (x) => byId[x.id] ?? { id: x.id },
     claims: (c) => byId[c.item] ?? { id: c.item },
     findings: (f) => byId[f.item] ?? { id: f.item ?? "", title: f.message ?? f.path ?? "" },
   };
@@ -382,10 +383,11 @@ const Inbox = ({ onOpen }) => {
     questions: sortRows("questions", data.questions.filter((x) => hit(x.id, x.question?.text))),
     drafts: sortRows("drafts", data.drafts.filter((id) => hit(id))),
     reviews: sortRows("reviews", data.reviews.filter((id) => hit(id))),
+    drop_flags: sortRows("drop_flags", (data.drop_flags ?? []).filter((x) => hit(x.id, x.by, x.reason))),
     claims: sortRows("claims", data.claims.filter((c) => hit(c.item, c.holder, c.machine))),
     findings: sortRows("findings", data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind))),
   };
-  const total = data.questions.length + data.drafts.length + data.reviews.length + data.claims.length + data.findings.length;
+  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length;
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
   // the "updated" page: every item the inbox lists, deduped, stalest on top —
   // each row shows how long since it was last touched
@@ -395,6 +397,7 @@ const Inbox = ({ onOpen }) => {
       ...data.questions.map((x) => x.id),
       ...data.drafts,
       ...data.reviews,
+      ...(data.drop_flags ?? []).map((f) => f.id),
       ...data.claims.map((c) => c.item),
       ...data.findings.map((f) => f.item).filter(Boolean),
     ]),
@@ -476,6 +479,21 @@ const Inbox = ({ onOpen }) => {
             if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act(id, "accept");
           }}>accept</button>
             <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
+        ),
+      ),
+    },
+    {
+      key: "drop_flags",
+      label: "Drop flags",
+      rows: view.drop_flags.map((x) =>
+        itemRow(
+          x.id,
+          html`<${InboxStatus} s=${x.status} />`,
+          html` <span class="text-secondary">· flagged by <b class=${whoCls(x.by)}>${x.by}</b> ${ago(x.at)} ago${x.reason ? ` — ${x.reason}` : ""}</span>${claimNote(x.id)}`,
+          html`<button class="btn btn-sm py-0 text-danger" title="drop it — the flag's reason is used" onClick=${async () => {
+            if (await confirmDialog(`drop ${x.id}?`, `flagged by ${x.by}${x.reason ? `: ${x.reason}` : ""} — dependents treat a dropped task as done and the flag's claim (if any) is released.`, { ok: "drop", danger: true })) act(x.id, "drop", { reason: x.reason });
+          }}>drop</button>
+            <button class="btn btn-sm py-0 text-secondary" title="keep it — dismiss the flag" onClick=${() => act(x.id, "unflag")}>keep</button>`,
         ),
       ),
     },
@@ -810,17 +828,22 @@ const PlanNode = ({ i, depth, tree }) => {
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
-        ${isPlan && html`<span class="acts"><button class="btn btn-sm py-0 btn-outline-secondary" title="open this plan's dependency graph"
+        ${isPlan && html`<span class="acts"><${ActBtn} title="open this plan's dependency graph"
           onClick=${(e) => {
             e.stopPropagation(); // the row itself opens the item
             nav(`graph/${i.id}`);
-          }}>graph</button></span>`}
+          }}><${GraphIcon} /></${ActBtn}></span>`}
+        ${!isPlan && i.status === "draft" && html`<span class="ms-auto acts"><${ActBtn} variant="primary" title="approve this draft — it becomes ready for agents"
+          onClick=${(e) => {
+            e.stopPropagation(); // the row itself opens the item
+            tree.act(i.id, "approve");
+          }}><${CheckIcon} /></${ActBtn}></span>`}
       </div>
       ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
 };
 const Plans = ({ onOpen }) => {
-  const { data } = useApi("/api/items");
+  const { data, reload } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.plans.q"));
   const [showDone, setShowDoneState] = useState(() => loadSearch("te.plans.done") === "1");
   const [open, setOpenState] = useState(() => {
@@ -863,7 +886,11 @@ const Plans = ({ onOpen }) => {
   };
   const isOpenOf = (i, depth) => open[i.id] ?? (depth === 0 || words.length > 0);
   const setAll = (v) => setOpen(Object.fromEntries(data.filter((i) => i.type === "epic").map((i) => [i.id, v])));
-  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen };
+  const act = async (id, action, body) => {
+    await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
+    reload();
+  };
+  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
@@ -1106,6 +1133,7 @@ const Graph = ({ onOpen, id }) => {
   const [zoom, setZoom] = useState(1);
   const [src, setSrc] = useState("");
   const [count, setCount] = useState(null);
+  const [drafts, setDrafts] = useState([]);
   // same component stays mounted between #/graph and #/graph/<id> — reset the
   // filters on scope switch (scoped edits never overwrite the saved ones)
   useEffect(() => {
@@ -1158,6 +1186,26 @@ const Graph = ({ onOpen, id }) => {
       live = false;
     };
   }, [applied, id]);
+  // drafts currently on screen → approve buttons in the corner panel;
+  // node ids in the mermaid source look like GL_0013
+  useEffect(() => {
+    const shown = new Set([...src.matchAll(/[A-Z][A-Z0-9]*_\d+/g)].map((m) => m[0].replace("_", "-")));
+    if (!shown.size) {
+      setDrafts([]);
+      return;
+    }
+    let live = true;
+    api("/api/items?status=draft").then((items) => {
+      if (live) setDrafts(items.filter((i) => shown.has(i.id)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [src]);
+  const act = async (itemId, action, body) => {
+    await post(`/api/items/${itemId}/${action}`, body).catch((e) => toast(e.message));
+    setApplied((a) => ({ ...a })); // refetch — the node redraws / drops off the filter
+  };
   const filtering = f.q.trim() || f.status || f.domain;
   // drag anywhere pans the scrollable view; a press that moves <5px still counts as a click (opens the item)
   const viewRef = useRef(null);
@@ -1244,6 +1292,17 @@ const Graph = ({ onOpen, id }) => {
         <button class="btn btn-outline-secondary bg-body" title="zoom in" disabled=${zoom >= ZOOM_MAX}
           onClick=${() => applyZoom(Math.min(ZOOM_MAX, +(zoomRef.current * 1.25).toFixed(2)))}>+</button>
       </div>
+      ${drafts.length > 0 && html`
+        <div class="graph-drafts card py-1 px-2">
+          <div class="small text-secondary">drafts</div>
+          ${drafts.slice(0, 10).map((d) => html`
+            <div key=${d.id} class="d-flex align-items-center gap-2">
+              <a class="id small" title=${d.title ?? ""} onClick=${() => onOpen(d.id)}>${d.id}</a>
+              <${ActBtn} variant="primary" title="approve this draft — it becomes ready for agents"
+                onClick=${() => act(d.id, "approve")}><${CheckIcon} /></${ActBtn}>
+            </div>`)}
+          ${drafts.length > 10 && html`<div class="small text-secondary">+${drafts.length - 10} more</div>`}
+        </div>`}
       <${MiniMap} view=${viewRef} svg=${svg} zoom=${zoom} />
       <div ref=${viewRef} class="card card-body graph-view" style=${{ "--zoom": zoom }}
         onPointerDown=${panStart} onPointerMove=${panMove} onPointerUp=${panEnd} onPointerCancel=${panEnd}
@@ -1580,10 +1639,24 @@ const ItemView = ({ id }) => {
           onClick=${remove}><${TrashIcon} /></${ActBtn}>
       </div>
     </div>
+    ${it.meta.drop_request && html`<div class="alert alert-warning py-2 px-2 small mb-2 d-flex align-items-center gap-2 flex-wrap">
+      <span><b>flagged for drop</b> by <b class=${whoCls(it.meta.drop_request.by)}>${it.meta.drop_request.by}</b> · ${ago(it.meta.drop_request.at)} ago${it.meta.drop_request.reason ? html` — ${it.meta.drop_request.reason}` : ""}</span>
+      <span class="ms-auto d-flex gap-2">
+        <button class="btn btn-sm btn-outline-danger py-0" onClick=${async () => {
+          if (await confirmDialog(`drop ${id}?`, `flagged by ${it.meta.drop_request.by}${it.meta.drop_request.reason ? `: ${it.meta.drop_request.reason}` : ""} — dependents treat a dropped task as done.`, { ok: "drop", danger: true })) act("drop", { reason: it.meta.drop_request.reason });
+        }}>drop</button>
+        <button class="btn btn-sm btn-outline-secondary py-0" title="dismiss the flag — the item stays" onClick=${() => act("unflag")}>keep</button>
+      </span>
+    </div>`}
     <div class="chain st-${st}">
       <span class="text-secondary">waits on</span>
       ${b.deps.length === 0 ? html`<span class="text-secondary">nothing</span>` : b.deps.slice(0, 4).map(depLink)}
       ${b.deps.length > 4 && html`<span class="text-secondary">+${b.deps.length - 4} more</span>`}
+      ${!closed && html`<a class="ms-1" title="edit dependencies — comma-separated ids; empty clears" onClick=${async () => {
+        const v = await promptDialog(`depends on — ${id}`, { label: "comma-separated ids (empty = nothing)", value: (it.meta.depends_on ?? []).join(", ") });
+        if (v === null) return;
+        act("deps", { depends_on: v.split(",").map((s) => s.trim()).filter(Boolean) });
+      }}><${PencilIcon} /></a>`}
       <span class="sep">·</span>
       <span class="text-secondary">unblocks →</span>
       ${dependents.length === 0 ? html`<span class="text-secondary">nothing yet</span>` : dependents.map(depLink)}
@@ -1994,7 +2067,7 @@ function refreshSyncBadge(g) {
 function refreshInboxBadge(d) {
   const a = document.querySelector('#nav a[data-r="inbox"]');
   if (!a) return;
-  const n = ["questions", "drafts", "reviews", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
+  const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
   a.dataset.count = n || "";
 }
 const pollNavBadges = () => {

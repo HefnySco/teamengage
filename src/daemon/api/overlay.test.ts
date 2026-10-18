@@ -584,6 +584,119 @@ describe("domains", () => {
   });
 });
 
+describe("agent edit / flag_drop / human deps in overlay mode", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+  const agent = async (path: string, body: unknown, token: string) => {
+    const r = await fetch(`${daemon.url}${path}`, {
+      method: "POST",
+      headers: { [SESSION_HEADER]: token },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, text: await r.text() };
+  };
+  const hello = async (name: string, tier?: string) => {
+    const r = await fetch(`${daemon.url}/agent/hello`, {
+      method: "POST",
+      body: JSON.stringify({ agent: name, ...(tier ? { tier } : {}) }),
+    });
+    return /^token (\S+)/.exec(await r.text())![1];
+  };
+  const post = (path: string, body: unknown = {}) =>
+    api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("edit rewrites the draft's task file + meta; flag/drop and deps flow end to end", async () => {
+    const { ids, files } = await store().createItems(
+      [
+        { type: "epic", title: "Edit epic", project: "global" },
+        { type: "task", title: "Edit base", project: "global" },
+        { type: "task", title: "Edit me", project: "global", touches: ["a: b"], acceptance: ["old"] },
+        { type: "task", title: "Flag me", project: "global" },
+      ],
+      human,
+    );
+    const [epic, base, id, flagId] = ids;
+    const file = () => readFileSync(join(root, files[2]), "utf8");
+    const token = await hello("editor", "standard");
+    const lite = await hello("lite", "light");
+
+    // light tier can't edit
+    expect((await agent(`/agent/edit/${id}`, { reason: "r", title: "nope" }, lite)).status).toBe(403);
+
+    const r = await agent(
+      `/agent/edit/${id}`,
+      {
+        reason: "rewrite the plan",
+        title: "Edited title",
+        summary: "Rewritten summary.",
+        acceptance: ["new check 1", "new check 2"],
+        touches: ["de_comm: src/x.cpp"],
+        depends_on: [base],
+        parent: epic,
+        tier: "heavy",
+        domains: ["core"],
+        sections: { Approach: "Sideways." },
+      },
+      token,
+    );
+    expect(r.status).toBe(200);
+    const text = file();
+    expect(text).toContain("# Edited title\n");
+    expect(text).toContain(`**Depends on:** ${base}`);
+    expect(text).toContain(`**Parent:** ${epic}`);
+    expect(text).toContain("**Touches:** de_comm: src/x.cpp");
+    expect(text).toMatch(/## Summary\n\nRewritten summary\./);
+    expect(text).toMatch(/## Acceptance\n\n- \[ \] new check 1\n- \[ \] new check 2/);
+    expect(text).not.toContain("- [ ] old");
+    expect(text).toContain("## Approach\n\nSideways.");
+    const meta = store().idx.get(id)!.meta;
+    expect(meta).toMatchObject({
+      status: "draft",
+      title: "Edited title",
+      depends_on: [base],
+      parent: epic,
+      tier: "heavy",
+      domains: ["core"],
+    });
+
+    // clears: parent "", tier "any", depends_on []
+    expect(
+      (
+        await agent(`/agent/edit/${id}`, { reason: "unblock it", parent: "", tier: "any", depends_on: [] }, token)
+      ).status,
+    ).toBe(200);
+    const after = store().idx.get(id)!.meta;
+    expect(after.parent).toBeUndefined();
+    expect(after.tier).toBeUndefined();
+    expect(after.depends_on).toEqual([]);
+    const clearedText = file();
+    expect(clearedText).toContain("**Depends on:** nothing");
+    expect(clearedText).not.toContain("**Parent:**");
+
+    // a non-draft can't be edited — the human's to_draft is the go-ahead
+    expect((await post(`/api/items/${id}/approve`)).status).toBe(200);
+    const late = await agent(`/agent/edit/${id}`, { reason: "late", title: "no" }, token);
+    expect(late.status).toBe(409);
+    expect(late.text).toContain("only drafts");
+
+    // flag_drop: any tier, any non-terminal status — inbox → keep / drop
+    expect((await agent(`/agent/flag_drop/${flagId}`, { reason: "stale" }, lite)).status).toBe(200);
+    const inbox = (await (await api("/api/inbox")).json()) as { drop_flags: Array<{ id: string; reason?: string }> };
+    expect(inbox.drop_flags).toContainEqual(expect.objectContaining({ id: flagId, reason: "stale" }));
+    expect((await post(`/api/items/${flagId}/unflag`)).status).toBe(200);
+    expect(store().idx.get(flagId)!.meta.drop_request).toBeUndefined();
+    expect((await agent(`/agent/flag_drop/${flagId}`, { reason: "really stale" }, lite)).status).toBe(200);
+    expect((await post(`/api/items/${flagId}/drop`, { reason: "really stale" })).status).toBe(200);
+    expect(store().idx.get(flagId)!.meta).toMatchObject({ status: "dropped" });
+    expect(store().idx.get(flagId)!.meta.drop_request).toBeUndefined();
+
+    // human deps: meta + the **Depends on:** line stay in sync; reparent syncs **Parent:**
+    expect((await post(`/api/items/${base}/deps`, { depends_on: [id] })).status).toBe(200);
+    expect(readFileSync(join(root, files[1]), "utf8")).toContain(`**Depends on:** ${id}`);
+    expect((await post(`/api/items/${id}/reparent`, { parent: epic })).status).toBe(200);
+    expect(file()).toContain(`**Parent:** ${epic}`);
+  });
+});
+
 describe("nothing TeamEngage writes is left untracked (commit: false)", () => {
   it("propose stages the new task files and their tracking files; nothing is committed", async () => {
     const head = git("rev-parse", "HEAD");

@@ -119,6 +119,18 @@ export const ItemMeta = z
     authored_tier: Tier.optional(),
     /** a stronger session checked a light-authored draft (`vet ok`) */
     vetted_by: z.string().optional(),
+    /**
+     * An agent asked the human to drop this item (flag_drop). Advisory only —
+     * the status is untouched; the human drops it or clears the flag.
+     */
+    drop_request: z
+      .object({
+        /** flagging session id (`agent@machine#hex`) */
+        by: z.string(),
+        reason: z.string().optional(),
+        at: z.string(),
+      })
+      .optional(),
     /** the human's watch marker — board ★ colour, no workflow effect; unset = not starred */
     star_color: StarColor.optional(),
     /** autonomy: solo — the human stopped auto-accept for this submission (cleared on submit) */

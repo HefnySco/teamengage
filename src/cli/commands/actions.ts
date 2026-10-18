@@ -80,6 +80,35 @@ export async function dropCmd(args: string[], home?: string): Promise<number> {
 
 export const undropCmd = (args: string[], home?: string) => act("undrop", args, {}, home);
 
+/** `te unflag <ID>` — dismiss an agent's drop flag; the item stays. */
+export const unflagCmd = (args: string[], home?: string) => act("unflag", args, {}, home);
+
+/**
+ * `te deps <ID> [refs…]` — replace an item's depends_on; `--off` clears it.
+ * Refs may carry a `<workspace>:` prefix like reparent's.
+ */
+export async function depsCmd(args: string[], home?: string): Promise<number> {
+  const off = args.includes("--off");
+  const [id, ...refs] = positional(args.filter((a) => a !== "--off"));
+  if (!id || (!refs.length && !off)) {
+    process.stderr.write("usage: te deps <ID> [REF…|--off]\n");
+    return 2;
+  }
+  // uppercase the id part only — a `ws:` workspace prefix stays as written
+  const ref = (r: string) => {
+    const i = r.indexOf(":");
+    return i === -1 ? r.toUpperCase() : `${r.slice(0, i)}:${r.slice(i + 1).toUpperCase()}`;
+  };
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/deps${wsQ(args)}`,
+    { depends_on: off ? [] : refs.map(ref) },
+    home,
+  )) as { depends_on?: string[] };
+  process.stdout.write(`${id.toUpperCase()} → depends on ${r.depends_on?.join(", ") || "nothing"}\n`);
+  return 0;
+}
+
 /** `te hold <ID> [reason]` — park a draft/ready item; agents can't see or claim it. */
 export async function holdCmd(args: string[], home?: string): Promise<number> {
   const [id, ...rest] = positional(args);

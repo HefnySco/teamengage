@@ -167,6 +167,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           .map((i) => ({ id: i.meta.id, question: i.meta.question })),
         reviews: items.filter((i) => i.meta.status === "in_review").map((i) => i.meta.id),
         claims: [...ops.index.claims.values()].filter((c) => c.conflicted),
+        drop_flags: items
+          .filter((i) => i.meta.drop_request)
+          .map((i) => ({
+            id: i.meta.id,
+            status: i.meta.status,
+            by: i.meta.drop_request!.by,
+            reason: i.meta.drop_request!.reason,
+            at: i.meta.drop_request!.at,
+          })),
         findings: ops.findings(),
       };
     } catch (e) {
@@ -367,6 +376,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("accept", (ops, id) => ops.accept(id));
   act("reject", (ops, id, b) => ops.reject(id, b.reason ? String(b.reason) : undefined));
   act("drop", (ops, id, b) => ops.drop(id, b.reason ? String(b.reason) : undefined));
+  act("unflag", (ops, id) => ops.unflagDrop(id));
+  act("deps", (ops, id, b) =>
+    ops.setDepends(id, Array.isArray(b.depends_on) ? b.depends_on.map(String) : []),
+  );
   act("undrop", (ops, id) => ops.undrop(id));
   act("complete", (ops, id, b) => ops.complete(id, b.note ? String(b.note) : undefined));
   act("hold", (ops, id, b) => ops.hold(id, b.reason ? String(b.reason) : undefined));

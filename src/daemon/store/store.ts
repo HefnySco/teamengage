@@ -12,7 +12,21 @@ import {
   appendToSection,
   emitFrontmatter,
 } from "../../core/files/markdown.js";
-import { withTeTag, withoutTeTag, toSourcePath, appendNote, appendSection, setTouches, removeNote, resolveSource } from "../../core/files/source.js";
+import {
+  withTeTag,
+  withoutTeTag,
+  toSourcePath,
+  appendNote,
+  appendSection,
+  setTouches,
+  removeNote,
+  resolveSource,
+  setTitleLine,
+  setDependsLine,
+  setParentLine,
+  replaceSection,
+  PROTECTED_SECTIONS,
+} from "../../core/files/source.js";
 import { normalizeDomain, normalizeDomains, type DomainDef } from "../../core/domains/domains.js";
 
 /** keywords: trimmed, lowercase, unique. */
@@ -836,6 +850,18 @@ export class PlansStore {
         },
         [`- ${now} ${who} ${what}`],
       );
+      if (this.ws.config.mode === "overlay" && it.meta.source) {
+        const found = await resolveSource(this.ws.root, id, it.meta.source);
+        if (found) {
+          const out = setParentLine(found.text, parent);
+          if (out !== found.text) {
+            const abs = join(this.ws.root, found.path);
+            await writeFileAtomic(abs, out);
+            this.onFileWrite?.(abs, out);
+            await this.stageTaskFiles([found.path]);
+          }
+        }
+      }
       await this.commitPaths([it.path], `te: ${id} ${what}`);
       return { parent };
     });
@@ -1074,6 +1100,168 @@ export class PlansStore {
       await this.stageTaskFiles([found.path]);
       await this.index.upsertFile(absItem);
       return { path: found.path };
+    });
+  }
+
+  /**
+   * Rewrite a draft: any of title, summary, acceptance (replaces the
+   * checklist), touches, depends_on, parent, targets, tier, domains and
+   * `## <heading>` sections (protected ones refused). The draft gate and
+   * reference checks live in ops; this is the write. Overlay mode edits the
+   * task file's header lines and sections; standard mode the item's own
+   * sections. The status stays `draft` — the human re-approves.
+   */
+  editDraft(
+    id: string,
+    change: {
+      reason: string;
+      title?: string;
+      summary?: string;
+      acceptance?: string[];
+      touches?: string[];
+      depends_on?: string[];
+      parent?: string | null;
+      targets?: string[];
+      tier?: "light" | "standard" | "heavy" | null;
+      domains?: string[];
+      sections?: Record<string, string>;
+    },
+    actor: Actor,
+  ): Promise<{ path?: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      if (doc.meta.status !== "draft") {
+        throw new InvalidTransitionError(`edit: ${id} is ${doc.meta.status} — only drafts can be edited`, doc.meta.status, "edit");
+      }
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      const what: string[] = [];
+      if (change.title && change.title !== doc.meta.title) {
+        meta.title = change.title;
+        what.push("title");
+      }
+      if (change.depends_on) {
+        meta.depends_on = change.depends_on;
+        what.push(`depends_on → ${change.depends_on.join(", ") || "nothing"}`);
+      }
+      if (change.parent !== undefined) {
+        if (change.parent) meta.parent = change.parent;
+        else delete meta.parent;
+        what.push(`parent → ${change.parent ?? "cleared"}`);
+      }
+      if (change.targets) {
+        meta.targets = change.targets;
+        what.push("targets");
+      }
+      if (change.tier !== undefined) {
+        if (change.tier) meta.tier = change.tier;
+        else delete meta.tier;
+        what.push(`tier → ${change.tier ?? "any"}`);
+      }
+      if (change.domains) {
+        meta.domains = normalizeDomains(change.domains);
+        what.push("domains");
+      }
+      if (change.domains) await this.ensureDomains(meta.domains);
+      const checklist = (a: string[]) =>
+        a.map((c) => `- [ ] ${c.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`).join("\n");
+      const sections = Object.entries(change.sections ?? {}).map(([h, b]) => {
+        const heading = h.replace(/^#+\s*/, "").trim();
+        if (!heading) throw new ValidationError("edit: empty section heading");
+        if (PROTECTED_SECTIONS.has(heading.toLowerCase())) {
+          throw new ValidationError(`edit: "## ${heading}" is managed by TeamEngage — not editable`);
+        }
+        return [heading, b] as [string, string];
+      });
+      const overlay = this.ws.config.mode === "overlay" && doc.meta.source;
+      if (change.touches && !overlay) {
+        throw new ValidationError("edit: touches is the task file's **Touches:** line — task-folder items only");
+      }
+      const bodyEdits: Array<[string, string]> = [];
+      if (change.summary !== undefined) {
+        bodyEdits.push(["Summary", change.summary]);
+        what.push("summary");
+      }
+      if (change.acceptance) {
+        bodyEdits.push(["Acceptance", checklist(change.acceptance)]);
+        what.push("acceptance");
+      }
+      for (const [h, b] of sections) {
+        bodyEdits.push([h, b]);
+        what.push(`## ${h}`);
+      }
+      let path: string | undefined;
+      let itemText = doc.raw.text;
+      if (overlay) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        let out = found.text;
+        if (change.title) out = setTitleLine(out, change.title);
+        if (change.depends_on) out = setDependsLine(out, change.depends_on);
+        if (change.parent !== undefined) out = setParentLine(out, change.parent ?? undefined);
+        if (change.touches) {
+          out = setTouches(out, change.touches);
+          what.push("touches");
+        }
+        for (const [h, b] of bodyEdits) out = replaceSection(out, h, b);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        path = found.path;
+      } else {
+        for (const [h, b] of bodyEdits) itemText = replaceSection(itemText, h, b);
+      }
+      await this.writeItemDoc(absItem, itemText, meta, [
+        `- ${now} ${who} edited the draft (${what.join(", ") || "no changes"}): ${change.reason}`,
+      ]);
+      await this.commitPaths([it.path], `te: ${id} edit by ${who}`);
+      if (path) await this.stageTaskFiles([path]);
+      await this.index.upsertFile(absItem);
+      return { path };
+    });
+  }
+
+  /**
+   * Set an item's depends_on (human — callers check). Refs are validated in
+   * ops (existence, self, cycles). Overlay mode rewrites the task file's
+   * `**Depends on:**` line so doc and meta stay in sync.
+   */
+  setDepends(id: string, dependsOn: string[], actor: Actor): Promise<{ depends_on: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const same =
+        it.meta.depends_on.length === dependsOn.length &&
+        it.meta.depends_on.every((r, i) => r === dependsOn[i]);
+      if (same) return { depends_on: dependsOn };
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const what = dependsOn.length ? dependsOn.join(", ") : "nothing";
+      await this.rewriteItem(id, (m) => ({ ...m, depends_on: dependsOn }), [
+        `- ${now} ${who} depends_on → ${what}`,
+      ]);
+      if (this.ws.config.mode === "overlay" && it.meta.source) {
+        const found = await resolveSource(this.ws.root, id, it.meta.source);
+        if (found) {
+          const out = setDependsLine(found.text, dependsOn);
+          if (out !== found.text) {
+            const abs = join(this.ws.root, found.path);
+            await writeFileAtomic(abs, out);
+            this.onFileWrite?.(abs, out);
+            await this.stageTaskFiles([found.path]);
+          }
+        }
+      }
+      await this.commitPaths([it.path], `te: ${id} depends_on → ${what}`);
+      return { depends_on: dependsOn };
     });
   }
 

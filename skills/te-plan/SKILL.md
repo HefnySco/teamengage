@@ -162,7 +162,9 @@ Field notes:
   landed ready so the human knows agents can pick them up now.
 - Do not claim your own drafts, edit the `te:` line, or move files.
 - Later refinements to a proposed file: additive only (`## Acceptance`,
-  `## Notes`), each recorded with `log`. To execute tasks, see te-work.
+  `## Notes`), each recorded with `log` — or rewrite the draft wholesale
+  with `edit` (§9), which stays the preferred path for real changes.
+  To execute tasks, see te-work.
 
 ## Example result
 
@@ -221,3 +223,25 @@ curl -s -X POST $B/rescope/GL-0061 -H "$H" -d '{
 
 `touches` **replaces** the whole line — list the old paths too. `add_acceptance`
 only appends. The task stays a draft; tell the human to approve it again.
+
+For bigger rewrites — wrong title, different summary, a re-cut acceptance
+list, new `depends_on`/`parent`, tier, domains, extra sections — use `edit`
+instead (same gates: drafts only, planner tiers, a `reason` is required):
+
+```bash
+curl -s -X POST $B/edit/GL-0061 -H "$H" -d '{
+  "reason":"human asked to split storage work out",
+  "summary":"Rerun only the module-event latch, not storage rotation.",
+  "acceptance":["second AUTO run re-fires module events","ctest -R mission_restart passes"],
+  "depends_on":["GL-0019"], "parent":"GL-0024", "tier":"standard",
+  "sections":{"Approach":"Reuse the restart flag path from TASK-13."}}'
+```
+
+Fields left out are unchanged; `acceptance` replaces the whole checklist,
+`"parent":""` / `"tier":"any"` clear, `depends_on: []` clears. Managed
+sections (## Notes/Review/Evidence/Handoff/Log/History) are refused.
+
+A task that turned out stale, duplicated or superseded is not yours to
+delete — flag it instead: `curl -s -X POST $B/flag_drop/GL-0061 -H "$H" -d
+'{"reason":"superseded by GL-0070"}'`. The human sees it in the inbox and
+drops or keeps it.

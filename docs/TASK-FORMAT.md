@@ -61,10 +61,17 @@ previous run must be cleared so the second run fires them again.
 - **Agents** create task files only through `propose` and never by hand. In
   existing files they make additive edits only: append to `## Acceptance`
   or `## Notes`, and record each edit with `log`.
+- **Agents may rewrite a draft wholesale, but only through the `edit`
+  tool** (planner tiers): title, `**Depends on:**`, `**Parent:**`,
+  `**Touches:**` and `##` sections — the item stays a draft for the human
+  to re-approve. Hand-edits to those header lines are not picked up as
+  state changes.
 - **Agents never** touch the `te:` line, move files (e.g. into `done/`), or
   change status by editing a file. Status lives in TeamEngage.
 - **The human** may edit anything and move files; TeamEngage follows moves
-  by the `te:` tag.
+  by the `te:` tag. `**Depends on:**` / `**Parent:**` are best changed with
+  `te deps` / the item page — those keep the tracked meta and the line in
+  sync (meta is the source of truth; editing the line alone does nothing).
 
 ## Cleaning up older files (target mapping)
 

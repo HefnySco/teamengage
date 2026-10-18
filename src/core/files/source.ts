@@ -107,6 +107,112 @@ export function appendSection(text: string, heading: string, block: string): str
   return [...lines.slice(0, end), "", ...add, ...(after.length ? ["", ...after] : [""])].join(eol);
 }
 
+/** First `# ` heading line outside frontmatter/code fences → `title`. */
+export function setTitleLine(text: string, title: string): string {
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let fmEnd = 0;
+  const fm = LEADING_FM.exec(text);
+  if (fm) fmEnd = text.slice(0, fm[0].length).split(/\r?\n/).length - 1;
+  for (let i = fmEnd; i < lines.length; i++) {
+    if (/^\s*(```|~~~)/.test(lines[i])) inFence = !inFence;
+    if (inFence) continue;
+    if (/^#\s/.test(lines[i])) {
+      lines[i] = `# ${title}`;
+      return lines.join(text.includes("\r\n") ? "\r\n" : "\n");
+    }
+  }
+  return text;
+}
+
+/**
+ * Replace the task file's `**Depends on:**` line (outside code fences).
+ * No such line → inserted after the `# ` title, else at the top.
+ */
+export function setDependsLine(text: string, dependsOn: string[]): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  const line = `**Depends on:** ${dependsOn.length ? dependsOn.join(", ") : "nothing"}`;
+  let inFence = false;
+  let at = -1;
+  let title = -1;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (at === -1 && /^\*\*Depends on:\*\*/i.test(l)) at = i;
+    if (title === -1 && /^#\s/.test(l)) title = i;
+  });
+  if (at !== -1) lines[at] = line;
+  else if (title !== -1) lines.splice(title + 1, 0, "", line);
+  else lines.unshift(line, "");
+  return lines.join(eol);
+}
+
+/**
+ * Set or clear the task file's `**Parent:**` line (outside code fences).
+ * `undefined` removes it; otherwise it is replaced, or inserted after
+ * `**Depends on:**` (else after the `# ` title, else at the top).
+ */
+export function setParentLine(text: string, parent: string | undefined): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  const line = `**Parent:** ${parent ?? ""}`;
+  let inFence = false;
+  let at = -1;
+  let afterDeps = -1;
+  let title = -1;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (at === -1 && /^\*\*Parent:\*\*/i.test(l)) at = i;
+    if (/^\*\*Depends on:\*\*/i.test(l)) afterDeps = i;
+    if (title === -1 && /^#\s/.test(l)) title = i;
+  });
+  if (at !== -1) {
+    if (parent === undefined) lines.splice(at, 1);
+    else lines[at] = line;
+  } else if (parent !== undefined) {
+    if (afterDeps !== -1) lines.splice(afterDeps + 1, 0, line);
+    else if (title !== -1) lines.splice(title + 1, 0, "", line);
+    else lines.unshift(line, "");
+  }
+  return lines.join(eol);
+}
+
+/** Headings the item/task files manage — draft edits may not rewrite these. */
+export const PROTECTED_SECTIONS = new Set([
+  "notes",
+  "review",
+  "evidence",
+  "handoff",
+  "log",
+  "history",
+]);
+
+/**
+ * Replace the body of the last `## <heading>` section (outside code fences);
+ * no such section → appended at the end (same shape appendSection produces).
+ */
+export function replaceSection(text: string, heading: string, body: string): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let at = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(l)) at = i;
+  });
+  const content = body.replace(/\s+$/, "").split(/\r?\n/);
+  if (at === -1) {
+    return [text.replace(/\s+$/, ""), "", `## ${heading}`, "", ...content, ""].join(eol);
+  }
+  const next = headings.find((h) => h > at) ?? lines.length;
+  return [...lines.slice(0, at + 1), "", ...content, "", ...lines.slice(next)].join(eol);
+}
+
 /**
  * Replace the task file's `**Touches:**` line (outside code fences). No such
  * line → inserted after `**Depends on:**` / `**Parent:**`, else after the

@@ -300,6 +300,79 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "flag_drop",
+    {
+      description:
+        "Ask the human to drop this task — flag it with a reason; the human decides (drop or keep). " +
+        "Use for stale, superseded, duplicated or wrong work — any status but done/dropped, claimed or not. " +
+        "Advisory only: nothing changes until the human acts. Not for being stuck on your own claim — handoff instead.",
+      inputSchema: { id: z.string(), reason: z.string() },
+    },
+    async ({ id, reason }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.flagDrop(id, s, reason);
+        return okText(`flagged ${id} for drop — the human decides`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "edit",
+    {
+      description:
+        "Rewrite a DRAFT — any of: title, summary, acceptance (replaces the whole checklist), touches " +
+        "(the **Touches:** line), depends_on, parent (\"\" clears), targets, tier (any clears), domains, " +
+        "sections ({\"## Heading\": new body}; ## Notes/Review/Evidence/Handoff/Log/History are managed — refused). " +
+        "Only drafts: for anything else ask the human to move it back to draft first (that is the go-ahead). " +
+        "reason says why. Planner tiers only (standard/heavy). It stays a draft — the human approves the new version.",
+      inputSchema: {
+        id: z.string(),
+        reason: z.string(),
+        title: z.string().optional(),
+        summary: z.string().optional(),
+        acceptance: z.array(z.string()).optional(),
+        touches: z.array(z.string()).optional(),
+        depends_on: z.array(z.string()).optional(),
+        parent: z.string().optional(),
+        targets: z.array(z.string()).optional(),
+        tier: z.enum(["light", "standard", "heavy", "any"]).optional(),
+        domains: z.array(z.string()).optional(),
+        sections: z.record(z.string(), z.string()).optional(),
+      },
+    },
+    async ({ id, reason, title, summary, acceptance, touches, depends_on, parent, targets, tier, domains, sections }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.editDraft(id, s, {
+          reason,
+          title,
+          summary,
+          acceptance,
+          touches,
+          depends_on,
+          parent: parent === "" ? null : parent,
+          targets,
+          tier: tier === "any" ? null : tier,
+          domains,
+          sections,
+        });
+        return okText(`edited ${id}${r.path ? ` → ${r.path}` : ""} (still draft — the human approves)`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "vet",
     {
       description:

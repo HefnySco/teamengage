@@ -157,6 +157,7 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
     questions: Array<{ id: string; question?: { text: string } }>;
     reviews: string[];
     claims: Array<{ item: string }>;
+    drop_flags: Array<{ id: string; by: string }>;
     findings: Array<{ severity: string }>;
   };
   process.stdout.write(
@@ -164,6 +165,7 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
       `drafts: ${i.drafts.join(", ") || "-"}`,
       `questions: ${i.questions.map((q) => q.id).join(", ") || "-"}`,
       `reviews: ${i.reviews.join(", ") || "-"}`,
+      `drop flags: ${(i.drop_flags ?? []).map((f) => `${f.id} (${f.by})`).join(", ") || "-"}`,
       `conflicted claims: ${i.claims.map((c) => c.item).join(", ") || "-"}`,
       `findings: ${i.findings.length}`,
     ].join("\n") + "\n",

@@ -394,6 +394,63 @@ describe("hold", () => {
   });
 });
 
+describe("drop flags (agent asks, human decides)", () => {
+  it("flag_drop works on any non-terminal status, keeps the status, records the flag", () => {
+    for (const s of ["draft", "ready", "hold", "in_progress", "waiting", "in_review"] as Status[]) {
+      const r = transition(
+        item(s),
+        { type: "flag_drop", reason: "superseded" },
+        agent,
+        ctx({ claim: claimOf() }),
+      );
+      expect(r.meta.status).toBe(s);
+      expect(r.meta.drop_request).toEqual({ by: agent.session, reason: "superseded", at: NOW });
+      expect(r.effects).toEqual([]); // advisory — claims stay put
+      expect(r.log[0]).toContain("flagged for drop: superseded");
+    }
+  });
+
+  it("refused on terminal items and for humans; a re-flag replaces the reason", () => {
+    for (const s of ["done", "dropped"] as Status[]) {
+      expect(() => transition(item(s), { type: "flag_drop" }, agent, ctx())).toThrow(
+        InvalidTransitionError,
+      );
+    }
+    expect(() => transition(item("draft"), { type: "flag_drop" }, human, ctx())).toThrow(
+      ForbiddenError,
+    );
+    const first = transition(item("draft"), { type: "flag_drop", reason: "old" }, agent, ctx());
+    const again = transition(first.meta, { type: "flag_drop", reason: "better reason" }, agent2, ctx());
+    expect(again.meta.drop_request?.by).toBe(agent2.session);
+    expect(again.meta.drop_request?.reason).toBe("better reason");
+  });
+
+  it("unflag_drop clears the flag (human-only); drop clears it too", () => {
+    const flagged = transition(item("ready"), { type: "flag_drop", reason: "x" }, agent, ctx());
+    expect(() =>
+      transition(flagged.meta, { type: "unflag_drop" }, agent, ctx()),
+    ).toThrow(ForbiddenError);
+    const kept = transition(flagged.meta, { type: "unflag_drop" }, human, ctx());
+    expect(kept.meta.status).toBe("ready");
+    expect(kept.meta.drop_request).toBeUndefined();
+    // nothing to unflag → refused
+    expect(() => transition(item("ready"), { type: "unflag_drop" }, human, ctx())).toThrow(
+      InvalidTransitionError,
+    );
+    // approving the flag = drop; the flag doesn't survive on the dropped item
+    const flaggedIp = transition(
+      item("in_progress"),
+      { type: "flag_drop", reason: "obsolete" },
+      agent,
+      ctx({ claim: claimOf() }),
+    );
+    const dropped = transition(flaggedIp.meta, { type: "drop" }, human, ctx({ claim: claimOf() }));
+    expect(dropped.meta.status).toBe("dropped");
+    expect(dropped.meta.drop_request).toBeUndefined();
+    expect(dropped.effects).toEqual([{ type: "delete_claim" }, { type: "cleanup_work" }]);
+  });
+});
+
 describe("archive", () => {
   it("hides any unclaimed item without touching its status; unarchive restores", () => {
     for (const s of ["draft", "ready", "hold", "done", "dropped", "in_review"] as Status[]) {

@@ -205,6 +205,9 @@ release  = in_progress|waiting ──▶ ready as before; on in_review it also
 blocked  = derived: any depends_on not done (in_review counts as done
            unless workspace.yaml review_unblocks: false)
 dropped  = human only; ──undrop──▶ draft (re-approval required)
+flag_drop= agent only, any non-terminal status: advisory `drop_request`
+          (by / reason / at) — the human's `drop` approves, `unflag_drop`
+          keeps it; status and claims are untouched meanwhile
 change_answer = human only, any status but done/dropped: revise the item's latest answer
            (same decision id, version +1, old → new in the Log)
 close_plan = human only, epic: sets plan_closed — a flag, not a status
@@ -265,8 +268,28 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   itself is the human's own git operation. Refused while claimed or while
   another item depends on it or names it as parent. Milder options first:
   drop (decided against, still listed) and archive (hidden, restorable).
+- `drop_request` is the agent's **delete flag** (`flag_drop` tool, any tier,
+  any non-terminal status — claimed or not): advisory only. The item keeps
+  its status and claim until the human drops it (the claim is released and
+  work cleaned up, as always) or keeps it (`te unflag` / "keep" in the
+  inbox, `unflag_drop`). The flag carries the flagger and its reason so the
+  human sees who asked and why.
+- **A draft is fully editable** — the agent `edit` tool (planner tiers:
+  standard/heavy) rewrites any field of a draft: title, summary, acceptance
+  (the whole checklist is replaced), touches, depends_on, parent, targets,
+  tier, domains and non-managed `##` sections (Notes/Review/Evidence/
+  Handoff/Log/History are refused). The item stays a draft, so the human's
+  approve remains the gate — every edit is by definition pre-approval. For
+  anything non-draft the human's `to_draft` is the go-ahead to rescope.
+- **`depends_on` may change after creation** — `te deps <ID> [refs…]`, the
+  pencil next to "waits on" on the item page, or `edit` on a draft. Refs
+  are validated (each must exist locally or in a linked workspace, no
+  self-dependency, no cycles); in overlay mode the `**Depends on:**` and
+  `**Parent:**` lines in the task file are rewritten to stay in sync (the
+  item's meta stays the source of truth — a hand-edit of the line alone
+  changes nothing).
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
-  `undrop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
+  `undrop`, `unflag_drop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
   `star`/`unstar`, `close_plan`/`reopen_plan`, and `release` of someone
   else's claim — except an agent may release an `in_review` claim held on
   its own machine (see `release` above).
@@ -416,6 +439,8 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `review(id, verdict, note?)` | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched. |
 | `bounce(id, reason)` | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human. |
 | `propose(items[])` | Create `draft` items/edges (a plan for the human to approve). |
+| `edit(id, reason, …)` | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft. |
+| `flag_drop(id, reason)` | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status. |
 | `query(filter)` | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains). |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph. |
 
@@ -438,7 +463,8 @@ submissions; accept stays with the human."
 
 **CLI** `te`: `te ls`, `te show GL-0013`, `te approve`, `te answer`, `te accept`,
 `te claim` / `te release` (human hands-off or freeing a stale claim),
-`te rollback`, `te sync`, `te import <folder>`, `te graph`.
+`te deps <ID> [refs…]` (change depends_on), `te unflag <ID>` (dismiss a drop
+flag), `te rollback`, `te sync`, `te import <folder>`, `te graph`.
 
 ## 9. Import of existing plans
 

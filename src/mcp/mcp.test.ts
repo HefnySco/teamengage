@@ -96,6 +96,8 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "brief",
         "claim",
         "close_plan",
+        "edit",
+        "flag_drop",
         "graph",
         "handoff",
         "hello",

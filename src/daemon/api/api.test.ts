@@ -11,6 +11,7 @@ import { SessionRegistry } from "../sessions/sessions.js";
 import { EventBus, registerEventRoutes, eventId } from "./events.js";
 import { registerApiRoutes } from "./api.js";
 import type { Event } from "../../core/model/event.js";
+import { NotFoundError } from "../../core/model/errors.js";
 
 let home: string;
 let plans: string;
@@ -768,5 +769,170 @@ describe("autonomy: solo", () => {
     } finally {
       wsr.ws.config.autonomy = "strict";
     }
+  });
+});
+
+describe("drop flags: agent asks, human decides", () => {
+  it("flag → inbox → unflag keeps it; flag → drop drops it and clears the flag", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "stale idea" },
+        { type: "task", title: "superseded work" },
+      ],
+      human,
+    );
+    const [keep, drop] = ids;
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const flags = async () =>
+      ((await (await api("/api/inbox")).json()) as { drop_flags: Array<{ id: string; by: string; reason?: string; status: string }> }).drop_flags;
+
+    const agent = ctx.sessions.hello("flagger", undefined, "light"); // any tier may flag
+    await ops.flagDrop(keep, agent, "no longer needed");
+    expect(store.idx.get(keep)!.meta.status).toBe("draft"); // advisory — status untouched
+    expect(store.idx.get(keep)!.meta.drop_request?.by).toBe(agent.id);
+    const f1 = await flags();
+    expect(f1.map((f) => f.id)).toContain(keep);
+    expect(f1.find((f) => f.id === keep)).toMatchObject({ reason: "no longer needed", status: "draft" });
+
+    // humans can't flag, agents can't unflag
+    await expect(ops.flagDrop(keep, "human" as never)).rejects.toThrow(/agent-only/);
+    expect((await post(`/api/items/${keep}/unflag`)).status).toBe(200);
+    expect(store.idx.get(keep)!.meta.drop_request).toBeUndefined();
+    expect((await post(`/api/items/${keep}/unflag`)).status).toBeGreaterThanOrEqual(400); // nothing to dismiss
+
+    // approve → ready, flag, drop: the flag is consumed by the drop
+    await ops.approve(drop);
+    await ops.flagDrop(drop, agent, "superseded by GL-other");
+    const d = await post(`/api/items/${drop}/drop`, { reason: "superseded by GL-other" });
+    expect(d.status).toBe(200);
+    expect(store.idx.get(drop)!.meta).toMatchObject({ status: "dropped" });
+    expect(store.idx.get(drop)!.meta.drop_request).toBeUndefined();
+    expect((await flags()).map((f) => f.id)).not.toContain(drop);
+
+    // flagging a claimed item doesn't interrupt it — the drop does the cleanup
+    const { ids: cids } = await store.createItems([{ type: "task", title: "in-flight" }], human);
+    await ops.approve(cids[0]);
+    const worker = ctx.sessions.hello("worker");
+    await ops.claim(cids[0], worker);
+    await ops.flagDrop(cids[0], worker, "blocked forever");
+    expect(store.idx.get(cids[0])!.meta.status).toBe("in_progress");
+    expect(store.idx.claims.has(cids[0])).toBe(true);
+    expect((await post(`/api/items/${cids[0]}/drop`, { reason: "blocked forever" })).status).toBe(200);
+    expect(store.idx.claims.has(cids[0])).toBe(false);
+  });
+});
+
+describe("deps: change depends_on after creation", () => {
+  it("set, clear, and validation — missing / self / cycle refused", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "dep base" },
+        { type: "task", title: "dep mid" },
+        { type: "task", title: "dep leaf" },
+      ],
+      human,
+    );
+    const [base, mid, leaf] = ids;
+    const post = (id: string, depends_on: string[]) =>
+      api(`/api/items/${id}/deps`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ depends_on }),
+      });
+
+    expect((await post(mid, [base])).status).toBe(200);
+    expect(store.idx.get(mid)!.meta.depends_on).toEqual([base]);
+    expect((await post(leaf, [mid])).status).toBe(200);
+
+    // closing a cycle: base may not wait on leaf (leaf → mid → base)
+    const cyc = await post(base, [leaf]);
+    expect(cyc.status).toBe(400);
+    expect(await cyc.text()).toMatch(/cycle/);
+    // self and missing
+    expect((await post(base, [base])).status).toBe(400);
+    expect((await post(base, ["WS-9999"])).status).toBe(404);
+    expect((await post(base, ["not an id"])).status).toBe(400);
+    // empty clears; a dropped dep satisfies dependents
+    expect((await post(leaf, [])).status).toBe(200);
+    expect(store.idx.get(leaf)!.meta.depends_on).toEqual([]);
+    expect((await api(`/api/items/${base}/drop`, { method: "POST" })).status).toBe(200);
+    expect(store.idx.get(mid)!.blocked).toBe(false); // dropped counts as done
+  });
+});
+
+describe("editDraft: agent rewrites a draft", () => {
+  it("fields + sections land on the item; drafts only, planner tier only", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "edit me" },
+        { type: "task", title: "edit target" },
+        { type: "epic", title: "edit epic" },
+      ],
+      human,
+    );
+    const [id, dep, epic] = ids;
+    const light = ctx.sessions.hello("lite", undefined, "light");
+    const planner = ctx.sessions.hello("plnr", undefined, "standard");
+
+    await expect(ops.editDraft(id, light, { reason: "x", title: "y" })).rejects.toThrow(/standard- or heavy/);
+    await expect(ops.editDraft(id, planner, { title: "y" } as never)).rejects.toThrow(/reason/);
+
+    await ops.editDraft(id, planner, {
+      reason: "fuller spec",
+      title: "edited title",
+      summary: "New summary body.",
+      acceptance: ["a1", "a2"],
+      depends_on: [dep],
+      parent: epic,
+      tier: "heavy",
+      domains: ["infra"],
+      sections: { Approach: "Do it sideways." },
+    });
+    const it = store.idx.get(id)!;
+    expect(it.meta).toMatchObject({
+      title: "edited title",
+      status: "draft",
+      tier: "heavy",
+      depends_on: [dep],
+      parent: epic,
+      domains: ["infra"],
+    });
+    const body = (h: string) => it.sections.find((s) => s.heading === h)?.body ?? "";
+    expect(body("Summary")).toContain("New summary body.");
+    expect(body("Acceptance")).toContain("- [ ] a1");
+    expect(body("Acceptance")).toContain("- [ ] a2");
+    expect(body("Approach")).toContain("Do it sideways.");
+    expect(body("Log")).toMatch(/edited the draft \(.*\): fuller spec/);
+    // protected sections are refused
+    await expect(
+      ops.editDraft(id, planner, { reason: "r", sections: { Notes: "forged" } }),
+    ).rejects.toThrow(/managed by TeamEngage/);
+
+    // clears: tier "" → cleared, parent "" → cleared, deps [] → cleared
+    await ops.editDraft(id, planner, { reason: "undo", parent: null, depends_on: [], tier: null });
+    const cleared = store.idx.get(id)!.meta;
+    expect(cleared.parent).toBeUndefined();
+    expect(cleared.depends_on).toEqual([]);
+    expect(cleared.tier).toBeUndefined();
+
+    // not a draft → refused even for a human
+    await ops.approve(id);
+    await expect(ops.editDraft(id, "human", { reason: "late", title: "no" })).rejects.toThrow(/draft/);
+    // validation: self-dep / dangling / cycle
+    await expect(ops.editDraft(id, planner, { reason: "r", depends_on: [id] })).rejects.toThrow(/itself/);
+    await expect(ops.editDraft(id, planner, { reason: "r", depends_on: ["WS-9999"] })).rejects.toThrow(NotFoundError);
   });
 });

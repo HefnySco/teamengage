@@ -67,6 +67,13 @@ export type Action =
   | { type: "set_tier"; tier?: Tier; reset?: boolean }
   | { type: "accept" }
   | { type: "reject"; reason?: string }
+  /**
+   * Agent asks the human to drop this item: sets `drop_request` (advisory —
+   * the status is untouched). Any session may flag, including the holder.
+   */
+  | { type: "flag_drop"; reason?: string }
+  /** Human dismisses a drop flag — the item stays. */
+  | { type: "unflag_drop" }
   | { type: "drop"; reason?: string }
   /** Restore a dropped item to draft (re-approval required before claim). */
   | { type: "undrop" }
@@ -554,9 +561,36 @@ export function transition(
       return out;
     }
 
+    case "flag_drop": {
+      if (actor.kind !== "agent") {
+        throw new ForbiddenError("flag_drop is an agent-only action (the human has drop)");
+      }
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      out.meta.drop_request = {
+        by: actor.session,
+        ...(action.reason ? { reason: action.reason } : {}),
+        at: stamp,
+      };
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from, action.reason));
+      out.log.push(`- ${stamp} ${who} flagged for drop${action.reason ? `: ${action.reason}` : ""}`);
+      return out;
+    }
+
+    case "unflag_drop": {
+      requireHuman(actor, action.type);
+      if (!meta.drop_request) {
+        throw new InvalidTransitionError("cannot unflag_drop: not flagged for drop", from, action.type);
+      }
+      delete out.meta.drop_request;
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
+      out.log.push(`- ${stamp} ${who} dismissed the drop flag — kept`);
+      return out;
+    }
+
     case "drop": {
       requireHuman(actor, action.type);
       if (TERMINAL.includes(from)) fail(from, action.type);
+      delete out.meta.drop_request;
       set("dropped", action.reason);
       out.log.push(`- ${stamp} ${who} dropped${action.reason ? `: ${action.reason}` : ""}`);
       if (ctx.claim) {

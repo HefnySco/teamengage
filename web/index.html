@@ -146,6 +146,8 @@
       /* graph: a scrollable zoom canvas; nodes open items on click */
       .graph-wrap { position: relative; }
       .graph-tools { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
+      .graph-drafts { position: absolute; top: .5rem; left: .5rem; z-index: 2; background: var(--bs-body-bg); opacity: .95; max-height: 60%; overflow: auto; }
+      .graph-drafts .id { cursor: pointer; }
       .graph-view { overflow: auto; height: calc(100vh - 12rem); }
       /* zoom sizes a wrapper around the svg — a transform would grow it only
          visually, leaving nothing scrollable; flex:none because .card is a
