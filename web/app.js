@@ -955,17 +955,20 @@ const PlanNode = ({ i, depth, tree }) => {
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
-        ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
+        ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} /><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
         ${isPlan && html`<span class="acts"><${ActBtn} title="open this plan's dependency graph"
           onClick=${(e) => {
             e.stopPropagation(); // the row itself opens the item
             nav(`graph/${i.id}`);
           }}><${GraphIcon} /></${ActBtn}></span>`}
-        ${!isPlan && i.status === "draft" && html`<span class="ms-auto acts"><${ActBtn} variant="primary" title="approve this draft — it becomes ready for agents"
-          onClick=${(e) => {
-            e.stopPropagation(); // the row itself opens the item
-            tree.act(i.id, "approve");
-          }}><${CheckIcon} /></${ActBtn}></span>`}
+        ${!isPlan && html`<span class="ms-auto d-flex align-items-center gap-2">
+          <${DomainTags} ds=${i.domains} />
+          ${i.status === "draft" && html`<span class="acts"><${ActBtn} variant="primary" title="approve this draft — it becomes ready for agents"
+            onClick=${(e) => {
+              e.stopPropagation(); // the row itself opens the item
+              tree.act(i.id, "approve");
+            }}><${CheckIcon} /></${ActBtn}></span>`}
+        </span>`}
       </div>
       ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
