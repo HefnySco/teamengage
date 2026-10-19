@@ -121,17 +121,24 @@ const DomainChips = ({ ds, onClick, active }) =>
 
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
 // an epic's derived plan lifecycle (plan_state) — draft → decomposing → active → done
-const PLAN_BADGE = {
-  draft: "text-bg-secondary",
-  decomposing: "text-bg-info",
-  active: "text-bg-warning",
-  done: "text-bg-success",
+const PLAN_CHIP = {
+  draft: "ps-draft",
+  decomposing: "ps-decomposing",
+  active: "ps-active",
+  done: "ps-done",
 };
+// ghost micro-chip: graph glyph + n/m fraction — the colour carries the state, the title the words;
+// clicking opens the plan's dependency graph
 const PlanBadge = ({ i }) => {
   if (!i.plan_state) return null;
+  const id = i.id ?? i.meta?.id; // list rows are flat; the item page nests it under meta
   const p = `${i.plan_progress?.done ?? 0}/${i.plan_progress?.total ?? 0}`;
-  return html`<span class="badge ${PLAN_BADGE[i.plan_state] ?? "text-bg-secondary"}"
-    title="plan ${i.plan_state} — ${p} parts finished">plan ${i.plan_state} ${p}</span>`;
+  return html`<span class="plan-chip ${PLAN_CHIP[i.plan_state] ?? "ps-draft"}" role="button"
+    title="plan ${i.plan_state} — ${p} parts finished — open the dependency graph"
+    onClick=${(e) => {
+      e.stopPropagation(); // don't open the item — show its plan graph instead
+      nav(`graph/${id}`);
+    }}><${GraphIcon} />${p}</span>`;
 };
 
 // bootstrap-icons glyphs, inlined (no icon font dependency)
@@ -201,18 +208,34 @@ const RobotIcon = () => glyph([
 ]);
 
 // search field with a × clear button inside (the native type=search one is webkit-only)
-const SearchBox = ({ value, onChange, onKeyDown, ...props }) => html`
+// onEscape may return true to keep the query (e.g. it dismissed a dropdown instead)
+const SearchBox = ({ value, onChange, onKeyDown, onEscape, ...props }) => html`
   <span class="search-box position-relative d-inline-flex align-items-center">
     <input type="search" class="form-control form-control-sm" ...${props} value=${value}
       onInput=${(e) => onChange(e.target.value)}
       onKeyDown=${(e) => {
-        if (e.key === "Escape") onChange("");
+        if (e.key === "Escape" && !onEscape?.()) onChange("");
         onKeyDown?.(e);
       }} />
     ${value && html`<button type="button" class="icon-btn position-absolute end-0 me-1" title="clear search" tabIndex=${-1}
       onMouseDown=${(e) => e.preventDefault()}
       onClick=${(e) => { onChange(""); e.currentTarget.previousElementSibling.focus(); }}>×</button>`}
   </span>`;
+
+// suggestion dropdown under a search box — @agents, #domains, is:flags.
+// mousedown+preventDefault keeps the input focused while a pick is applied
+const SearchSug = ({ sug, sel, onPick }) => html`
+  <div class="sug">
+    <div class="hd">${sug.title}</div>
+    ${sug.items.map(
+      (s, n) => html`<div class="it ${n === sel ? "sel" : ""}" key=${s.insert}
+        onMouseDown=${(e) => {
+          e.preventDefault();
+          onPick(s.insert);
+        }}>${s.body}</div>`,
+    )}
+    <div class="ft">↑↓ select · ↩ apply · esc dismiss</div>
+  </div>`;
 
 // IDs (XX-0000) inside free text become item links
 const ID_TOKEN = /\b([A-Z][A-Z0-9]*-\d+)\b/;
@@ -594,13 +617,35 @@ const saveSearch = (key, q) => {
     /* storage blocked — search just isn't remembered */
   }
 };
-// every word must appear in id, title, project or source path
+// is:flag search filters — name → [description for the dropdown, item predicate]
+const FLAG_FILTERS = {
+  starred: ["only starred cards", (i) => Boolean(i.star_color)],
+  claimed: ["an agent holds a claim", (i) => Boolean(i.claim)],
+  unclaimed: ["nobody holds it", (i) => !i.claim],
+  blocked: ["waiting on dependencies", (i) => Boolean(i.blocked)],
+  "ai-ok": ["AI review approved", (i) => i.ai_review?.verdict === "ok"],
+  "ai-flagged": ["AI review flagged issues", (i) => Boolean(i.ai_review) && i.ai_review.verdict !== "ok"],
+  plan: ["epic — a plan with parts", (i) => i.type === "epic"],
+};
+// every word must appear in id, title, project or source path. @word filters the
+// claim holder's name, is:flag a boolean trait; a lone @ or # is not a filter
 const matches = (i, words) => {
   const hay = [i.id, i.title, i.project, i.legacy_id, i.source, ...(i.domains ?? []).map((d) => `#${d} ${d}`)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  return words.every((w) => hay.includes(w));
+  return words.every((w) => {
+    if (w === "@" || w === "#") return true;
+    if (w[0] === "@") {
+      // holders look like agent@machine#session — "@devin" is the agent devin only
+      // (name boundary), "@devin@mhef" narrows by machine prefix
+      const x = w.slice(1);
+      const h = (i.claim?.holder ?? "").toLowerCase();
+      return x.includes("@") ? h.startsWith(x) : h.startsWith(x + "@");
+    }
+    if (w.startsWith("is:")) return FLAG_FILTERS[w.slice(3)]?.[1](i) ?? true;
+    return hay.includes(w);
+  });
 };
 // board card order: created = creation date, updated = last touched (updated, else created), name = title — id breaks ties
 const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
@@ -640,6 +685,9 @@ const Board = ({ onOpen }) => {
   // AI-review filter: "" = all, "ok" = only approved, "issues" = only flagged
   const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
   const [domShowAll, setDomShowAll] = useState(false);
+  const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
+  const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
+  const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
   const setDomain = (d) => {
     const v = d === domain ? "" : d; // clicking the active domain clears it
     setDomainState(v);
@@ -675,9 +723,64 @@ const Board = ({ onOpen }) => {
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
+  // search suggestions: the word being typed picks the dropdown —
+  // @ → claim holders, # → domains, is: → flags
+  const agents = {};
+  for (const i of data) {
+    if (!i.claim) continue;
+    const name = i.claim.holder.split("@")[0]; // holder is agent@machine#session
+    (agents[name] ??= { name, machine: i.claim.machine, n: 0 }).n++;
+  }
+  const tok = q.slice(q.lastIndexOf(" ") + 1).toLowerCase();
+  const applySug = (insert) => setSearch(q.slice(0, q.length - tok.length) + insert + " ");
+  let sugDef = null;
+  if (tok[0] === "@") {
+    const w = tok.slice(1);
+    const items = Object.values(agents)
+      .filter((a) => a.name.toLowerCase().includes(w))
+      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+      .map((a) => ({
+        insert: `@${a.name}`,
+        body: html`<span class="av">${a.name[0].toUpperCase()}</span
+          ><span><b>${a.name}</b> <span class="text-secondary">@${a.machine}</span></span
+          ><span class="ms-auto text-secondary">${a.n} claimed</span>`,
+      }));
+    items.push({
+      insert: "is:unclaimed",
+      body: html`<span class="av">∅</span><span class="text-secondary">unclaimed</span><span class="ms-auto text-secondary">${data.filter((i) => !i.claim).length}</span>`,
+    });
+    sugDef = { title: "agents", items };
+  } else if (tok[0] === "#") {
+    const w = tok.slice(1);
+    sugDef = {
+      title: "domains",
+      items: Object.entries(domainCounts)
+        .filter(([d]) => d.includes(w))
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([d, n]) => ({
+          insert: `#${d}`,
+          body: html`<i class="dot" style=${`--c:${domainColors[d] ?? fallbackColor(d)}`}></i><b>#${d}</b><span class="ms-auto text-secondary">${n}</span>`,
+        })),
+    };
+  } else if (tok.startsWith("is:")) {
+    const w = tok.slice(3);
+    sugDef = {
+      title: "flags",
+      items: Object.entries(FLAG_FILTERS)
+        .filter(([f]) => f.includes(w))
+        .map(([f, [desc]]) => ({
+          insert: `is:${f}`,
+          body: html`<b>is:${f}</b> <span class="text-secondary">${desc}</span>`,
+        })),
+    };
+  }
+  if (sugDef && !sugDef.items.length) sugDef = null;
+  const sug = sugFocus && !sugOff ? sugDef : null;
+  const sel = sug ? Math.min(sugSel, sug.items.length - 1) : 0;
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.board.q", v);
+    setSugOff(false); // a new token reopens a dismissed dropdown
   };
   const setSort = (v) => {
     setSortState(v);
@@ -701,14 +804,38 @@ const Board = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Board</h2>
-      <${SearchBox}
-        style=${{ maxWidth: "24rem" }}
-        placeholder="search id, title, project, file…"
-        value=${q}
-        onChange=${setSearch}
-        onKeyDown=${(e) => e.key === "Enter" && hits.length === 1 && onOpen(hits[0].id)}
-        autofocus
-      />
+      <span class="position-relative">
+        <${SearchBox}
+          style=${{ maxWidth: "24rem" }}
+          placeholder="search id, title, file… · @agent #domain is:flag"
+          value=${q}
+          onChange=${setSearch}
+          onKeyDown=${(e) => {
+            if (sug) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setSugSel((s) => (s + (e.key === "ArrowDown" ? 1 : -1) + sug.items.length) % sug.items.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                applySug(sug.items[sel].insert);
+                return;
+              }
+            }
+            if (e.key === "Enter" && hits.length === 1) onOpen(hits[0].id);
+          }}
+          onEscape=${() => {
+            if (!sug) return false;
+            setSugOff(true); // first Esc closes the dropdown; a second clears the query
+            return true;
+          }}
+          onFocus=${() => setSugFocus(true)}
+          onBlur=${() => setSugFocus(false)}
+          autofocus
+        />
+        ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
+      </span>
       <${SortSeg} eff=${eff} onSort=${setSort} title="order cards inside each column" />
       <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
@@ -747,7 +874,8 @@ const Board = ({ onOpen }) => {
             <div class="col-body">
               ${items.map(
                 (i) => html`
-                  <div class="card bcard p-2" key=${i.id} onClick=${() => onOpen(i.id)}>
+                  <div class=${`card bcard p-2${i.type === "epic" && i.plan_state ? ` plan ps-${i.plan_state}` : ""}`} key=${i.id} onClick=${() => onOpen(i.id)}>
+                    ${i.type === "epic" && i.plan_state && html`<div class="plan-over">plan · ${i.plan_state}</div>`}
                     <div class="d-flex align-items-center gap-1">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}

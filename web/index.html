@@ -81,6 +81,19 @@
       .bcard-title { font-size: .8rem; line-height: 1.35; margin-bottom: .35rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
       .bcard-meta { font-size: .7rem; color: var(--bs-tertiary-color); }
       .av { width: 1rem; height: 1rem; border-radius: 50%; background: var(--bs-secondary-bg); color: var(--bs-secondary-color); display: inline-grid; place-items: center; font-size: .56rem; font-weight: 600; border: 1px solid var(--bs-border-color); }
+      /* plan (epic) cards: state colours drive a tinted shell, a caps overline and a ghost chip */
+      .ps-draft { --ps: var(--bs-secondary); --ps-em: var(--bs-secondary-text-emphasis); }
+      .ps-decomposing { --ps: var(--bs-info); --ps-em: var(--bs-info-text-emphasis); }
+      .ps-active { --ps: var(--bs-warning); --ps-em: var(--bs-warning-text-emphasis); }
+      .ps-done { --ps: var(--bs-success); --ps-em: var(--bs-success-text-emphasis); }
+      .bcard.plan { background: color-mix(in srgb, var(--ps) 9%, var(--bs-tertiary-bg));
+                    border-color: color-mix(in srgb, var(--ps) 35%, var(--bs-border-color-translucent)); }
+      .plan-over { font-size: .56rem; font-weight: 700; letter-spacing: .09em; color: var(--ps-em); text-transform: uppercase; margin-bottom: .1rem; }
+      .plan-chip { display: inline-flex; align-items: center; gap: .25rem; height: 1.05rem; padding: 0 .36rem;
+                   border: 1px solid var(--ps); border-radius: .25rem; background: color-mix(in srgb, var(--ps) 12%, transparent);
+                   color: var(--ps-em); font-size: .62rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+      .plan-chip:hover { background: color-mix(in srgb, var(--ps) 24%, transparent); }
+      .plan-chip svg { width: .56rem; height: .56rem; }
       .icon-btn { width: 1.35rem; height: 1.35rem; display: inline-grid; place-items: center; border: 0; border-radius: .25rem; color: var(--bs-tertiary-color); background: transparent; cursor: pointer; padding: 0; }
       .icon-btn:hover { background: var(--bs-secondary-bg); color: var(--bs-body-color); }
       /* item-page action bar: icon-only buttons, all the same square size — the tooltip is the label */
@@ -194,6 +207,16 @@
       /* search fields: × clear button inside the box (native one is webkit-only) */
       .search-box input { padding-right: 1.55rem; }
       .search-box input::-webkit-search-cancel-button { display: none; }
+      /* search suggestions: @agents / #domains / is:flags dropdown under the box */
+      .sug { position: absolute; top: calc(100% + .3rem); left: 0; min-width: 19rem; max-height: 17rem; overflow-y: auto;
+             background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color); border-radius: .45rem;
+             box-shadow: 0 .5rem 1.4rem rgba(0,0,0,.4); padding: .3rem; z-index: 1050; font-size: .75rem; }
+      .sug .hd { font-size: .62rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--bs-tertiary-color); padding: .25rem .45rem .3rem; }
+      .sug .it { display: flex; align-items: center; gap: .5rem; padding: .32rem .45rem; border-radius: .3rem; cursor: pointer; }
+      .sug .it:hover, .sug .it.sel { background: var(--bs-secondary-bg); }
+      .sug .it.sel .av { background: var(--bs-primary); border-color: var(--bs-primary); color: #fff; }
+      .sug .dot { width: .38rem; height: .38rem; border-radius: 50%; background: var(--c, #888); flex: none; }
+      .sug .ft { border-top: 1px solid var(--bs-border-color-translucent); margin-top: .3rem; padding: .3rem .45rem .15rem; font-size: .64rem; color: var(--bs-tertiary-color); }
     </style>
   </head>
   <body>
