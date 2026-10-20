@@ -166,6 +166,24 @@ const StarIcon = ({ filled }) => html`
 const STAR_CYCLE = ["yellow", "red", "green", "blue"];
 const STAR_TEXT = { yellow: "text-warning", red: "text-danger", green: "text-success", blue: "text-primary" };
 const nextStarColor = (c) => STAR_CYCLE[STAR_CYCLE.indexOf(c) + 1]; // unset → yellow; blue → undefined (unstar)
+// a ★ flips none → yellow → red → green → blue → none — every list
+const toggleStar = async (i, reload) => {
+  const next = nextStarColor(i.star_color);
+  try {
+    await post(`/api/items/${i.id}/${next ? "star" : "unstar"}`, next ? { color: next } : {});
+  } catch (e) {
+    toast(`${i.id}: ${e.message}`);
+  }
+  reload?.();
+};
+// always rendered — the empty star holds the slot so rows stay aligned
+const StarBtn = ({ i, reload }) => html`
+  <button class="icon-btn ${i.star_color ? `on ${STAR_TEXT[i.star_color]}` : ""}"
+    title=${i.star_color ? `starred ${i.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+    onClick=${(e) => {
+      e.stopPropagation(); // don't open the item
+      toggleStar(i, reload);
+    }}><${StarIcon} filled=${Boolean(i.star_color)} /></button>`;
 
 // one <path> (or several) per glyph — same inline convention as the icons above
 const glyph = (paths) => html`
@@ -704,16 +722,6 @@ const Board = ({ onOpen }) => {
     }
     reload();
   };
-  // a card's ★ flips none → yellow → red → green → blue → none — every column
-  const toggleStar = async (i) => {
-    const next = nextStarColor(i.star_color);
-    try {
-      await post(`/api/items/${i.id}/${next ? "star" : "unstar"}`, next ? { color: next } : {});
-    } catch (e) {
-      toast(`${i.id}: ${e.message}`);
-    }
-    reload();
-  };
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
@@ -885,12 +893,7 @@ const Board = ({ onOpen }) => {
                             e.stopPropagation(); // don't open the item
                             archive([i.id]);
                           }}><${ArchiveIcon} /></button>`}
-                        <button class="icon-btn ${i.star_color ? `on ${STAR_TEXT[i.star_color]}` : ""}"
-                          title=${i.star_color ? `starred ${i.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
-                          onClick=${(e) => {
-                            e.stopPropagation(); // don't open the item
-                            toggleStar(i);
-                          }}><${StarIcon} filled=${Boolean(i.star_color)} /></button>
+                        <${StarBtn} i=${i} reload=${reload} />
                       </span>
                     </div>
                     <div class="bcard-title">${i.title}</div>
@@ -950,6 +953,7 @@ const PlanNode = ({ i, depth, tree }) => {
             tree.setOpen({ ...tree.open, [i.id]: !isOpen });
           }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
         <span class="id text-nowrap">${i.id}</span>
+        <${StarBtn} i=${i} reload=${tree.reload} />
         ${isPlan ? html`<${PlanBadge} i=${i} />` : html`<${Badge} s=${i.status} />`}
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
@@ -1021,7 +1025,7 @@ const Plans = ({ onOpen }) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
   };
-  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act };
+  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
@@ -1070,7 +1074,7 @@ const Archive = ({ onOpen }) => {
         (i) => html`
           <div class="list-group-item d-flex align-items-center gap-2 flex-wrap" key=${i.id}>
             <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
-            ${i.star_color && html`<span class="${STAR_TEXT[i.star_color]}" title="starred ${i.star_color}"><${StarIcon} filled /></span>`}
+            <${StarBtn} i=${i} reload=${reload} />
             <${Badge} s=${i.status} />
             <span class="flex-grow-1">${i.title}</span>
             ${i.archived_at && html`<span class="text-secondary small">archived ${ago(i.archived_at)} ago</span>`}
