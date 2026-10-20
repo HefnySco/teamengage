@@ -383,6 +383,51 @@ describe("review / bounce (AI peer review of a submission)", () => {
     for (let n = 0; n < MAX_AI_BOUNCES; n++) expect(at(n).meta.status).toBe("in_progress");
     expect(() => at(MAX_AI_BOUNCES)).toThrow(/AI bounces/);
   });
+
+  it("an issues verdict on a holder that can't act here records the review and keeps the claim", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues", note: "acceptance 2 fails" },
+      agent2,
+      ctx({ claim: claimOf(), holderAway: true }),
+    );
+    expect(r.meta.status).toBe("in_review");
+    expect(r.meta.ai_review?.verdict).toBe("issues");
+    expect(r.effects).toEqual([]);
+    expect(r.events[0]).toMatchObject({ action: "review", from: "in_review", to: "in_review" });
+  });
+
+  it("an issues verdict with no claim, or an ok verdict, never releases", () => {
+    const noClaim = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues" },
+      agent2,
+      ctx({ holderAway: true }),
+    );
+    expect(noClaim.meta.status).toBe("in_review");
+    expect(noClaim.effects).toEqual([]);
+    const ok = transition(
+      item("in_review"),
+      { type: "review", verdict: "ok" },
+      agent2,
+      ctx({ claim: claimOf(), holderAway: true }),
+    );
+    expect(ok.meta.status).toBe("in_review");
+    expect(ok.effects).toEqual([]);
+  });
+
+  it("a bounce on a holder that can't act here releases the claim to ready", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "bounce", reason: "tests red" },
+      agent2,
+      ctx({ claim: claimOf(), holderAway: true }),
+    );
+    expect(r.meta.status).toBe("ready");
+    expect(r.effects).toEqual([{ type: "delete_claim" }, { type: "cleanup_work", keepBranches: true }]);
+    expect(r.events[0]).toMatchObject({ action: "bounce", from: "in_review", to: "ready", note: "tests red" });
+    expect(r.log.some((l) => l.includes("claim released"))).toBe(true);
+  });
 });
 
 describe("hold", () => {

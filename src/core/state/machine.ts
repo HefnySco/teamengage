@@ -119,6 +119,13 @@ export interface TransitionCtx {
   priorBounces?: number;
   /** workspace escalate_after / max_attempts (defaults 2 / 5) */
   escalation?: { after: number; max: number };
+  /**
+   * The claim's holder can't act from this daemon: it lives on another
+   * machine or its session is no longer live. An `issues` verdict or a
+   * bounce on such an item releases the claim to `ready` instead of sending
+   * it back to a session that will never answer (never set for human claims).
+   */
+  holderAway?: boolean;
 }
 
 export type Effect =
@@ -312,7 +319,7 @@ export function transition(
       }
       if (ctx.claim && !takeover) {
         throw new ClaimRefusedError(
-          `already claimed by ${ctx.claim.holder} on ${ctx.claim.machine}`,
+          `already claimed by ${ctx.claim.holder} on ${ctx.claim.machine} — release on ${ctx.claim.machine} or by the human here`,
           ctx.claim.holder,
           ctx.claim.machine,
         );
@@ -419,7 +426,20 @@ export function transition(
         ...(action.summary ? { summary: action.summary } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
-      out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
+      // an issues verdict only records the review: it never releases the claim.
+      // The holder's view of another machine's claim is a synced copy and can be
+      // stale, so a reviewer here must not delete a claim that may still be live.
+      // Bounces still release it (see the bounce path) so the fix isn't stranded.
+      const releaseClaim = false;
+      out.events.push(ev(actor, stamp, meta.id, "review", from, releaseClaim ? "ready" : from, verdict));
+      if (releaseClaim) {
+        out.meta.status = "ready";
+        out.effects.push({ type: "delete_claim" });
+        out.effects.push({ type: "cleanup_work", keepBranches: true });
+        out.log.push(
+          `- ${stamp} claim released — holder ${ctx.claim!.holder}@${ctx.claim!.machine} can't act from here`,
+        );
+      }
       out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}`);
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
@@ -440,15 +460,22 @@ export function transition(
         );
       }
       const f = recordFailure(meta, out, ctx);
-      // escalated past the holder, or out of attempts → the claim goes;
+      // escalated past the holder, out of attempts, or a holder that can't
+      // act from here (other machine / dead session) → the claim goes;
       // otherwise the holder keeps it and fixes (it has the context)
       const outgrown = !!f.escalated && !!ctx.claim?.tier && tierRank(ctx.claim.tier) < tierRank(f.escalated);
+      const holderAway = !!ctx.claim && ctx.holderAway === true;
       if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.reason}`);
-      else if (outgrown) set("ready", action.reason);
+      else if (outgrown || holderAway) set("ready", action.reason);
       else set("in_progress", action.reason);
-      if (f.held || outgrown) {
+      if (f.held || outgrown || holderAway) {
         out.effects.push({ type: "delete_claim" });
         out.effects.push({ type: "cleanup_work", keepBranches: true });
+      }
+      if (holderAway && !f.held && !outgrown) {
+        out.log.push(
+          `- ${stamp} claim released — holder ${ctx.claim!.holder}@${ctx.claim!.machine} can't act from here`,
+        );
       }
       out.meta.ai_review = {
         verdict: "issues",
