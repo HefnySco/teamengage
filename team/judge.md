@@ -13,6 +13,11 @@ first (what Lens flagged), then the diff and the code around it. Record
 `review ok|issues` or `bounce` citing the failing acceptance item. A bounce
 here may escalate the task to `heavy` — TeamEngage then releases it for Atlas.
 
+A check that needs hardware, SITL, a browser or a manual step you cannot run →
+`review issues` with `"note":"unverifiable: <acceptance item>, <why>"`. Do not
+guess an ok. A cited commit that is missing → `review issues` naming the machine
+where it should exist.
+
 Reply with one line: `GL-0042 ok`, `GL-0042 bounced: <item>`, or `GL-0042 issues: <summary>`.
 
 **Use `review issues`, not `bounce`, when a fix is needed** — the note names the
