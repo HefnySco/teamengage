@@ -386,6 +386,9 @@ const Inbox = ({ onOpen }) => {
   const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
   const [kind, setKind] = useState("all");
   const [sort, setSortState] = useState(() => loadSearch("te.inbox.sort"));
+  const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
+  const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
+  const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const byId = Object.fromEntries((all ?? []).map((i) => [i.id, i]));
   const title = (id) => byId[id]?.title ?? "";
@@ -430,10 +433,9 @@ const Inbox = ({ onOpen }) => {
   };
   const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length;
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
-  // the "updated" page: every item the inbox lists, deduped, stalest on top —
-  // each row shows how long since it was last touched
-  const touched = (i) => i.updated ?? i.created ?? "";
-  const updatedItems = [
+  // every item the inbox lists, deduped — the pool the search filters and the
+  // suggestion dropdown's @agent / #domain counts draw from
+  const poolIds = [
     ...new Set([
       ...data.questions.map((x) => x.id),
       ...data.drafts,
@@ -442,13 +444,17 @@ const Inbox = ({ onOpen }) => {
       ...data.claims.map((c) => c.item),
       ...data.findings.map((f) => f.item).filter(Boolean),
     ]),
-  ]
+  ];
+  // the "updated" page: stalest on top — each row shows how long since it was last touched
+  const touched = (i) => i.updated ?? i.created ?? "";
+  const updatedItems = poolIds
     .filter((id) => hit(id))
     .map((id) => byId[id] ?? { id })
     .sort((a, b) => touched(a).localeCompare(touched(b)) || a.id.localeCompare(b.id, undefined, { numeric: true }));
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.inbox.q", v);
+    setSugOff(false); // a new token reopens a dismissed dropdown
   };
   const setSort = (v) => {
     setSortState(v);
@@ -464,6 +470,11 @@ const Inbox = ({ onOpen }) => {
     if (reason !== null) act(id, action, { reason });
   };
   const empty = !total;
+  // same search language as the board: @agent, #domain, is:flag, plus plain words
+  const { def: sugDef, tok } = searchSug(q, poolIds.map((id) => byId[id] ?? { id }));
+  const applySug = (insert) => setSearch(q.slice(0, q.length - tok.length) + insert + " ");
+  const sug = sugFocus && !sugOff ? sugDef : null;
+  const sel = sug ? Math.min(sugSel, sug.items.length - 1) : 0;
 
   // one dense line per thing that needs you; actions reveal on hover
   const idCell = (id) => html`
@@ -574,9 +585,38 @@ const Inbox = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
-      <${SearchBox} style=${{ maxWidth: "24rem" }} value=${q} onChange=${setSearch}
-        placeholder="search id, title, project, file, text…" />
-      ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}</span>`}
+      <span class="position-relative">
+        <${SearchBox}
+          style=${{ maxWidth: "24rem" }}
+          placeholder="search id, title, text… · @agent #domain is:flag"
+          value=${q}
+          onChange=${setSearch}
+          onKeyDown=${(e) => {
+            if (sug) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setSugSel((s) => (s + (e.key === "ArrowDown" ? 1 : -1) + sug.items.length) % sug.items.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                applySug(sug.items[sel].insert);
+                return;
+              }
+            }
+            if (e.key === "Enter" && updatedItems.length === 1) onOpen(updatedItems[0].id);
+          }}
+          onEscape=${() => {
+            if (!sug) return false;
+            setSugOff(true); // first Esc closes the dropdown; a second clears the query
+            return true;
+          }}
+          onFocus=${() => setSugFocus(true)}
+          onBlur=${() => setSugFocus(false)}
+        />
+        ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
+      </span>
+      ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}${updatedItems.length === 1 ? " — Enter opens it" : ""}</span>`}
       <${SortSeg} eff=${effSort} onSort=${setSort} title="order rows inside each group" />
       ${!empty && html`
         <span class="btn-group btn-group-sm ms-auto" role="group">
@@ -665,6 +705,64 @@ const matches = (i, words) => {
     return hay.includes(w);
   });
 };
+// search suggestions under a query box — the word being typed picks the
+// dropdown: @ → claim holders, # → domains, is: → flags. `pool` is the item
+// set the page searches (board: everything; inbox: only what it lists), so
+// the counts beside each suggestion reflect what the search will hit.
+const searchSug = (q, pool) => {
+  const agents = {};
+  for (const i of pool) {
+    if (!i.claim) continue;
+    const name = i.claim.holder.split("@")[0]; // holder is agent@machine#session
+    (agents[name] ??= { name, machine: i.claim.machine, n: 0 }).n++;
+  }
+  const domainCounts = {};
+  for (const i of pool) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
+  const tok = q.slice(q.lastIndexOf(" ") + 1).toLowerCase();
+  let def = null;
+  if (tok[0] === "@") {
+    const w = tok.slice(1);
+    const items = Object.values(agents)
+      .filter((a) => a.name.toLowerCase().includes(w))
+      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+      .map((a) => ({
+        insert: `@${a.name}`,
+        body: html`<span class="av">${a.name[0].toUpperCase()}</span
+          ><span><b>${a.name}</b> <span class="text-secondary">@${a.machine}</span></span
+          ><span class="ms-auto text-secondary">${a.n} claimed</span>`,
+      }));
+    items.push({
+      insert: "is:unclaimed",
+      body: html`<span class="av">∅</span><span class="text-secondary">unclaimed</span><span class="ms-auto text-secondary">${pool.filter((i) => !i.claim).length}</span>`,
+    });
+    def = { title: "agents", items };
+  } else if (tok[0] === "#") {
+    const w = tok.slice(1);
+    def = {
+      title: "domains",
+      items: Object.entries(domainCounts)
+        .filter(([d]) => d.includes(w))
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([d, n]) => ({
+          insert: `#${d}`,
+          body: html`<i class="dot" style=${`--c:${domainColors[d] ?? fallbackColor(d)}`}></i><b>#${d}</b><span class="ms-auto text-secondary">${n}</span>`,
+        })),
+    };
+  } else if (tok.startsWith("is:")) {
+    const w = tok.slice(3);
+    def = {
+      title: "flags",
+      items: Object.entries(FLAG_FILTERS)
+        .filter(([f]) => f.includes(w))
+        .map(([f, [desc]]) => ({
+          insert: `is:${f}`,
+          body: html`<b>is:${f}</b> <span class="text-secondary">${desc}</span>`,
+        })),
+    };
+  }
+  if (def && !def.items.length) def = null;
+  return { def, tok };
+};
 // board card order: created = creation date, updated = last touched (updated, else created), name = title — id breaks ties
 const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
 const byCreated = (a, b) => (a.created ?? "").localeCompare(b.created ?? "") || byId(a, b);
@@ -733,56 +831,8 @@ const Board = ({ onOpen }) => {
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
   // search suggestions: the word being typed picks the dropdown —
   // @ → claim holders, # → domains, is: → flags
-  const agents = {};
-  for (const i of data) {
-    if (!i.claim) continue;
-    const name = i.claim.holder.split("@")[0]; // holder is agent@machine#session
-    (agents[name] ??= { name, machine: i.claim.machine, n: 0 }).n++;
-  }
-  const tok = q.slice(q.lastIndexOf(" ") + 1).toLowerCase();
+  const { def: sugDef, tok } = searchSug(q, data);
   const applySug = (insert) => setSearch(q.slice(0, q.length - tok.length) + insert + " ");
-  let sugDef = null;
-  if (tok[0] === "@") {
-    const w = tok.slice(1);
-    const items = Object.values(agents)
-      .filter((a) => a.name.toLowerCase().includes(w))
-      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
-      .map((a) => ({
-        insert: `@${a.name}`,
-        body: html`<span class="av">${a.name[0].toUpperCase()}</span
-          ><span><b>${a.name}</b> <span class="text-secondary">@${a.machine}</span></span
-          ><span class="ms-auto text-secondary">${a.n} claimed</span>`,
-      }));
-    items.push({
-      insert: "is:unclaimed",
-      body: html`<span class="av">∅</span><span class="text-secondary">unclaimed</span><span class="ms-auto text-secondary">${data.filter((i) => !i.claim).length}</span>`,
-    });
-    sugDef = { title: "agents", items };
-  } else if (tok[0] === "#") {
-    const w = tok.slice(1);
-    sugDef = {
-      title: "domains",
-      items: Object.entries(domainCounts)
-        .filter(([d]) => d.includes(w))
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .map(([d, n]) => ({
-          insert: `#${d}`,
-          body: html`<i class="dot" style=${`--c:${domainColors[d] ?? fallbackColor(d)}`}></i><b>#${d}</b><span class="ms-auto text-secondary">${n}</span>`,
-        })),
-    };
-  } else if (tok.startsWith("is:")) {
-    const w = tok.slice(3);
-    sugDef = {
-      title: "flags",
-      items: Object.entries(FLAG_FILTERS)
-        .filter(([f]) => f.includes(w))
-        .map(([f, [desc]]) => ({
-          insert: `is:${f}`,
-          body: html`<b>is:${f}</b> <span class="text-secondary">${desc}</span>`,
-        })),
-    };
-  }
-  if (sugDef && !sugDef.items.length) sugDef = null;
   const sug = sugFocus && !sugOff ? sugDef : null;
   const sel = sug ? Math.min(sugSel, sug.items.length - 1) : 0;
   const setSearch = (v) => {
