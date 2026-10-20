@@ -112,7 +112,11 @@ Ask, don't guess.
 Reviewing (a second session, never the holder): query status=in_review lists
 submissions; review <id> {verdict: ok|issues, note} records your verdict for
 the human, bounce <id> {reason} sends broken work back to its holder (max 2
-in a row). Accept/reject stay human-only.
+in a row; a holder on another machine or no longer live releases the claim to
+ready instead — bounced work must not strand). Accept/reject stay human-only.
+
+A wrong "## Evidence" line is never rewritten — supersede <id> {line,
+correct, reason} appends a correction naming the old line; it stays visible.
 
 ## ${AUTHORING_RULES}`;
 

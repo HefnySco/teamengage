@@ -95,6 +95,11 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 
 - Follow the task's own steps and the touched repos' rules (naming, build,
   commit style). Commit in the code repos as those rules say.
+- Before each commit, check `git diff --name-only` (and `git diff --cached
+  --name-only`) against the task's `**Touches:**` — a path outside Touches
+  stays out of the commit; carry it in a new dependent task (`propose` with
+  `depends_on` = this one, its own Touches + acceptance). Never widen the
+  task's own Touches to make a commit fit.
 - `log` at real milestones (not every step) — it is the human's record:
 
   ```bash
@@ -148,6 +153,13 @@ curl -s -X POST $B/submit/GL-0019 -H "$H" -d '{
 
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
+
+Before you submit, every commit you cite must exist where you claim it is —
+run `git cat-file -e <sha>` in each repo; a missing commit means fix the
+Evidence (or make the commit) first, never submit a citation that isn't
+there. Commits live on this machine only — you never push: if the reviewer
+works on another machine, ask the human to push, or write a patch
+(`git format-patch` / `git bundle`) and cite its path in `notes`.
 
 ## 8. Reviewing someone else's submission
 

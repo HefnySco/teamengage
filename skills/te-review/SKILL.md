@@ -102,7 +102,12 @@ Judge the **logic**:
   to doubt it — never as a substitute for reading.
 - **What you cannot verify is a finding, not a skip** — if a check needs
   hardware or a deploy you don't have, say so in the note rather than passing
-  it silently.
+  it silently. For missing hardware, SITL, a live browser or a human-only
+  manual step, write the note as `unverifiable: <acceptance item>, <why it
+  cannot be checked here>` — it goes straight to the human, no fix round.
+  A cited commit that isn't in the repo (`git cat-file -e <sha>` fails) is
+  **not** unverifiable: record `issues` naming the machine where the commit
+  should exist and stop.
 - **Never edit the code.** The claim and its worktree belong to the holder.
   Review is read-only — found a bug, report it; the holder fixes it.
 
@@ -154,6 +159,9 @@ reviewer picks it up. (A light `ok` on a heavy task is never auto-accepted.)
 
 `bounce` moves the item to `in_progress` **keeping the same claim** — the
 holder reads the reason in `brief`/`## Review`, fixes, and `submit`s again.
+Except when the holder can't act — its claim is on another machine or its
+session is gone: then the bounce (likewise an `issues` verdict) releases the
+claim to `ready` so the fix is never stranded on a session that won't answer.
 Each bounce counts as a failed attempt: when it escalates the task above the
 holder's tier, the claim is released instead (`→ ready`) and a stronger
 agent takes it; at `max_attempts` the task waits for the human.
@@ -165,7 +173,8 @@ To **take over the fix** instead of sending it back: record the `issues`
 verdict, then `claim` the item. An `in_review` item with an `issues` verdict
 can be claimed by any session on the claim's machine — the claim and its
 worktree move to you, so you continue on the same branch and `submit` again.
-Cross-machine takeover is refused; there it stays `bounce`. Taking over
+Cross-machine takeover is refused — record `issues` or `bounce` there; the
+claim is released to `ready` so a session that can act picks it up. Taking over
 fixes the submission within its approved scope — the task's Touches and
 acceptance don't change. Anything wider → `propose` a dependent task.
 
