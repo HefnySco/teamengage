@@ -112,6 +112,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "review",
         "simple",
         "submit",
+        "supersede",
         "vet",
       ].sort(),
     );

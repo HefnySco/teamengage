@@ -117,7 +117,7 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
       // it can never conflict with a takeover of that same claim
       if (rc.machine === wsr.store.machine) continue;
       throw new ClaimRefusedError(
-        `claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)}`,
+        `claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)} (release it on ${rc.machine} or by the human here)`,
         rc.holder,
         rc.machine,
       );
@@ -125,7 +125,7 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
     const o = targetsOverlap(claim.targets, rc.targets, roots);
     if (o.overlap) {
       throw new ClaimRefusedError(
-        `target ${o.via?.[0]} claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)}`,
+        `target ${o.via?.[0]} claimed on ${rc.machine} by ${rc.holder} — ${advice(rc)} (release it on ${rc.machine} or by the human here)`,
         rc.holder,
         rc.machine,
         o.via?.[0],

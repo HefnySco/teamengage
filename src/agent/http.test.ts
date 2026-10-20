@@ -257,7 +257,7 @@ describe("plain-HTTP agent API", () => {
   it("AI peer review: a second session reviews a submission, bounces broken work, capped at 2 in a row", async () => {
     // the guide knows the tools
     const guide = await call("GET", "/agent");
-    for (const tool of ["review", "bounce"]) {
+    for (const tool of ["review", "bounce", "supersede"]) {
       expect(guide.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
     }
     const holder = await hello("worker");

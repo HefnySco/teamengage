@@ -127,6 +127,34 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "supersede",
+    {
+      description:
+        "Correct a wrong ## Evidence line — append-only: adds a 'supersedes' entry that names the old " +
+        "line (line), the correct value (correct) and why (reason). The old line stays visible; " +
+        "evidence is never rewritten. No claim needed.",
+      inputSchema: {
+        id: z.string(),
+        line: z.string(),
+        correct: z.string(),
+        reason: z.string().optional(),
+      },
+    },
+    async ({ id, line, correct, reason }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.supersede(id, s, { line, correct, reason });
+        return okText(`superseded evidence on ${id}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "ask",
     {
       description: "Record a question → item waits for the human.",
@@ -183,7 +211,9 @@ export function registerWriteTools(
         "Read the task file, the Evidence section and the actual diff/tests first, then record verdict ok|issues " +
         "with summary (one plain-English sentence for the human — what the verdict means, no jargon) " +
         "and a specific note for whoever fixes it (findings with file:line). " +
-        "Advisory marker only — it never changes status; the human still accepts. Never review your own submission.",
+        "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
+        "holder is on another machine or no longer live releases the claim to ready so the fix isn't stranded. " +
+        "Never review your own submission.",
       inputSchema: {
         id: z.string(),
         verdict: z.enum(["ok", "issues"]),
@@ -197,8 +227,11 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.review(id, s, verdict, note, summary);
-        return okText(`reviewed ${id}: ${verdict}`);
+        const r = await o.review(id, s, verdict, note, summary);
+        return okText(
+          `reviewed ${id}: ${verdict}` +
+            (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
+        );
       } catch (e) {
         return errFrom(e);
       }
@@ -210,7 +243,9 @@ export function registerWriteTools(
     {
       description:
         "Reviewer only (not the holder): send a broken submission back to its holder — in_review → in_progress, " +
-        "the claim is kept so the holder fixes and resubmits. reason is required and goes to the holder; " +
+        "the claim is kept so the holder fixes and resubmits — unless the holder is on another machine or no " +
+        "longer live, where the claim is released to ready instead (a bounced item must not strand). " +
+        "reason is required and goes to the holder; " +
         "summary is required too — one plain-English sentence for the human, no jargon. " +
         "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
         "Each bounce is a failed attempt: on escalation past the holder's tier the claim is released for a stronger agent.",
@@ -228,7 +263,7 @@ export function registerWriteTools(
           m.status === "in_progress"
             ? "in_progress (holder fixes and resubmits)"
             : m.status === "ready"
-              ? `ready — escalated to tier ${m.tier}, claim released`
+              ? `ready — claim released${m.tier ? ` (tier ${m.tier})` : ""}`
               : `${m.status} — out of attempts, the human decides`;
         return okText(`bounced ${id} → ${where} (attempt ${m.attempts ?? 0})`);
       } catch (e) {

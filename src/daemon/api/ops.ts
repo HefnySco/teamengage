@@ -28,7 +28,7 @@ import {
   itemSnapshots,
   cleanupSnapshots,
 } from "../effects/effects.js";
-import { checkRemoteClaims } from "../sync/sync.js";
+import { checkRemoteClaims, fetchPlansRepo } from "../sync/sync.js";
 import { resourceRoots } from "../../core/config/config.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import type { SessionRegistry } from "../sessions/sessions.js";
@@ -325,7 +325,7 @@ export class WorkspaceOps {
         mine.machine === session.machine;
       if (!takeover) {
         throw new ClaimRefusedError(
-          `already claimed by ${mine.holder} on ${mine.machine}`,
+          `already claimed by ${mine.holder} on ${mine.machine} — release on ${mine.machine} or by the human here`,
           mine.holder,
           mine.machine,
         );
@@ -385,7 +385,7 @@ export class WorkspaceOps {
         const o = targetsOverlap(targets, c.targets, roots);
         if (o.overlap) {
           throw new ClaimRefusedError(
-            `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine}`,
+            `target ${o.via?.[0]} overlaps claim on ${c.item} held by ${c.holder} on ${c.machine} — release on ${c.machine} or by the human here`,
             c.holder,
             c.machine,
             o.via?.[0],
@@ -405,7 +405,22 @@ export class WorkspaceOps {
     if (claim) {
       await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
     }
+    // refresh our view of other machines' claims — the release itself only
+    // reaches them when the human pushes, but a fetch keeps the next claim's
+    // remote check current
+    if (this.wsr.ws.config.sync === "manual") await fetchPlansRepo(this.wsr.ws.plansDir);
     return r;
+  }
+
+  /**
+   * The item's claim holder can't act from this daemon: the claim lives on
+   * another machine, or its local session is no longer live. Human claims
+   * never count — the human acts through any machine's UI.
+   */
+  private holderAway(it: IndexedItem): boolean {
+    const c = it.claim;
+    if (!c || c.actor === "human") return false;
+    return c.machine !== this.wsr.store.machine || !this.sessions.isLive(c.holder);
   }
 
   private assertLiveClaim(it: IndexedItem): void {
@@ -487,12 +502,19 @@ export class WorkspaceOps {
     summary?: string,
   ) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor(session), {
-      type: "review",
-      verdict,
-      note,
-      summary,
-    });
+    const claim = it.claim;
+    const r = await this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor(session),
+      { type: "review", verdict, note, summary },
+      { holderAway: () => this.holderAway(this.item(id)) },
+    );
+    // an `issues` verdict on a holder that can't act released the claim
+    if (claim && r.meta.status !== "in_review") {
+      await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    }
+    return r;
   }
 
   /**
@@ -507,7 +529,10 @@ export class WorkspaceOps {
       it.meta.version,
       this.actorFor(session),
       { type: "bounce", reason, summary },
-      { priorBounces: () => this.aiBouncesSinceHumanTouch(id) },
+      {
+        priorBounces: () => this.aiBouncesSinceHumanTouch(id),
+        holderAway: () => this.holderAway(this.item(id)),
+      },
     ).then(async (r) => {
       if (claim && r.meta.status !== "in_progress") {
         await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
@@ -901,6 +926,32 @@ export class WorkspaceOps {
     return this.store.addNote(id, text, this.actorFor(actor));
   }
 
+  /**
+   * Correct a wrong `## Evidence` line without rewriting it: appends a
+   * `supersedes` entry naming the old line, the correct value and the
+   * reason — the old line stays visible. Append-only; any session may
+   * correct the record (the reviewer who spots it is rarely the holder).
+   */
+  async supersede(
+    id: string,
+    actor: Session | "human",
+    s: { line: string; correct: string; reason?: string },
+  ) {
+    this.item(id);
+    const line = s.line.trim();
+    const correct = s.correct.trim();
+    if (!line || !correct) throw new ValidationError("supersede needs {line, correct[, reason]}");
+    const who = actor === "human" ? "human" : actor.id;
+    const now = new Date().toISOString();
+    return this.store.annotate(id, {
+      heading: "Evidence",
+      lines: [
+        `- supersedes "${line}" → ${correct}${s.reason?.trim() ? ` — ${s.reason.trim()}` : ""} (${who}, ${now.slice(0, 16).replace("T", " ")})`,
+      ],
+      log: [`- ${now} ${who} superseded an Evidence line`],
+    });
+  }
+
   /** Agent asks the human to drop this item — advisory flag, status untouched. */
   async flagDrop(id: string, session: Session, reason?: string) {
     const it = this.item(id);
@@ -967,7 +1018,7 @@ export class WorkspaceOps {
       throw new ForbiddenError("edit needs a standard- or heavy-tier session (planner), not light");
     }
     if (!change.reason?.trim()) throw new ValidationError("edit needs a reason");
-    const { reason, ...fields } = change;
+    const { reason: _reason, ...fields } = change;
     if (!Object.values(fields).some((v) => v !== undefined)) {
       throw new ValidationError("edit: give at least one field to change");
     }

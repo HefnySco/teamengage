@@ -122,7 +122,10 @@ RULES
      Both need a summary — one plain-English sentence for the human.
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,
-     so fix and submit again. Cross-machine takeover is refused.
+     so fix and submit again. Cross-machine takeover is refused. An
+     "issues" verdict or a bounce on a submission whose holder is on
+     another machine or no longer live releases the claim to ready
+     instead — a fix must never wait on a session that can't answer.
   7. Declare your model tier at hello: light (Haiku-class), standard
      (Sonnet-class) or heavy (Opus-class). Items above your tier are hidden
      from next and refused on claim. When stuck — same error twice, no new

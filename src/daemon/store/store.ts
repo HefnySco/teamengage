@@ -172,6 +172,8 @@ export class PlansStore {
       touchClaim?: boolean;
       /** AI bounces since the last human action — evaluated inside the queue (bounce cap). */
       priorBounces?: () => number | Promise<number>;
+      /** Whether the claim's holder can't act from this daemon — evaluated inside the queue. */
+      holderAway?: () => boolean;
     } = {},
   ): Promise<PerformResult> {
     return this.enqueue(async () => {
@@ -194,6 +196,7 @@ export class PlansStore {
         claim,
         depsDone: ctx.depsDone,
         priorBounces: ctx.priorBounces ? await ctx.priorBounces() : undefined,
+        holderAway: ctx.holderAway ? ctx.holderAway() : undefined,
         escalation: { after: this.ws.config.escalate_after, max: this.ws.config.max_attempts },
       });
 
@@ -593,7 +596,7 @@ export class PlansStore {
    */
   annotate(
     id: string,
-    opts: { heading: string; lines: string[]; metaPatch?: Record<string, unknown> },
+    opts: { heading: string; lines: string[]; metaPatch?: Record<string, unknown>; log?: string[] },
   ): Promise<ItemMeta> {
     return this.enqueue(async () => {
       await this.assertReady();
@@ -607,7 +610,7 @@ export class PlansStore {
         version: doc.meta.version + 1,
         updated: new Date().toISOString(),
       } as ItemMeta;
-      await this.writeItemDoc(absPath, doc.raw.text, meta, [], [
+      await this.writeItemDoc(absPath, doc.raw.text, meta, opts.log ?? [], [
         { heading: opts.heading, text: opts.lines.join("\n") + "\n" },
       ]);
       await this.commitPaths([it.path], `te: ${id} annotated`);
