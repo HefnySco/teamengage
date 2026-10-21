@@ -684,6 +684,7 @@ const FLAG_FILTERS = {
   "ai-ok": ["AI review approved", (i) => i.ai_review?.verdict === "ok"],
   "ai-flagged": ["AI review flagged issues", (i) => Boolean(i.ai_review) && i.ai_review.verdict !== "ok"],
   plan: ["epic — a plan with parts", (i) => i.type === "epic"],
+  idea: ["idea — a source document, never claimed", (i) => i.type === "idea"],
 };
 // every word must appear in id, title, project or source path. @word filters the
 // claim holder's name, is:flag a boolean trait; a lone @ or # is not a filter
@@ -792,8 +793,70 @@ const SortSeg = ({ eff, onSort, title }) => {
   return html`<span class="btn-group btn-group-sm" role="group">${btn("created", "created")}${btn("updated", "updated")}${btn("name", "AZ")}</span>`;
 };
 
+// ---- new idea — the human captures a thought as a source document ----------
+// same propose pipeline agents use; it lands as a draft (approve to triage)
+const NewIdea = ({ projects, onClose, onCreated }) => {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [project, setProject] = useState(projects[0]?.name ?? "");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!title.trim() || busy) return;
+    setBusy(true);
+    try {
+      const r = await post("/api/propose", {
+        items: [{
+          type: "idea",
+          title: title.trim(),
+          summary: body.trim() || undefined,
+          project: project || undefined,
+        }],
+      });
+      toast(`idea ${r.ids[0]}${r.files?.[0] ? ` → ${r.files[0]}` : ""} saved as a draft`, "success");
+      onCreated(r.ids[0]);
+    } catch (e) {
+      toast(e.message);
+      setBusy(false);
+    }
+  };
+  return html`
+    <div class="modal-backdrop show"></div>
+    <div class="modal d-block" tabindex="-1"
+      onKeyDown=${(e) => e.key === "Escape" && onClose()}
+      onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header py-2">
+            <b class="modal-title fs-6">new idea</b>
+            <button type="button" class="btn-close" title="cancel" onClick=${onClose}></button>
+          </div>
+          <div class="modal-body py-2 small">
+            <div class="mb-2 text-secondary">a source document — ask an agent to plan from it later; it is never claimed</div>
+            <input class="form-control form-control-sm mb-2" placeholder="title" value=${title}
+              ref=${(b) => b?.focus()}
+              onInput=${(e) => setTitle(e.target.value)}
+              onKeyDown=${(e) => e.key === "Enter" && save()} />
+            <textarea class="form-control form-control-sm" rows="7"
+              placeholder="the thought — markdown (becomes the idea file's ## Summary)"
+              value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>
+            ${projects.length > 1 && html`
+              <select class="form-select form-select-sm mt-2" value=${project} onChange=${(e) => setProject(e.target.value)}>
+                ${projects.map((p) => html`<option key=${p.name} value=${p.name}>${p.name} (${p.prefix})</option>`)}
+              </select>`}
+          </div>
+          <div class="modal-footer py-1">
+            <button class="btn btn-sm btn-outline-secondary" onClick=${onClose}>cancel</button>
+            <button class="btn btn-sm btn-primary" disabled=${!title.trim() || busy} onClick=${save}>save idea</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+};
+
 const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
+  const { data: ws } = useApi("/api/workspace");
+  const [ideaOpen, setIdeaOpen] = useState(false);
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
   const [sort, setSortState] = useState(() => loadSearch("te.board.sort"));
@@ -899,7 +962,11 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
         onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
+      <button class="btn btn-sm btn-outline-info ms-auto" title="capture a thought as an idea — a source document an agent can plan from; lands as a draft" onClick=${() => setIdeaOpen(true)}>+ idea</button>
       ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
+        onClose=${() => setIdeaOpen(false)}
+        onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
     </div>
     ${domEntries.length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
       <span class="small text-body-tertiary me-1">Domains</span>
@@ -937,6 +1004,7 @@ const Board = ({ onOpen }) => {
                     <div class="d-flex align-items-center gap-1">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
+                      ${i.type === "idea" && html`<span class="badge text-bg-info" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
                       <span class="ms-auto d-flex">
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
                           onClick=${(e) => {
@@ -1795,6 +1863,7 @@ const ItemView = ({ id }) => {
       <span class="id flex-shrink-0">${it.meta.id}</span>
       <${Badge} s=${st} />
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
+      ${it.meta.type === "idea" && html`<span class="badge text-bg-info" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
@@ -1850,6 +1919,19 @@ const ItemView = ({ id }) => {
         : html`<span class="sep">·</span><span class="text-secondary">when:</span>${polLine}
           ${st === "done" && html`<span class="text-secondary" title="done satisfies dependents under every setting — this is stored policy for a rerun">applies if reopened</span>`}`}
     </div>
+    ${(it.meta.type === "idea" || (b.relates ?? []).length > 0 || (b.referenced_by ?? []).length > 0) && html`
+    <div class="chain st-${st}">
+      <span class="text-secondary">relates</span>
+      ${(b.relates ?? []).length === 0 ? html`<span class="text-secondary">nothing</span>` : b.relates.map(depLink)}
+      ${!closed && html`<a class="ms-1" title="edit relates — comma-separated ids this item references (ideas, other sources); empty clears" onClick=${async () => {
+        const v = await promptDialog(`relates — ${id}`, { label: "comma-separated ids (empty = nothing)", value: (it.meta.relates ?? []).join(", ") });
+        if (v === null) return;
+        act("relate", { relates: v.split(",").map((s) => s.trim()).filter(Boolean) });
+      }}><${PencilIcon} /></a>`}
+      <span class="sep">·</span>
+      <span class="text-secondary">referenced by ←</span>
+      ${(b.referenced_by ?? []).length === 0 ? html`<span class="text-secondary">nothing yet</span>` : b.referenced_by.map(depLink)}
+    </div>`}
     <details class="disc">
       <summary class="disc-bar"><span class="caret"></span><span class="disc-t fw-semibold">details</span>
         <span>v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${(it.meta.domains ?? []).map((d) => " #" + d).join("")}${it.claim ? ` · claim ${it.claim.holder}@${it.claim.machine}` : ""}</span>

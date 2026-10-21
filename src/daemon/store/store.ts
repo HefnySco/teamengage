@@ -24,6 +24,7 @@ import {
   setTitleLine,
   setDependsLine,
   setParentLine,
+  setRelatesLine,
   replaceSection,
   PROTECTED_SECTIONS,
 } from "../../core/files/source.js";
@@ -306,6 +307,7 @@ export class PlansStore {
       targets?: string[];
       depends_on?: string[];
       parent?: string;
+      relates?: string[];
       summary?: string;
       acceptance?: string[];
       touches?: string[];
@@ -341,6 +343,7 @@ export class PlansStore {
           ...raw,
           depends_on: raw.depends_on?.map((r) => local(r, at)),
           parent: raw.parent === undefined ? undefined : local(raw.parent, at),
+          relates: raw.relates?.map((r) => local(r, at)),
         };
         const project = d.project;
         const prefix = project
@@ -391,6 +394,7 @@ export class PlansStore {
           targets: d.targets ?? [],
           depends_on: d.depends_on ?? [],
           parent: d.parent,
+          relates: d.relates ?? [],
           domains: normalizeDomains(d.domains ?? []),
           ...(d.tier ? { tier: d.tier } : {}),
           ...(actor.kind === "agent" && actor.tier ? { authored_tier: actor.tier } : {}),
@@ -468,6 +472,7 @@ export class PlansStore {
       title: string;
       status: string;
       depends_on: string[];
+      relates?: string[];
       summary: string;
       simple?: string;
       project?: string;
@@ -507,6 +512,7 @@ export class PlansStore {
           project: d.project,
           targets: [],
           depends_on: d.depends_on,
+          relates: d.relates ?? [],
           priority: 2,
           version: 1,
           created: now,
@@ -1124,6 +1130,7 @@ export class PlansStore {
       touches?: string[];
       depends_on?: string[];
       parent?: string | null;
+      relates?: string[];
       targets?: string[];
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
@@ -1157,6 +1164,10 @@ export class PlansStore {
         if (change.parent) meta.parent = change.parent;
         else delete meta.parent;
         what.push(`parent → ${change.parent ?? "cleared"}`);
+      }
+      if (change.relates) {
+        meta.relates = change.relates;
+        what.push(`relates → ${change.relates.join(", ") || "nothing"}`);
       }
       if (change.targets) {
         meta.targets = change.targets;
@@ -1208,6 +1219,7 @@ export class PlansStore {
         if (change.title) out = setTitleLine(out, change.title);
         if (change.depends_on) out = setDependsLine(out, change.depends_on);
         if (change.parent !== undefined) out = setParentLine(out, change.parent ?? undefined);
+        if (change.relates) out = setRelatesLine(out, change.relates);
         if (change.touches) {
           out = setTouches(out, change.touches);
           what.push("touches");
@@ -1265,6 +1277,44 @@ export class PlansStore {
       }
       await this.commitPaths([it.path], `te: ${id} depends_on → ${what}`);
       return { depends_on: dependsOn };
+    });
+  }
+
+  /**
+   * Set an item's relates (human — callers check). Loose references only —
+   * no ordering, no cycle checks; refs are validated in ops. Overlay mode
+   * rewrites the task file's `**Relates:**` line so doc and meta stay in sync.
+   */
+  setRelates(id: string, relates: string[], actor: Actor): Promise<{ relates: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const same =
+        it.meta.relates.length === relates.length &&
+        it.meta.relates.every((r, i) => r === relates[i]);
+      if (same) return { relates };
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const what = relates.length ? relates.join(", ") : "nothing";
+      await this.rewriteItem(id, (m) => ({ ...m, relates }), [
+        `- ${now} ${who} relates → ${what}`,
+      ]);
+      if (this.ws.config.mode === "overlay" && it.meta.source) {
+        const found = await resolveSource(this.ws.root, id, it.meta.source);
+        if (found) {
+          const out = setRelatesLine(found.text, relates);
+          if (out !== found.text) {
+            const abs = join(this.ws.root, found.path);
+            await writeFileAtomic(abs, out);
+            this.onFileWrite?.(abs, out);
+            await this.stageTaskFiles([found.path]);
+          }
+        }
+      }
+      await this.commitPaths([it.path], `te: ${id} relates → ${what}`);
+      return { relates };
     });
   }
 

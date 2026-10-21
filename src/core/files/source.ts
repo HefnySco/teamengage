@@ -179,6 +179,37 @@ export function setParentLine(text: string, parent: string | undefined): string 
   return lines.join(eol);
 }
 
+/**
+ * Set or clear the task file's `**Relates:**` line (outside code fences).
+ * `[]` removes it; otherwise it is replaced, or inserted after
+ * `**Parent:**` / `**Depends on:**` (else after the `# ` title, else at the top).
+ */
+export function setRelatesLine(text: string, relates: string[]): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  const line = `**Relates:** ${relates.join(", ")}`;
+  let inFence = false;
+  let at = -1;
+  let after = -1;
+  let title = -1;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (at === -1 && /^\*\*Relates:\*\*/i.test(l)) at = i;
+    if (/^\*\*(Depends on|Parent):\*\*/i.test(l)) after = i;
+    if (title === -1 && /^#\s/.test(l)) title = i;
+  });
+  if (at !== -1) {
+    if (relates.length === 0) lines.splice(at, 1);
+    else lines[at] = line;
+  } else if (relates.length) {
+    if (after !== -1) lines.splice(after + 1, 0, line);
+    else if (title !== -1) lines.splice(title + 1, 0, "", line);
+    else lines.unshift(line, "");
+  }
+  return lines.join(eol);
+}
+
 /** Headings the item/task files manage — draft edits may not rewrite these. */
 export const PROTECTED_SECTIONS = new Set([
   "notes",
@@ -230,7 +261,7 @@ export function setTouches(text: string, touches: string[]): string {
     if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
     if (inFence) return;
     if (at === -1 && /^\*\*Touches:\*\*/i.test(l)) at = i;
-    if (/^\*\*(Depends on|Parent):\*\*/i.test(l)) after = i;
+    if (/^\*\*(Depends on|Parent|Relates):\*\*/i.test(l)) after = i;
     if (title === -1 && /^#\s/.test(l)) title = i;
   });
   if (at !== -1) lines[at] = line;

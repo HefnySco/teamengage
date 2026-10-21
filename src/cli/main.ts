@@ -18,6 +18,7 @@ import {
   undropCmd,
   unflagCmd,
   depsCmd,
+  relateCmd,
   holdCmd,
   archiveCmd,
   keyCmd,
@@ -50,7 +51,7 @@ usage: te <command> [options]
 commands:
   init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>] [--overlay]
                    create a workspace (.teamengage plans repo)
-  ls [--status s] [--project p] [--domain d] [--text t] [--q words] [--json]
+  ls [--status s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   validate [--json]
@@ -61,6 +62,7 @@ commands:
   undrop <ID>         restore a dropped item back to draft
   unflag <ID>         dismiss an agent's drop flag — the item stays
   deps <ID> [REF…|--off]   replace an item's depends_on (--off clears)
+  relate <ID> [REF…|--off] replace an item's relates — loose refs like source ideas
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
   unhold <ID>         release a hold → ready
   tier <ID> <t> [--reset]  model tier needed: light|standard|heavy|any; --reset zeroes attempts
@@ -73,7 +75,7 @@ commands:
   renumber <OLD> <NEW>
   reparent <ID> <PARENT|--off>   set or clear an item's parent epic (plan membership)
   rollback <ID> [--yes]  restore claim snapshots onto live targets
-  import <folder|file>  import a Markdown task folder (or one task file)
+  import <folder|file> [--type t]  import Markdown task files (--type idea for a source doc)
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
@@ -169,6 +171,8 @@ async function main(argv: string[]): Promise<number> {
       return unflagCmd(rest, home);
     case "deps":
       return depsCmd(rest, home);
+    case "relate":
+      return relateCmd(rest, home);
     case "hold":
       return holdCmd(rest, home);
     case "archive":

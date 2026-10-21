@@ -22,6 +22,8 @@ export interface PlannedItem {
   status: Status;
   /** new depends_on refs (resolved to new ids where possible) */
   depends_on: string[];
+  /** new relates refs (resolved to new ids where possible) */
+  relates: string[];
   summary: string;
   simple?: string;
   suggestedId: string;
@@ -69,6 +71,7 @@ const PREFIX_TYPE: Record<string, ItemType> = {
   BUG: "bug",
   WISH: "wish",
   SPIKE: "spike",
+  IDEA: "idea",
 };
 
 function typeFor(basename: string): ItemType {
@@ -99,6 +102,8 @@ function statusFor(dirSegments: string[], file: string, amb: Ambiguity[]): Statu
  */
 const DEP_RE =
   /^\s*\*{0,2}\s*(?:depends\s+on|order\s*:\s*\*{0,2}\s*after|blocked\s+by)\s*:?\s*\*{0,2}\s*(.+?)\s*$/im;
+/** `**Relates:** X, Y` — loose references, same ref syntax as deps. */
+const REL_RE = /^\s*\*{0,2}\s*relates\s*:?\s*\*{0,2}\s*(.+?)\s*$/im;
 /** Values that mean "no dependencies" rather than naming one. */
 const NO_DEP_RE = /^(nothing|none|no\b.*|-|—|n\/a)$/i;
 const TITLE_RE = /^#\s+(.+)$/m;
@@ -139,7 +144,13 @@ function extractRefs(entry: string): string[] {
 
 export function planImport(
   files: ImportSource[],
-  opts: { prefix: string; existingIds?: Iterable<string>; existingSources?: Set<string> },
+  opts: {
+    prefix: string;
+    existingIds?: Iterable<string>;
+    existingSources?: Set<string>;
+    /** force every imported file to this type (e.g. --type idea) */
+    type?: ItemType;
+  },
 ): ImportPlan {
   const amb: Ambiguity[] = [];
   const seenLegacy = new Map<string, string>(); // legacy → file
@@ -275,16 +286,41 @@ export function planImport(
         }
       }
     }
+    // **Relates:** — loose refs, resolved like deps; unresolved ones are
+    // reported and dropped (a relates edge pointing nowhere is worse than none)
+    const relM = REL_RE.exec(content);
+    const relates: string[] = [];
+    if (relM) {
+      for (const raw of relM[1].split(DEP_CUT_RE)[0].split(/[,;]/)) {
+        const entry = raw.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "").replace(/\.md$/i, "").trim();
+        if (!entry || NO_DEP_RE.test(entry)) continue;
+        for (const ref of extractRefs(entry)) {
+          const m = matchDep(ref);
+          if (m.ids.length === 1) relates.push(m.ids[0]);
+          else
+            amb.push({
+              kind: "unresolved_dep",
+              message:
+                m.ids.length > 1
+                  ? `relates '${ref}' matches ${m.ids.length} items — ambiguous`
+                  : `relates '${ref}' not found among imported items`,
+              file: g.main?.path ?? key,
+            });
+        }
+      }
+    }
     const body = content
       .replace(TITLE_RE, "")
       .replace(DEP_RE, "")
+      .replace(REL_RE, "")
       .trim();
     items.push({
       legacy_id: legacy,
       title,
-      type: g.main ? typeFor(legacy) : "task",
+      type: opts.type ?? (g.main ? typeFor(legacy) : "task"),
       status: statusFor(g.dirSegments, g.main?.path ?? key, amb),
       depends_on,
+      relates,
       summary: body.split("\n\n")[0] || title,
       simple: g.simple?.content.trim() || undefined,
       suggestedId: id,
@@ -297,6 +333,7 @@ export function planImport(
       (i) =>
         `+ ${i.suggestedId} [${i.status}] ${i.type} "${i.title}"` +
         `${i.depends_on.length ? ` deps:[${i.depends_on.join(",")}]` : ""}` +
+        `${i.relates.length ? ` rel:[${i.relates.join(",")}]` : ""}` +
         ` ← ${i.sources.join(", ")}`,
     )
     .join("\n");

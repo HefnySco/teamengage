@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ItemId, ItemRef, TargetRef, Name, DateStr } from "./refs.js";
 
-export const ItemType = z.enum(["epic", "task", "bug", "wish", "spike", "review"]);
+export const ItemType = z.enum(["epic", "task", "bug", "wish", "spike", "review", "idea"]);
 export type ItemType = z.infer<typeof ItemType>;
 
 /** Stored statuses. `blocked` and `turn` are derived, never stored (DESIGN §5). */

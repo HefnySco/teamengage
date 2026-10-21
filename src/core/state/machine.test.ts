@@ -111,6 +111,23 @@ describe("every non-arrow is rejected", () => {
   });
 });
 
+describe("ideas are sources, never work", () => {
+  const idea = (status: Status) => ItemMeta.parse({ id: "GL-0044", type: "idea", title: "i", status });
+  const ideaClaim = { ...claimOf(), item: "GL-0044" };
+
+  it("claim is refused — plan from them instead", () => {
+    expect(() =>
+      transition(idea("ready"), { type: "claim", claim: ideaClaim }, agent, ctx({ depsDone: true })),
+    ).toThrow(/ideas are sources/);
+  });
+
+  it("the normal lifecycle minus execution still applies", () => {
+    expect(transition(idea("draft"), { type: "approve_plan" }, human, ctx()).meta.status).toBe("ready");
+    expect(transition(idea("draft"), { type: "complete" }, human, ctx()).meta.status).toBe("done");
+    expect(transition(idea("ready"), { type: "drop" }, human, ctx()).meta.status).toBe("dropped");
+  });
+});
+
 describe("claim takeover of an AI-flagged submission", () => {
   const flagged = (): ItemMeta => ({
     ...item("in_review"),

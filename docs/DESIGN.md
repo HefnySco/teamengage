@@ -56,7 +56,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Machine** | A host running a daemon (`desktop`, `laptop`). Every claim, session and event records its machine. |
 | **Resource** | Anything work touches, declared in `workspace.yaml`, **inside or outside** the workspace root: a local git repo, a remote git URL, an SSH folder on another machine (e.g. a Raspberry Pi), a plain local folder, a URL. See §6.3. |
 | **Project** | Optional grouping inside a workspace (`mission_planner`, `andruav`) with its own ID prefix. |
-| **Item** | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`. Lives at workspace level (cross-cutting) or project level (detail). |
+| **Item** | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`, `idea`. Lives at workspace level (cross-cutting) or project level (detail). |
 | **Edge** | `depends_on`, `parent`, `relates`. `blocks` is derived. Edges may cross projects and workspaces (§4.1). |
 | **Turn** | Whose move it is on an item: `human` or `agent`. Drives both inboxes. |
 | **Claim** | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human. |
@@ -251,6 +251,16 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   on the item page); never a gate — `accept`/`reject` stay human-only and
   the turn stays the human's. `submit` clears it (a fresh submission starts
   unreviewed); `bounce` sets it to `issues` with the bounce reason.
+- An **idea** is a **source document**, not work: a thought, brainstorm or
+  spec the human (or an agent, via `propose type:"idea"`) captured for
+  later planning. `claim` refuses it ("ideas are sources — plan from them")
+  and `next` skips it — the same treatment epics get. Its lifecycle is the
+  normal one minus execution: `draft` → `ready` is an optional "triaged"
+  marker, never a gate — an agent may plan from an idea in any status;
+  `complete`/`drop`/`archive` close it out. The link back is `relates`:
+  items generated from the idea name it in `relates` (reference only — no
+  ordering, no gate), and the idea's page lists its referrers under
+  "referenced by". `te relate <ID> [refs|--off]` edits the edge, like `te deps`.
 - A **plan** is an epic; its parts are the items whose `parent` points at
   it (sub-plans are epics too, so it nests). `plan_closed` is the only
   stored flag — the human sets it (close plan / reopen plan on the item

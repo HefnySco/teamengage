@@ -144,6 +144,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
             `plan: ${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0} — epics are plans; work their children, not this item`,
           );
         }
+        if (it.meta.type === "idea") {
+          lines.push(
+            `idea: a source document — plan from it (propose items with relates: ["${it.meta.id}"]); it is never claimed`,
+          );
+        }
         if (it.meta.tier || it.meta.attempts) {
           lines.push(`tier: ${it.meta.tier ?? "any"}${it.meta.attempts ? ` · ${it.meta.attempts} failed attempt(s) — read ## Handoff / ## Review first` : ""}`);
         }
@@ -160,6 +165,12 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           lines.push(
             `dep ${d.ref} ${d.status}${d.key && !["done", "dropped"].includes(d.status) ? " [key task — wait for its acceptance]" : ""}${d.pending ? " (not accepted yet — build on it, but it may still change)" : ""}${d.archived ? " [archived]" : ""}${d.outcome ? ` — ${d.outcome}` : ""}`,
           );
+        }
+        for (const r of b.relates) {
+          lines.push(`relates ${r.ref} ${r.status}`);
+        }
+        for (const r of b.referenced_by) {
+          lines.push(`referenced by ${r.ref} ${r.status}`);
         }
         for (const d of b.decisions) {
           lines.push(`decision ${d.meta.id}: ${d.meta.title}`);

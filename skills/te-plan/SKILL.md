@@ -75,6 +75,25 @@ Inside one propose call, refer to earlier items as `#0`, `#1`, … (0-based):
 `"parent": "#0", "depends_on": ["#1"]`. Put prerequisites before the items
 that need them.
 
+## 3b. Planning from idea sources
+
+Ideas (`type: "idea"`, `IDEA-*.md` files) are **source documents** — a
+thought, brainstorm or spec the human captured. They are never claimed or
+executed; an agent turns them into a plan when the human asks.
+
+When the human points you at one or more ("plan from GL-0044 and GL-0047"):
+
+1. Read each with `curl -s $B/brief/<id> -H "$H"` — the idea's whole task
+   file is the spec.
+2. Propose the plan as usual (epic + tasks).
+3. Set `"relates": ["GL-0044", "GL-0047"]` on every item it grows from —
+   the epic at minimum. The edge is **reference only**: no ordering, no
+   gate. The idea's page then lists the plan under "referenced by".
+
+Capturing a thought as an idea works the same way — an agent may
+`propose { "type": "idea", "title": "…", "summary": "…" }` to save a
+brainstorm for later planning.
+
 ## 4. Acceptance criteria an agent can check
 
 Each `acceptance` entry is one observable, binary check — ideally a command
@@ -143,6 +162,8 @@ The reply lists each new id and its file, e.g.
 `proposed GL-0024 → global/TASK-14-clear-latched-events-when-a-mission-restarts.md`.
 
 Field notes:
+- `relates`: loose references — the idea(s) this item was generated from,
+  or other source docs. Reference only, never ordering (§3b).
 - `project` is the folder (`global`, `mission_planner`, `webclient`, …).
 - `title`: imperative, specific. Keep the project's numbering style if it
   has one (`TASK-14 — …`); the file name gets its own number anyway.

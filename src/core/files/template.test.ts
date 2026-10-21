@@ -46,6 +46,39 @@ describe("task template", () => {
     expect(body).toContain("- [ ] already boxed\n- [ ] plain dash\n- [ ] bare\n");
   });
 
+  it("ideas are lighter — no deps/touches/acceptance; relates is a line", () => {
+    const body = renderTaskBody({
+      id: "GL-0003",
+      type: "idea",
+      title: "A thought",
+      summary: "what if missions were trees",
+      relates: ["GL-0001"],
+      depends_on: ["GL-0001"],
+      parent: "GL-0009",
+    });
+    expect(body).toBe(
+      [
+        "# A thought",
+        "",
+        "**Relates:** GL-0001",
+        "",
+        "## Summary",
+        "what if missions were trees",
+        "",
+        "## Notes",
+        "",
+      ].join("\n"),
+    );
+    const bare = renderTaskBody({ id: "GL-0004", type: "idea", title: "Bare" });
+    expect(bare).not.toContain("**Depends on:**");
+    expect(bare).not.toContain("**Relates:**");
+    expect(bare).not.toContain("**Touches:**");
+    expect(bare).not.toContain("## Acceptance");
+    // work items keep their header and gain **Relates:** only when set
+    const task = renderTaskBody({ id: "GL-0005", type: "task", title: "T", relates: ["GL-0003", "GL-0004"] });
+    expect(task).toContain("**Depends on:** nothing\n**Relates:** GL-0003, GL-0004\n**Touches:** TBD\n");
+  });
+
   it("tags the file and round-trips through the importer (title, deps, parent)", () => {
     const text = renderTaskFile({
       id: "GL-0002",
@@ -86,8 +119,9 @@ describe("file naming", () => {
     expect(long).toBe("a-very-long-title-that-keeps-going-well-past-the");
   });
 
-  it("epics are PHASE, everything else TASK; two-digit numbers", () => {
+  it("epics are PHASE, ideas are IDEA, everything else TASK", () => {
     expect(filePrefix("epic")).toBe("PHASE");
+    expect(filePrefix("idea")).toBe("IDEA");
     expect(filePrefix("bug")).toBe("TASK");
     expect(taskFileName("TASK", 7, "Fix it")).toBe("TASK-07-fix-it.md");
     expect(taskFileName("TASK", 123, "Fix it")).toBe("TASK-123-fix-it.md");

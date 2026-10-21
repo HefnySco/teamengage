@@ -113,7 +113,7 @@ export class WorkspaceOps {
     const d = domain ? normalizeDomain(domain) : undefined;
     return this.index
       .readyItems()
-      .filter((i) => i.meta.type !== "epic") // epics are plans — agents claim their tasks
+      .filter((i) => i.meta.type !== "epic" && i.meta.type !== "idea") // plans and sources — agents claim tasks
       .filter((i) => !d || i.meta.domains.includes(d))
       .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
       .filter((i) => !tier || !i.meta.tier || tierRank(i.meta.tier) <= tierRank(tier))
@@ -253,7 +253,29 @@ export class WorkspaceOps {
       const dep = this.index.get(ref);
       return { ref, status: dep?.meta.status ?? "unknown", archived: Boolean(dep?.meta.archived) };
     });
-    return { item: it, deps, dependents, decisions, targets, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
+    // loose references, both ways — e.g. a plan pointing back at the idea(s)
+    // it was generated from. Reference only: no ordering, no blocking.
+    const relates = it.meta.relates.map((ref) => {
+      const parsed = parseItemRef(ref);
+      const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
+      return { ref, status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown" };
+    });
+    const wsName = this.wsr.ws.config.name;
+    const referenced_by = [...this.index.items.values()]
+      .filter(
+        (x) =>
+          x.meta.id !== id &&
+          x.meta.relates.some((r) => {
+            try {
+              const p = parseItemRef(r);
+              return (p.workspace === undefined || p.workspace === wsName) && p.id === id;
+            } catch {
+              return false;
+            }
+          }),
+      )
+      .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
+    return { item: it, deps, dependents, decisions, targets, relates, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
   }
 
   /**
@@ -313,6 +335,9 @@ export class WorkspaceOps {
     const it = this.item(id);
     if (it.meta.type === "epic") {
       throw new ClaimRefusedError("epics are plans — claim their tasks");
+    }
+    if (it.meta.type === "idea") {
+      throw new ClaimRefusedError("ideas are sources — plan from them");
     }
     const mine = it.claim;
     if (mine) {
@@ -629,6 +654,7 @@ export class WorkspaceOps {
       targets?: string[];
       depends_on?: string[];
       parent?: string;
+      relates?: string[];
       summary?: string;
       acceptance?: string[];
       touches?: string[];
@@ -649,7 +675,7 @@ export class WorkspaceOps {
     if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
       for (const id of r.ids) {
         const it = this.index.items.get(id);
-        if (!it || it.meta.type === "epic" || !it.meta.depends_on.length) continue;
+        if (!it || it.meta.type === "epic" || it.meta.type === "idea" || !it.meta.depends_on.length) continue;
         if (it.meta.authored_tier === "light") continue; // a stronger session vets it first
         const known = it.meta.depends_on.every((ref) => {
           try {
@@ -1007,6 +1033,7 @@ export class WorkspaceOps {
       touches?: string[];
       depends_on?: string[];
       parent?: string | null;
+      relates?: string[];
       targets?: string[];
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
@@ -1024,6 +1051,7 @@ export class WorkspaceOps {
     }
     if (change.depends_on) this.assertDeps(id, change.depends_on);
     if (change.parent) this.assertParent(id, change.parent);
+    if (change.relates) this.assertRefs(id, change.relates);
     for (const t of change.targets ?? []) parseTargetRef(t); // throws on a bad ref
     return this.store.editDraft(id, change, this.actorFor(actor));
   }
@@ -1033,6 +1061,33 @@ export class WorkspaceOps {
     this.item(id);
     this.assertDeps(id, dependsOn);
     return this.store.setDepends(id, dependsOn, this.actorFor("human"));
+  }
+
+  /** Human: replace an item's relates (any status). Reference-only refs checked here. */
+  async setRelates(id: string, relates: string[]) {
+    this.item(id);
+    this.assertRefs(id, relates);
+    return this.store.setRelates(id, relates, this.actorFor("human"));
+  }
+
+  /**
+   * Loose refs (relates): each must parse, exist (local index or a linked
+   * workspace) and not be the item itself. No cycle checks — relates is
+   * reference only, never ordering.
+   */
+  private assertRefs(id: string, refs: string[]) {
+    const wsName = this.wsr.ws.config.name;
+    for (const r of refs) {
+      const parsed = parseItemRef(r); // throws ValidationError on bad refs
+      const here = parsed.workspace === undefined || parsed.workspace === wsName;
+      if (here && parsed.id === id) {
+        throw new ValidationError(`relates: ${id} may not reference itself`);
+      }
+      if (here) this.item(parsed.id);
+      else if (this.links?.statusOf(r) === undefined) {
+        throw new NotFoundError(`reference ${r} not found`);
+      }
+    }
   }
 
   /**

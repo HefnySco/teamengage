@@ -6,6 +6,7 @@ import { WorkspaceOps } from "./ops.js";
 import { TeError, NotFoundError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import { compareIds } from "../../core/address/refs.js";
+import { ItemType } from "../../core/model/item.js";
 import type { Ambiguity } from "../../import/import.js";
 
 /**
@@ -263,11 +264,73 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  /** What the web UI needs to offer choices: name, mode, projects. */
+  app.get("/api/workspace", async (req, reply) => {
+    try {
+      const { ws } = opsFor(ctx, wsOf(req.query)).wsr;
+      const cfg = ws.config;
+      return {
+        name: cfg.name,
+        mode: cfg.mode,
+        projects: Object.entries(cfg.projects).map(([name, p]) => ({ name, prefix: p.prefix })),
+      };
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  /**
+   * Human-side create — same pipeline an agent's `propose` tool uses, the
+   * actor is the human. Items land as drafts (the board's draft column /
+   * inbox shows them; the human approves or drops).
+   */
+  app.post("/api/propose", async (req, reply) => {
+    try {
+      const b = (req.body ?? {}) as { items?: unknown };
+      if (!Array.isArray(b.items) || !b.items.length) throw new TeError("USAGE", "propose needs {items:[…]}");
+      const items = b.items.map((raw, i) => {
+        const d = raw as Record<string, unknown>;
+        if (!d || typeof d.title !== "string" || !d.title.trim()) {
+          throw new TeError("USAGE", `propose item ${i}: title is required`);
+        }
+        if (d.type !== undefined) {
+          const t = ItemType.safeParse(d.type);
+          if (!t.success) throw new TeError("USAGE", `propose item ${i}: type must be one of ${ItemType.options.join("|")}`);
+        }
+        const list = (k: string) => (Array.isArray(d[k]) ? (d[k] as unknown[]).map(String) : undefined);
+        return {
+          type: d.type === undefined ? undefined : String(d.type),
+          title: d.title,
+          project: d.project === undefined ? undefined : String(d.project),
+          targets: list("targets"),
+          depends_on: list("depends_on"),
+          parent: d.parent === undefined ? undefined : String(d.parent),
+          relates: list("relates"),
+          summary: d.summary === undefined ? undefined : String(d.summary),
+          acceptance: list("acceptance"),
+          touches: list("touches"),
+          simple: d.simple === undefined ? undefined : String(d.simple),
+          domains: list("domains"),
+          tier: d.tier as "light" | "standard" | "heavy" | undefined,
+        };
+      });
+      return await opsFor(ctx, wsOf(req.query)).propose(items, "human");
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   /** Markdown-folder import (IM-0001): dry-run preview or apply. */
   app.post("/api/import", async (req, reply) => {
     try {
-      const b = req.body as { folder?: string; project?: string; apply?: boolean };
+      const b = req.body as { folder?: string; project?: string; apply?: boolean; type?: string };
       if (!b.folder) throw new TeError("USAGE", "import needs {folder}");
+      let forceType: ItemType | undefined;
+      if (b.type !== undefined) {
+        const t = ItemType.safeParse(b.type);
+        if (!t.success) throw new TeError("USAGE", `import type must be one of ${ItemType.options.join("|")}`);
+        forceType = t.data;
+      }
       const ops = opsFor(ctx, wsOf(req.query));
       const { scanFolder, importRoot, sourceKey, sourcesUnder } = await import("../../import/scan.js");
       const { planImport } = await import("../../import/import.js");
@@ -328,6 +391,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         prefix,
         existingIds: ops.index.items.keys(),
         existingSources,
+        type: forceType,
       });
       plan.ambiguities.push(...tagged);
       if (!b.apply) {
@@ -341,6 +405,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           title: i.title,
           status: i.status,
           depends_on: i.depends_on,
+          relates: i.relates,
           summary: i.summary,
           simple: i.simple,
           project: b.project,
@@ -379,6 +444,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("unflag", (ops, id) => ops.unflagDrop(id));
   act("deps", (ops, id, b) =>
     ops.setDepends(id, Array.isArray(b.depends_on) ? b.depends_on.map(String) : []),
+  );
+  act("relate", (ops, id, b) =>
+    ops.setRelates(id, Array.isArray(b.relates) ? b.relates.map(String) : []),
   );
   act("undrop", (ops, id) => ops.undrop(id));
   act("complete", (ops, id, b) => ops.complete(id, b.note ? String(b.note) : undefined));

@@ -109,6 +109,32 @@ export async function depsCmd(args: string[], home?: string): Promise<number> {
   return 0;
 }
 
+/**
+ * `te relate <ID> [refs…]` — replace an item's relates (loose references,
+ * e.g. the idea a plan was generated from); `--off` clears it.
+ */
+export async function relateCmd(args: string[], home?: string): Promise<number> {
+  const off = args.includes("--off");
+  const [id, ...refs] = positional(args.filter((a) => a !== "--off"));
+  if (!id || (!refs.length && !off)) {
+    process.stderr.write("usage: te relate <ID> [REF…|--off]\n");
+    return 2;
+  }
+  // uppercase the id part only — a `ws:` workspace prefix stays as written
+  const ref = (r: string) => {
+    const i = r.indexOf(":");
+    return i === -1 ? r.toUpperCase() : `${r.slice(0, i)}:${r.slice(i + 1).toUpperCase()}`;
+  };
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/relate${wsQ(args)}`,
+    { relates: off ? [] : refs.map(ref) },
+    home,
+  )) as { relates?: string[] };
+  process.stdout.write(`${id.toUpperCase()} → relates to ${r.relates?.join(", ") || "nothing"}\n`);
+  return 0;
+}
+
 /** `te hold <ID> [reason]` — park a draft/ready item; agents can't see or claim it. */
 export async function holdCmd(args: string[], home?: string): Promise<number> {
   const [id, ...rest] = positional(args);

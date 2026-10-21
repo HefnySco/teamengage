@@ -350,6 +350,93 @@ describe("propose: #N batch-local refs", () => {
   });
 });
 
+describe("ideas and relates", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+
+  it("an idea lands as IDEA-NN-…, lighter body, never ready for agents", async () => {
+    const { ids, files } = await store().createItems(
+      [{ type: "idea", title: "IDEA-1 — Tree missions", project: "global", summary: "what if missions were trees" }],
+      human,
+    );
+    const [id] = ids;
+    expect(store().idx.get(id)!.meta.type).toBe("idea");
+    expect(store().idx.get(id)!.meta.status).toBe("draft");
+    expect(files[0]).toMatch(/^global\/IDEA-\d+.*\.md$/);
+    const text = readFileSync(join(root, files[0]), "utf8");
+    expect(text).not.toContain("**Depends on:**");
+    expect(text).not.toContain("**Touches:**");
+    expect(text).not.toContain("## Acceptance");
+
+    // approved ideas are still never claimable — they are sources
+    const r = await post(`/api/items/${id}/approve`, {});
+    expect(r.error).toBeUndefined();
+    const claim = await post(`/api/items/${id}/claim`, {});
+    expect(claim.error).toBe("CLAIM_REFUSED");
+    expect(String(claim.message)).toMatch(/ideas are sources/);
+  });
+
+  it("relates: batch refs, file line, brief both directions, relate endpoint", async () => {
+    const { ids, files } = await store().createItems(
+      [
+        { type: "idea", title: "Source thought", project: "global" },
+        { type: "task", title: "From the idea", project: "global", relates: ["#0"] },
+      ],
+      human,
+    );
+    const [idea, task] = ids;
+    expect(store().idx.get(task)!.meta.relates).toEqual([idea]);
+    const text = readFileSync(join(root, files[1]), "utf8");
+    expect(text).toContain(`**Relates:** ${idea}`);
+
+    // brief shows the edge both ways
+    const b1 = (await (await api(`/api/items/${task}`)).json()) as {
+      relates: Array<{ ref: string; status: string }>;
+    };
+    expect(b1.relates.map((r) => r.ref)).toEqual([idea]);
+    const b2 = (await (await api(`/api/items/${idea}`)).json()) as {
+      referenced_by: Array<{ ref: string }>;
+    };
+    expect(b2.referenced_by.map((r) => r.ref)).toContain(task);
+
+    // the relate endpoint rewrites meta + the file line; --off style [] clears
+    const r = await post(`/api/items/${task}/relate`, { relates: [] });
+    expect(r.relates).toEqual([]);
+    expect(store().idx.get(task)!.meta.relates).toEqual([]);
+    expect(readFileSync(join(root, files[1]), "utf8")).not.toContain("**Relates:**");
+
+    // refs must exist; self-reference refused
+    const bad = await post(`/api/items/${task}/relate`, { relates: ["GL-9999"] });
+    expect(String(bad.message)).toMatch(/not found/i);
+    const self = await post(`/api/items/${task}/relate`, { relates: [task] });
+    expect(String(self.message)).toMatch(/itself/);
+  });
+
+  it("the web UI can capture one: POST /api/propose as the human", async () => {
+    const ws = (await (await api("/api/workspace")).json()) as { name: string; projects: Array<{ name: string }> };
+    expect(ws.name).toBe("tasks");
+    expect(ws.projects.map((p) => p.name)).toContain("global");
+
+    const r = (await post("/api/propose", {
+      items: [{ type: "idea", title: "Web thought", project: "global", summary: "captured from the board" }],
+    })) as { ids: string[]; files: string[] };
+    const [id] = r.ids;
+    expect(store().idx.get(id)!.meta.type).toBe("idea");
+    expect(store().idx.get(id)!.meta.status).toBe("draft");
+    expect(r.files[0]).toMatch(/^global\/IDEA-\d+.*\.md$/);
+    expect(readFileSync(join(root, r.files[0]), "utf8")).toContain("captured from the board");
+
+    const bad = await post("/api/propose", { items: [{ type: "not-a-type", title: "x" }] });
+    expect(bad.error).toBe("USAGE");
+  });
+
+  it("next never offers an idea", async () => {
+    const { ids } = await store().createItems([{ type: "idea", title: "Ready thought", project: "global" }], human);
+    await post(`/api/items/${ids[0]}/approve`, {});
+    const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
+    expect(next.map((i) => i.meta.id)).not.toContain(ids[0]);
+  });
+});
+
 describe("overlay import honours ignore globs", () => {
   it("skips root-relative ignored files, imports the rest", async () => {
     const ws = ctx.workspaces.get("tasks")!.ws;

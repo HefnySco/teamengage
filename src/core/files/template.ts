@@ -16,6 +16,8 @@ export interface TaskDraft {
   summary?: string;
   depends_on?: string[];
   parent?: string;
+  /** loose references (e.g. the ideas a plan was generated from) — no ordering */
+  relates?: string[];
   /** repos / paths the work touches, free text (`droneengage_mavlink: src/mission/**`) */
   touches?: string[];
   /** checkable acceptance criteria, one per line */
@@ -24,22 +26,27 @@ export interface TaskDraft {
 
 /** Body of a task file (without the `te:` frontmatter). */
 export function renderTaskBody(d: TaskDraft): string {
-  const deps = d.depends_on?.length ? d.depends_on.join(", ") : "nothing";
-  const head = [`# ${d.title}`, "", `**Depends on:** ${deps}`];
-  if (d.parent) head.push(`**Parent:** ${d.parent}`);
-  head.push(`**Touches:** ${d.touches?.length ? d.touches.join("; ") : "TBD"}`);
+  const idea = d.type === "idea";
+  const block: string[] = [];
+  if (!idea) {
+    const deps = d.depends_on?.length ? d.depends_on.join(", ") : "nothing";
+    block.push(`**Depends on:** ${deps}`);
+    if (d.parent) block.push(`**Parent:** ${d.parent}`);
+  }
+  if (d.relates?.length) block.push(`**Relates:** ${d.relates.join(", ")}`);
+  if (!idea) block.push(`**Touches:** ${d.touches?.length ? d.touches.join("; ") : "TBD"}`);
   const acceptance = d.acceptance?.length
     ? d.acceptance.map((a) => `- [ ] ${a.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`)
     : ["- [ ] TBD — the human or the planner fills this in before approval"];
   return [
-    ...head,
+    `# ${d.title}`,
     "",
+    ...(block.length ? [...block, ""] : []),
     "## Summary",
     (d.summary ?? d.title).trim(),
     "",
-    "## Acceptance",
-    ...acceptance,
-    "",
+    // an idea is a source document — no acceptance checklist
+    ...(idea ? [] : ["## Acceptance", ...acceptance, ""]),
     "## Notes",
     "",
   ].join("\n");
@@ -70,9 +77,9 @@ export function slugify(title: string): string {
   return cut.replace(/-[^-]*$/, "") || cut;
 }
 
-/** `TASK` for work items, `PHASE` for epics. */
-export function filePrefix(type: string): "TASK" | "PHASE" {
-  return type === "epic" ? "PHASE" : "TASK";
+/** `TASK` for work items, `PHASE` for epics, `IDEA` for source documents. */
+export function filePrefix(type: string): "TASK" | "PHASE" | "IDEA" {
+  return type === "epic" ? "PHASE" : type === "idea" ? "IDEA" : "TASK";
 }
 
 /**
@@ -102,7 +109,7 @@ export function nextTaskNumber(dir: string, prefix: string, taken: Iterable<numb
  * x`, `PHASE-2: Y`) is slugged without it — the file gets the allocated one.
  */
 export function taskFileName(prefix: string, n: number, title: string): string {
-  const bare = title.replace(/^\s*(?:task|phase)[-\s]*[\d.]+[a-z]?\s*[—–:-]*\s*/i, "") || title;
+  const bare = title.replace(/^\s*(?:task|phase|idea)[-\s]*[\d.]+[a-z]?\s*[—–:-]*\s*/i, "") || title;
   return `${prefix}-${String(n).padStart(2, "0")}-${slugify(bare)}.md`;
 }
 
@@ -110,11 +117,15 @@ export function taskFileName(prefix: string, n: number, title: string): string {
 export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the task folder is the plan)
 - One task per file: <project>/TASK-<NN>-<slug>.md. Epics are PHASE-*.md or
   *-MEGAPLAN.md. Optional plain-English companion: X.simple.md.
+- Ideas are IDEA-*.md — source documents (thoughts, specs, brainstorms) an
+  agent can be asked to plan from. They are never claimed; tasks generated
+  from one name it in "relates".
 - Every task file has: a "# Title", a "**Depends on:**" line (ids, or
   "nothing"), a "**Touches:**" line (repos/paths), and a "## Acceptance"
   checklist an agent can verify. Format: \`te template\`.
 - Create tasks with propose (it writes the file from the template and
-  tracks it) — never by hand. Plain-English version for the human:
+  tracks it) — never by hand. Work generated from an idea names it in
+  "relates" (reference only — no ordering, no gate). Plain-English version for the human:
   simple <id> {text} (writes and links X.simple.md) — never by hand.
 - Never edit or remove the "te:" frontmatter line; never move files into
   done/ — status lives in TeamEngage, the human moves files.

@@ -12,6 +12,7 @@ this page and that code must agree.
 |---|---|---|
 | Task (also bug, spike, review, wish) | `TASK-<NN>-<slug>.md` | the project folder (`projects.<p>.path`, default the project name) |
 | Epic | `PHASE-<NN>-<slug>.md` (existing `*-MEGAPLAN.md` files stay valid) | same |
+| Idea | `IDEA-<NN>-<slug>.md` | same |
 | Plain-English companion | `<same name>.simple.md` | next to its task |
 
 - `NN` is one above the highest number used anywhere under the project
@@ -55,6 +56,11 @@ previous run must be cleared so the second run fires them again.
 | `## Summary` | yes | What and why, technical. More sections (Background, Design, …) may follow it. |
 | `## Acceptance` | yes | `- [ ]` checklist. Each line observable and checkable by an agent: a command, a test, a measurable behaviour. |
 | `## Notes` | yes (may be empty) | Append-only working notes. |
+| `**Relates:**` | optional | Loose references — e.g. the `IDEA-` source doc(s) the work was generated from. Reference only, never ordering. |
+
+An **idea** file is lighter: `# Title`, an optional `**Relates:**` line,
+`## Summary`, `## Notes` — no `**Depends on:**`, `**Parent:**`,
+`**Touches:**` or `## Acceptance`. It is a source document, not work.
 
 ## Who changes what
 

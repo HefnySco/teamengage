@@ -136,6 +136,29 @@ describe("import planning (IM-0001)", () => {
     rmSync(f2, { recursive: true, force: true });
   });
 
+  it("IDEA prefix → idea; **Relates:** resolves to new ids; --type overrides", async () => {
+    const files = [
+      { path: "todo/IDEA-01 tree missions.md", content: "# Tree missions\n\nWhat if missions were trees.\n" },
+      { path: "todo/TASK-01 plan it.md", content: "# Plan it\n\n**Relates:** IDEA-01, ZZ-99\n" },
+    ];
+    const plan = planImport(files, { prefix: "WS", existingIds: [] });
+    const idea = plan.items.find((i) => i.legacy_id === "IDEA-01 tree missions")!;
+    const task = plan.items.find((i) => i.legacy_id === "TASK-01 plan it")!;
+    expect(idea.type).toBe("idea");
+    expect(task.relates).toEqual([idea.suggestedId]);
+    // an unresolvable relates ref is reported, not silently stored
+    expect(
+      plan.ambiguities.some((a) => a.kind === "unresolved_dep" && a.message.includes("ZZ-99")),
+    ).toBe(true);
+
+    // --type idea forces the type on a file whose name says nothing
+    const forced = planImport(
+      [{ path: "notes/brainstorm.md", content: "# Brainstorm\n" }],
+      { prefix: "WS", existingIds: [], type: "idea" },
+    );
+    expect(forced.items[0].type).toBe("idea");
+  });
+
   it("a second import dedups by source path — same-name files elsewhere still import", async () => {
     // 'seed/TASK-02 add scopes.md' was already imported; a different file
     // that happens to share the basename must NOT be silently dropped
