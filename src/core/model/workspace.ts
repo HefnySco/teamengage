@@ -107,6 +107,13 @@ export const WorkspaceConfig = z
     stale_after: z.string().default("24h"),
     projects: z.record(z.string(), ProjectConfig).default({}),
     resources: z.record(z.string(), ResourceConfig).default({}),
+    /**
+     * Code repos `te sync` carries between machines besides the git
+     * resources: paths or `dir/*` globs relative to the root (`../*` = every
+     * repo next to the task folder). Each repo's checked-out branch and any
+     * te/* branches are pulled/pushed, fast-forward only.
+     */
+    repos: z.array(z.string()).default([]),
     /** linked workspaces: name → workspace root path. */
     links: z.record(z.string(), z.string()).default({}),
   })

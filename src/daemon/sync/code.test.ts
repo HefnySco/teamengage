@@ -165,3 +165,45 @@ describe("syncCode between two machines", () => {
     expect(r.problems[0]).toMatch(/no git remote/);
   });
 });
+
+describe("repos: plain code repos next to the task folder", () => {
+  it("carries each repo's checked-out branch, skipping the plans repo and resources", async () => {
+    const top = join(home, "plain");
+    const bare = join(home, "lib.git");
+    g(home, "init", "-q", "--bare", bare);
+    for (const m of ["w", "h"]) mkdirSync(join(top, m), { recursive: true });
+    // work machine: Tasks/ (the task folder) + lib/ side by side
+    const libW = join(top, "w", "lib");
+    mkdirSync(libW);
+    g(libW, "init", "-q", "-b", "dev");
+    ident(libW);
+    commitFile(libW, "x.c", "1\n");
+    g(libW, "remote", "add", "origin", bare);
+    g(libW, "push", "-q", "-u", "origin", "dev");
+    commitFile(libW, "x.c", "2\n"); // unpushed work
+    const tasks = join(top, "w", "Tasks");
+    mkdirSync(join(tasks, ".teamengage", "items"), { recursive: true });
+    writeFileSync(join(tasks, ".teamengage", "workspace.yaml"), 'name: p\nprefix: P\nrepos: ["../*"]\n');
+    g(tasks, "init", "-q", "-b", "main"); // the task folder's own repo — synced as plans, not here
+    const ws = resolveWorkspace(tasks, { home });
+    const store = new PlansStore(ws, "w");
+    await store.init();
+    const reps = await syncCode({ ws, store }, { home });
+    expect(reps.map((r) => r.resource)).toEqual(["lib"]);
+    expect(reps[0].done).toEqual(["pushed dev (+1)"]);
+
+    // home machine: an older clone fast-forwards
+    g(join(top, "h"), "clone", "-q", "-b", "dev", bare, "lib");
+    g(libW, "commit", "-q", "--allow-empty", "-m", "3");
+    await syncCode({ ws, store }, { home });
+    const tasksH = join(top, "h", "Tasks");
+    mkdirSync(join(tasksH, ".teamengage", "items"), { recursive: true });
+    writeFileSync(join(tasksH, ".teamengage", "workspace.yaml"), 'name: p\nprefix: P\nrepos: ["../lib"]\n');
+    const wsH = resolveWorkspace(tasksH, { home });
+    const storeH = new PlansStore(wsH, "h");
+    await storeH.init();
+    g(join(top, "h", "lib"), "reset", "-q", "--hard", "HEAD~1");
+    const [r] = await syncCode({ ws: wsH, store: storeH }, { home });
+    expect(r.done).toEqual(["pulled dev (+2)"]); // the reset one + "3"
+  });
+});

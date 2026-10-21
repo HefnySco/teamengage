@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { expandTilde } from "../../core/config/config.js";
 import { git, isRepo, isDirty, remotes, aheadBehind, worktreeList } from "../../resources/git/git.js";
 import { parseTargetRef } from "../../core/address/refs.js";
 import type { Claim } from "../../core/model/claim.js";
@@ -77,6 +79,51 @@ async function fastForward(
   return undefined;
 }
 
+interface SyncTarget {
+  name: string;
+  repo?: string;
+  /** branch accepted work lands on; undefined = the checked-out branch */
+  base?: string;
+}
+
+/** Git resources, then the `repos:` list (paths / `dir/*` globs from the root). */
+async function syncTargets(wsr: WorkspaceRuntime, home?: string): Promise<SyncTarget[]> {
+  const ws = wsr.ws;
+  const out: SyncTarget[] = [];
+  const seen = new Set<string>();
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  for (const [name, r] of ws.resources) {
+    if (r.config.kind !== "git") continue;
+    const repo = await repoForResource(ws, name, home || undefined).catch(() => undefined);
+    if (repo) seen.add(real(repo));
+    out.push({ name, repo, base: r.config.base ?? "main" });
+  }
+  // the plans repo syncs on its own (it may be the task folder's repo)
+  const plansTop = (await git(ws.plansDir, ["rev-parse", "--show-toplevel"]).catch(() => "")).trim();
+  if (plansTop) seen.add(real(plansTop));
+  for (const pat of ws.config.repos ?? []) {
+    const abs = resolve(ws.root, expandTilde(pat, home || undefined));
+    const dirs = abs.endsWith(`${sep}*`)
+      ? readdirSync(dirname(abs), { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => join(dirname(abs), d.name))
+          .filter((d) => existsSync(join(d, ".git")))
+      : [abs];
+    for (const d of dirs.sort()) {
+      if (seen.has(real(d))) continue;
+      seen.add(real(d));
+      out.push({ name: basename(d), repo: d });
+    }
+  }
+  return out;
+}
+
 export interface CodeSyncOpts {
   pull?: boolean;
   push?: boolean;
@@ -88,7 +135,6 @@ export interface CodeSyncOpts {
 export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): Promise<CodeSyncReport[]> {
   const pull = opts.pull ?? true;
   const push = opts.push ?? true;
-  const ws = wsr.ws;
   const statusOf = (id: string) => wsr.store.idx.items.get(id)?.meta.status;
   /** work still open: its branch must travel. Done/dropped/untracked work stays put. */
   const open = (b: string) => {
@@ -98,17 +144,21 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
   };
   const out: CodeSyncReport[] = [];
 
-  for (const [name, r] of ws.resources) {
-    if (r.config.kind !== "git") continue;
-    const rep: CodeSyncReport = { resource: name, done: [], problems: [] };
+  for (const t of await syncTargets(wsr, opts.home)) {
+    const rep: CodeSyncReport = { resource: t.name, done: [], problems: [] };
     out.push(rep);
-    const repo = await repoForResource(ws, name, opts.home).catch(() => undefined);
+    const repo = t.repo;
     if (!repo || !(await isRepo(repo))) {
       rep.problems.push("repository not found on this machine (check the resource path or its per-machine override)");
       continue;
     }
     rep.repo = repo;
-    const base = r.config.base ?? "main";
+    // a plain repo syncs whatever branch is checked out
+    const base = t.base ?? (await git(repo, ["branch", "--show-current"]).catch(() => "")).trim();
+    if (!base) {
+      rep.problems.push("detached HEAD — check out a branch to sync it");
+      continue;
+    }
     const remote = await pickRemote(repo, base);
     if (!remote) {
       rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
@@ -151,6 +201,11 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     } else if (remoteBase && pull) {
       await git(repo, ["branch", "-q", base, rBase]);
       rep.done.push(`pulled ${base} (new here)`);
+    }
+
+    // a plain repo is worked in place — say what can't travel
+    if (!t.base && (await isDirty(repo, false))) {
+      rep.problems.push(`uncommitted changes on ${base} stay on this machine — commit them, then sync again`);
     }
 
     // ---- te/* work branches: open work travels, finished work is pruned ----
