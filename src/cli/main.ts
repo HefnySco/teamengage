@@ -8,6 +8,7 @@ import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
+import { runCmd, waitCmd } from "./commands/run.js";
 import {
   approveCmd,
   acceptCmd,
@@ -134,7 +135,7 @@ async function main(argv: string[]): Promise<number> {
     console.log(version());
     return 0;
   }
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+  if (args.length === 0 || ((args.includes("--help") || args.includes("-h")) && args[0] !== "run")) {
     process.stdout.write(USAGE);
     return 0;
   }
@@ -207,6 +208,10 @@ async function main(argv: string[]): Promise<number> {
       return reparentCmd(rest, home);
     case "import":
       return importCmd(rest, home);
+    case "run":
+      return runCmd(rest, home);
+    case "wait":
+      return waitCmd(rest, home);
     case "mcp": {
       const { runShim } = await import("../mcp/shim/shim.js");
       await runShim(home);

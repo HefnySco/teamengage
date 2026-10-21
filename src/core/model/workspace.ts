@@ -113,10 +113,28 @@ export const WorkspaceConfig = z
   .passthrough();
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfig>;
 
+/**
+ * `te run` on this machine: which agent CLIs code and review. Machine-local
+ * because each machine has its own agents installed. A command gets the
+ * prompt as its last argument, or wherever it says `$TE_PROMPT`.
+ */
+export const RunConfig = z.object({
+  /** e.g. `devin -p --model swe-2-high --permission-mode accept-edits --` */
+  coder: z.string().min(1).optional(),
+  /** e.g. `claude -p --model sonnet --permission-mode acceptEdits` — unset: the human reviews */
+  reviewer: z.string().min(1).optional(),
+  /** agents running at once */
+  concurrency: z.number().int().min(1).default(1),
+  /** times the coder is sent back to fix an `issues` review before the human decides */
+  fix_rounds: z.number().int().min(0).default(1),
+});
+export type RunConfig = z.infer<typeof RunConfig>;
+
 /** `~/.teamengage/machine.yaml`. */
 export const MachineConfig = z
   .object({
     name: z.string().min(1),
+    run: RunConfig.optional(),
   })
   .passthrough();
 export type MachineConfig = z.infer<typeof MachineConfig>;

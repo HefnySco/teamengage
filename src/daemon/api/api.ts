@@ -317,6 +317,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return {
         name: cfg.name,
         mode: cfg.mode,
+        root: ws.root,
+        autonomy: cfg.autonomy,
+        machine: ctx.machine,
         projects: Object.entries(cfg.projects).map(([name, p]) => ({ name, prefix: p.prefix })),
       };
     } catch (e) {

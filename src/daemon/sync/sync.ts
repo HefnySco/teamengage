@@ -373,7 +373,10 @@ export async function plansGitStatus(
   opts: { fetch?: boolean | string } = {},
 ): Promise<PlansGitStatus> {
   const repo = await plansRepoTop(wsr);
-  const scope = relative(repo, wsr.ws.root) || ".";
+  // overlay: the task folder (root) is inside the repo. Standard layout: the
+  // plans dir is its own repo and the root sits outside it — scope to plans.
+  const rel = relative(repo, wsr.ws.root);
+  const scope = (rel.startsWith("..") ? relative(repo, wsr.ws.plansDir) : rel) || ".";
   const branch = (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim() || undefined;
   const upstream = await upstreamRef(repo);
   const defaultRemote = upstream ? upstream.slice(0, upstream.indexOf("/")) : undefined;
