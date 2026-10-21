@@ -53,6 +53,15 @@ function loadYamlFile<T>(path: string, schema: { parse(x: unknown): T }): T {
   }
 }
 
+/** Commented `te run` block for a new machine.yaml — uncomment the agents you have. */
+export const MACHINE_RUN_TEMPLATE = `# te run: the agent CLIs this machine starts on ready tasks
+# run:
+#   coder: devin -p --model swe-2-high --permission-mode accept-edits --
+#   reviewer: claude -p --model sonnet --permission-mode acceptEdits
+#   concurrency: 1
+#   fix_rounds: 1
+`;
+
 /** `~/.teamengage/machine.yaml`; defaults to the OS hostname. */
 export function loadMachineConfig(home?: string): MachineConfig {
   const path = join(teHome(home), "machine.yaml");

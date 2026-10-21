@@ -3,7 +3,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import YAML from "yaml";
-import { teHome } from "../../core/config/config.js";
+import { teHome, MACHINE_RUN_TEMPLATE } from "../../core/config/config.js";
 import { isRepo, git } from "../../resources/git/git.js";
 
 /**
@@ -40,11 +40,15 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
         prefix,
         plans: relative(root, plansDir) || ".",
         sync: "manual",
+        // one developer: an ok review auto-accepts after auto_accept_after
+        // unless you act first; `strict` makes every accept yours
+        autonomy: "solo",
         ...(overlay ? { mode: "overlay", commit: false } : {}),
         stale_after: "24h",
         projects: {},
         links: {},
         resources: overlay ? {} : { self: { kind: "git", path: "." } },
+        repos: flag("--repos") ? flag("--repos")!.split(",") : [],
       }),
     );
   }
@@ -62,7 +66,7 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
   const home2 = teHome(home);
   mkdirSync(home2, { recursive: true });
   const machinePath = join(home2, "machine.yaml");
-  if (!existsSync(machinePath)) writeFileSync(machinePath, `name: ${hostname()}\n`);
+  if (!existsSync(machinePath)) writeFileSync(machinePath, `name: ${hostname()}\n${MACHINE_RUN_TEMPLATE}`);
 
   // register in workspaces.yaml
   const regPath = join(home2, "workspaces.yaml");

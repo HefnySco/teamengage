@@ -39,11 +39,11 @@ same plan concurrently. That is TeamEngage's reason to exist.
 5. **Evidence before done.** Agents *submit*; the human *accepts*.
 6. **Ask, don't guess.** Ambiguity becomes a recorded question; the agent moves on.
 7. **Never push for the human.** TeamEngage commits and merges locally; pushing
-   anywhere is the human's call. The one exception is the human pressing
-   **Commit & Push** on the Sync page: it commits only the task folder and
-   pushes the plans repo's branch to its upstream (refused while behind);
-   **Pull** only fast-forwards. Agents can't reach either, and code repos
-   are never pushed.
+   is the human's call. The one exception is the human asking for a sync
+   (`te sync`, or **sync now** / **Commit & Push** on the Sync page). It
+   fast-forwards and pushes the plans repo, then each code repo's base
+   branch and open `te/*` task branches through their upstream remotes,
+   refusing anything diverged. Agents can't reach it.
 8. **Minimal agent output.** Tools return IDs and one-liners; detail on request.
 9. **Small schema.** Add fields only when a real workflow needs them.
 
@@ -394,8 +394,9 @@ Plan safety is not enough — two agents in the same checkout corrupt each other
 - The daemon refuses dirty main checkouts at merge time rather than stashing
   the human's uncommitted work.
 - Worktrees, clones and snapshots are machine-local. An item claimed on the
-  desktop is worked on the desktop; to move it, the agent submits or releases,
-  the human pushes the branch, and the other machine re-claims.
+  desktop is worked on the desktop. To move it, run `te sync --leave` there
+  (release + push the branch) and `te sync` on the other machine, where the
+  next claim resumes the branch.
 
 ### 6.4 Agents are local
 
@@ -422,6 +423,16 @@ Machines share the **plans repo** through git; nothing else is shared.
   - `auto` — before `claim` the daemon pulls the plans repo; after it, it pushes
     the plans repo **only** (never code repos). This shrinks the race window to
     seconds. Applies only to the plans repo, which is TeamEngage's own data.
+- **Code travels too** (`te sync`). A task worked at the office continues
+  at home from the same commits. Sync pushes and fast-forwards each git
+  resource's base branch (accepted merges) and every `te/<ID>-*` branch of an
+  open task, and prunes remote branches of finished tasks once the base
+  holds them. Repos that aren't resources (overlay mode: agents work in the
+  repos in place) are listed under `repos:` and carry their checked-out
+  branch. `te sync --leave` first releases this machine's in-progress
+  claims. Release WIP-commits the worktree and keeps the branch, so the next
+  claim on the other machine resumes on it. Anything diverged or dirty is
+  reported, never merged.
 - **Double-claim race.** If both machines claimed the same item (or overlapping
   targets) before syncing, the merge shows two claims. The daemon keeps the
   earlier one, marks the other **conflicted**, tells that agent on its next call

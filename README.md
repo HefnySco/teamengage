@@ -20,26 +20,40 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
 |---|---|---|
 | ![Board view](docs/screenshots/board.png) | ![Graph view](docs/screenshots/graph.png) | ![Sync view](docs/screenshots/sync.png) |
 
+### Your day with it
+
+```bash
+te approve TK-12 TK-13      # (or on the board) these tasks may be worked
+te run                      # your coder agent implements, your reviewer checks;
+                            # stops with "needs you: TK-13 asks …, TK-12 review ok"
+te answer TK-13 "use port 5760"
+te run                      # picks TK-13 up where it stopped
+te accept TK-12             # merges its branch (under solo: auto 30m after an ok review)
+
+te sync --leave             # leaving work: hand tasks over, push plans + code
+te sync                     # at home: pull it all, then te run carries on
+```
+
+`te wait --notify` blocks until something needs you, so you can leave
+`te run --watch` running and get pinged.
+
 ### Why it helps
 
-- **Your task files stay yours.** Point it at an existing folder of Markdown
-  task specs; it tracks them in place (one `te:` line per file) and never
-  copies or rewrites your content.
-- **No two agents on the same work.** Agents *claim* a task before touching
-  code; claims are visible across machines through git.
-- **You stay in the loop, not in the way.** Agents *ask* instead of guessing
-  (the question lands in your inbox) and *submit* with evidence; you accept,
-  reject, hold, or mark key tasks that block until accepted.
-- **A second opinion before yours.** Another AI session can *review* a
-  submission (verdict + note, shown on the card) or *bounce* broken work
-  back to its holder — accept stays yours.
-- **Plans that read like a storyboard.** Board, dependency graph, domains
-  (`#mavlink`, `#webclient`…) as hashtags, Markdown rendered, full History.
-- **Rules agents actually follow.** Plain HTTP for any agent (`curl`, no MCP
-  needed), skills for planning / executing / tagging, and an optional Claude
-  Code guard that refuses edits that would break the tracking.
-- **Several machines, one plan.** The task folder's own git repo is the sync
-  channel; each machine runs one small local daemon.
+- **Agents get fed, you get asked.** `te run` starts the agent CLIs you
+  configured on each ready task, sends every submission to a reviewer model,
+  and sends `issues` back for a fix. It only stops for you: questions,
+  accepts, new plans.
+- **Your task files stay yours.** It tracks an existing folder of Markdown
+  task specs in place (one `te:` line per file).
+- **No two agents on the same work.** An agent *claims* a task before it
+  touches code. Claims lock the task's target paths and show up on every
+  machine.
+- **Nothing is done until you say so.** Agents *ask* instead of guessing and
+  *submit* with evidence; you accept or reject.
+- **Two machines, one workbench.** `te sync` carries the plans *and* the
+  code (accepted merges, open task branches) between home and work, using
+  your own git remotes. It only fast-forwards and never merges behind your
+  back.
 
 ### Quick start
 
@@ -49,32 +63,26 @@ coding agent:
 > Install TeamEngage for me on this machine, following the solo fast path in
 > https://github.com/HefnySco/teamengage/blob/master/AGENTS.md
 
-It asks you two questions (where your tasks live, which agents you use) and
-ends by opening the board. One machine, no git remote needed — add more
-machines later.
-
 Or by hand:
 
 ```bash
 git clone https://github.com/HefnySco/teamengage.git ~/teamengage
-cd ~/teamengage && npm run deploy                                      # deps + build + `te` on PATH
+cd ~/teamengage && npm run deploy                     # deps + build + `te` on PATH
 
-te init --overlay --root ~/my-project/Tasks --name tasks --prefix TK   # track an existing task folder
-te import ~/my-project/Tasks --apply                                   # tag the task files (dry run without --apply)
-npm run autorun                                                        # keep the daemon running (systemd user service, Linux)
-npm run ui                                                             # open the web board
-curl http://127.0.0.1:4747/agent                                       # what your agents read
+te init --overlay --root ~/code/Tasks --prefix TK --repos '../*'   # track a task folder; sync the repos beside it
+te import ~/code/Tasks --apply                        # tag the task files (dry run without --apply)
+$EDITOR ~/.teamengage/machine.yaml                    # uncomment run: — your coder + reviewer CLIs
+te run --dry-run                                      # what it would start
+te ui                                                 # the board
 ```
 
-Any `te` command starts the daemon on demand — `autorun` just keeps it
-alive across logins. Skip it on non-systemd setups and use
-`npm run daemon` (foreground) instead; `npm run restart` restarts the
-service after an update.
+Any `te` command starts the daemon. `npm run autorun` keeps it running
+across logins (a systemd user service).
 
-On one machine that's all you need. To share the plan with other machines,
-make the task folder its own **git repository with a private remote** —
-that is the sync channel. Plan data never goes
-into this (the tool's) repository.
+**Second machine:** make the task folder a git repo with a private remote
+and push it. On the other machine, clone it and the code repos, run
+`te init --overlay --root <same folder>`, then `te sync`. See
+[team/README.md](team/README.md) for the agents.
 
 **Setting it up on a machine, or asking an agent to?** Follow
 [AGENTS.md](AGENTS.md) — step-by-step install, first/second machine, daemon
@@ -110,10 +118,11 @@ src/daemon      single-writer daemon: store, watcher, HTTP server, sessions,
 src/mcp         MCP Streamable HTTP server, tools, stdio shim
 src/cli         `te` commands
 src/resources   git / ssh / folder / url resource drivers
-src/sync        multi-machine plans-repo sync and reconciliation
+src/daemon/sync te sync: plans repo + code repos between machines, claim reconciliation
 src/import      importer for existing Markdown task folders
 web/            human web UI, served by the daemon
 skills/         agent skills: te-work (execute), te-review (peer review), te-plan (plan), te-tag (tag domains), te-analysis (triage)
+team/           te run setup: coder + reviewer agent CLIs
 ```
 
 Task files in overlay workspaces follow `docs/TASK-FORMAT.md` (`te template`).

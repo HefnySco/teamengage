@@ -17,7 +17,7 @@ import type { Claim } from "../../core/model/claim.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 
 /**
- * Plans-repo sync (SY-0001/2, RS-0004). TeamEngage pushes nothing (principle
+ * Plans-repo sync (SY-0001/2, RS-0004). TeamEngage pushes nothing on its own (principle
  * 7) — but in `manual` mode a read-only fetch before claim shrinks the
  * double-claim race window, and post-pull reconciliation marks loser claims
  * conflicted rather than letting two agents collide.

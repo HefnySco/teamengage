@@ -43,8 +43,20 @@ async function act(
   return 0;
 }
 
-export const approveCmd = (args: string[], home?: string) => act("approve", args, {}, home);
-export const acceptCmd = (args: string[], home?: string) => act("accept", args, {}, home);
+/** `te approve A B C` — one call per id; stops at the first refusal. */
+async function each(action: string, args: string[], home?: string): Promise<number> {
+  const ids = positional(args);
+  if (ids.length < 2) return act(action, args, {}, home);
+  const flags = args.filter((a, i) => a.startsWith("--") || args[i - 1]?.startsWith("--"));
+  for (const id of ids) {
+    const code = await act(action, [id, ...flags], {}, home);
+    if (code) return code;
+  }
+  return 0;
+}
+
+export const approveCmd = (args: string[], home?: string) => each("approve", args, home);
+export const acceptCmd = (args: string[], home?: string) => each("accept", args, home);
 export const humanClaimCmd = (args: string[], home?: string) => act("claim", args, {}, home);
 
 export async function answerCmd(args: string[], home?: string): Promise<number> {

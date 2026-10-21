@@ -45,13 +45,39 @@ function version(): string {
   return pkg.version;
 }
 
-const USAGE = `te — TeamEngage CLI
+const USAGE = `te — TeamEngage: you plan and decide, your AI agents do the work
 
-usage: te <command> [options]
+the loop
+  te run                 start agents on ready tasks; stops when only you can move things
+  te wait --notify       block until something needs you (a question, a review)
+  te status              what needs you now
+  te approve <ID>        a draft may be worked
+  te answer <ID> <text>  answer an agent's question
+  te accept <ID>         take the work (merges its branch)
+  te reject <ID> [why]   send it back
 
-commands:
-  init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>] [--overlay]
+two machines (home ↔ work)
+  te sync                pull + push the plans and the code
+  te sync --leave        before you go: hand this machine's tasks over, then sync
+
+look around
+  te ls [--status s]     te show <ID>     te ui (the board)
+
+set up
+  te init --overlay --root <task folder> [--repos '../*']
+  te import <folder> --apply      te hooks --install
+  ~/.teamengage/machine.yaml      which agents te run starts (te run --help)
+
+te help all — every command (hold, drop, archive, deps, tier, rollback, …)
+`;
+
+const USAGE_ALL = `te — every command
+
+  init [--plans <path>] [--name <n>] [--prefix <P>] [--root <dir>] [--overlay] [--repos <globs>]
                    create a workspace (.teamengage plans repo)
+  run [--watch] [--max n] [--dry-run]   start this machine's agents on ready tasks
+  wait [--notify] [--any] [--timeout d]  block until something new needs you
+  sync [--leave] [-m msg] [--status]    plans + code to/from your other machines
   ls [--status s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
@@ -140,6 +166,10 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const [cmd, ...rest] = args;
+  if (cmd === "help") {
+    process.stdout.write(rest[0] === "all" ? USAGE_ALL : USAGE);
+    return 0;
+  }
   const home = process.env.TEAMENGAGE_HOME;
   switch (cmd) {
     case "init":

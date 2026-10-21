@@ -1,46 +1,56 @@
-# team/ — a token-lean Claude Code team for TeamEngage
+# team/ — your agent team is two commands
 
-Six Claude Code **subagents** plus **swift** (Devin SWE-2, see `swift.md`), each pinned to a model and effort and built on
-a `te-*` skill. TeamEngage enforces the tiers they declare at `hello`.
+`te run` is the team. It needs two agent CLIs on this machine, set in
+`~/.teamengage/machine.yaml`:
 
-| Name | Model · effort | Tier | Job | Skill |
-|---|---|---|---|---|
-| **scout** | Haiku · low | light | dispatcher — run as the main session | — |
-| **sketch** | Sonnet · medium | standard | plans a direct feature / fix (1–3 tasks) | te-plan |
-| **atlas** | Opus · medium | heavy | plans large scope; fixes tasks escalated to heavy; vets light drafts | te-plan, te-work |
-| **swift** | Devin SWE-2 High (free) | standard | main coder — headless `devin -p` via `swift.sh` | te-work |
-| **forge** | Sonnet · medium | standard | coder fallback when swift hands off | te-work |
-| **lens** | Haiku · low | light | first-pass logic review | te-review |
-| **judge** | Sonnet · medium | standard | escalated review | te-review |
+- a **coder**, which implements a task and submits it
+- a **reviewer** (optional), which checks the submission against the task's
+  acceptance before you see it
 
-## Flow
-
-```
-you → scout: "I want X"
-scout → sketch | atlas → propose → "GL-0042 created — approve?"
-you approve (web UI / te approve)
-develop: swift (SWE-2 High, free) → forge (Sonnet) if swift hands off
-review:  lens ─ ok ───────────────────────→ accept (you, or auto under solo)
-              ├ issues → FIX by the other model (swift wrote it → forge; forge wrote it → swift)
-              ├ issues "trivial:" → swift fixes it (free), whoever wrote it
-              └ "needs standard review" → judge
-stuck → hand off (problem/tried/state/next) → a fresh session continues
-each bounce/handoff/takeover = 1 attempt · every 2 → tier +1 (→ atlas) · at 5 → hold for you
+```yaml
+name: work-pc
+run:
+  coder: devin -p --model swe-2-high --permission-mode accept-edits --
+  reviewer: claude -p --model sonnet --allowedTools Bash,Read,Edit,Write,Glob,Grep
+  concurrency: 1   # agents at once
+  fix_rounds: 1    # an "issues" review goes back to the coder this many times
 ```
 
-Tunable in `.teamengage/workspace.yaml`: `escalate_after` (2), `max_attempts` (5).
-The human can override per task: `te tier GL-0042 heavy [--reset]`.
+Use a different model for the reviewer than for the coder: the point is a
+second opinion. Each command gets its prompt as the last argument, or
+wherever you write `"$TE_PROMPT"`. Any CLI that takes a prompt and can run
+`curl` and `git` works.
 
-## Install
+## What `te run` does
+
+```
+ready task ─▶ coder (claim → work → submit) ─▶ reviewer ─ ok ─────▶ you accept
+                ▲                                  │                (solo: auto after 30m)
+                └──── fix (fix_rounds times) ◀── issues
+coder asks a question ─▶ you: te answer ─▶ next te run resumes it
+```
+
+It stops when only you can move things forward and prints what needs you.
+Leave it running with `te run --watch`; in another terminal,
+`te wait --notify` pings you when something needs you.
+
+Agents still do every state change themselves over the daemon's HTTP
+interface (`curl http://127.0.0.1:4747/agent`), with the same claims, target
+locks and evidence as a session you start by hand. `te run` opens each
+agent's session and closes it when the process exits. Work that was bounced
+or abandoned goes back to `ready` and doesn't sit on a dead claim.
+
+Agents need the `te-work` and `te-review` skills (`skills/`, linked during
+install; see [AGENTS.md](../AGENTS.md)).
+
+## Two machines
+
+`te run` works on the machine you run it on. Before you leave:
 
 ```bash
-mkdir -p ~/.claude/agents && ln -s ~/teamengage/team/{scout,sketch,atlas,forge,lens,judge}.md ~/.claude/agents/
-claude --agent scout          # start the dispatcher as your session
+te sync --leave
 ```
 
-## Other LLMs
-
-Any tool that can `curl` joins by declaring its tier at hello — e.g. a small
-local model as `{"agent":"qwen","tier":"light"}`. It only sees `light` (or
-untiered) tasks, and drafts it proposes wait for a stronger session's `vet`
-before they become ready.
+Unfinished tasks are released, with their work committed to their branches,
+and everything is pushed. On the other machine, `te sync` and then `te run`
+carry on from those branches.

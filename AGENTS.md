@@ -38,7 +38,7 @@ git clone https://github.com/HefnySco/teamengage.git ~/teamengage
 cd ~/teamengage && npm run deploy                         # deps + build + `te` on PATH
 te --version
 
-te init --overlay --root <task-folder> --name <folder-name> --prefix <XX>
+te init --overlay --root <task-folder> --name <folder-name> --prefix <XX> [--repos '../*']
 te import <task-folder>                                   # dry run — show the human the summary
 te import <task-folder> --apply                           # after the human says yes
 ```
@@ -73,8 +73,9 @@ curl -s -X POST http://127.0.0.1:4747/agent/hello -d '{"agent":"setup-check"}'
 te ui                                  # open the board for the human
 ```
 
-Finish by telling the human what to paste into a new agent session to see it
-work: *"use te-work to pick up the next ready task"*.
+Then set up `te run` (§6, "The team") so the human doesn't have to start
+agent sessions by hand. Finish by telling the human: approve a task on the
+board, then run `te run`.
 
 ---
 
@@ -289,16 +290,20 @@ ln -s ~/teamengage/skills/te-work ~/teamengage/skills/te-review ~/teamengage/ski
 # Devin: link the same folders into the Devin skills folder (~/.config/devin/skills/)
 ```
 
-### Model-tiered team (optional)
+### The team: `te run` (recommended)
 
-`team/` holds six Claude Code subagents (Haiku dispatcher and first reviewer,
-Sonnet planner/coder/reviewer, Opus architect) that declare model tiers at
-`hello`; TeamEngage then gates claims by tier and escalates stuck tasks.
-See `team/README.md`.
+Ask the human which agent CLI should **code** and which should **review**
+(a different model from the coder). Then uncomment the `run:` block in
+`~/.teamengage/machine.yaml`, for example:
 
-```bash
-mkdir -p ~/.claude/agents && ln -s ~/teamengage/team/{scout,sketch,atlas,forge,lens,judge}.md ~/.claude/agents/
+```yaml
+run:
+  coder: devin -p --model swe-2-high --permission-mode accept-edits --
+  reviewer: claude -p --model sonnet --allowedTools Bash,Read,Edit,Write,Glob,Grep
 ```
+
+**Check:** `te run --dry-run` names the first task it would start. Details:
+`team/README.md`.
 
 ### Claude Code guard (recommended)
 
@@ -329,21 +334,31 @@ It should print a session token, the workspace, and a `rules:` line.
 
 ## 7. Daily sync between machines (tell the human)
 
-Work is coordinated through the task folder's git repo:
+One command carries the plans **and the code**:
 
-- **Before working:** `git pull` in the task folder. An agent's `hello`
-  prints `plans behind … — STOP` when this machine is behind.
-- **After working:** commit `<task-folder>` (task files + `.teamengage/`)
-  and `git push`. TeamEngage never commits or pushes on its own in overlay
-  mode — the human decides.
-- The human can do this from the web UI: **Sync** page → **Pull**
-  (fast-forward only), **Commit** (local, task folder only) and
-  **Commit & Push** (commits, then pushes to the chosen remote; refused
-  while behind). Files TeamEngage creates — e.g. new task files from
-  `propose` — are already `git add`ed, so nothing is left untracked. The `sync` tab shows a badge when there is
-  something to pull or push. Agents must not press these or push themselves.
-- Work isn't meant to run on two machines at the same time on the same
-  task; claims show which machine holds what.
+```bash
+te sync            # arriving at a machine, or any time: pull + push everything
+te sync --leave    # before leaving a machine: hand its tasks over, then sync
+```
+
+- **Plans:** the task folder's repo is pulled (fast-forward, local edits
+  stashed around it), committed and pushed.
+- **Code:** for every git resource and every repo in `repos:`, the
+  checked-out/base branch and every open task's `te/<ID>-*` branch is
+  pulled and pushed through its upstream remote. Finished task branches
+  that are already merged are deleted on the remote.
+- **`--leave`** first releases this machine's in-progress tasks. Their
+  worktrees are committed as WIP and their branches kept, so on the other
+  machine the next claim resumes from the same commits. Tasks that are
+  waiting or in review keep their claim; only their work is committed.
+- Fast-forward only. A branch changed on both machines, or a checkout with
+  uncommitted changes in the way, is reported. It is never merged or
+  overwritten. Exit code 1 means something needs a look.
+- In overlay mode code repos are usually not resources. List them in
+  `.teamengage/workspace.yaml`, e.g. `repos: ["../*"]` (every repo next to
+  the task folder) or `repos: [../de_mavlink, ../webclient]`.
+- The web UI's **Sync → sync now** runs the same thing. Agents never sync or
+  push; only the human does.
 
 ## Updating the tool later
 

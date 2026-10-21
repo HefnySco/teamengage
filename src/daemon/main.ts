@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   teHome,
   loadMachineConfig,
+  MACHINE_RUN_TEMPLATE,
   loadRegistry,
   resolveWorkspace,
 } from "../core/config/config.js";
@@ -42,7 +43,7 @@ async function main(): Promise<number | undefined> {
   // machine.yaml: created on first run from the hostname
   const machinePath = join(teDir, "machine.yaml");
   if (!existsSync(machinePath)) {
-    writeFileSync(machinePath, `name: ${hostname()}\n`);
+    writeFileSync(machinePath, `name: ${hostname()}\n${MACHINE_RUN_TEMPLATE}`);
   }
   const machine = loadMachineConfig(home).name;
   const registry = loadRegistry(home);
