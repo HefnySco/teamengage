@@ -29,3 +29,13 @@ acceptance item and what to change. Start the note with `trivial:` when the fix
 is a typo, lint error, missing import or a one-line change — Scout then sends it
 to the free coder whoever wrote it. Scout then hands the fix to the *other* coder
 model (takeover).
+
+## Review note format
+Keep every review note short. Three parts, one line each:
+- Verdict first: `ok`, `issues`, `unverifiable` or `trivial:`.
+- Reason: one sentence, naming the acceptance item by number if one fails.
+- Next: one line with the recommended action, e.g. `Next: pass --seed 11 in replay()`, or `Next: human to approve scope of X`.
+
+No diffs, logs or long lists in the note. Add detail only when a coder cannot fix the issue without it, and then cite the exact lines.
+
+Example: `issues — acceptance 2: replay() drops --seed. Next: pass --seed 11 (trivial:).`
