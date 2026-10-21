@@ -2083,7 +2083,16 @@ const PlansGit = () => {
     setBusy(what);
     setNote(null);
     try {
-      const r = await post(path, body);
+      let r = await post(path, body);
+      let code = "";
+      if (what === "syncnow") {
+        // /api/sync-all: plans + code repos; plans errors come back inline
+        code = (r.code ?? [])
+          .map((c) => `code ${c.resource}: ${c.done.join(", ") || "up to date"}${c.problems.length ? ` — ⚠ ${c.problems.join("; ")}` : ""}`)
+          .join(" · ");
+        if (r.plans?.error) throw new Error(`${r.plans.error}${code ? ` · ${code}` : ""}`);
+        r = r.plans;
+      }
       setG(r.status);
       refreshSyncBadge(r.status);
       setNote({
@@ -2094,7 +2103,7 @@ const PlansGit = () => {
             : what === "commit"
               ? r.committed ? `committed ${r.committed} change(s) locally — push when ready` : "nothing to commit"
               : what === "syncnow"
-                ? `synced with ${r.remote}: ${[r.pulled ? `pulled ${r.pulled}` : "", r.committed ? `committed ${r.committed}` : "", r.pushed ? "pushed" : ""].filter(Boolean).join(", ") || "already in sync"}`
+                ? `plans synced with ${r.remote}: ${[r.pulled ? `pulled ${r.pulled}` : "", r.committed ? `committed ${r.committed}` : "", r.pushed ? "pushed" : ""].filter(Boolean).join(", ") || "already in sync"}${code ? ` · ${code}` : ""}`
                 : `${r.committed ? `committed ${r.committed} change(s), ` : ""}${r.pushed ? `pushed to ${r.remote}` : `nothing to push to ${r.remote}`}`,
       });
       if (what !== "pull") setMsg("");
@@ -2173,11 +2182,12 @@ const PlansGit = () => {
               `sync now — ${syncR}`,
               `1. fetch + fast-forward pull${g.changes.length ? ` (stashing ${g.changes.length} local change(s) first)` : ""}\n` +
                 `2. commit the task folder\n` +
-                `3. push\n\n` +
+                `3. push\n` +
+                `4. pull + push the code repos (base branch, open te/* task branches)\n\n` +
                 `message: ${msg.trim() || `Tasks: ${g.machine ?? "this machine"} — ${stamp(new Date())}`}`,
               { ok: "sync" },
             );
-            if (ok) run("syncnow", "/api/plans-git/sync-now", { remote: syncR, message: msg });
+            if (ok) run("syncnow", "/api/sync-all", { remote: syncR, message: msg });
           }}>${busy === "syncnow" ? "syncing…" : "⟳ sync now"}</button>`}
         <button class="btn btn-sm btn-link ${g.remotes.length ? "" : "ms-auto "}py-0" onClick=${() => load(true)}>check remotes</button>
       </div>

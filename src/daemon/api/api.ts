@@ -215,6 +215,51 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return sendErr(reply, e);
     }
   });
+  /**
+   * Sync this machine with the others (`te sync`, UI Sync): plans pull →
+   * commit → push, then every code repo's base + open `te/*` branches.
+   * `leave`: first release every claim held on this machine (worktrees are
+   * WIP-committed, branches kept) so the work can continue elsewhere.
+   */
+  app.post("/api/sync-all", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const { syncNow } = await import("../sync/sync.js");
+      const { syncCode, commitWip } = await import("../sync/code.js");
+      const b = (req.body ?? {}) as { remote?: string; message?: string; leave?: boolean };
+      const released: string[] = [];
+      const saved: string[] = [];
+      const problems: string[] = [];
+      if (b.leave) {
+        for (const c of [...ops.wsr.store.idx.claims.values()]) {
+          if (c.machine !== ops.wsr.store.machine) continue;
+          const status = ops.wsr.store.idx.items.get(c.item)?.meta.status;
+          try {
+            if (status === "in_progress") {
+              // release WIP-commits the worktree and keeps the branch
+              await ops.release(c.item, "human", "te sync --leave: work continues on another machine");
+              released.push(c.item);
+            } else {
+              // waiting / in review: keep the claim, just commit what's on disk
+              saved.push(...(await commitWip(ops.wsr, c)));
+            }
+          } catch (e) {
+            problems.push(`${c.item}: ${(e as Error).message}`);
+          }
+        }
+      }
+      let plans: unknown;
+      try {
+        plans = await syncNow(ops.wsr, String(b.message ?? ""), b.remote || undefined);
+      } catch (e) {
+        plans = { error: (e as Error).message };
+      }
+      const code = await syncCode(ops.wsr, { home: ctx.home });
+      return { released, saved, problems, plans, code };
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
   app.post("/api/plans-git/commit", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));

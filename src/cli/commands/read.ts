@@ -125,7 +125,63 @@ export async function validateCmd(args: string[], home?: string): Promise<number
   return findings.some((f) => f.severity === "error") ? 1 : 0;
 }
 
+interface CodeReport {
+  resource: string;
+  remote?: string;
+  done: string[];
+  problems: string[];
+}
+
+/**
+ * `te sync [--leave] [-m msg]` — bring this machine level with the others:
+ * plans pull/commit/push, then code (base + open te/* branches) pull/push.
+ * `--leave` first hands this machine's in-progress tasks over (released,
+ * work committed, branches kept). `--status` only reports.
+ */
 export async function syncCmd(args: string[], home?: string): Promise<number> {
+  if (flag(args, "--status")) return syncStatusCmd(args, home);
+  const message = opt(args, "-m") ?? opt(args, "--message") ?? "";
+  const r = (await daemonApi(
+    "POST",
+    `/api/sync-all?${wsQ(args)}`,
+    { leave: flag(args, "--leave"), message, remote: opt(args, "--remote") },
+    home,
+  )) as {
+    released: string[];
+    saved: string[];
+    problems: string[];
+    plans: { error?: string; remote?: string; pulled?: number; committed?: number; pushed?: boolean };
+    code: CodeReport[];
+  };
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+    return 0;
+  }
+  const w = (s: string) => process.stdout.write(s + "\n");
+  let trouble = r.problems.length;
+  if (r.released.length) w(`handed over: ${r.released.join(", ")} (released here, work kept on their branches)`);
+  if (r.saved.length) w(`saved WIP: ${r.saved.join(", ")}`);
+  for (const p of r.problems) w(`! ${p}`);
+  if (r.plans.error) {
+    trouble++;
+    w(`plans: ! ${r.plans.error}`);
+  } else {
+    const bits = [
+      r.plans.pulled ? `pulled ${r.plans.pulled}` : "",
+      r.plans.committed ? `committed ${r.plans.committed}` : "",
+      r.plans.pushed ? "pushed" : "",
+    ].filter(Boolean);
+    w(`plans: ${bits.length ? bits.join(", ") : "up to date"}${r.plans.remote ? ` (${r.plans.remote})` : ""}`);
+  }
+  for (const c of r.code) {
+    w(`code ${c.resource}: ${c.done.length ? c.done.join(", ") : "up to date"}${c.remote ? ` (${c.remote})` : ""}`);
+    for (const p of c.problems) w(`  ! ${p}`);
+    trouble += c.problems.length;
+  }
+  return trouble ? 1 : 0;
+}
+
+async function syncStatusCmd(args: string[], home?: string): Promise<number> {
   const s = (await daemonApi("GET", `/api/sync?${wsQ(args)}`, undefined, home)) as {
     repo: { remote: boolean; ahead: number; behind: number; upstream?: string };
     unsyncedClaims: string[];

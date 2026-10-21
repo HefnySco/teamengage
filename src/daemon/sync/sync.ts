@@ -533,7 +533,7 @@ export async function commitAndPushPlans(
     const now = pickRemote(await plansGitStatus(wsr), r.name);
     if (now.ref && now.ahead === 0) return { remote: r.name, committed, pushed: false, status: markFetched(await plansGitStatus(wsr), r.name, r.fetched) };
     try {
-      await git(before.repo, ["push", r.name, `HEAD:refs/heads/${before.branch}`], { timeoutMs: 90_000, humanPlansPush: true });
+      await git(before.repo, ["push", r.name, `HEAD:refs/heads/${before.branch}`], { timeoutMs: 90_000, humanPush: true });
     } catch (e) {
       throw new ClaimRefusedError(`push to ${r.name} failed: ${(e as Error).message.split("\n")[0]}`);
     }
@@ -565,7 +565,7 @@ export async function syncNow(
     let pushed = false;
     if (!(r.ref && r.ahead === 0)) {
       try {
-        await git(st.repo, ["push", r.name, `HEAD:refs/heads/${mid.branch}`], { timeoutMs: 90_000, humanPlansPush: true });
+        await git(st.repo, ["push", r.name, `HEAD:refs/heads/${mid.branch}`], { timeoutMs: 90_000, humanPush: true });
         pushed = true;
       } catch (e) {
         throw new ClaimRefusedError(

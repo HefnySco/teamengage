@@ -24,10 +24,11 @@ export interface RunOpts {
   /** Extra environment. */
   env?: NodeJS.ProcessEnv;
   /**
-   * The one exception to "TeamEngage never pushes": the human pressing
-   * Commit & Push for the plans (task folder) repo. Nothing else sets it.
+   * The one exception to "TeamEngage never pushes": the human asking for a
+   * sync (`te sync`, the UI's Sync / Commit & Push) — plans repo and the code
+   * repos' `te/*` + base branches. Agents can never reach it.
    */
-  humanPlansPush?: boolean;
+  humanPush?: boolean;
 }
 
 const FORBIDDEN = new Set(["push"]);
@@ -37,7 +38,7 @@ const FORBIDDEN = new Set(["push"]);
  * — TeamEngage never pushes for the human (DESIGN principle 7, decision 6).
  */
 export async function git(repo: string, args: string[], opts: RunOpts = {}): Promise<string> {
-  if (args.length > 0 && FORBIDDEN.has(args[0]) && !opts.humanPlansPush) {
+  if (args.length > 0 && FORBIDDEN.has(args[0]) && !opts.humanPush) {
     throw new GitError("git push is forbidden in TeamEngage", repo, args);
   }
   try {

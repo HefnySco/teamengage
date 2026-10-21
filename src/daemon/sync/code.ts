@@ -1,0 +1,219 @@
+import { existsSync } from "node:fs";
+import { git, isRepo, isDirty, remotes, aheadBehind, worktreeList } from "../../resources/git/git.js";
+import { parseTargetRef } from "../../core/address/refs.js";
+import type { Claim } from "../../core/model/claim.js";
+import { repoForResource, worktreePath } from "../effects/effects.js";
+import type { WorkspaceRuntime } from "../server/context.js";
+
+/**
+ * Code sync between the human's machines (home ↔ work). The plans repo
+ * carries claims and status; this carries the code those claims produced:
+ * every git resource's base branch (accepted merges land there) and its
+ * `te/<ID>-*` work branches (in-progress and in-review work), so a task
+ * released on one machine resumes on the other from the same commits.
+ *
+ * Human-triggered only (`te sync`, the UI's Sync) — agents never push.
+ * Fast-forward only: a diverged branch or a dirty checkout is reported,
+ * never merged or overwritten.
+ */
+
+export interface CodeSyncReport {
+  resource: string;
+  repo?: string;
+  remote?: string;
+  /** what happened: "pushed te/GL-0012-swift", "pulled main (+3)" */
+  done: string[];
+  /** what needs the human: diverged branches, dirty checkouts, offline */
+  problems: string[];
+}
+
+const ITEM_OF = /^te\/([A-Za-z][A-Za-z0-9]*-\d+)(?:-|$)/;
+
+/** The item a `te/<ID>-…` branch belongs to. */
+export function itemOfBranch(branch: string): string | undefined {
+  return ITEM_OF.exec(branch)?.[1];
+}
+
+async function refs(repo: string, prefix: string): Promise<string[]> {
+  return (await git(repo, ["for-each-ref", "--format=%(refname)", prefix]))
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function hasRef(repo: string, ref: string): Promise<boolean> {
+  return git(repo, ["rev-parse", "--verify", "-q", ref]).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** The remote a resource syncs through: base's upstream, else origin, else the only one. */
+async function pickRemote(repo: string, base: string): Promise<string | undefined> {
+  const up = (await git(repo, ["rev-parse", "--abbrev-ref", `${base}@{upstream}`]).catch(() => "")).trim();
+  if (up.includes("/")) return up.slice(0, up.indexOf("/"));
+  const all = await remotes(repo);
+  if (all.includes("origin")) return "origin";
+  return all.length === 1 ? all[0] : undefined;
+}
+
+/**
+ * Fast-forward local `branch` to `target`. A branch checked out somewhere
+ * (the main checkout or a worktree) moves only when that checkout is clean.
+ */
+async function fastForward(
+  repo: string,
+  branch: string,
+  target: string,
+  checkedOut: Map<string, string>,
+): Promise<string | undefined> {
+  const at = checkedOut.get(branch);
+  if (at) {
+    if (await isDirty(at, false)) return `${branch}: behind, but its checkout ${at} has uncommitted changes — commit or stash, then sync again`;
+    await git(at, ["merge", "--ff-only", "-q", target], { timeoutMs: 60_000 });
+    return undefined;
+  }
+  await git(repo, ["update-ref", `refs/heads/${branch}`, target]);
+  return undefined;
+}
+
+export interface CodeSyncOpts {
+  pull?: boolean;
+  push?: boolean;
+  home?: string;
+  fetchTimeoutMs?: number;
+}
+
+/** Sync every git resource of the workspace; one report per resource. */
+export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): Promise<CodeSyncReport[]> {
+  const pull = opts.pull ?? true;
+  const push = opts.push ?? true;
+  const ws = wsr.ws;
+  const statusOf = (id: string) => wsr.store.idx.items.get(id)?.meta.status;
+  /** work still open: its branch must travel. Done/dropped/untracked work stays put. */
+  const open = (b: string) => {
+    const id = itemOfBranch(b);
+    const s = id ? statusOf(id) : undefined;
+    return s !== undefined && s !== "done" && s !== "dropped";
+  };
+  const out: CodeSyncReport[] = [];
+
+  for (const [name, r] of ws.resources) {
+    if (r.config.kind !== "git") continue;
+    const rep: CodeSyncReport = { resource: name, done: [], problems: [] };
+    out.push(rep);
+    const repo = await repoForResource(ws, name, opts.home).catch(() => undefined);
+    if (!repo || !(await isRepo(repo))) {
+      rep.problems.push("repository not found on this machine (check the resource path or its per-machine override)");
+      continue;
+    }
+    rep.repo = repo;
+    const base = r.config.base ?? "main";
+    const remote = await pickRemote(repo, base);
+    if (!remote) {
+      rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
+      continue;
+    }
+    rep.remote = remote;
+    try {
+      await git(
+        repo,
+        ["fetch", "-q", "--prune", remote, `+refs/heads/${base}:refs/remotes/${remote}/${base}`, `+refs/heads/te/*:refs/remotes/${remote}/te/*`],
+        { timeoutMs: opts.fetchTimeoutMs ?? 60_000 },
+      );
+    } catch (e) {
+      rep.problems.push(`could not fetch from ${remote} — offline? (${(e as Error).message.split("\n")[0]})`);
+      continue;
+    }
+
+    const checkedOut = new Map<string, string>();
+    for (const w of await worktreeList(repo)) if (w.branch) checkedOut.set(w.branch, w.path);
+    const rBase = `refs/remotes/${remote}/${base}`;
+    const remoteBase = await hasRef(repo, rBase);
+    const localBase = await hasRef(repo, `refs/heads/${base}`);
+
+    // ---- base branch: accepted work ----
+    if (remoteBase && localBase) {
+      const ab = await aheadBehind(repo, rBase, `refs/heads/${base}`);
+      if (ab.ahead > 0 && ab.behind > 0) {
+        rep.problems.push(`${base}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — merge or rebase it yourself`);
+      } else if (ab.behind > 0 && pull) {
+        const p = await fastForward(repo, base, rBase, checkedOut);
+        if (p) rep.problems.push(p);
+        else rep.done.push(`pulled ${base} (+${ab.behind})`);
+      } else if (ab.ahead > 0 && push) {
+        await git(repo, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`], { timeoutMs: 90_000, humanPush: true });
+        rep.done.push(`pushed ${base} (+${ab.ahead})`);
+      }
+    } else if (localBase && push) {
+      await git(repo, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`], { timeoutMs: 90_000, humanPush: true });
+      rep.done.push(`pushed ${base} (new on ${remote})`);
+    } else if (remoteBase && pull) {
+      await git(repo, ["branch", "-q", base, rBase]);
+      rep.done.push(`pulled ${base} (new here)`);
+    }
+
+    // ---- te/* work branches: open work travels, finished work is pruned ----
+    const local = new Set((await refs(repo, "refs/heads/te/")).map((s) => s.slice("refs/heads/".length)));
+    const remotePrefix = `refs/remotes/${remote}/`;
+    const theirs = new Set((await refs(repo, `${remotePrefix}te/`)).map((s) => s.slice(remotePrefix.length)));
+
+    for (const b of [...new Set([...local, ...theirs])].sort()) {
+      const rRef = `${remotePrefix}${b}`;
+      if (!open(b)) {
+        // finished work: drop the remote copy once the base holds it
+        if (push && theirs.has(b) && remoteBase && (await git(repo, ["merge-base", "--is-ancestor", rRef, rBase]).then(() => true, () => false))) {
+          await git(repo, ["push", "-q", remote, "--delete", b], { timeoutMs: 60_000, humanPush: true }).then(
+            () => rep.done.push(`pruned ${b} on ${remote} (merged)`),
+            () => {},
+          );
+        }
+        continue;
+      }
+      if (local.has(b) && theirs.has(b)) {
+        const ab = await aheadBehind(repo, rRef, `refs/heads/${b}`);
+        if (ab.ahead > 0 && ab.behind > 0) {
+          rep.problems.push(`${b}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — the task was worked on both machines; merge it yourself`);
+        } else if (ab.behind > 0 && pull) {
+          const p = await fastForward(repo, b, rRef, checkedOut);
+          if (p) rep.problems.push(p);
+          else rep.done.push(`pulled ${b} (+${ab.behind})`);
+        } else if (ab.ahead > 0 && push) {
+          await git(repo, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`], { timeoutMs: 90_000, humanPush: true });
+          rep.done.push(`pushed ${b} (+${ab.ahead})`);
+        }
+      } else if (local.has(b) && push) {
+        await git(repo, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`], { timeoutMs: 90_000, humanPush: true });
+        rep.done.push(`pushed ${b} (new on ${remote})`);
+      } else if (theirs.has(b) && pull) {
+        await git(repo, ["branch", "-q", b, rRef]);
+        rep.done.push(`pulled ${b} (new here)`);
+      }
+      // uncommitted work in a live worktree can't travel — say so
+      const at = checkedOut.get(b);
+      if (at && (await isDirty(at))) {
+        rep.problems.push(`${b}: uncommitted changes in ${at} stay on this machine — use te sync --leave to commit them before you go`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Commit whatever is uncommitted in a claim's worktrees onto its branch, so
+ * the branch can travel. Returns the branches that got a WIP commit.
+ */
+export async function commitWip(wsr: WorkspaceRuntime, claim: Claim): Promise<string[]> {
+  const out: string[] = [];
+  for (const t of claim.targets) {
+    const { resource } = parseTargetRef(t);
+    const r = wsr.ws.resources.get(resource);
+    if (!r || r.config.kind !== "git" || r.config.worktree === false) continue;
+    const wt = worktreePath(wsr.ws, claim.item, resource);
+    if (!existsSync(wt) || !(await isDirty(wt))) continue;
+    await git(wt, ["add", "-A"]);
+    await git(wt, ["commit", "-q", "--no-verify", "-m", `te: WIP ${claim.item} (te sync --leave)`]);
+    out.push(`${claim.item}:${resource}`);
+  }
+  return out;
+}
