@@ -20,9 +20,13 @@ curl -s $B            # full protocol + examples, if you need it
 ## 1. Start a session
 
 ```bash
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>","tier":"<light|standard|heavy>"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
+
+**Started by `te run`?** It already opened your session: use
+`H="X-TE-Session: $TE_SESSION"` and do **not** call `hello`. It also checked
+that the plans are in sync. The task is in `$TE_ITEM`.
 
 Read every line `hello` prints before going on:
 
@@ -34,12 +38,11 @@ Read every line `hello` prints before going on:
 | `rules: …` / `tiers: …` | The rules. They are enforced. |
 | `to vet (light-authored drafts): …` | Drafts a light-tier model wrote. If the human asked you to, check them with `vet` (see te-plan §8). |
 
-**Tier.** Declare the model class you are running on: `light` (Haiku-class),
-`standard` (Sonnet-class) or `heavy` (Opus-class). Be honest — `next` then
-only offers tasks you are allowed to take, and `claim` refuses tasks above
-your tier. A `brief` line `tier: … · N failed attempt(s)` means others
-already tried: read `handoff notes:` and `## Review` **before** anything else
-and don't repeat what they ruled out.
+**Tier (optional).** Only if the human uses model tiers: add
+`"tier":"light|standard|heavy"` to hello, and be honest about it. Either
+way, a `brief` line `tier: … · N failed attempt(s)` means others already
+tried. Read `handoff notes:` and `## Review` **before** anything else, and
+don't repeat what they ruled out.
 
 Keep `$T` for the whole task. After a daemon restart, `hello` again — your
 claims come back to the new session.

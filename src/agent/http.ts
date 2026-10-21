@@ -126,8 +126,8 @@ RULES
      "issues" verdict or a bounce on a submission whose holder is on
      another machine or no longer live releases the claim to ready
      instead — a fix must never wait on a session that can't answer.
-  7. Declare your model tier at hello: light (Haiku-class), standard
-     (Sonnet-class) or heavy (Opus-class). Items above your tier are hidden
+  7. Optional: declare a model tier at hello — light (Haiku-class), standard
+     (Sonnet-class) or heavy (Opus-class) — and items above it are hidden
      from next and refused on claim. When stuck — same error twice, no new
      progress — STOP and call handoff (problem, tried, state, next): the
      claim is released and a fresh session continues from your note. Bounces
@@ -137,7 +137,7 @@ RULES
 AUTHORING
 ${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
 SESSION
-  curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>","tier":"standard"}'
+  curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
     → first line: "token <TOKEN>"; send it on every later call:
   -H "X-TE-Session: <TOKEN>"
   Keep the token for the whole task. After a daemon restart, call hello again:

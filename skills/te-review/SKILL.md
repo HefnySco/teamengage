@@ -22,9 +22,12 @@ daemon is not running, tell the user and stop.
 
 ```bash
 B=http://127.0.0.1:4747/agent
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review","tier":"<light|standard|heavy>"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
+
+Started by `te run`? Use `H="X-TE-Session: $TE_SESSION"` and skip `hello`.
+The task to review is in `$TE_ITEM`.
 
 Name the session `<you>-review` — the human sees who reviewed.
 

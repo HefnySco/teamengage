@@ -202,6 +202,16 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   const { port } = await ensureDaemon(home);
   const base = `http://127.0.0.1:${port}`;
   const ws = (await daemonApi("GET", `/api/workspace?${wsQ(args)}`, undefined, home)) as Workspace;
+  // the agents skip hello, so its sync check happens here: never start
+  // work on plans another machine has moved past
+  const hand = (await daemonApi("GET", `/api/handoff?${wsQ(args)}`, undefined, home)) as {
+    behind: number;
+    upstream?: string;
+  };
+  if (hand.behind > 0 && !dry) {
+    process.stderr.write(`te run: plans are ${hand.behind} commit(s) behind ${hand.upstream} — run te sync first\n`);
+    return 1;
+  }
   const logDir = join(teHome(home), "runs", ws.name);
   mkdirSync(logDir, { recursive: true });
 
