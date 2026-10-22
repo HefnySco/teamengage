@@ -118,7 +118,7 @@ Judge the **logic**:
 
 ```bash
 curl -s -X POST $B/review/GL-0019 -H "$H" \
-  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","note":"acceptance 1–3 verified; restarted with --debug twice, counter survives; ctest 4/4 green on the claim branch; diff confined to **Touches:**"}'
+  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","note":"I restarted the daemon twice with --debug and the counter kept its value both times, and the 4 ctest cases pass on the claim branch — acceptance items 1–3 check out and the diff stays inside **Touches:**."}'
 ```
 
 - `summary` is **required** — one plain-English sentence for the human, no
@@ -127,6 +127,17 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   human reads on the item page.
 - `note` is the technical detail for whoever fixes it — what you ran, what
   passed, over which diff. `"looks fine"` tells nobody anything.
+- **Write `summary` and `note` the way you would explain the verdict in
+  chat** — plain-English prose a human who did not watch the work can
+  follow. Open the note with a sentence or two on what you actually did
+  and the outcome ("I rebuilt the image and ran it — the drone flew the
+  mission and all 10 checks passed"), then numbered findings, each one or
+  two sentences saying what it *means*, not only what it *is*. Put a
+  file:line or commit sha only where it pins a finding down. Never a
+  compressed log dump (`mt-1075 -> OnMissionACK 0`, `src ai`, `cache-hit`)
+  or field names as shorthand — when a technical term is needed for
+  precision, keep it and put the plain meaning next to it. These comments
+  are read by the human on the item page, not parsed by a machine.
 - `ok` — verified, ready for the human to accept. Under `autonomy: solo`
   (the `hello` rules line says so) an `ok` is **not** advisory only: the
   daemon accepts and merges the submission after `auto_accept_after`
@@ -168,9 +179,10 @@ claim to `ready` so the fix is never stranded on a session that won't answer.
 Each bounce counts as a failed attempt: when it escalates the task above the
 holder's tier, the claim is released instead (`→ ready`) and a stronger
 agent takes it; at `max_attempts` the task waits for the human.
-Write the reason for the holder: specific, actionable. After two bounces in a
-row a third is refused — the item stays in review and the human decides; just
-record a `review` verdict.
+Write the reason for the holder: specific, actionable — and in the same
+plain-sentences style as a review note, since the human reads it too. After
+two bounces in a row a third is refused — the item stays in review and the
+human decides; just record a `review` verdict.
 
 To **take over the fix** instead of sending it back: record the `issues`
 verdict, then `claim` the item. An `in_review` item with an `issues` verdict
