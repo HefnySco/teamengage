@@ -207,3 +207,70 @@ describe("repos: plain code repos next to the task folder", () => {
     expect(r.done).toEqual(["pulled dev (+2)"]); // the reset one + "3"
   });
 });
+
+describe("sync_remotes and submodules", () => {
+  async function wsWith(top: string, yaml: string) {
+    const tasks = join(top, "Tasks");
+    mkdirSync(join(tasks, ".teamengage", "items"), { recursive: true });
+    writeFileSync(join(tasks, ".teamengage", "workspace.yaml"), yaml);
+    const ws = resolveWorkspace(tasks, { home });
+    const store = new PlansStore(ws, "w");
+    await store.init();
+    return { ws, store } as WorkspaceRuntime;
+  }
+  const repoWith = (dir: string, remotesTo: Record<string, string>) => {
+    mkdirSync(dir, { recursive: true });
+    g(dir, "init", "-q", "-b", "master");
+    ident(dir);
+    commitFile(dir, "a", "1\n");
+    for (const [name, url] of Object.entries(remotesTo)) {
+      g(home, "init", "-q", "--bare", url);
+      g(dir, "remote", "add", name, url);
+    }
+  };
+
+  it("never pushes a remote outside the allow-list (a public upstream stays untouched)", async () => {
+    const top = join(home, "allow");
+    repoWith(join(top, "pub"), { upstream: join(home, "pub-up.git") });
+    repoWith(join(top, "prv"), { upstream: join(home, "prv-up.git"), origin_local: join(home, "prv-local.git") });
+    g(join(top, "prv"), "push", "-q", "-u", "upstream", "master"); // tracks the public one
+    commitFile(join(top, "prv"), "a", "2\n"); // private work, ahead of upstream
+    const wsr = await wsWith(top, 'name: a\nprefix: A\nrepos: ["../*"]\nsync_remotes: [origin_local, origin]\n');
+    const reps = await syncCode(wsr, { home });
+    const by = Object.fromEntries(reps.map((r) => [r.resource, r]));
+    expect(by.pub.problems[0]).toMatch(/none of sync_remotes/);
+    expect(by.prv.remote).toBe("origin_local");
+    expect(by.prv.done).toEqual(["pushed master (new on origin_local)"]);
+    expect(g(home, "--git-dir", join(home, "prv-up.git"), "rev-list", "--count", "master")).toBe("1"); // upstream got nothing
+    expect(g(home, "--git-dir", join(home, "pub-up.git"), "branch")).toBe("");
+  });
+
+  it("holds a parent's push while a submodule commit exists only here", async () => {
+    const top = join(home, "subs");
+    const libBare = join(home, "sublib.git");
+    const seed = join(home, "sublib-seed");
+    repoWith(seed, { origin: libBare });
+    g(seed, "push", "-q", "origin", "master");
+    repoWith(join(top, "app"), { origin: join(home, "subapp.git") });
+    const app = join(top, "app");
+    execFileSync("git", ["-c", "protocol.file.allow=always", "submodule", "add", "-q", libBare, "lib"], { cwd: app });
+    g(app, "commit", "-q", "-m", "add lib");
+    ident(join(app, "lib"));
+    commitFile(join(app, "lib"), "b", "local only\n"); // never pushed
+    g(app, "add", "lib");
+    g(app, "commit", "-q", "-m", "bump lib");
+    const wsr = await wsWith(top, 'name: s\nprefix: S\nrepos: ["../app"]\n');
+    const [r] = await syncCode(wsr, { home });
+    expect(r.problems.join("\n")).toMatch(/submodule lib has commits no remote has/);
+    expect(r.done).toEqual([]);
+    expect(g(home, "--git-dir", join(home, "subapp.git"), "branch")).toBe("");
+  });
+  it("dry run reports and changes nothing", async () => {
+    const top = join(home, "dry");
+    repoWith(join(top, "r"), { origin: join(home, "dry.git") });
+    const wsr = await wsWith(top, 'name: d\nprefix: D\nrepos: ["../r"]\n');
+    const [r] = await syncCode(wsr, { home, dryRun: true });
+    expect(r.done).toEqual(["[dry run] pushed master (new on origin)"]);
+    expect(g(home, "--git-dir", join(home, "dry.git"), "branch")).toBe("");
+  });
+});

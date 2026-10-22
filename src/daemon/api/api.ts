@@ -226,7 +226,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const ops = opsFor(ctx, wsOf(req.query));
       const { syncNow } = await import("../sync/sync.js");
       const { syncCode, commitWip } = await import("../sync/code.js");
-      const b = (req.body ?? {}) as { remote?: string; message?: string; leave?: boolean };
+      const b = (req.body ?? {}) as { remote?: string; message?: string; leave?: boolean; dryRun?: boolean };
+      if (b.dryRun) {
+        // report only: fetch the plans remote and every code remote, change nothing
+        const { plansGitStatus } = await import("../sync/sync.js");
+        const st = await plansGitStatus(ops.wsr, { fetch: b.remote || true }).catch((e: Error) => ({ error: e.message }));
+        const plans =
+          "error" in st
+            ? st
+            : { dryRun: true, remote: st.defaultRemote, behind: st.behind, ahead: st.ahead, changes: st.changes.length };
+        return { released: [], saved: [], problems: [], plans, code: await syncCode(ops.wsr, { home: ctx.home, dryRun: true }) };
+      }
       const released: string[] = [];
       const saved: string[] = [];
       const problems: string[] = [];

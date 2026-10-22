@@ -114,6 +114,12 @@ export const WorkspaceConfig = z
      * te/* branches are pulled/pushed, fast-forward only.
      */
     repos: z.array(z.string()).default([]),
+    /**
+     * Remotes `te sync` may use for code, in preference order — a strict
+     * allow-list (e.g. [origin_local, origin] keeps a public `upstream`
+     * from ever being pushed). Unset: each branch's upstream remote.
+     */
+    sync_remotes: z.array(z.string()).default([]),
     /** linked workspaces: name → workspace root path. */
     links: z.record(z.string(), z.string()).default({}),
   })
