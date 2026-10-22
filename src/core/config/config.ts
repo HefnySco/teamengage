@@ -57,7 +57,7 @@ function loadYamlFile<T>(path: string, schema: { parse(x: unknown): T }): T {
 export const MACHINE_RUN_TEMPLATE = `# te run: the agent CLIs this machine starts on ready tasks
 # run:
 #   coder: devin -p --model swe-2-high --permission-mode accept-edits --
-#   reviewer: claude -p --model sonnet --permission-mode acceptEdits
+#   reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
 #   concurrency: 1
 #   fix_rounds: 1
 `;

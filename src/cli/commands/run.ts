@@ -143,7 +143,7 @@ Configure the agents for this machine in ~/.teamengage/machine.yaml:
 
   run:
     coder: devin -p --model swe-2-high --permission-mode accept-edits --
-    reviewer: claude -p --model sonnet --permission-mode acceptEdits
+    reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
     concurrency: 1      # agents at once
     fix_rounds: 1       # issues review → coder fixes, this many times
 

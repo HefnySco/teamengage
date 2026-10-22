@@ -299,7 +299,7 @@ Ask the human which agent CLI should **code** and which should **review**
 ```yaml
 run:
   coder: devin -p --model swe-2-high --permission-mode accept-edits --
-  reviewer: claude -p --model sonnet --allowedTools Bash,Read,Edit,Write,Glob,Grep
+  reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
 ```
 
 **Check:** `te run --dry-run` names the first task it would start. Details:
@@ -357,6 +357,13 @@ te sync --leave    # before leaving a machine: hand its tasks over, then sync
 - In overlay mode code repos are usually not resources. List them in
   `.teamengage/workspace.yaml`, e.g. `repos: ["../*"]` (every repo next to
   the task folder) or `repos: [../de_mavlink, ../webclient]`.
+- **Private vs public remotes:** set `sync_remotes: [origin_local, origin]`
+  to make `te sync` use only those remotes, in that order. A repo with none
+  of them is skipped, so a public `upstream` is never pushed. Without it,
+  each branch's upstream remote is used.
+- A repo whose submodule points at a commit no remote has is not pushed
+  (the other machine couldn't fetch it). Push the submodule first.
+- `te sync --dry-run` fetches and reports what it would do, changing nothing.
 - The web UI's **Sync → sync now** runs the same thing. Agents never sync or
   push; only the human does.
 

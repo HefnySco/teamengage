@@ -27,6 +27,8 @@ export interface CodeSyncReport {
   done: string[];
   /** what needs the human: diverged branches, dirty checkouts, offline */
   problems: string[];
+  /** not synced on purpose (no allowed remote, not a working repo) — not a problem */
+  skipped?: string;
 }
 
 const ITEM_OF = /^te\/([A-Za-z][A-Za-z0-9]*-\d+)(?:-|$)/;
@@ -50,13 +52,37 @@ async function hasRef(repo: string, ref: string): Promise<boolean> {
   );
 }
 
-/** The remote a resource syncs through: base's upstream, else origin, else the only one. */
-async function pickRemote(repo: string, base: string): Promise<string | undefined> {
+/**
+ * The remote a repo syncs through. `allowed` (workspace `sync_remotes`) is a
+ * strict allow-list in preference order — a repo with none of them is not
+ * synced at all, so a public `upstream` is never pushed by accident. Without
+ * it: base's upstream, else origin, else the only remote.
+ */
+async function pickRemote(repo: string, base: string, allowed: string[]): Promise<string | undefined> {
+  const all = await remotes(repo);
+  if (allowed.length) return allowed.find((r) => all.includes(r));
   const up = (await git(repo, ["rev-parse", "--abbrev-ref", `${base}@{upstream}`]).catch(() => "")).trim();
   if (up.includes("/")) return up.slice(0, up.indexOf("/"));
-  const all = await remotes(repo);
   if (all.includes("origin")) return "origin";
   return all.length === 1 ? all[0] : undefined;
+}
+
+/**
+ * Submodules whose checked-out commit no remote branch has: pushing the
+ * parent would publish a gitlink the other machine can't fetch.
+ */
+async function unpushedSubmodules(repo: string): Promise<string[]> {
+  if (!existsSync(join(repo, ".gitmodules"))) return [];
+  const out: string[] = [];
+  const status = await git(repo, ["submodule", "status", "--recursive"], { timeoutMs: 30_000 }).catch(() => "");
+  for (const line of status.split("\n")) {
+    const m = /^([ +U-])([0-9a-f]+) (\S+)/.exec(line);
+    if (!m || m[1] === "-") continue; // not initialized here
+    const sub = join(repo, m[3]);
+    const on = await git(sub, ["branch", "-r", "--contains", "HEAD"]).catch(() => "");
+    if (!on.trim()) out.push(m[3]);
+  }
+  return out;
 }
 
 /**
@@ -82,6 +108,8 @@ async function fastForward(
 interface SyncTarget {
   name: string;
   repo?: string;
+  /** found by a `repos:` glob — an unusable match is skipped, not an error */
+  glob?: boolean;
   /** branch accepted work lands on; undefined = the checked-out branch */
   base?: string;
 }
@@ -118,7 +146,7 @@ async function syncTargets(wsr: WorkspaceRuntime, home?: string): Promise<SyncTa
     for (const d of dirs.sort()) {
       if (seen.has(real(d))) continue;
       seen.add(real(d));
-      out.push({ name: basename(d), repo: d });
+      out.push({ name: basename(d), repo: d, glob: pat.endsWith("*") });
     }
   }
   return out;
@@ -129,12 +157,16 @@ export interface CodeSyncOpts {
   push?: boolean;
   home?: string;
   fetchTimeoutMs?: number;
+  /** fetch and report only: no pull, push or prune */
+  dryRun?: boolean;
 }
 
 /** Sync every git resource of the workspace; one report per resource. */
 export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): Promise<CodeSyncReport[]> {
   const pull = opts.pull ?? true;
-  const push = opts.push ?? true;
+  const pushWanted = opts.push ?? true;
+  const dry = opts.dryRun ?? false;
+  const w = dry ? "[dry run] " : "";
   const statusOf = (id: string) => wsr.store.idx.items.get(id)?.meta.status;
   /** work still open: its branch must travel. Done/dropped/untracked work stays put. */
   const open = (b: string) => {
@@ -149,6 +181,10 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     out.push(rep);
     const repo = t.repo;
     if (!repo || !(await isRepo(repo))) {
+      if (t.glob) {
+        rep.skipped = "not a working git repo";
+        continue;
+      }
       rep.problems.push("repository not found on this machine (check the resource path or its per-machine override)");
       continue;
     }
@@ -159,23 +195,41 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
       rep.problems.push("detached HEAD — check out a branch to sync it");
       continue;
     }
-    const remote = await pickRemote(repo, base);
+    const allowed = wsr.ws.config.sync_remotes ?? [];
+    const remote = await pickRemote(repo, base, allowed);
     if (!remote) {
-      rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
+      if (allowed.length) rep.skipped = `no ${allowed.join("/")} remote`;
+      else rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
       continue;
     }
     rep.remote = remote;
     try {
-      await git(
-        repo,
-        ["fetch", "-q", "--prune", remote, `+refs/heads/${base}:refs/remotes/${remote}/${base}`, `+refs/heads/te/*:refs/remotes/${remote}/te/*`],
-        { timeoutMs: opts.fetchTimeoutMs ?? 60_000 },
-      );
+      const fetchRefs = (refspecs: string[]) =>
+        git(repo, ["fetch", "-q", "--prune", remote, ...refspecs], { timeoutMs: opts.fetchTimeoutMs ?? 60_000 });
+      const teRefs = `+refs/heads/te/*:refs/remotes/${remote}/te/*`;
+      await fetchRefs([`+refs/heads/${base}:refs/remotes/${remote}/${base}`, teRefs]).catch(async (e: Error) => {
+        // a fresh (empty) remote has no base branch yet — the first push creates it
+        if (!/couldn't find remote ref/i.test(e.message)) throw e;
+        await fetchRefs([teRefs]);
+      });
     } catch (e) {
       rep.problems.push(`could not fetch from ${remote} — offline? (${(e as Error).message.split("\n")[0]})`);
       continue;
     }
 
+    /** run a git step and report it — or, dry, only report it */
+    const act = async (desc: string, gitArgs: string[]) => {
+      if (!dry) await git(repo, gitArgs, { timeoutMs: 90_000, humanPush: gitArgs[0] === "push" });
+      rep.done.push(`${w}${desc}`);
+    };
+    let push = pushWanted;
+    if (push) {
+      const subs = await unpushedSubmodules(repo);
+      if (subs.length) {
+        push = false;
+        rep.problems.push(`not pushed: submodule ${subs.join(", ")} has commits no remote has — push the submodule first, then sync again`);
+      }
+    }
     const checkedOut = new Map<string, string>();
     for (const w of await worktreeList(repo)) if (w.branch) checkedOut.set(w.branch, w.path);
     const rBase = `refs/remotes/${remote}/${base}`;
@@ -188,19 +242,16 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
       if (ab.ahead > 0 && ab.behind > 0) {
         rep.problems.push(`${base}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — merge or rebase it yourself`);
       } else if (ab.behind > 0 && pull) {
-        const p = await fastForward(repo, base, rBase, checkedOut);
+        const p = dry ? undefined : await fastForward(repo, base, rBase, checkedOut);
         if (p) rep.problems.push(p);
-        else rep.done.push(`pulled ${base} (+${ab.behind})`);
+        else rep.done.push(`${w}pulled ${base} (+${ab.behind})`);
       } else if (ab.ahead > 0 && push) {
-        await git(repo, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`], { timeoutMs: 90_000, humanPush: true });
-        rep.done.push(`pushed ${base} (+${ab.ahead})`);
+        await act(`pushed ${base} (+${ab.ahead})`, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`]);
       }
     } else if (localBase && push) {
-      await git(repo, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`], { timeoutMs: 90_000, humanPush: true });
-      rep.done.push(`pushed ${base} (new on ${remote})`);
+      await act(`pushed ${base} (new on ${remote})`, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`]);
     } else if (remoteBase && pull) {
-      await git(repo, ["branch", "-q", base, rBase]);
-      rep.done.push(`pulled ${base} (new here)`);
+      await act(`pulled ${base} (new here)`, ["branch", "-q", base, rBase]);
     }
 
     // a plain repo is worked in place — say what can't travel
@@ -218,10 +269,7 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
       if (!open(b)) {
         // finished work: drop the remote copy once the base holds it
         if (push && theirs.has(b) && remoteBase && (await git(repo, ["merge-base", "--is-ancestor", rRef, rBase]).then(() => true, () => false))) {
-          await git(repo, ["push", "-q", remote, "--delete", b], { timeoutMs: 60_000, humanPush: true }).then(
-            () => rep.done.push(`pruned ${b} on ${remote} (merged)`),
-            () => {},
-          );
+          await act(`pruned ${b} on ${remote} (merged)`, ["push", "-q", remote, "--delete", b]).catch(() => {});
         }
         continue;
       }
@@ -230,19 +278,16 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
         if (ab.ahead > 0 && ab.behind > 0) {
           rep.problems.push(`${b}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — the task was worked on both machines; merge it yourself`);
         } else if (ab.behind > 0 && pull) {
-          const p = await fastForward(repo, b, rRef, checkedOut);
+          const p = dry ? undefined : await fastForward(repo, b, rRef, checkedOut);
           if (p) rep.problems.push(p);
-          else rep.done.push(`pulled ${b} (+${ab.behind})`);
+          else rep.done.push(`${w}pulled ${b} (+${ab.behind})`);
         } else if (ab.ahead > 0 && push) {
-          await git(repo, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`], { timeoutMs: 90_000, humanPush: true });
-          rep.done.push(`pushed ${b} (+${ab.ahead})`);
+          await act(`pushed ${b} (+${ab.ahead})`, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`]);
         }
       } else if (local.has(b) && push) {
-        await git(repo, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`], { timeoutMs: 90_000, humanPush: true });
-        rep.done.push(`pushed ${b} (new on ${remote})`);
+        await act(`pushed ${b} (new on ${remote})`, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`]);
       } else if (theirs.has(b) && pull) {
-        await git(repo, ["branch", "-q", b, rRef]);
-        rep.done.push(`pulled ${b} (new here)`);
+        await act(`pulled ${b} (new here)`, ["branch", "-q", b, rRef]);
       }
       // uncommitted work in a live worktree can't travel — say so
       const at = checkedOut.get(b);

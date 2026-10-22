@@ -127,6 +127,7 @@ export async function validateCmd(args: string[], home?: string): Promise<number
 
 interface CodeReport {
   resource: string;
+  skipped?: string;
   remote?: string;
   done: string[];
   problems: string[];
@@ -144,13 +145,23 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
   const r = (await daemonApi(
     "POST",
     `/api/sync-all?${wsQ(args)}`,
-    { leave: flag(args, "--leave"), message, remote: opt(args, "--remote") },
+    { leave: flag(args, "--leave"), message, remote: opt(args, "--remote"), dryRun: flag(args, "--dry-run") },
     home,
   )) as {
     released: string[];
     saved: string[];
     problems: string[];
-    plans: { error?: string; remote?: string; pulled?: number; committed?: number; pushed?: boolean };
+    plans: {
+      error?: string;
+      remote?: string;
+      pulled?: number;
+      committed?: number;
+      pushed?: boolean;
+      dryRun?: boolean;
+      behind?: number;
+      ahead?: number;
+      changes?: number;
+    };
     code: CodeReport[];
   };
   if (flag(args, "--json")) {
@@ -162,7 +173,9 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
   if (r.released.length) w(`handed over: ${r.released.join(", ")} (released here, work kept on their branches)`);
   if (r.saved.length) w(`saved WIP: ${r.saved.join(", ")}`);
   for (const p of r.problems) w(`! ${p}`);
-  if (r.plans.error) {
+  if (r.plans.dryRun) {
+    w(`plans: [dry run] ${r.plans.behind} to pull, ${r.plans.ahead} to push, ${r.plans.changes} uncommitted${r.plans.remote ? ` (${r.plans.remote})` : ""}`);
+  } else if (r.plans.error) {
     trouble++;
     w(`plans: ! ${r.plans.error}`);
   } else {
@@ -173,11 +186,14 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
     ].filter(Boolean);
     w(`plans: ${bits.length ? bits.join(", ") : "up to date"}${r.plans.remote ? ` (${r.plans.remote})` : ""}`);
   }
+  const skipped = r.code.filter((c) => c.skipped);
   for (const c of r.code) {
+    if (c.skipped) continue;
     w(`code ${c.resource}: ${c.done.length ? c.done.join(", ") : "up to date"}${c.remote ? ` (${c.remote})` : ""}`);
     for (const p of c.problems) w(`  ! ${p}`);
     trouble += c.problems.length;
   }
+  if (skipped.length) w(`skipped: ${skipped.map((c) => `${c.resource} (${c.skipped})`).join(", ")}`);
   return trouble ? 1 : 0;
 }
 

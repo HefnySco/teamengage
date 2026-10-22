@@ -397,12 +397,15 @@ const Inbox = ({ onOpen }) => {
     const c = byId[id]?.claim;
     return c ? html` <span class="text-secondary">· ${c.holder.split("@")[0]}@${c.machine} ${ago(c.claimed_at)}</span>` : null;
   };
-  // AI review marker for review rows — reviewed items are a quick accept, flagged ones need a look
-  const aiNote = (id) => {
+  // AI review marker for review rows — a robot between status and title:
+  // green = ok (quick accept), red = flagged (needs a look), grey = not reviewed
+  const aiMark = (id) => {
     const r = byId[id]?.ai_review;
-    if (!r) return null;
-    return html` <span class="${r.verdict === "ok" ? "text-success" : "text-danger-emphasis"}"
-      title=${`AI review: ${r.verdict} — ${r.reviewed_by}${r.note ? `\n${r.note}` : ""}`}>AI ${r.verdict === "ok" ? "✓" : "✗"}</span>`;
+    const cls = r ? (r.verdict === "ok" ? "text-success" : "text-danger") : "text-secondary";
+    const tip = r
+      ? `AI review: ${r.verdict} — ${r.reviewed_by}${r.summary ? `\n${r.summary}` : ""}${r.note ? `\n${r.note}` : ""}`
+      : "no AI review yet";
+    return html`<span class="${cls}" title=${tip}><${RobotIcon} /></span>`;
   };
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (id, ...extra) =>
@@ -525,8 +528,8 @@ const Inbox = ({ onOpen }) => {
       rows: view.reviews.map((id) =>
         itemRow(
           id,
-          html`<${InboxStatus} s="in_review" />`,
-          html`${claimNote(id)}${aiNote(id)}`,
+          html`<span class="d-inline-flex align-items-center gap-2"><${InboxStatus} s="in_review" />${aiMark(id)}</span>`,
+          claimNote(id),
           html`<button class="btn btn-sm py-0 btn-primary" onClick=${async () => {
             if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act(id, "accept");
           }}>accept</button>
@@ -2087,7 +2090,7 @@ const PlansGit = () => {
       let code = "";
       if (what === "syncnow") {
         // /api/sync-all: plans + code repos; plans errors come back inline
-        code = (r.code ?? [])
+        code = (r.code ?? []).filter((c) => !c.skipped)
           .map((c) => `code ${c.resource}: ${c.done.join(", ") || "up to date"}${c.problems.length ? ` — ⚠ ${c.problems.join("; ")}` : ""}`)
           .join(" · ");
         if (r.plans?.error) throw new Error(`${r.plans.error}${code ? ` · ${code}` : ""}`);

@@ -59,6 +59,7 @@ the loop
 two machines (home ↔ work)
   te sync                pull + push the plans and the code
   te sync --leave        before you go: hand this machine's tasks over, then sync
+  te sync --dry-run      what it would pull and push
 
 look around
   te ls [--status s]     te show <ID>     te ui (the board)
@@ -77,7 +78,7 @@ const USAGE_ALL = `te — every command
                    create a workspace (.teamengage plans repo)
   run [--watch] [--max n] [--dry-run]   start this machine's agents on ready tasks
   wait [--notify] [--any] [--timeout d]  block until something new needs you
-  sync [--leave] [-m msg] [--status]    plans + code to/from your other machines
+  sync [--leave] [--dry-run] [-m msg] [--status]   plans + code to/from your other machines
   ls [--status s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
