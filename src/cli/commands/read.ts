@@ -127,6 +127,7 @@ export async function validateCmd(args: string[], home?: string): Promise<number
 
 interface CodeReport {
   resource: string;
+  skipped?: string;
   remote?: string;
   done: string[];
   problems: string[];
@@ -185,11 +186,14 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
     ].filter(Boolean);
     w(`plans: ${bits.length ? bits.join(", ") : "up to date"}${r.plans.remote ? ` (${r.plans.remote})` : ""}`);
   }
+  const skipped = r.code.filter((c) => c.skipped);
   for (const c of r.code) {
+    if (c.skipped) continue;
     w(`code ${c.resource}: ${c.done.length ? c.done.join(", ") : "up to date"}${c.remote ? ` (${c.remote})` : ""}`);
     for (const p of c.problems) w(`  ! ${p}`);
     trouble += c.problems.length;
   }
+  if (skipped.length) w(`skipped: ${skipped.map((c) => `${c.resource} (${c.skipped})`).join(", ")}`);
   return trouble ? 1 : 0;
 }
 

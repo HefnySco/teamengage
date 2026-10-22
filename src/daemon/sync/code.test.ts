@@ -238,7 +238,8 @@ describe("sync_remotes and submodules", () => {
     const wsr = await wsWith(top, 'name: a\nprefix: A\nrepos: ["../*"]\nsync_remotes: [origin_local, origin]\n');
     const reps = await syncCode(wsr, { home });
     const by = Object.fromEntries(reps.map((r) => [r.resource, r]));
-    expect(by.pub.problems[0]).toMatch(/none of sync_remotes/);
+    expect(by.pub.problems).toEqual([]);
+    expect(by.pub.skipped).toBe("no origin_local/origin remote");
     expect(by.prv.remote).toBe("origin_local");
     expect(by.prv.done).toEqual(["pushed master (new on origin_local)"]);
     expect(g(home, "--git-dir", join(home, "prv-up.git"), "rev-list", "--count", "master")).toBe("1"); // upstream got nothing

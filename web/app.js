@@ -2087,7 +2087,7 @@ const PlansGit = () => {
       let code = "";
       if (what === "syncnow") {
         // /api/sync-all: plans + code repos; plans errors come back inline
-        code = (r.code ?? [])
+        code = (r.code ?? []).filter((c) => !c.skipped)
           .map((c) => `code ${c.resource}: ${c.done.join(", ") || "up to date"}${c.problems.length ? ` — ⚠ ${c.problems.join("; ")}` : ""}`)
           .join(" · ");
         if (r.plans?.error) throw new Error(`${r.plans.error}${code ? ` · ${code}` : ""}`);

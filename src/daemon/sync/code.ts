@@ -27,6 +27,8 @@ export interface CodeSyncReport {
   done: string[];
   /** what needs the human: diverged branches, dirty checkouts, offline */
   problems: string[];
+  /** not synced on purpose (no allowed remote, not a working repo) — not a problem */
+  skipped?: string;
 }
 
 const ITEM_OF = /^te\/([A-Za-z][A-Za-z0-9]*-\d+)(?:-|$)/;
@@ -106,6 +108,8 @@ async function fastForward(
 interface SyncTarget {
   name: string;
   repo?: string;
+  /** found by a `repos:` glob — an unusable match is skipped, not an error */
+  glob?: boolean;
   /** branch accepted work lands on; undefined = the checked-out branch */
   base?: string;
 }
@@ -142,7 +146,7 @@ async function syncTargets(wsr: WorkspaceRuntime, home?: string): Promise<SyncTa
     for (const d of dirs.sort()) {
       if (seen.has(real(d))) continue;
       seen.add(real(d));
-      out.push({ name: basename(d), repo: d });
+      out.push({ name: basename(d), repo: d, glob: pat.endsWith("*") });
     }
   }
   return out;
@@ -177,6 +181,10 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     out.push(rep);
     const repo = t.repo;
     if (!repo || !(await isRepo(repo))) {
+      if (t.glob) {
+        rep.skipped = "not a working git repo";
+        continue;
+      }
       rep.problems.push("repository not found on this machine (check the resource path or its per-machine override)");
       continue;
     }
@@ -190,11 +198,8 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     const allowed = wsr.ws.config.sync_remotes ?? [];
     const remote = await pickRemote(repo, base, allowed);
     if (!remote) {
-      rep.problems.push(
-        allowed.length
-          ? `none of sync_remotes (${allowed.join(", ")}) on this repo — not synced`
-          : "no git remote — this code stays on this machine (add one: git remote add origin <url>)",
-      );
+      if (allowed.length) rep.skipped = `no ${allowed.join("/")} remote`;
+      else rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
       continue;
     }
     rep.remote = remote;
