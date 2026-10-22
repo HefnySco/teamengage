@@ -11,14 +11,16 @@
 name: work-pc
 run:
   coder: devin -p --model swe-2-high --permission-mode accept-edits --
-  reviewer: claude -p --model sonnet --allowedTools Bash,Read,Edit,Write,Glob,Grep
+  reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
   concurrency: 1   # agents at once
   fix_rounds: 1    # an "issues" review goes back to the coder this many times
 ```
 
 Use a different model for the reviewer than for the coder: the point is a
 second opinion. Each command gets its prompt as the last argument, or
-wherever you write `"$TE_PROMPT"`. Any CLI that takes a prompt and can run
+wherever you write `"$TE_PROMPT"`. Use `"$TE_PROMPT"` when a flag takes a
+list of values, like Claude's `--allowedTools`, or the prompt ends up in
+that list. Any CLI that takes a prompt and can run
 `curl` and `git` works.
 
 ## What `te run` does

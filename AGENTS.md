@@ -299,7 +299,7 @@ Ask the human which agent CLI should **code** and which should **review**
 ```yaml
 run:
   coder: devin -p --model swe-2-high --permission-mode accept-edits --
-  reviewer: claude -p --model sonnet --allowedTools Bash,Read,Edit,Write,Glob,Grep
+  reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
 ```
 
 **Check:** `te run --dry-run` names the first task it would start. Details:
