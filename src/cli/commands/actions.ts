@@ -74,10 +74,15 @@ export async function rejectCmd(args: string[], home?: string): Promise<number> 
   const pos = positional(args);
   const [id, ...rest] = pos;
   if (!id) {
-    process.stderr.write("usage: te reject <ID> [reason]\n");
+    process.stderr.write("usage: te reject <ID> [reason] [--release]\n");
     return 2;
   }
-  return act("reject", [id, ...args.filter((a) => a.startsWith("--"))], { reason: rest.join(" ") }, home);
+  return act(
+    "reject",
+    [id, ...args.filter((a) => a.startsWith("--"))],
+    { reason: rest.join(" "), ...(args.includes("--release") ? { release: true } : {}) },
+    home,
+  );
 }
 
 export async function dropCmd(args: string[], home?: string): Promise<number> {

@@ -40,6 +40,19 @@ describe("pickNext", () => {
     expect(pickNext(cfg(), st(), items, [], "work")).toBeUndefined();
   });
 
+  it("takes over an in_progress item whose holder session died", () => {
+    const dead = { holder: "claude@work#aa11", machine: "work", dead: true };
+    const items = [item("A-1", "in_progress", { claim: dead })];
+    expect(pickNext(cfg(), st(), items, [], "work")).toEqual({ id: "A-1", mode: "takeover" });
+    // a dead claim already rebound by hello (same agent name) stays a resume
+    const same = { holder: "devin@work#bb22", machine: "work", dead: true };
+    expect(pickNext(cfg(), st(), [item("A-2", "in_progress", { claim: same })], [], "work")).toEqual({ id: "A-2", mode: "resume" });
+    // live holder, dead claim on another machine, tried — not picked
+    expect(pickNext(cfg(), st(), [item("A-3", "in_progress", { claim: { ...dead, dead: false } })], [], "work")).toBeUndefined();
+    expect(pickNext(cfg(), st(), [item("A-4", "in_progress", { claim: { ...dead, machine: "home" } })], [], "work")).toBeUndefined();
+    expect(pickNext(cfg(), st({ tried: new Set(["A-1"]) }), items, [], "work")).toBeUndefined();
+  });
+
   it("respects concurrency, running items, tried items, --max and a pending claim", () => {
     const ready = ["A-1", "A-2"];
     expect(pickNext(cfg(), st({ running: new Map([["A-1", "work"]]) }), [], ready, "work")).toBeUndefined();

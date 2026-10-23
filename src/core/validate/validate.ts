@@ -19,6 +19,7 @@ export type FindingKind =
   | "claim_on_done"
   | "overlapping_claims"
   | "stale_claim"
+  | "dead_claim"
   | "unsynced_claim"
   | "bad_target"
   // overlay mode (task-file tracking)

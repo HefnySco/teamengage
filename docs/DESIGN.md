@@ -195,7 +195,16 @@ withdraw = holder only, in_review ──▶ in_progress, claim kept: the
 takeover = claim on in_review carrying an `issues` verdict: any agent
           session on the claim's machine takes claim and worktree over
           ──▶ in_progress (cross-machine refused — worktrees are
-          machine-local, §6.3)
+          machine-local, §6.3). The same takeover applies to an
+          in_progress item whose holder can't act from this daemon (dead
+          session): the new session takes claim, worktree and branch over
+          and continues where it stopped — a dead holder must not strand
+          the work. A live holder's in_progress claim stays untouchable.
+reject   = human only: in_review ──▶ in_progress, claim kept — the holder
+          fixes and resubmits. `te reject <ID> --release` instead sends it
+          ──▶ ready: the claim is released, branches kept (dirty work is
+          WIP-committed first), so another agent's claim resumes the same
+          work. On ready, reject un-approves ──▶ draft.
 release  = in_progress|waiting ──▶ ready as before; on in_review it also
           means "submission back to the pool": claim dropped, branches
           kept. The holder may release its own claim anywhere; an agent

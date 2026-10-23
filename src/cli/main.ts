@@ -54,7 +54,7 @@ the loop
   te approve <ID>        a draft may be worked
   te answer <ID> <text>  answer an agent's question
   te accept <ID>         take the work (merges its branch)
-  te reject <ID> [why]   send it back
+  te reject <ID> [why]   send it back to the holder (--release: free the claim → ready)
 
 two machines (home ↔ work)
   te sync                pull + push the plans and the code
@@ -86,7 +86,7 @@ const USAGE_ALL = `te — every command
   status [--json]
   approve | accept | claim | release <ID> [note]
   answer <ID> <text>
-  reject | drop <ID> [reason]
+  reject | drop <ID> [reason]     (reject --release: claim freed → ready for another agent)
   undrop <ID>         restore a dropped item back to draft
   unflag <ID>         dismiss an agent's drop flag — the item stays
   deps <ID> [REF…|--off]   replace an item's depends_on (--off clears)

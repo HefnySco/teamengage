@@ -25,7 +25,8 @@ export function registerWriteTools(
     {
       description:
         "Take an item: writes the claim file, locks targets, sets up worktrees/snapshots. " +
-        "On an in_review item with an AI 'issues' verdict this takes the claim over — same machine only.",
+        "On an in_review item with an AI 'issues' verdict this takes the claim over — same machine only. " +
+        "Same for an in_progress item whose holder session ended — claim, worktree and branch become yours.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {

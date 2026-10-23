@@ -59,7 +59,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       });
       return items.map((i) => ({
         ...i.meta,
-        claim: i.claim,
+        claim: i.claim ? { ...i.claim, dead: ops.claimDead(i.claim) } : i.claim,
         blocked: i.blocked,
         ready: i.ready,
         turn: i.turn,
@@ -497,7 +497,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("answer", (ops, id, b) => ops.answer(id, String(b.text ?? b.title ?? "answered")));
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
   act("accept", (ops, id) => ops.accept(id));
-  act("reject", (ops, id, b) => ops.reject(id, b.reason ? String(b.reason) : undefined));
+  act("reject", (ops, id, b) => ops.reject(id, b.reason ? String(b.reason) : undefined, b.release === true));
   act("drop", (ops, id, b) => ops.drop(id, b.reason ? String(b.reason) : undefined));
   act("unflag", (ops, id) => ops.unflagDrop(id));
   act("deps", (ops, id, b) =>

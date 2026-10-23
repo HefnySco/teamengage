@@ -936,3 +936,55 @@ describe("editDraft: agent rewrites a draft", () => {
     await expect(ops.editDraft(id, planner, { reason: "r", depends_on: ["WS-9999"] })).rejects.toThrow(NotFoundError);
   });
 });
+
+describe("reject --release and dead-holder takeover", () => {
+  it("reject --release frees the claim → ready; the next claim resumes", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "rejected for reassign" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const s1 = ctx.sessions.hello("coder-1");
+    await ops.claim(id, s1);
+    await ops.submit(id, s1, {});
+
+    const r = await api(`/api/items/${id}/reject`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "reassign it", release: true }),
+    });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { meta: { status: string } }).meta.status).toBe("ready");
+    expect(store.idx.get(id)!.claim).toBeUndefined();
+    // the submission's branch survives → the next claim reports a resume
+    const s2 = ctx.sessions.hello("coder-2");
+    const c = await ops.claim(id, s2);
+    expect(c.claim.holder).toBe(s2.id);
+  });
+
+  it("a dead holder's in_progress claim is takeable; a live one is not; finding surfaces", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "stranded work" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const s1 = ctx.sessions.hello("gone-agent");
+    await ops.claim(id, s1);
+    const s2 = ctx.sessions.hello("new-agent");
+    // live holder: a second session can't steal it
+    await expect(ops.claim(id, s2)).rejects.toThrow(/already claimed/);
+    // the holder's session ends → dead_claim finding + takeover allowed
+    ctx.sessions.disconnect(s1.id);
+    expect(ops.findings().some((f) => f.kind === "dead_claim" && f.item === id)).toBe(true);
+    const c = await ops.claim(id, s2);
+    expect(c.claim.holder).toBe(s2.id);
+    expect(store.idx.get(id)!.meta.status).toBe("in_progress");
+    expect(ops.findings().some((f) => f.kind === "dead_claim" && f.item === id)).toBe(false);
+  });
+});

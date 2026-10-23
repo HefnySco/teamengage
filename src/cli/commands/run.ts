@@ -27,13 +27,13 @@ const wsQ = (args: string[]) => {
   return w ? `ws=${encodeURIComponent(w)}` : "";
 };
 
-export type Mode = "work" | "fix" | "resume" | "review";
+export type Mode = "work" | "fix" | "resume" | "review" | "takeover";
 
 export interface RunItem {
   id: string;
   status: string;
   title: string;
-  claim?: { holder: string; machine: string } | null;
+  claim?: { holder: string; machine: string; dead?: boolean } | null;
   ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string };
   question?: { text: string };
 }
@@ -92,6 +92,18 @@ export function pickNext(
     (i) => i.status === "in_progress" && i.claim?.holder.startsWith(prefix) && free(i.id) && !st.tried.has(i.id),
   );
   if (r) return { id: r.id, mode: "resume" };
+  // a claim whose holder session ended on this machine strands the item —
+  // any agent can claim-take it over; the worktree/branch come with it
+  const d = items.find(
+    (i) =>
+      i.status === "in_progress" &&
+      i.claim?.dead === true &&
+      here(i) &&
+      !i.claim.holder.startsWith(prefix) &&
+      free(i.id) &&
+      !st.tried.has(i.id),
+  );
+  if (d) return { id: d.id, mode: "takeover" };
   if (st.pendingClaim || st.started >= maxTasks) return undefined;
   const w = ready.find((id) => free(id) && !st.tried.has(id));
   return w ? { id: w, mode: "work" } : undefined;
@@ -121,9 +133,11 @@ export function promptFor(mode: Mode, id: string, name: string, base: string, to
   const how =
     mode === "fix"
       ? `${id} is in review with an issues verdict: claim it (takeover), read ## Review, fix exactly that, and submit again. `
-      : mode === "resume"
-        ? `You already hold ${id} (do not claim it again). Read brief ${id} — the human may have answered your question (decisions) — and continue from the work already on its branch in the worktree, then submit. `
-        : `If brief shows a ## Review or ## Handoff from an earlier attempt, read it first — that is what to fix. `;
+      : mode === "takeover"
+        ? `${id} is in progress but its holder's session ended: claim it — the claim, worktree and branch become yours — read brief ${id} (## Handoff / ## Review say where it stopped), continue the work already there, then submit. `
+        : mode === "resume"
+          ? `You already hold ${id} (do not claim it again). Read brief ${id} — the human may have answered your question (decisions) — and continue from the work already on its branch in the worktree, then submit. `
+          : `If brief shows a ## Review or ## Handoff from an earlier attempt, read it first — that is what to fix. `;
   return (
     `Use the te-work skill to implement ${id}. ${session} ${how}` +
     `Do only this task, within its Touches and acceptance. If the task is unclear, ask instead of guessing, then stop. ` +

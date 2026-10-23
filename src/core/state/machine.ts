@@ -66,7 +66,13 @@ export type Action =
   /** Human sets (or clears) the model tier an item needs; reset clears attempts. */
   | { type: "set_tier"; tier?: Tier; reset?: boolean }
   | { type: "accept" }
-  | { type: "reject"; reason?: string }
+  /**
+   * Human reject of a submission: back to in_progress, claim kept (the
+   * holder fixes and resubmits). `release` instead sends it to ready —
+   * the claim is freed for another agent while its branch is kept, so the
+   * next claim resumes the same work rather than restarting.
+   */
+  | { type: "reject"; reason?: string; release?: boolean }
   /**
    * Agent asks the human to drop this item: sets `drop_request` (advisory —
    * the status is untouched). Any session may flag, including the holder.
@@ -286,12 +292,16 @@ export function transition(
       // picked up for the fix by any agent on the claim's machine — the
       // holder re-claims or a fresh session takes the claim over. The
       // worktree is machine-local, so cross-machine takeover stays refused.
+      // The same applies to an in_progress item whose holder can't act from
+      // this daemon (dead session): it would strand otherwise — a session
+      // on the claim's machine takes claim, worktree and branch over. A
+      // live holder keeps its claim — a second window must not steal work.
       const takeover =
-        from === "in_review" &&
-        meta.ai_review?.verdict === "issues" &&
         actor.kind === "agent" &&
         !!ctx.claim &&
-        ctx.claim.machine === actor.machine;
+        ctx.claim.machine === actor.machine &&
+        ((from === "in_review" && meta.ai_review?.verdict === "issues") ||
+          (from === "in_progress" && ctx.holderAway === true));
       if (from !== "ready" && !takeover) fail(from, action.type);
       if (meta.type === "epic") {
         throw new ClaimRefusedError("epics are plans — claim their tasks");
@@ -330,7 +340,9 @@ export function transition(
       set("in_progress");
       out.log.push(
         takeover
-          ? `- ${stamp} ${who} took over the fix${ctx.claim!.holder !== who ? ` (was ${ctx.claim!.holder})` : ""}`
+          ? from === "in_progress"
+            ? `- ${stamp} ${who} took over from ${ctx.claim!.holder} — its session can't act here`
+            : `- ${stamp} ${who} took over the fix${ctx.claim!.holder !== who ? ` (was ${ctx.claim!.holder})` : ""}`
           : `- ${stamp} ${who} claimed`,
       );
       out.effects.push({ type: "write_claim", claim: action.claim });
@@ -568,6 +580,17 @@ export function transition(
     case "reject": {
       requireHuman(actor, action.type);
       if (from === "in_review") {
+        if (action.release) {
+          set("ready", action.reason);
+          out.log.push(
+            `- ${stamp} ${who} rejected submission and released the claim${action.reason ? `: ${action.reason}` : ""}`,
+          );
+          if (ctx.claim) {
+            out.effects.push({ type: "delete_claim" });
+            out.effects.push({ type: "cleanup_work", keepBranches: true });
+          }
+          return out;
+        }
         set("in_progress", action.reason);
         out.log.push(`- ${stamp} ${who} rejected submission${action.reason ? `: ${action.reason}` : ""}`);
         return out;

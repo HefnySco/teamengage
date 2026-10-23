@@ -40,6 +40,7 @@ describe("every arrow in DESIGN §5", () => {
     ["in_review →bounce→ in_progress", "in_review", agent2, { type: "bounce", reason: "tests fail" }, "in_progress", { claim: claimOf() }],
     ["in_review →accept→ done", "in_review", human, { type: "accept" }, "done", {}],
     ["in_review →reject→ in_progress", "in_review", human, { type: "reject", reason: "no" }, "in_progress", {}],
+    ["in_review →reject --release→ ready", "in_review", human, { type: "reject", reason: "no", release: true }, "ready", { claim: claimOf() }],
     ["in_progress →ask→ waiting", "in_progress", agent, { type: "ask", question: { text: "?", asked_by: agent.session, asked_at: NOW } }, "waiting", { claim: claimOf() }],
     ["waiting →answer→ in_progress", "waiting", human, { type: "answer", decisionId: "D-0001", decisionTitle: "t" }, "in_progress", { claim: claimOf() }],
     ["in_progress →release→ ready", "in_progress", agent, { type: "release" }, "ready", { claim: claimOf() }],
@@ -704,6 +705,113 @@ describe("model tiers, attempts and handoff", () => {
     const r = transition(withMeta("hold", { attempts: 5 }), { type: "set_tier", tier: "heavy", reset: true }, human, ctx());
     expect(r.meta.tier).toBe("heavy");
     expect(r.meta.attempts).toBeUndefined();
+  });
+});
+
+describe("reject --release sends a submission back to the pool", () => {
+  it("in_review → ready: claim deleted, worktree cleaned, branches kept", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "reject", reason: "wrong approach", release: true },
+      human,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.status).toBe("ready");
+    expect(r.effects).toEqual([
+      { type: "delete_claim" },
+      { type: "cleanup_work", keepBranches: true },
+    ]);
+    expect(r.log[0]).toMatch(/rejected submission and released the claim: wrong approach$/);
+    expect(r.events[0]).toMatchObject({ action: "reject", from: "in_review", to: "ready" });
+  });
+
+  it("without a claim it still lands ready — nothing to free", () => {
+    const r = transition(item("in_review"), { type: "reject", release: true }, human, ctx());
+    expect(r.meta.status).toBe("ready");
+    expect(r.effects).toEqual([]);
+  });
+
+  it("plain reject keeps the claim and lands in_progress (unchanged)", () => {
+    const r = transition(item("in_review"), { type: "reject", reason: "fix" }, human, ctx({ claim: claimOf() }));
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([]);
+  });
+
+  it("--release on a ready item is still the un-approve path → draft", () => {
+    const r = transition(item("ready"), { type: "reject", release: true }, human, ctx());
+    expect(r.meta.status).toBe("draft");
+  });
+});
+
+describe("claim takeover of an item whose holder can't act", () => {
+  // in_progress + dead holder on the same machine: the item would strand
+  const deadCtx = (c: Partial<TransitionCtx> = {}) =>
+    ctx({ claim: claimOf(), depsDone: true, holderAway: true, ...c });
+
+  it("another session on the same machine takes claim and work over", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "claim", claim: claimOf(agent2.session) },
+      agent2,
+      deadCtx(),
+    );
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([
+      { type: "write_claim", claim: claimOf(agent2.session) },
+      { type: "setup_work" },
+    ]);
+    expect(r.log[0]).toMatch(/took over from claude-code@desktop#a1f3 — its session can't act here$/);
+    expect(r.meta.attempts).toBe(1); // a stranded claim counts as a failed attempt
+  });
+
+  it("a live holder's in_progress claim stays untouchable", () => {
+    expect(() =>
+      transition(
+        item("in_progress"),
+        { type: "claim", claim: claimOf(agent2.session) },
+        agent2,
+        ctx({ claim: claimOf(), depsDone: true, holderAway: false }),
+      ),
+    ).toThrow(InvalidTransitionError);
+    expect(() =>
+      transition(
+        item("in_progress"),
+        { type: "claim", claim: claimOf(agent2.session) },
+        agent2,
+        ctx({ claim: claimOf(), depsDone: true }),
+      ),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("refused across machines — the worktree is local", () => {
+    const remote: Actor = { kind: "agent", session: "gemini-cli@laptop#b2c4", machine: "laptop" };
+    const remoteClaim = { ...claimOf(agent2.session), holder: remote.session, machine: "laptop" };
+    expect(() =>
+      transition(item("in_progress"), { type: "claim", claim: remoteClaim }, remote, deadCtx()),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("agent-only: the human releases instead", () => {
+    expect(() =>
+      transition(
+        item("in_progress"),
+        { type: "claim", claim: { ...claimOf("human"), actor: "human" as const } },
+        human,
+        deadCtx(),
+      ),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("a takeover that runs out of attempts waits for the human", () => {
+    const meta = { ...item("in_progress"), attempts: 4 };
+    expect(() =>
+      transition(
+        meta,
+        { type: "claim", claim: claimOf(agent2.session) },
+        agent2,
+        deadCtx({ escalation: { after: 2, max: 5 } }),
+      ),
+    ).toThrow(/out of attempts/);
   });
 });
 

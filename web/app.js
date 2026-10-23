@@ -224,6 +224,9 @@ const RobotIcon = () => glyph([
   "M6 12.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5M3 8.062C3 6.76 4.235 5.765 5.53 5.886a26.6 26.6 0 0 0 4.94 0C11.765 5.765 13 6.76 13 8.062v1.157a.93.93 0 0 1-.765.935c-.845.147-2.34.346-4.235.346s-3.39-.2-4.235-.346A.93.93 0 0 1 3 9.219zm4.542-.827a.25.25 0 0 0-.217.068l-.92.9a25 25 0 0 1-1.871-.183.25.25 0 0 0-.068.495c.55.076 1.232.149 2.02.193a.25.25 0 0 0 .189-.071l.754-.736.847 1.71a.25.25 0 0 0 .404.062l.932-.97a25 25 0 0 0 1.922-.188.25.25 0 0 0-.068-.495c-.538.074-1.207.145-1.98.189a.25.25 0 0 0-.166.076l-.754.785-.842-1.7a.25.25 0 0 0-.182-.135",
   "M8.5 1.866a1 1 0 1 0-1 0V3h-2A4.5 4.5 0 0 0 1 7.5V8a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1v1a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1v-.5A4.5 4.5 0 0 0 10.5 3h-2zM14 7.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7.5A3.5 3.5 0 0 1 5.5 4h5A3.5 3.5 0 0 1 14 7.5",
 ]);
+const BulbIcon = () => glyph([
+  "M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13h-5a.5.5 0 0 1-.46-.302l-.761-1.77a1.9 1.9 0 0 0-.453-.618A5.98 5.98 0 0 1 2 6m3 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1-.5-.5",
+]);
 
 // search field with a × clear button inside (the native type=search one is webkit-only)
 // onEscape may return true to keep the query (e.g. it dismissed a dropdown instead)
@@ -468,9 +471,9 @@ const Inbox = ({ onOpen }) => {
     reload();
   };
   // a cancelled prompt (null) aborts the action — only OK fires it
-  const askThen = async (id, action, label) => {
+  const askThen = async (id, action, label, extra) => {
     const reason = await promptDialog(label);
-    if (reason !== null) act(id, action, { reason });
+    if (reason !== null) act(id, action, { reason, ...extra });
   };
   const empty = !total;
   // same search language as the board: @agent, #domain, is:flag, plus plain words
@@ -533,7 +536,8 @@ const Inbox = ({ onOpen }) => {
           html`<button class="btn btn-sm py-0 btn-primary" onClick=${async () => {
             if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act(id, "accept");
           }}>accept</button>
-            <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>`,
+            <button class="btn btn-sm py-0 text-danger" onClick=${() => askThen(id, "reject", "reject reason")}>reject</button>
+            <button class="btn btn-sm py-0 text-danger" title="reject & release — frees the claim → ready for another agent (the branch is kept)" onClick=${() => askThen(id, "reject", "reject reason", { release: true })}>reject+release</button>`,
         ),
       ),
     },
@@ -960,13 +964,13 @@ const Board = ({ onOpen }) => {
         />
         ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
       </span>
+      <button class="btn btn-sm btn-outline-warning" title="capture a thought as an idea — a source document an agent can plan from; lands as a draft" onClick=${() => setIdeaOpen(true)}><${BulbIcon} /></button>
       <${SortSeg} eff=${eff} onSort=${setSort} title="order cards inside each column" />
       <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
         onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
-      <button class="btn btn-sm btn-outline-info ms-auto" title="capture a thought as an idea — a source document an agent can plan from; lands as a draft" onClick=${() => setIdeaOpen(true)}>+ idea</button>
-      ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
         onClose=${() => setIdeaOpen(false)}
         onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
@@ -1797,9 +1801,9 @@ const ItemView = ({ id }) => {
   const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
     .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
   // a cancelled prompt (null) aborts the action — only OK fires it
-  const askThen = async (action, label) => {
+  const askThen = async (action, label, extra) => {
     const reason = await promptDialog(label);
-    if (reason !== null) act(action, { reason });
+    if (reason !== null) act(action, { reason, ...extra });
   };
   const TABS = ["simple", "technical", "evidence"];
   // "graph" like the plans-page action: an epic opens its plan subtree
@@ -1874,7 +1878,7 @@ const ItemView = ({ id }) => {
         ${st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
         ${(st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
         ${(st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
-        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}>`}
+        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
         ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
         ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
         ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
@@ -1942,7 +1946,7 @@ const ItemView = ({ id }) => {
       <div class="disc-panel">
         <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
         <div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">meta</span><span class="text-secondary">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${it.meta.archived ? " · archived" : ""}</span></div>
-        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the button above</span>`}</span></div>`}
+        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.dead && html` <span class="badge text-bg-warning" title="the holder's session ended — another agent can claim-take it over, or release it">session ended</span>`}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the button above</span>`}</span></div>`}
         ${b.source && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">source</span><span class="text-secondary">${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span></div>`}
         ${st === "draft" && html`<div class="d-flex align-items-center gap-2 small"><span class="text-secondary item-lbl">unblocks</span>${polLine}</div>`}
       </div>

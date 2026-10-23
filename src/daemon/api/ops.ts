@@ -275,7 +275,7 @@ export class WorkspaceOps {
           }),
       )
       .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
-    return { item: it, deps, dependents, decisions, targets, relates, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
+    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
   }
 
   /**
@@ -317,11 +317,27 @@ export class WorkspaceOps {
   }
 
   findings(): Finding[] {
+    // claims whose holder session ended on this machine strand their item
+    // (in_progress forever, invisible to next) — a day-late stale_claim is
+    // not enough, so warn now: take it over (claim) or release it
+    const dead: Finding[] = [...this.index.claims.values()]
+      .filter((c) => {
+        if (!this.claimDead(c)) return false;
+        const st = this.index.items.get(c.item)?.meta.status;
+        return st !== undefined && st !== "done" && st !== "dropped";
+      })
+      .map((c) => ({
+        severity: "warning" as const,
+        kind: "dead_claim" as const,
+        item: c.item,
+        message: `claim by ${c.holder} — its session ended; another agent can take it over (claim), or release it`,
+      }));
     return [
       ...validate(this.index, {
         staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
         roots: resourceRoots(this.wsr.ws),
       }),
+      ...dead,
       ...(this.wsr.overlay?.findings() ?? []),
     ];
   }
@@ -343,11 +359,14 @@ export class WorkspaceOps {
     if (mine) {
       // takeover: an AI-flagged submission (in_review + issues) stays
       // claimed to its machine — another session here may pick the fix up.
-      // The state machine makes the final call.
+      // An in_progress item whose holder can't act from here (dead
+      // session) is takeable the same way — it would strand otherwise.
+      // The state machine makes the final call (holderAway via ctx below).
       const takeover =
-        it.meta.status === "in_review" &&
-        it.meta.ai_review?.verdict === "issues" &&
-        mine.machine === session.machine;
+        (it.meta.status === "in_review" &&
+          it.meta.ai_review?.verdict === "issues" &&
+          mine.machine === session.machine) ||
+        (it.meta.status === "in_progress" && this.holderAway(it) && mine.machine === session.machine);
       if (!takeover) {
         throw new ClaimRefusedError(
           `already claimed by ${mine.holder} on ${mine.machine} — release on ${mine.machine} or by the human here`,
@@ -382,6 +401,7 @@ export class WorkspaceOps {
       {
         depsDone: this.depsDone(it),
         guard: this.overlapGuard(it.meta.targets, roots, id),
+        holderAway: () => this.holderAway(this.item(id)),
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release
@@ -446,6 +466,20 @@ export class WorkspaceOps {
     const c = it.claim;
     if (!c || c.actor === "human") return false;
     return c.machine !== this.wsr.store.machine || !this.sessions.isLive(c.holder);
+  }
+
+  /**
+   * The claim's holder session ended on this machine — the item strands
+   * (in_progress) until a session takes it over (claim) or the human
+   * releases it. Surfaced as `dead` on API claims and a `dead_claim`
+   * finding.
+   */
+  claimDead(c: Claim): boolean {
+    return (
+      c.actor === "agent" &&
+      c.machine === this.wsr.store.machine &&
+      !this.sessions.isLive(c.holder)
+    );
   }
 
   private assertLiveClaim(it: IndexedItem): void {
@@ -859,12 +893,20 @@ export class WorkspaceOps {
     return { ...r, merged };
   }
 
-  async reject(id: string, reason?: string) {
+  async reject(id: string, reason?: string, release = false) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+    const claim = it.claim;
+    const r = await this.store.perform(id, it.meta.version, this.actorFor("human"), {
       type: "reject",
       reason,
+      release,
     });
+    // release: the transition deleted the claim — tear the worktree down
+    // too. Branches stay, so the next claim resumes the same work.
+    if (claim && r.meta.status === "ready") {
+      await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    }
+    return r;
   }
 
   async drop(id: string, reason?: string) {
