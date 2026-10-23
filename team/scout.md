@@ -27,3 +27,15 @@ TeamEngage is 2.0 — no te-swift, sketch, atlas or judge exist.
 
 ## Final report
 One table: ID · final status · verdict · what the human must do (from senior's lines).
+
+## Verdict policy (human rule, 2026-10-23)
+Reject / hold / send back for a fix ONLY when there is a real bug (failing test,
+wrong behaviour, plainly unmet acceptance). Out-of-Touches edits, unverifiable
+checks (hardware, device, other host) and minor gaps are "accept with note":
+list the note, optionally have a follow-up task proposed, never block on it.
+Tell lens this rule in every review prompt. In the final report call such tasks
+"accept (with note)", not "do not accept". Do not spend fix rounds on them.
+
+For a minor real-logic defect found in review (not scope, not docs): accept the
+task, and have forge `propose` a light follow-up task (depends on the original,
+own Touches + checkable acceptance) to fix it. Never bounce the original for it.
