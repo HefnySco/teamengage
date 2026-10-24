@@ -104,6 +104,7 @@ describe("every non-arrow is rejected", () => {
     ["in_progress", agent, { type: "approve_plan" }, { claim: claimOf() }],
     ["draft", human, { type: "submit" }, {}],
     ["ready", daemon, { type: "claim", claim: claimOf() }, { depsDone: true }],
+    ["ready", agent, { type: "claim", claim: claimOf() }, { depsDone: true, planHold: "PL-0001" }], // a held plan pauses its subtree
   ];
   it.each(cases)("%s + %o → error", (from, actor, action, extra) => {
     expect(() => transition(item(from), action, actor, ctx(extra))).toThrow(

@@ -402,6 +402,7 @@ export class WorkspaceOps {
         depsDone: this.depsDone(it),
         guard: this.overlapGuard(it.meta.targets, roots, id),
         holderAway: () => this.holderAway(this.item(id)),
+        planHold: () => this.index.get(id)?.paused_by,
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release

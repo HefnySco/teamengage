@@ -175,6 +175,8 @@ export class PlansStore {
       priorBounces?: () => number | Promise<number>;
       /** Whether the claim's holder can't act from this daemon — evaluated inside the queue. */
       holderAway?: () => boolean;
+      /** Id of an ancestor plan on hold — evaluated inside the queue like holderAway. */
+      planHold?: () => string | undefined;
     } = {},
   ): Promise<PerformResult> {
     return this.enqueue(async () => {
@@ -198,6 +200,7 @@ export class PlansStore {
         depsDone: ctx.depsDone,
         priorBounces: ctx.priorBounces ? await ctx.priorBounces() : undefined,
         holderAway: ctx.holderAway ? ctx.holderAway() : undefined,
+        planHold: ctx.planHold ? ctx.planHold() : undefined,
         escalation: { after: this.ws.config.escalate_after, max: this.ws.config.max_attempts },
       });
 

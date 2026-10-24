@@ -61,6 +61,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ...i.meta,
         claim: i.claim ? { ...i.claim, dead: ops.claimDead(i.claim) } : i.claim,
         blocked: i.blocked,
+        paused: i.paused,
+        paused_by: i.paused_by,
         ready: i.ready,
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),

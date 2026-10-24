@@ -775,6 +775,10 @@ const searchSug = (q, pool) => {
 const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
 const byCreated = (a, b) => (a.created ?? "").localeCompare(b.created ?? "") || byId(a, b);
 const byUpdated = (a, b) => (b.updated ?? b.created ?? "").localeCompare(a.updated ?? a.created ?? "") || byId(a, b);
+const pctDone = (i) => {
+  const t = i.plan_progress?.total ?? 0;
+  return t ? (i.plan_progress?.done ?? 0) / t : 0;
+};
 const SORTS = {
   "created-asc": byCreated,
   "created-desc": (a, b) => byCreated(b, a),
@@ -782,11 +786,18 @@ const SORTS = {
   "updated-asc": (a, b) => byUpdated(b, a),
   "name-asc": (a, b) => (a.title ?? "").localeCompare(b.title ?? "") || byId(a, b),
   "name-desc": (a, b) => (b.title ?? "").localeCompare(a.title ?? "") || byId(a, b),
+  "completion-desc": (a, b) => pctDone(b) - pctDone(a) || byId(a, b),
+  "completion-asc": (a, b) => pctDone(a) - pctDone(b) || byId(a, b),
+  "size-desc": (a, b) => (b.plan_progress?.total ?? 0) - (a.plan_progress?.total ?? 0) || byId(a, b),
+  "size-asc": (a, b) => (a.plan_progress?.total ?? 0) - (b.plan_progress?.total ?? 0) || byId(a, b),
 };
-// the order control — created ↑↓ | updated ↓↑ | AZ; clicking the active field
-// flips its direction. Shared by the board (cards inside each column) and the
-// inbox (rows inside each group); an empty eff means "keep the server's order"
-const SortSeg = ({ eff, onSort, title }) => {
+// fields that read most naturally biggest-first — the first click gives desc
+const DESC_FIRST = new Set(["updated", "completion", "size"]);
+// the order control — one button per field; clicking the active field flips
+// its direction. Shared by the board (cards inside each column), the inbox
+// (rows inside each group) and plans; an empty eff means "keep the server's
+// order". `fields` picks which buttons show (plans swap in completion/size).
+const SortSeg = ({ eff, onSort, title, fields = [["created", "created"], ["updated", "updated"], ["name", "AZ"]] }) => {
   const btn = (field, label) => {
     const on = eff.startsWith(field);
     const desc = eff.endsWith("desc");
@@ -794,10 +805,10 @@ const SortSeg = ({ eff, onSort, title }) => {
       field === "name" && on ? (desc ? "Z→A" : "A→Z")
       : on ? `${label} ${desc ? "↓" : "↑"}`
       : label;
-    const next = !on ? `${field}-${field === "updated" ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
+    const next = !on ? `${field}-${DESC_FIRST.has(field) ? "desc" : "asc"}` : desc ? `${field}-asc` : `${field}-desc`;
     return html`<button class="btn btn-outline-secondary${on ? " active" : ""}" title=${title} onClick=${() => onSort(next)}>${text}</button>`;
   };
-  return html`<span class="btn-group btn-group-sm" role="group">${btn("created", "created")}${btn("updated", "updated")}${btn("name", "AZ")}</span>`;
+  return html`<span class="btn-group btn-group-sm" role="group">${fields.map(([f, l]) => btn(f, l))}</span>`;
 };
 
 // ---- new idea — the human captures a thought as a source document ----------
@@ -1026,6 +1037,7 @@ const Board = ({ onOpen }) => {
                       <div class="bcard-meta d-flex align-items-center gap-1 flex-wrap">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
+                        ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
                           title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
                           AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}</span>`}
@@ -1083,6 +1095,7 @@ const PlanNode = ({ i, depth, tree }) => {
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
+        ${i.paused && html`<span class="small text-warning-emphasis" title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} /><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
         ${isPlan && html`<span class="acts"><${ActBtn} title="open this plan's dependency graph"
@@ -1102,10 +1115,21 @@ const PlanNode = ({ i, depth, tree }) => {
       ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
 };
+// a plan counts fully completed when its own status is done/dropped AND every
+// descendant is finished — tasks done/dropped, sub-plans themselves fully
+// completed. The hide applies to root rows only: a finished sub-plan under an
+// unfinished parent keeps showing inside the parent's tree.
+const doneish = (s) => s === "done" || s === "dropped";
+const fullyCompleted = (kids, i, seen = new Set()) => {
+  if (seen.has(i.id)) return false; // parent cycle — not done
+  seen.add(i.id);
+  return doneish(i.status) && (kids.get(i.id) ?? []).every((c) => (c.type === "epic" ? fullyCompleted(kids, c, seen) : doneish(c.status)));
+};
 const Plans = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
   const [q, setQ] = useState(() => loadSearch("te.plans.q"));
   const [showDone, setShowDoneState] = useState(() => loadSearch("te.plans.done") === "1");
+  const [sort, setSortState] = useState(() => loadSearch("te.plans.sort"));
   const [open, setOpenState] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("te.plans.open") ?? "{}");
@@ -1129,13 +1153,14 @@ const Plans = ({ onOpen }) => {
     if (!kids.has(i.parent)) kids.set(i.parent, []);
     kids.get(i.parent).push(i);
   }
-  // tasks first, then sub-plans — each in id order
-  for (const list of kids.values()) list.sort((a, b) => (a.type === "epic") - (b.type === "epic") || byId(a, b));
-  const roots = data.filter((i) => i.type === "epic" && !(i.parent && items.has(i.parent))).sort((a, b) => byCreated(b, a));
+  const effSort = SORTS[sort] ? sort : "created-desc";
+  // tasks first, then sub-plans — tasks in id order, sub-plans in the chosen order
+  for (const list of kids.values()) list.sort((a, b) => (a.type === "epic") - (b.type === "epic") || (a.type === "epic" ? SORTS[effSort](a, b) : byId(a, b)));
+  const roots = data.filter((i) => i.type === "epic" && !(i.parent && items.has(i.parent))).sort(SORTS[effSort]);
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   // a plan matches when it or any descendant matches the search
   const subtreeMatches = (i) => matches(i, words) || (kids.get(i.id) ?? []).some(subtreeMatches);
-  const visible = roots.filter((r) => (showDone || r.plan_state !== "done") && (!words.length || subtreeMatches(r)));
+  const visible = roots.filter((r) => (showDone || !fullyCompleted(kids, r)) && (!words.length || subtreeMatches(r)));
   const setSearch = (v) => {
     setQ(v);
     saveSearch("te.plans.q", v);
@@ -1143,6 +1168,10 @@ const Plans = ({ onOpen }) => {
   const setShowDone = (v) => {
     setShowDoneState(v);
     saveSearch("te.plans.done", v ? "1" : "");
+  };
+  const setSort = (v) => {
+    setSortState(v);
+    saveSearch("te.plans.sort", v);
   };
   const isOpenOf = (i, depth) => open[i.id] ?? (depth === 0 || words.length > 0);
   const setAll = (v) => setOpen(Object.fromEntries(data.filter((i) => i.type === "epic").map((i) => [i.id, v])));
@@ -1162,6 +1191,7 @@ const Plans = ({ onOpen }) => {
         autofocus
       />
       <button class="btn btn-sm ${showDone ? "btn-primary" : "btn-outline-secondary"}" title="also show finished plans" onClick=${() => setShowDone(!showDone)}>done plans</button>
+      <${SortSeg} eff=${effSort} onSort=${setSort} title="order plans — roots and sub-plans" fields=${[["created", "created"], ["completion", "done %"], ["size", "size"]]} />
       <span class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" onClick=${() => setAll(true)}>expand all</button><button class="btn btn-outline-secondary" onClick=${() => setAll(false)}>collapse all</button></span>
       <span class="text-secondary small">${visible.length} of ${roots.length} plan(s)</span>
     </div>
@@ -1394,6 +1424,10 @@ const Graph = ({ onOpen, id }) => {
   const [src, setSrc] = useState("");
   const [count, setCount] = useState(null);
   const [drafts, setDrafts] = useState([]);
+  // scope zoom: { id, depth } — the graph becomes the node's neighbourhood,
+  // depth hops over deps (both directions) and parent/children. Set by
+  // Ctrl/middle-click on a node; × on the scope chip returns to the wide view
+  const [focus, setFocus] = useState(null);
   // same component stays mounted between #/graph and #/graph/<id> — reset the
   // filters on scope switch (scoped edits never overwrite the saved ones)
   useEffect(() => {
@@ -1408,6 +1442,7 @@ const Graph = ({ onOpen, id }) => {
             }
           })(),
     );
+    setFocus(null);
   }, [id]);
   const update = (patch) => {
     const next = { ...f, ...patch };
@@ -1426,11 +1461,18 @@ const Graph = ({ onOpen, id }) => {
   }, [f]);
   useEffect(() => {
     const p = new URLSearchParams();
-    if (id) p.set("under", id);
-    if (applied.q.trim()) p.set("q", applied.q.trim());
-    if (applied.status) p.set("status", applied.status);
-    if (applied.domain) p.set("domain", applied.domain);
-    if (applied.linked) p.set("linked", "1");
+    if (focus) {
+      // a scoped walk ignores the text/status/domain filters — like + linked,
+      // the point is the neighbourhood itself
+      p.set("root", focus.id);
+      p.set("depth", String(focus.depth));
+    } else {
+      if (id) p.set("under", id);
+      if (applied.q.trim()) p.set("q", applied.q.trim());
+      if (applied.status) p.set("status", applied.status);
+      if (applied.domain) p.set("domain", applied.domain);
+      if (applied.linked) p.set("linked", "1");
+    }
     const qs = p.toString();
     let live = true;
     api(`/api/graph${qs ? "?" + qs : ""}`).then(async (r) => {
@@ -1445,7 +1487,7 @@ const Graph = ({ onOpen, id }) => {
     return () => {
       live = false;
     };
-  }, [applied, id]);
+  }, [applied, id, focus]);
   // drafts currently on screen → approve buttons in the corner panel;
   // node ids in the mermaid source look like GL_0013
   useEffect(() => {
@@ -1523,11 +1565,31 @@ const Graph = ({ onOpen, id }) => {
     v.scrollLeft = a.cx * zoom - a.ox;
     v.scrollTop = a.cy * zoom - a.oy;
   }, [zoom]);
+  // a fresh focus resets the pixel zoom — the new neighbourhood needs a clean
+  // view; changing depth keeps the current zoom
+  useEffect(() => applyZoom(1), [focus?.id]);
+  // the item id under the pointer — mermaid node ids look like GL_0013
+  const nodeAt = (e) =>
+    document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/)?.[0]?.replace("_", "-") ?? null;
+  // Ctrl/middle-click a node = scope the graph to its neighbourhood; the depth
+  // carries over so re-focusing sideways keeps the same width
+  const focusOn = (itemId) => setFocus((cur) => (cur?.id === itemId ? cur : { id: itemId, depth: cur?.depth ?? 1 }));
   return html`
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-      <h2 class="h4 mb-0 me-2">Graph</h2>
+      <h2 class="h4 mb-0 me-2" title="click a node to open it — Ctrl+click or middle-click focuses the graph around it">Graph</h2>
       ${id && html`<span class="badge text-bg-secondary" title="graph scoped to this plan and its parts">
         plan ${id} <a href="#/graph" class="text-reset ms-1 text-decoration-none" title="back to the full graph">×</a></span>`}
+      ${focus && html`
+        <span class="badge text-bg-secondary" title="graph scoped to the neighbourhood around this item — hops step over dependencies both ways and parent/child links">
+          around ${focus.id} <a href="#/graph" class="text-reset ms-1 text-decoration-none" title="back to the ${id ? "plan graph" : "full graph"}"
+            onClick=${(e) => { e.preventDefault(); setFocus(null); }}>×</a></span>
+        <span class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" title="narrow — one hop fewer" disabled=${focus.depth <= 1}
+            onClick=${() => setFocus({ ...focus, depth: focus.depth - 1 })}>−</button>
+          <button class="btn btn-outline-secondary" disabled>${focus.depth} hop${focus.depth > 1 ? "s" : ""}</button>
+          <button class="btn btn-outline-secondary" title="widen — one hop deeper into dependencies" disabled=${focus.depth >= 6}
+            onClick=${() => setFocus({ ...focus, depth: focus.depth + 1 })}>+</button>
+        </span>`}
       <${SearchBox} style=${{ maxWidth: "22rem" }} value=${f.q} onChange=${(v) => update({ q: v })}
         placeholder="search id, title, project, file, #domain…" />
       <select class="form-select form-select-sm w-auto" value=${f.status} onChange=${(e) => update({ status: e.target.value })}>
@@ -1542,7 +1604,7 @@ const Graph = ({ onOpen, id }) => {
         <input type="checkbox" class="form-check-input mt-0" checked=${f.linked} disabled=${!filtering}
           onChange=${(e) => update({ linked: e.target.checked })} /> + linked
       </label>
-      ${count !== null && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > 80 ? " — showing 80, narrow the search" : ""}</span>`}
+      ${count !== null && !focus && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > 80 ? " — showing 80, narrow the search" : ""}</span>`}
     </div>
     <div class="graph-wrap">
       <div class="graph-tools btn-group btn-group-sm">
@@ -1570,9 +1632,16 @@ const Graph = ({ onOpen, id }) => {
         onClick=${(e) => {
           if (Date.now() < panSuppressUntil.current) return;
           // pointer capture retargets click at the view — hit-test the node actually under the pointer
-          const el = document.elementFromPoint(e.clientX, e.clientY) ?? e.target;
-          const id = el?.closest?.("[id]")?.id?.match(/[A-Z]{2,}[-_]\d+/);
-          if (id) onOpen(id[0].replace("_", "-"));
+          const nid = nodeAt(e);
+          if (!nid) return;
+          if (e.ctrlKey || e.metaKey) focusOn(nid);
+          else onOpen(nid);
+        }}
+        onAuxClick=${(e) => {
+          if (e.button !== 1 || Date.now() < panSuppressUntil.current) return;
+          e.preventDefault();
+          const nid = nodeAt(e);
+          if (nid) focusOn(nid);
         }}>
         <div class="graph-zoom" dangerouslySetInnerHTML=${{ __html: svg }} />
       </div>

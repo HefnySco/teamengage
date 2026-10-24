@@ -66,6 +66,26 @@ describe("Index", () => {
     expect(idx.get("GL-0002")!.claim?.holder).toBe("a@m#1");
   });
 
+  it("a plan on hold pauses its whole subtree — parts keep their status but are never ready", async () => {
+    writeItem("HLD-0001", { type: "epic", status: "hold" }); // held root plan
+    writeItem("HLD-0002", { type: "epic", parent: "HLD-0001" }); // sub-plan
+    writeItem("HLD-0003", { parent: "HLD-0002" }); // nested task
+    writeItem("HLD-0004", {}); // unrelated
+    let idx = await Index.load(plans);
+    expect(idx.get("HLD-0003")!.paused).toBe(true);
+    expect(idx.get("HLD-0003")!.paused_by).toBe("HLD-0001");
+    expect(idx.get("HLD-0003")!.ready).toBe(false); // status is ready, still not claimable
+    expect(idx.get("HLD-0002")!.paused).toBe(true);
+    expect(idx.get("HLD-0001")!.paused).toBe(false); // the held plan itself is not paused
+    expect(idx.get("HLD-0004")!.paused).toBe(false);
+
+    // unhold → the subtree becomes claimable again
+    writeItem("HLD-0001", { type: "epic", status: "ready" });
+    idx = await Index.load(plans);
+    expect(idx.get("HLD-0003")!.paused).toBe(false);
+    expect(idx.get("HLD-0003")!.ready).toBe(true);
+  });
+
   it("incremental upsertFile equals full reload", async () => {
     const idx = await Index.load(plans);
     const before = JSON.stringify([...idx.items.keys()].sort());

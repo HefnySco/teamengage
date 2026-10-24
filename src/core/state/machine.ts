@@ -121,6 +121,8 @@ export interface TransitionCtx {
   claim?: Claim | null;
   /** Whether all depends_on items are done (needed for claim). */
   depsDone?: boolean;
+  /** Id of an ancestor plan on hold — a held plan pauses its subtree, claim refused. */
+  planHold?: string;
   /** AI bounces this item already took since the last human action (bounce cap). */
   priorBounces?: number;
   /** workspace escalate_after / max_attempts (defaults 2 / 5) */
@@ -311,6 +313,13 @@ export function transition(
       }
       if (meta.archived) throw new InvalidTransitionError("cannot claim: item is archived — unarchive first", from, "claim");
       if (actor.kind === "daemon") throw new ForbiddenError("daemon cannot claim");
+      if (ctx.planHold) {
+        throw new InvalidTransitionError(
+          `cannot claim: plan ${ctx.planHold} is on hold — everything under it is paused`,
+          from,
+          "claim",
+        );
+      }
       if (ctx.depsDone === false) {
         throw new InvalidTransitionError("cannot claim: dependencies not done", from, "claim");
       }

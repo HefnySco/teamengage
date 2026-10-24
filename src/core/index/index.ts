@@ -51,6 +51,10 @@ export interface IndexedItem {
   claim?: Claim;
   /** derived: any depends_on item (this workspace) not done */
   blocked: boolean;
+  /** derived: an ancestor plan is on hold — parts keep their status but are never claimable */
+  paused: boolean;
+  /** the nearest held ancestor's id, when paused */
+  paused_by?: string;
   /** derived: reverse of depends_on */
   blocks: string[];
   /** derived: items whose parent is this id */
@@ -134,6 +138,7 @@ export class Index {
               sections: doc.sections,
               path: relative(plansDir, file),
               blocked: false,
+              paused: false,
               blocks: [],
               children: [],
               ready: false,
@@ -199,6 +204,7 @@ export class Index {
       sections: doc.sections,
       path: rel,
       blocked: false,
+      paused: false,
       blocks: [],
       children: [],
       ready: false,
@@ -284,8 +290,29 @@ export class Index {
         }
         return status !== undefined && !depSatisfied(status, this.reviewUnblocks, unblocksOn);
       });
+      // held-plan cascade: an ancestor epic on hold pauses the whole subtree —
+      // parts keep their status but are never ready for an agent to claim
+      it.paused = false;
+      it.paused_by = undefined;
+      for (let p = it.meta.parent, seen = new Set([it.meta.id]); p; ) {
+        try {
+          const ref = parseItemRef(p);
+          if (ref.workspace || seen.has(ref.id)) break; // foreign / cycle — stop
+          seen.add(ref.id);
+          const anc = this.items.get(ref.id);
+          if (!anc) break;
+          if (anc.meta.status === "hold") {
+            it.paused = true;
+            it.paused_by = anc.meta.id;
+            break;
+          }
+          p = anc.meta.parent;
+        } catch {
+          break; // unparseable ref → validator finding, not a pause
+        }
+      }
       it.turn = turnOf(it.meta.status);
-      it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim;
+      it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim && !it.paused;
     }
     // plan lifecycle for epics (children are already built above)
     for (const it of this.items.values()) {
