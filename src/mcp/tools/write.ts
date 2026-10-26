@@ -182,21 +182,26 @@ export function registerWriteTools(
   server.registerTool(
     "submit",
     {
-      description: "Hand work to the human with evidence (commits/tests/notes).",
+      description:
+        "Hand work to the human with evidence (commits/tests/notes). " +
+        "walkthrough is required — the human's 'explain what you did': a few plain-English paragraphs " +
+        "walking them through the change (what you changed, how it works, what to look at first), " +
+        "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough.",
       inputSchema: {
         id: z.string(),
         commits: z.array(z.string()).optional(),
         tests: z.string().optional(),
         notes: z.string().optional(),
+        walkthrough: z.string(),
       },
     },
-    async ({ id, commits, tests, notes }) => {
+    async ({ id, commits, tests, notes, walkthrough }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes });
+        await o.submit(id, s, { commits, tests, notes, walkthrough });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);
@@ -209,9 +214,11 @@ export function registerWriteTools(
     {
       description:
         "Peer-review a submission as a different session than the holder (find them: query status=in_review). " +
-        "Read the task file, the Evidence section and the actual diff/tests first, then record verdict ok|issues " +
-        "with summary (one plain-English sentence for the human — what the verdict means, no jargon) " +
+        "Read the task file, the Walkthrough and Evidence sections and the actual diff/tests first, then record " +
+        "verdict ok|issues with summary (plain-English prose for the human — what you verified and why the verdict, no jargon) " +
         "and a specific note for whoever fixes it (findings with file:line). " +
+        "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
+        "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
         "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
         "holder is on another machine or no longer live releases the claim to ready so the fix isn't stranded. " +
         "Never review your own submission.",
@@ -220,17 +227,18 @@ export function registerWriteTools(
         verdict: z.enum(["ok", "issues"]),
         summary: z.string(),
         note: z.string().optional(),
+        needs_human: z.boolean().optional(),
       },
     },
-    async ({ id, verdict, summary, note }) => {
+    async ({ id, verdict, summary, note, needs_human }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.review(id, s, verdict, note, summary);
+        const r = await o.review(id, s, verdict, note, summary, needs_human);
         return okText(
-          `reviewed ${id}: ${verdict}` +
+          `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}` +
             (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
         );
       } catch (e) {
@@ -364,7 +372,7 @@ export function registerWriteTools(
       description:
         "Rewrite a DRAFT — any of: title, summary, acceptance (replaces the whole checklist), touches " +
         "(the **Touches:** line), depends_on, parent (\"\" clears), relates, targets, tier (any clears), domains, " +
-        "sections ({\"## Heading\": new body}; ## Notes/Review/Evidence/Handoff/Log/History are managed — refused). " +
+        "sections ({\"## Heading\": new body}; ## Notes/Review/Evidence/Walkthrough/Handoff/Log/History are managed — refused). " +
         "Only drafts: for anything else ask the human to move it back to draft first (that is the go-ahead). " +
         "reason says why. Planner tiers only (standard/heavy). It stays a draft — the human approves the new version.",
       inputSchema: {

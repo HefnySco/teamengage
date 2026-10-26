@@ -45,6 +45,12 @@ export const AiReview = z.object({
   note: z.string().optional(),
   /** one plain-English sentence for the human — what the verdict means */
   summary: z.string().optional(),
+  /**
+   * "ok, but…" — the reviewer leans positive yet wants the human's own
+   * judgement (risky area, an unverifiable step, a call that isn't theirs).
+   * Such a review is never auto-accepted under autonomy: solo.
+   */
+  needs_human: z.boolean().optional(),
 });
 export type AiReview = z.infer<typeof AiReview>;
 

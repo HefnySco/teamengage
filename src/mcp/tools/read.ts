@@ -39,7 +39,7 @@ export const HELLO_RULES =
 
 /** Extra line under `autonomy: solo` (one human / small team). */
 export const SOLO_RULES =
-  "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts; key tasks, drop/delete and pushing stay the human's";
+  "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts (a reviewer's needs_human flag keeps it the human's call); key tasks, drop/delete and pushing stay the human's";
 
 /** Model tiers: what a session declares at hello, and what it may then do. */
 export const TIER_RULES =
@@ -137,7 +137,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
             : r.note
               ? ` — ${r.note}`
               : "";
-          lines.push(`ai_review: ${r.verdict} by ${r.reviewed_by}${detail}`);
+          lines.push(`ai_review: ${r.verdict} by ${r.reviewed_by}${r.needs_human ? " (needs the human's call)" : ""}${detail}`);
         }
         if (it.meta.type === "epic" && it.plan_state) {
           lines.push(

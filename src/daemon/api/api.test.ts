@@ -770,6 +770,50 @@ describe("autonomy: solo", () => {
       wsr.ws.config.autonomy = "strict";
     }
   });
+
+  it("needs_human ok reviews never auto-accept; the submitter's walkthrough lands in ## Walkthrough", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "Borderline work" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const agent = ctx.sessions.hello("nh-agent");
+    const reviewer = ctx.sessions.hello("nh-reviewer");
+    await ops.claim(id, agent);
+    await ops.submit(id, agent, {
+      notes: "acceptance checked",
+      walkthrough: "Changed the counter reset path — the flag is set on FC restart.",
+    });
+    // the walkthrough is appended to the item's ## Walkthrough section
+    const wt = store.idx.get(id)!.sections.find((s) => s.heading.toLowerCase() === "walkthrough")?.body ?? "";
+    expect(wt).toContain("Changed the counter reset path");
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.auto_accept_after = "30m";
+    try {
+      // "ok, but the human should decide" — flagged, never auto-accepted
+      await ops.review(id, reviewer, "ok", "auth-adjacent change", "looks right, wants your eyes", true);
+      const it = store.idx.get(id)!;
+      expect(it.meta.ai_review?.needs_human).toBe(true);
+      expect(ops.autoAcceptAt(it)).toBeUndefined();
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(id);
+      const listed = (await (await api(`/api/items?status=in_review`)).json()) as Array<{
+        id: string;
+        auto_accept_at?: string;
+      }>;
+      expect(listed.find((i) => i.id === id)?.auto_accept_at).toBeUndefined();
+      expect((await ops.brief(id)).autoAcceptAt).toBeUndefined();
+      // a plain ok on a later submission auto-accepts again
+      await ops.review(id, reviewer, "ok", "re-checked", "all good now");
+      expect(ops.autoAcceptAt(store.idx.get(id)!)).toBeTruthy();
+      expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(id);
+      expect(store.idx.get(id)!.meta.status).toBe("done");
+    } finally {
+      wsr.ws.config.autonomy = "strict";
+    }
+  });
 });
 
 describe("drop flags: agent asks, human decides", () => {

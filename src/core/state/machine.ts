@@ -37,15 +37,22 @@ export type Action =
   | {
       type: "submit";
       note?: string;
-      evidence?: { commits?: string[]; tests?: string; notes?: string };
+      evidence?: {
+        commits?: string[];
+        tests?: string;
+        notes?: string;
+        /** "walk me through this code" — plain-English explanation of the change for the human */
+        walkthrough?: string;
+      };
     }
   /**
    * A second agent session records a peer review of the submission
    * (advisory: no status change, the human still accepts). Not the holder.
    * `summary` is the plain-English line for the human; `note` the technical
-   * detail for whoever fixes it.
+   * detail for whoever fixes it. `needs_human` marks an "ok, but…" verdict —
+   * it keeps the accept strictly the human's (no auto-accept).
    */
-  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string }
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean }
   /**
    * A second agent session bounces a broken submission back to its holder
    * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
@@ -434,6 +441,13 @@ export function transition(
         if (action.evidence.tests) lines.push(`- tests: ${action.evidence.tests}`);
         if (action.evidence.notes) lines.push(`- ${action.evidence.notes}`);
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
+        // the submitter's own walkthrough, kept per submission like Handoff
+        if (action.evidence.walkthrough?.trim()) {
+          out.sectionWrites.push({
+            heading: "Walkthrough",
+            text: `### ${stamp} ${who}\n\n${action.evidence.walkthrough.trim()}\n\n`,
+          });
+        }
       }
       return out;
     }
@@ -448,6 +462,7 @@ export function transition(
         reviewed_at: ctx.now,
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
+        ...(action.needs_human ? { needs_human: true } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
       // an issues verdict only records the review: it never releases the claim.
@@ -464,13 +479,13 @@ export function transition(
           `- ${stamp} claim released — holder ${ctx.claim!.holder}@${ctx.claim!.machine} can't act from here`,
         );
       }
-      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}`);
+      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}${action.needs_human ? " (needs the human's call)" : ""}`);
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
         heading: "Review",
         text: action.summary
-          ? `- ${stamp} ${who} ${action.verdict} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
-          : `- ${stamp} ${who} ${verdict}\n`,
+          ? `- ${stamp} ${who} ${action.verdict}${action.needs_human ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
+          : `- ${stamp} ${who} ${verdict}${action.needs_human ? " (needs the human's call)" : ""}\n`,
       });
       return out;
     }

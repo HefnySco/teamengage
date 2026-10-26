@@ -1039,8 +1039,8 @@ const Board = ({ onOpen }) => {
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
-                          title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
-                          AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}</span>`}
+                          title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.needs_human ? "\nflagged for your call — never auto-accepted" : ""}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
+                          AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}${i.ai_review.needs_human ? " ⚑" : ""}</span>`}
                         ${i.auto_accept_at && html`<span class="badge text-bg-warning" title=${`autonomy: solo — the daemon accepts this at ${new Date(i.auto_accept_at).toLocaleString()} unless you act (stop it on the item page)`}>⏱ ${untilText(i.auto_accept_at)}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
@@ -1861,7 +1861,9 @@ const ItemView = ({ id }) => {
   const st = it.meta.status;
   const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n.toLowerCase())?.body.trim() ?? "";
   // open on the plain-English tab only when the item has one
-  const tab = picked ?? (b.source?.simple?.text || sec("simple") ? "simple" : "technical");
+  const tab = picked ?? (st === "in_review" && sec("walkthrough")
+    ? "walkthrough" // what the submitter says they changed — the review starts here
+    : b.source?.simple?.text || sec("simple") ? "simple" : "technical");
   const act = async (action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
@@ -1874,7 +1876,7 @@ const ItemView = ({ id }) => {
     const reason = await promptDialog(label);
     if (reason !== null) act(action, { reason, ...extra });
   };
-  const TABS = ["simple", "technical", "evidence"];
+  const TABS = ["simple", "technical", "walkthrough", "evidence"];
   // "graph" like the plans-page action: an epic opens its plan subtree
   // (#/graph/<id>); a task opens the full graph searched on its id with
   // + linked on — itself plus everything one step away
@@ -2028,7 +2030,8 @@ const ItemView = ({ id }) => {
     </div>`}
     ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
-      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : "advisory, the accept is still yours"}</span>
+      ${it.meta.ai_review.needs_human && html` <span class="badge text-bg-warning" title="the reviewer leans ${it.meta.ai_review.verdict} but wants your judgement — never auto-accepted">needs your call</span>`}
+      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : it.meta.ai_review.needs_human ? "flagged for your call — never auto-accepted" : "advisory, the accept is still yours"}</span>
       ${b.autoAcceptAt && html`<div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
         <span class="badge text-bg-warning">⏱ auto-accept ${untilText(b.autoAcceptAt)}</span>
         <span class="text-secondary">autonomy: solo — the daemon accepts (local merge, no push) unless you accept, reject or stop it</span>
@@ -2049,7 +2052,7 @@ const ItemView = ({ id }) => {
         </div>
         <span class="ms-auto d-flex align-items-center gap-3">
           ${b.source && html`<span class="text-secondary small text-truncate d-inline-block" style=${{ maxWidth: "22rem" }} title=${b.source.path}>${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span>`}
-          ${(tab === "simple" || tab === "technical") && html`<a class="small text-nowrap" onClick=${toggleMd}
+          ${(tab === "simple" || tab === "technical" || tab === "walkthrough") && html`<a class="small text-nowrap" onClick=${toggleMd}
             title="switch between formatted text and the markdown source">${mdView === "formatted" ? "⟨/⟩ markdown" : "formatted"}</a>`}
         </span>
       </div>
@@ -2059,6 +2062,7 @@ const ItemView = ({ id }) => {
           <${MdBox} view=${mdView} text=${b.source ? (b.source.text?.trim() || "(the task file is empty)") : `${sec("Summary")}\n\n## Acceptance\n${sec("Acceptance")}`} />
           ${b.targets.map((t) => html`<div class="text-secondary small">target ${t.ref} → ${t.kind}${t.path ? " " + t.path : ""}${t.host ? " " + t.host : ""}</div>`)}
         `}
+        ${tab === "walkthrough" && html`<${MdBox} view=${mdView} text=${sec("Walkthrough") || "(none — this submission predates required walkthroughs)"} />`}
         ${tab === "evidence" && html`<pre class="mb-0">${sec("Evidence") || "(none)"}</pre>
           ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}`}
       </div>

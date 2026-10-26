@@ -137,7 +137,7 @@ Two workspace **modes**:
 
 An item file is Markdown with YAML frontmatter (`id`, `type`, `status`,
 `targets`, `depends_on`, `parent`, `priority`, `version`, …) plus `##`
-sections (Summary, Simple, Acceptance, Notes, Review, Evidence, Log).
+sections (Summary, Simple, Acceptance, Notes, Review, Evidence, Walkthrough, Log).
 `turn` and `blocked` are derived, never stored. `version` is a CAS counter
 the store bumps on every write.
 

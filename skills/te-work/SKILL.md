@@ -144,13 +144,19 @@ back to you (`brief` shows the decision).
 ## 7. Prove it, then submit
 
 Go through `## Acceptance` one item at a time and actually run each check.
-Then submit with the evidence:
+Then submit with the evidence — and a `walkthrough` (**required**): the
+human's "explain what you did". A few plain-English paragraphs walking them
+through the change — what you changed, how it works, where to look first —
+written like a chat reply, not a diff dump (file:line only where it pins
+something down). It lands in the item's `## Walkthrough` and opens on the
+item page:
 
 ```bash
 curl -s -X POST $B/submit/GL-0019 -H "$H" -d '{
   "commits": ["droneengage_mavlink@3f2a1c9", "droneengage_comm@8be0d14"],
   "tests": "ctest -R mission_restart: 4/4 passed; SITL tests/rerun.sh: second AUTO run fired all 6 module events",
-  "notes": "acceptance 1–3 verified as above; de_comm dedup reset behind the new restart flag"
+  "notes": "acceptance 1–3 verified as above; de_comm dedup reset behind the new restart flag",
+  "walkthrough": "The mission counter now survives an autopilot reboot. de_mavlink already knew when the FC restarted; the new part is a restart flag that de_comm also resets its dedup cache on, so the second run of the same mission is not swallowed as a duplicate. Worth looking at first: the flag is set in handleMissionCurrentCount and read in the dedup path — everything else is plumbing."
 }'
 ```
 
@@ -172,16 +178,17 @@ Evidence and the task file, and actually run the acceptance checks:
 
 ```bash
 curl -s "$B/query?status=in_review" -H "$H"
-curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","note":"acceptance 1–3 rerun locally, all green"}'
+curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","summary":"Acceptance 1–3 rerun locally, all green — the change does what the task asked.","note":"acceptance 1–3 rerun locally, all green"}'
 ```
 
-- `verdict` is `ok` or `issues`; the `note` is what the human reads to
-  accept quickly or dig in — be specific, "looks fine" is worth nothing.
+- `verdict` is `ok` or `issues`; `summary` is required — plain-English for
+  the human: what you verified and why the verdict. `needs_human: true`
+  marks "ok, but the human should decide" — never auto-accepted.
 - A broken submission goes back to its holder (claim kept — they fix and
-  resubmit); the `reason` is what they see:
+  resubmit); the `reason` is what they see, `summary` is required too:
 
   ```bash
-  curl -s -X POST $B/bounce/GL-0019 -H "$H" -d '{"reason":"acceptance 2 fails: restart counter never resets"}'
+  curl -s -X POST $B/bounce/GL-0019 -H "$H" -d '{"reason":"acceptance 2 fails: restart counter never resets","summary":"The restart counter never resets — it goes back for fixes."}'
   ```
 
 - Never review or bounce **your own** submission. After 2 bounces in a row

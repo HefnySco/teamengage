@@ -34,7 +34,7 @@ export interface RunItem {
   status: string;
   title: string;
   claim?: { holder: string; machine: string; dead?: boolean } | null;
-  ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string };
+  ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string; needs_human?: boolean };
   question?: { text: string };
 }
 
@@ -127,6 +127,7 @@ export function promptFor(mode: Mode, id: string, name: string, base: string, to
       `Use the te-review skill to review ${id}. ${session} You did not write this code. ` +
       `Check every acceptance item of ${id} against its branch diff and run its tests. ` +
       `Record review ok, or review issues with one sentence naming the failed acceptance item and a note a coder can act on. ` +
+      `Ok but not yours to call (risky area, an unverifiable step, unclear acceptance)? Set needs_human so it never auto-accepts. ` +
       `${common}\nFinal reply: exactly one line — "${id} ok" or "${id} issues: <summary>".`
     );
   }
@@ -355,7 +356,9 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
         : i.status === "draft"
           ? "draft  → te approve"
           : i.ai_review?.verdict === "ok"
-            ? `review ok${ws.autonomy === "solo" ? " (auto-accepts soon)" : ""}  → te accept`
+            ? i.ai_review.needs_human
+              ? `review ok — the reviewer asks for your call  → te accept / te reject`
+              : `review ok${ws.autonomy === "solo" ? " (auto-accepts soon)" : ""}  → te accept`
             : i.ai_review?.verdict === "issues"
               ? `review issues: ${i.ai_review.summary ?? ""}  → decide: te accept / te reject`
               : "submitted  → te accept / te reject";

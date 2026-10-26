@@ -61,6 +61,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Turn** | Whose move it is on an item: `human` or `agent`. Drives both inboxes. |
 | **Claim** | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human. |
 | **Evidence** | Commits, test output, logs, snapshot diffs, notes attached on submit. |
+| **Walkthrough** | The submitter's plain-English explanation of the change — required on submit, appended per submission. |
 | **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items. |
 | **Session** | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`. |
 | **Event** | Append-only record of every change (who, where, what, when, why). |
@@ -297,7 +298,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   standard/heavy) rewrites any field of a draft: title, summary, acceptance
   (the whole checklist is replaced), touches, depends_on, parent, targets,
   tier, domains and non-managed `##` sections (Notes/Review/Evidence/
-  Handoff/Log/History are refused). The item stays a draft, so the human's
+  Walkthrough/Handoff/Log/History are refused). The item stays a draft, so the human's
   approve remains the gate — every edit is by definition pre-approval. For
   anything non-draft the human's `to_draft` is the go-ahead to rescope.
 - **`depends_on` may change after creation** — `te deps <ID> [refs…]`, the
@@ -334,7 +335,9 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
     ⏱ countdown; the human stops it with **stop auto-accept** (that
     submission only — `auto_accept_off`, cleared by the next submit), by
     rejecting, or by making it a key task (🔑 — key tasks are never
-    auto-accepted); a resubmit, bounce or `issues` verdict resets the clock. Archived items
+    auto-accepted); a resubmit, bounce or `issues` verdict resets the clock. A
+    reviewer's own `needs_human` flag ("ok, but the human should decide")
+    exempts the submission the same way — no countdown is armed. Archived items
     and human claims are skipped.
   Everything else stays human-only in both modes: pushing, drop/undrop,
   delete, archive, star, hold, close_plan, change_answer, and releasing

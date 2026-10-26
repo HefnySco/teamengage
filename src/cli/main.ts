@@ -135,15 +135,19 @@ server "teamengage" if your IDE has it configured — same tools, same rules.
 3. brief <id>                                — read targets, deps, decisions
 4. claim <id>                                — then work only in returned paths
 5. log <id> {note} / ask <id> {question}     — progress / blockers
-6. submit <id> {commits, tests, notes}       — hand to the human
+6. submit <id> {commits, tests, notes, walkthrough} — hand to the human
+   (walkthrough: plain-English "what I changed and how it works")
 You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
 
 Reviewing (a second session, never the holder): query status=in_review lists
-submissions; review <id> {verdict: ok|issues, note} records your verdict for
-the human, bounce <id> {reason} sends broken work back to its holder (max 2
-in a row; a holder on another machine or no longer live releases the claim to
-ready instead — bounced work must not strand). Accept/reject stay human-only.
+submissions; review <id> {verdict: ok|issues, summary, note, needs_human?}
+records your verdict for the human — summary and note in plain English saying
+what you verified and why; needs_human marks "ok, but the human should
+decide" (never auto-accepted). bounce <id> {reason, summary} sends broken
+work back to its holder (max 2 in a row; a holder on another machine or no
+longer live releases the claim to ready instead — bounced work must not
+strand). Accept/reject stay human-only.
 
 A wrong "## Evidence" line is never rewritten — supersede <id> {line,
 correct, reason} appends a correction naming the old line; it stays visible.

@@ -265,9 +265,20 @@ describe("plain-HTTP agent API", () => {
     expect((await call("POST", "/agent/claim/WS-0005", { token: holder })).text).toMatch(
       /^claimed/,
     );
+    // walkthrough is required — the human's "explain what you did"
+    const noWalkthrough = await call("POST", "/agent/submit/WS-0005", {
+      token: holder,
+      body: { tests: "1 passed" },
+    });
+    expect(noWalkthrough.status).toBe(400);
+    expect(noWalkthrough.text).toContain("walkthrough");
     expect(
-      (await call("POST", "/agent/submit/WS-0005", { token: holder, body: { tests: "1 passed" } }))
-        .text,
+      (
+        await call("POST", "/agent/submit/WS-0005", {
+          token: holder,
+          body: { tests: "1 passed", walkthrough: "Changed the counter reset path." },
+        })
+      ).text,
     ).toMatch(/^in_review/);
     // summary is required — a review without it is a usage error, not a marker
     const noSummary = await call("POST", "/agent/review/WS-0005", {
@@ -305,7 +316,7 @@ describe("plain-HTTP agent API", () => {
       expect(bounced.status).toBe(200);
       const resubmit = await call("POST", "/agent/submit/WS-0005", {
         token: holder,
-        body: { notes: "fixed" },
+        body: { notes: "fixed", walkthrough: "Fixed the red tests." },
       });
       expect(resubmit.text).toMatch(/^in_review/);
     }

@@ -215,6 +215,7 @@ export const PROTECTED_SECTIONS = new Set([
   "notes",
   "review",
   "evidence",
+  "walkthrough",
   "handoff",
   "log",
   "history",

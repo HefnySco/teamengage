@@ -200,7 +200,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
     expect(ans.status).toBe(200);
     const s = await client.callTool({
       name: "submit",
-      arguments: { id: "WS-0001", commits: ["abc123"], tests: "npm test ✓" },
+      arguments: { id: "WS-0001", commits: ["abc123"], tests: "npm test ✓", walkthrough: "added the retry loop" },
     });
     expect(text(s as never)).toBe("in_review WS-0001");
     const acc = await fetch(`${daemon.url}/api/items/WS-0001/accept`, {

@@ -523,7 +523,7 @@ export class WorkspaceOps {
   async submit(
     id: string,
     session: Session,
-    evidence?: { commits?: string[]; tests?: string; notes?: string },
+    evidence?: { commits?: string[]; tests?: string; notes?: string; walkthrough?: string },
   ) {
     const it = this.item(id);
     this.assertLiveClaim(it);
@@ -560,6 +560,7 @@ export class WorkspaceOps {
     verdict: "ok" | "issues",
     note?: string,
     summary?: string,
+    needsHuman?: boolean,
   ) {
     const it = this.item(id);
     const claim = it.claim;
@@ -567,7 +568,7 @@ export class WorkspaceOps {
       id,
       it.meta.version,
       this.actorFor(session),
-      { type: "review", verdict, note, summary },
+      { type: "review", verdict, note, summary, needs_human: needsHuman },
       { holderAway: () => this.holderAway(this.item(id)) },
     );
     // an `issues` verdict on a holder that can't act released the claim
@@ -736,8 +737,9 @@ export class WorkspaceOps {
   /**
    * autonomy: solo — submissions whose latest peer review is `ok` and older
    * than auto_accept_after are accepted by the daemon (same local merge, never
-   * a push). Key tasks, archived items and human claims wait for the human;
-   * a resubmit, bounce or `issues` verdict changes ai_review and so resets it.
+   * a push). Key tasks, archived items, human claims and reviews the reviewer
+   * flagged needs_human ("ok, but…") wait for the human; a resubmit, bounce
+   * or `issues` verdict changes ai_review and so resets it.
    */
   autoAcceptDue(now = Date.now()): string[] {
     return [...this.index.items.values()]
@@ -757,6 +759,7 @@ export class WorkspaceOps {
       cfg.autonomy !== "solo" ||
       m.status !== "in_review" ||
       rv?.verdict !== "ok" ||
+      rv.needs_human ||
       m.unblocks_on === "done" ||
       m.archived ||
       m.auto_accept_off ||

@@ -114,12 +114,16 @@ RULES
   1. Read freely: GET endpoints, or the plan files themselves.
   2. Change state ONLY through these endpoints — never edit .teamengage/ files.
   3. claim before touching code; work only in the paths brief/claim return.
-  4. ask instead of guessing; submit with evidence. Never mark work done.
-     Never git push. The human approves, answers, and accepts.
+  4. ask instead of guessing; submit with evidence AND a walkthrough —
+     plain-English "what I changed and how it works" for the human.
+     Never mark work done. Never git push. The human approves, answers,
+     and accepts.
   5. A session that is NOT the holder may review submissions (query
      status=in_review): review records your verdict for the human, bounce
      sends broken work back to the holder. Never review your own submission.
-     Both need a summary — one plain-English sentence for the human.
+     Both need a summary — plain-English for the human: what you verified
+     and why the verdict. "ok, but the human should decide" → set
+     needs_human so the accept is never automatic.
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,
      so fix and submit again. The same takeover applies to an in_progress
@@ -158,7 +162,7 @@ EXAMPLES
   curl -s -X POST ${base}/agent/claim/MP-0002 -H "X-TE-Session: $T"
   curl -s -X POST ${base}/agent/log/MP-0002 -H "X-TE-Session: $T" -d '{"note":"tests green"}'
   curl -s -X POST ${base}/agent/ask/MP-0002 -H "X-TE-Session: $T" -d '{"question":"A or B?","options":["A","B"]}'
-  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed"}'
+  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed","walkthrough":"Added a retry loop in connect(): …"}'
 
 Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.
 `;

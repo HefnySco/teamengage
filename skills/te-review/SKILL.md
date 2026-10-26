@@ -65,9 +65,11 @@ paths (the claim's **worktrees** — where the submitted work lives), and an
 `ai_review:` line if a verdict exists.
 
 Then read the submission record — the item file
-`.teamengage/items/<XX>/<id>.md` inside the task folder. `## Evidence` is what
-the submitter says they did (commits, tests, notes), `## Review` the earlier
-verdicts, `## Log` the full history. Reading `.teamengage/` files is fine —
+`.teamengage/items/<XX>/<id>.md` inside the task folder. `## Walkthrough` is
+the submitter's own plain-English explanation of the change (read it, then
+check it against the diff — it is a claim, not proof), `## Evidence` is what
+they cite (commits, tests, notes), `## Review` the earlier verdicts,
+`## Log` the full history. Reading `.teamengage/` files is fine —
 just never edit them.
 
 ## 4. Read the actual diff — this is the review
@@ -107,7 +109,9 @@ Judge the **logic**:
   hardware or a deploy you don't have, say so in the note rather than passing
   it silently. For missing hardware, SITL, a live browser or a human-only
   manual step, write the note as `unverifiable: <acceptance item>, <why it
-  cannot be checked here>` — it goes straight to the human, no fix round.
+  cannot be checked here>` — it goes straight to the human, no fix round —
+  and when the rest is otherwise ok, record `ok` with `needs_human` (below)
+  so it is never auto-accepted.
   A cited commit that isn't in the repo (`git cat-file -e <sha>` fails) is
   **not** unverifiable: record `issues` naming the machine where the commit
   should exist and stop.
@@ -143,6 +147,17 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   daemon accepts and merges the submission after `auto_accept_after`
   unless the human steps in. Give `ok` only when you actually ran the
   acceptance checks; when in doubt, `issues`.
+- `ok` **with `needs_human: true`** — "ok, but…". The work looks right, yet
+  the call is not yours: a risky area, an acceptance item you could not
+  fully verify, or a judgement the human should make. Such a review is
+  **never auto-accepted** — it always waits for the human. Say what needs
+  their eyes in `summary`:
+
+  ```bash
+  curl -s -X POST $B/review/GL-0019 -H "$H" \
+    -d '{"verdict":"ok","needs_human":true,"summary":"The change does what the task asked, but it touches the auth path — worth your own look before accepting.","note":"acceptance 1–3 verified; diff inside Touches; auth/session edge cases are the part I cannot fully judge"}'
+  ```
+
 - `issues` — verified concerns the human should weigh before deciding (or
   checks you couldn't run). Number the findings in `note`, worst first, each
   with file:line or commit, so whoever fixes it doesn't redo your analysis.
