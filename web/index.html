@@ -96,6 +96,8 @@
       .plan-chip svg { width: .56rem; height: .56rem; }
       .icon-btn { width: 1.35rem; height: 1.35rem; display: inline-grid; place-items: center; border: 0; border-radius: .25rem; color: var(--bs-tertiary-color); background: transparent; cursor: pointer; padding: 0; }
       .icon-btn:hover { background: var(--bs-secondary-bg); color: var(--bs-body-color); }
+      .icon-btn.spinning svg { animation: te-rot .7s linear infinite; }
+      @keyframes te-rot { to { transform: rotate(360deg); } }
       /* item-page action bar: icon-only buttons, all the same square size — the tooltip is the label */
       .act-btn { width: 1.75rem; height: 1.75rem; padding: 0; display: inline-grid; place-items: center; }
       /* domain filter tags: hoverable, the active one stays highlighted */

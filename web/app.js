@@ -212,6 +212,24 @@ const UndoIcon = () => glyph([
   "M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 0 0 8 2z",
   "M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466",
 ]);
+const RefreshIcon = () => glyph([
+  "M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z",
+  "M8 4.466V.534a.25.25 0 0 1 .41.192l2.36-1.966a.25.25 0 0 1 0 .384l-2.36 1.966A.25.25 0 0 1 8 4.466",
+]);
+// manual reload for a page — spins while the fetch is in flight; refresh() may
+// bundle several useApi reloads
+const RefreshBtn = ({ refresh }) => {
+  const [busy, setBusy] = useState(false);
+  return html`<button class="icon-btn ${busy ? "spinning" : ""}" title="reload this page's data" disabled=${busy}
+    onClick=${async () => {
+      setBusy(true);
+      try {
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    }}><${RefreshIcon} /></button>`;
+};
 const PlusSquareIcon = () => glyph([
   "M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2z",
   "M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4",
@@ -385,7 +403,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
   // the inbox lists ids; the item list supplies titles, projects and files to search
-  const { data: all } = useApi("/api/items?archived=all");
+  const { data: all, reload: reloadAll } = useApi("/api/items?archived=all");
   const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
   const [kind, setKind] = useState("all");
   const [sort, setSortState] = useState(() => loadSearch("te.inbox.sort"));
@@ -592,6 +610,7 @@ const Inbox = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
+      <${RefreshBtn} refresh=${() => Promise.all([reload(), reloadAll(), refreshDomains()])} />
       <span class="position-relative">
         <${SearchBox}
           style=${{ maxWidth: "24rem" }}
@@ -873,7 +892,7 @@ const NewIdea = ({ projects, onClose, onCreated }) => {
 
 const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
-  const { data: ws } = useApi("/api/workspace");
+  const { data: ws, reload: reloadWs } = useApi("/api/workspace");
   const [ideaOpen, setIdeaOpen] = useState(false);
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
@@ -943,6 +962,7 @@ const Board = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Board</h2>
+      <${RefreshBtn} refresh=${() => Promise.all([reload(), reloadWs(), refreshDomains()])} />
       <span class="position-relative">
         <${SearchBox}
           style=${{ maxWidth: "24rem" }}
