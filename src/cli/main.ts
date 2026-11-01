@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initCmd } from "./commands/init.js";
 import { guardCmd, hooksCmd } from "./commands/guard.js";
+import { skillsCmd } from "./commands/skills.js";
 import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
@@ -66,7 +67,7 @@ look around
 
 set up
   te init --overlay --root <task folder> [--repos '../*']
-  te import <folder> --apply      te hooks --install
+  te import <folder> --apply      te hooks --install      te skills --install
   ~/.teamengage/machine.yaml      which agents te run starts (te run --help)
 
 te help all — every command (hold, drop, archive, deps, tier, rollback, …)
@@ -112,6 +113,9 @@ const USAGE_ALL = `te — every command
   tag <ID> name… [-name…]          add / remove domains on an item
   hooks [--install|--uninstall] [--settings <file>]
              Claude Code guard hooks (default ~/.claude/settings.json)
+  skills [--install|--uninstall|--check] [--dir <path>]
+             link skills/te-* into the agent skill dirs (link, never copy —
+             copies go stale and teach agents an outdated protocol)
   guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
   daemon     run the daemon in the foreground
 
@@ -270,6 +274,8 @@ async function main(argv: string[]): Promise<number> {
       return guardCmd(rest, home);
     case "hooks":
       return hooksCmd(rest);
+    case "skills":
+      return skillsCmd(rest, home);
     case "template":
       process.stdout.write(TEMPLATE_EXAMPLE);
       return 0;

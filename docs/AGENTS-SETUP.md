@@ -77,10 +77,12 @@ curl-only, no MCP needed:
   (`te domains untagged`, plan for the human's OK, `te tag`).
 - `skills/te-analysis/` — read-only analysis of the task bank.
 
-Install by linking them into the agent's skills folder:
+Install by linking them into the agent's skills folder — never copy
+(a copied skill teaches agents a stale protocol):
 
 ```bash
-ln -s "$PWD/skills/te-work" "$PWD/skills/te-review" "$PWD/skills/te-plan" "$PWD/skills/te-tag" "$PWD/skills/te-analysis" ~/.claude/skills/
+te skills --install    # detects ~/.claude, ~/.config/devin, ~/.codeium/windsurf
+te skills --check      # exit 1 on drift (copy, stale copy, missing, broken link)
 ```
 
 ## Enforcing the rules (when instructions aren't enough)
