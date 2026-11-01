@@ -27,7 +27,7 @@ const CLASS_FOR: Record<string, string> = {
   dropped: "dropped",
 };
 
-// same palette as the web UI status colours (web/index.html .st-* / ST_BADGE)
+// same palette as the web UI status colours (web/teamengage.css --te-st-* / ST_BADGE)
 const CLASS_DEFS = `  classDef draft fill:#6c757d,color:#fff
   classDef ready fill:#0d6efd,color:#fff
   classDef hold fill:#6d4c41,color:#fff

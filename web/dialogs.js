@@ -57,12 +57,18 @@ export const toast = (text, kind = "danger") => {
 export const DialogHost = () => {
   const [, tick] = useState(0);
   const inputRef = useRef(null);
+  const okRef = useRef(null);
   useEffect(() => {
     emitChange = () => tick((n) => n + 1);
     return () => {
       emitChange = () => {};
     };
   }, []);
+  // autofocus once when a dialog opens — a ref callback with fresh identity
+  // re-runs on every render (e.g. a toast expiring) and would steal focus
+  useEffect(() => {
+    (dialog?.kind === "confirm" ? okRef : inputRef).current?.focus();
+  }, [dialog]);
   const close = (v) => {
     const d = dialog;
     dialog = null;
@@ -87,13 +93,13 @@ export const DialogHost = () => {
               ${dialog.kind === "prompt" && html`
                 ${dialog.label && html`<div class="mb-1 text-secondary">${dialog.label}</div>`}
                 <input class="form-control form-control-sm" defaultValue=${dialog.value} placeholder=${dialog.placeholder}
-                  ref=${(b) => { inputRef.current = b; b?.focus(); }}
+                  ref=${inputRef}
                   onKeyDown=${(e) => { if (e.key === "Enter") close(inputRef.current?.value.trim() ?? ""); }} />`}
             </div>
             <div class="modal-footer py-1">
               <button class="btn btn-sm btn-outline-secondary" onClick=${() => close(cancelWith)}>cancel</button>
               <button class="btn btn-sm ${dialog.danger ? "btn-danger" : "btn-primary"}"
-                ref=${(b) => { if (b && dialog.kind === "confirm") b.focus(); }}
+                ref=${okRef}
                 onClick=${() => close(dialog.kind === "confirm" ? true : (inputRef.current?.value.trim() ?? ""))}>${dialog.ok}</button>
             </div>
           </div>

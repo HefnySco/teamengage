@@ -10,6 +10,9 @@ The browser UI the daemon serves at `/` (UI-0001). A dependency-light SPA:
   API.
 - `markdown.js` — renders task-file Markdown in the UI (sections, checklists,
   refs, notes).
+- `teamengage.css` — the app styles on top of Bootstrap: every meaningful
+  colour is a `--te-*` token in `:root` (statuses, plan states, item types);
+  imported by `app.js`, bundled into `dist/app.css`.
 - `index.html`, `favicon.svg`, `logo.svg` — the shell page and assets.
 - `dist/` — generated bundle, do not edit (rebuilt by `npm run build:web`).
 

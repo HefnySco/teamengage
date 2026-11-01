@@ -1,4 +1,5 @@
 import "bootstrap/dist/css/bootstrap.min.css";
+import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
@@ -837,6 +838,10 @@ const NewIdea = ({ projects, onClose, onCreated }) => {
   const [body, setBody] = useState("");
   const [project, setProject] = useState(projects[0]?.name ?? "");
   const [busy, setBusy] = useState(false);
+  // focus once on mount — an inline `(b) => b?.focus()` ref re-runs on every
+  // render (new function identity) and steals focus back from the textarea
+  const titleRef = useRef(null);
+  useEffect(() => titleRef.current?.focus(), []);
   const save = async () => {
     if (!title.trim() || busy) return;
     setBusy(true);
@@ -870,7 +875,7 @@ const NewIdea = ({ projects, onClose, onCreated }) => {
           <div class="modal-body py-2 small">
             <div class="mb-2 text-secondary">a source document — ask an agent to plan from it later; it is never claimed</div>
             <input class="form-control form-control-sm mb-2" placeholder="title" value=${title}
-              ref=${(b) => b?.focus()}
+              ref=${titleRef}
               onInput=${(e) => setTitle(e.target.value)}
               onKeyDown=${(e) => e.key === "Enter" && save()} />
             <textarea class="form-control form-control-sm" rows="7"
@@ -900,6 +905,7 @@ const Board = ({ onOpen }) => {
   const [starredOnly, setStarredOnlyState] = useState(() => loadSearch("te.board.starred") === "1");
   // AI-review filter: "" = all, "ok" = only approved, "issues" = only flagged
   const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
+  const [hidePlans, setHidePlansState] = useState(() => loadSearch("te.board.noplans") === "1");
   const [domShowAll, setDomShowAll] = useState(false);
   const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
   const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
@@ -925,7 +931,8 @@ const Board = ({ onOpen }) => {
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
   const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
-  const hits = words.length ? inAi.filter((i) => matches(i, words)) : inAi;
+  const inPlans = hidePlans ? inAi.filter((i) => !(i.type === "epic" && i.plan_state)) : inAi;
+  const hits = words.length ? inPlans.filter((i) => matches(i, words)) : inPlans;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -953,6 +960,10 @@ const Board = ({ onOpen }) => {
     const v = { "": "ok", ok: "issues", issues: "" }[aiFilter];
     setAiFilterState(v);
     saveSearch("te.board.ai", v);
+  };
+  const setHidePlans = (v) => {
+    setHidePlansState(v);
+    saveSearch("te.board.noplans", v ? "1" : "");
   };
   const eff = SORTS[sort] ? sort : "created-asc";
   const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
@@ -1001,7 +1012,10 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
         onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
-      ${(words.length > 0 || domain || starredOnly || aiFilter) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      <button class="btn btn-sm ${hidePlans ? "btn-outline-secondary" : "btn-plans"}"
+        title=${hidePlans ? "plan cards hidden — click to show plans (epics) again" : "hide plan cards — epics with a plan leave the board"}
+        onClick=${() => setHidePlans(!hidePlans)}><${GraphIcon} /> plans</button>
+      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
         onClose=${() => setIdeaOpen(false)}
         onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
@@ -1042,8 +1056,8 @@ const Board = ({ onOpen }) => {
                     <div class="d-flex align-items-center gap-1">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
-                      ${i.type === "idea" && html`<span class="badge text-bg-info" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
-                      <span class="ms-auto d-flex">
+                      <span class="ms-auto d-flex align-items-center gap-1">
+                        ${i.type === "idea" && html`<span class="te-idea" title="idea — a source document; agents plan from it, it is never claimed"><${BulbIcon} /></span>`}
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
                           onClick=${(e) => {
                             e.stopPropagation(); // don't open the item
@@ -1961,7 +1975,7 @@ const ItemView = ({ id }) => {
       <span class="id flex-shrink-0">${it.meta.id}</span>
       <${Badge} s=${st} />
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
-      ${it.meta.type === "idea" && html`<span class="badge text-bg-info" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
+      ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
