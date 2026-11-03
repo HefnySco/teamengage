@@ -13,7 +13,7 @@ this page and that code must agree.
 | Task (also bug, spike, review, wish) | `TASK-<NN>-<slug>.md` | the project folder (`projects.<p>.path`, default the project name) |
 | Epic | `PHASE-<NN>-<slug>.md` (existing `*-MEGAPLAN.md` files stay valid) | same |
 | Idea | `IDEA-<NN>-<slug>.md` | same |
-| Plain-English companion | `<same name>.simple.md` | next to its task |
+| Plain-English (STE) companion | `<same name>.simple.md` | next to its task |
 
 - `NN` is one above the highest number used anywhere under the project
   folder, `done/` included, and above any number an item still records —
@@ -57,6 +57,11 @@ previous run must be cleared so the second run fires them again.
 | `## Acceptance` | yes | `- [ ]` checklist. Each line observable and checkable by an agent: a command, a test, a measurable behaviour. |
 | `## Notes` | yes (may be empty) | Append-only working notes. |
 | `**Relates:**` | optional | Loose references — e.g. the `IDEA-` source doc(s) the work was generated from. Reference only, never ordering. |
+
+Agent-written text — the title, `## Summary`, `## Acceptance`, `## Notes`
+and the `.simple.md` companion — is written in ASD-STE100 Simplified
+Technical English (STE): short sentences, active voice, plain approved
+words used consistently. See the WRITING rules in `te agents-md`.
 
 An **idea** file is lighter: `# Title`, an optional `**Relates:**` line,
 `## Summary`, `## Notes` — no `**Depends on:**`, `**Parent:**`,

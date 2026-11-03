@@ -86,7 +86,7 @@ function checkWrite(
 
   const before = read(abs);
   if (before === null && SIMPLE_SUFFIX.test(r)) {
-    return `${r}: plain-English versions are written with the simple tool (simple <id> {text}) — it creates, tags and links the file.`;
+    return `${r}: plain-English (STE) versions are written with the simple tool (simple <id> {text}) — it creates, tags and links the file.`;
   }
   if (before === null) {
     return (

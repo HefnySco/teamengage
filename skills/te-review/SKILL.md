@@ -66,7 +66,7 @@ paths (the claim's **worktrees** — where the submitted work lives), and an
 
 Then read the submission record — the item file
 `.teamengage/items/<XX>/<id>.md` inside the task folder. `## Walkthrough` is
-the submitter's own plain-English explanation of the change (read it, then
+the submitter's own STE explanation of the change (read it, then
 check it against the diff — it is a claim, not proof), `## Evidence` is what
 they cite (commits, tests, notes), `## Review` the earlier verdicts,
 `## Log` the full history. Reading `.teamengage/` files is fine —
@@ -125,16 +125,16 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","note":"I restarted the daemon twice with --debug and the counter kept its value both times, and the 4 ctest cases pass on the claim branch — acceptance items 1–3 check out and the diff stays inside **Touches:**."}'
 ```
 
-- `summary` is **required** — one plain-English sentence for the human, no
+- `summary` is **required** — one sentence in STE for the human, no
   jargon: what the verdict means. _"The fix works but error reporting was
   left out"_, not _"missing stderr propagation in run()"_. It is what the
   human reads on the item page.
 - `note` is the technical detail for whoever fixes it — what you ran, what
   passed, over which diff. `"looks fine"` tells nobody anything.
-- **Write `summary` and `note` the way you would explain the verdict in
-  chat** — plain-English prose a human who did not watch the work can
-  follow. Open the note with a sentence or two on what you actually did
-  and the outcome ("I rebuilt the image and ran it — the drone flew the
+- **Write `summary` and `note` in STE** (ASD-STE100 Simplified Technical
+  English) — prose a human who did not watch the work can follow. Open
+  the note with a sentence or two on what you actually did and the
+  outcome ("I rebuilt the image and ran it — the drone flew the
   mission and all 10 checks passed"), then numbered findings, each one or
   two sentences saying what it *means*, not only what it *is*. Put a
   file:line or commit sha only where it pins a finding down. Never a
@@ -195,7 +195,7 @@ Each bounce counts as a failed attempt: when it escalates the task above the
 holder's tier, the claim is released instead (`→ ready`) and a stronger
 agent takes it; at `max_attempts` the task waits for the human.
 Write the reason for the holder: specific, actionable — and in the same
-plain-sentences style as a review note, since the human reads it too. After
+STE style as a review note, since the human reads it too. After
 two bounces in a row a third is refused — the item stays in review and the
 human decides; just record a `review` verdict.
 

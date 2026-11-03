@@ -6,7 +6,7 @@ import type { DaemonCtx } from "../daemon/server/context.js";
 import type { AgentBinding } from "../mcp/server/mcp.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
-import { AUTHORING_RULES } from "../core/files/template.js";
+import { AUTHORING_RULES, WRITING_RULES } from "../core/files/template.js";
 import type { ToolResult } from "../mcp/format.js";
 
 /**
@@ -115,13 +115,13 @@ RULES
   2. Change state ONLY through these endpoints — never edit .teamengage/ files.
   3. claim before touching code; work only in the paths brief/claim return.
   4. ask instead of guessing; submit with evidence AND a walkthrough —
-     plain-English "what I changed and how it works" for the human.
+     an STE "what I changed and how it works" for the human.
      Never mark work done. Never git push. The human approves, answers,
      and accepts.
   5. A session that is NOT the holder may review submissions (query
      status=in_review): review records your verdict for the human, bounce
      sends broken work back to the holder. Never review your own submission.
-     Both need a summary — plain-English for the human: what you verified
+     Both need a summary — in STE, for the human: what you verified
      and why the verdict. "ok, but the human should decide" → set
      needs_human so the accept is never automatic.
   6. An in_review item with an "issues" verdict can be claimed by any
@@ -143,6 +143,8 @@ RULES
 
 AUTHORING
 ${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
+WRITING
+${WRITING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
 SESSION
   curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
     → first line: "token <TOKEN>"; send it on every later call:

@@ -170,8 +170,10 @@ Field notes:
 - `summary`: what and why, with the facts an agent needs (functions, files,
   message ids). Longer background goes in `## Notes` later via `log` +
   additive edit.
-- `simple`: add when the human will want a plain-English version (for an
-  existing task: `curl -s -X POST $B/simple/<id> -H "$H" -d '{"text":"…"}'`).
+- `simple`: add when the human will want a plain-English version in STE
+  (for an existing task: `curl -s -X POST $B/simple/<id> -H "$H" -d '{"text":"…"}'`).
+- Write every field in STE (ASD-STE100 Simplified Technical English):
+  short sentences, active voice, plain approved words.
 
 ## 7. After proposing
 
@@ -213,7 +215,7 @@ When restart is detected (GL-0019), clear latched module events so the second ru
 ```
 
 plus `TASK-14-clear-latched-events-when-a-mission-restarts.simple.md` with
-the plain-English line.
+the STE line.
 
 ## 8. Vetting a light-authored draft
 

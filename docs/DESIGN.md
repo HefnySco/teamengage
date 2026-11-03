@@ -61,7 +61,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Turn** | Whose move it is on an item: `human` or `agent`. Drives both inboxes. |
 | **Claim** | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human. |
 | **Evidence** | Commits, test output, logs, snapshot diffs, notes attached on submit. |
-| **Walkthrough** | The submitter's plain-English explanation of the change — required on submit, appended per submission. |
+| **Walkthrough** | The submitter's explanation of the change — in STE (ASD-STE100 Simplified Technical English), required on submit, appended per submission. |
 | **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items. |
 | **Session** | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`. |
 | **Event** | Append-only record of every change (who, where, what, when, why). |
@@ -161,7 +161,7 @@ updated: 2026-10-08
 ...technical description for agents...
 
 ## Simple
-...plain-English version for the human (replaces *.simple.md)...
+...STE version for the human (replaces *.simple.md)...
 
 ## Acceptance
 - [ ] second AUTO run fires module commands

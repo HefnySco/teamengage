@@ -113,10 +113,26 @@ export function taskFileName(prefix: string, n: number, title: string): string {
   return `${prefix}-${String(n).padStart(2, "0")}-${slugify(bare)}.md`;
 }
 
+/**
+ * How agents write text the human reads — and notes other agents work
+ * from: ASD-STE100 Simplified Technical English. One definition, used by
+ * `te agents-md`, GET /agent and `hello`; the write tools point at it.
+ */
+export const WRITING_RULES = `Write every text the human reads in ASD-STE100 Simplified Technical
+English (STE) — and every note another agent works from:
+- short sentences, one idea each, ~20 words max;
+- active voice, present tense, one instruction per sentence;
+- approved simple words only — one word, one meaning, used the same way
+  everywhere ("show" not "indicate", "use" not "utilize");
+- technical names stay as-is — functions, commands, file:line, field
+  names; STE covers the prose around them.
+Applies to: task titles, summaries, acceptance items, notes, the simple
+version, questions, logs, walkthroughs, review and bounce text, handoffs.`;
+
 /** Authoring rules for agent instruction files (`te agents-md`, GET /agent). */
 export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the task folder is the plan)
 - One task per file: <project>/TASK-<NN>-<slug>.md. Epics are PHASE-*.md or
-  *-MEGAPLAN.md. Optional plain-English companion: X.simple.md.
+  *-MEGAPLAN.md. Optional plain-English companion (in STE): X.simple.md.
 - Ideas are IDEA-*.md — source documents (thoughts, specs, brainstorms) an
   agent can be asked to plan from. They are never claimed; tasks generated
   from one name it in "relates".
@@ -125,8 +141,9 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   checklist an agent can verify. Format: \`te template\`.
 - Create tasks with propose (it writes the file from the template and
   tracks it) — never by hand. Work generated from an idea names it in
-  "relates" (reference only — no ordering, no gate). Plain-English version for the human:
-  simple <id> {text} (writes and links X.simple.md) — never by hand.
+  "relates" (reference only — no ordering, no gate). Plain-English version
+  for the human, in STE: simple <id> {text} (writes and links X.simple.md)
+  — never by hand.
 - Never edit or remove the "te:" frontmatter line; never move files into
   done/ — status lives in TeamEngage, the human moves files.
 - Notes worth keeping in a task: note <id> {text} (appends to its "## Notes").

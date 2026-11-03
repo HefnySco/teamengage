@@ -119,10 +119,12 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 
   Never rewrite existing lines or touch the `te:` line.
 
-### Plain-English version
+### Plain-English version (STE)
 
 Asked for a "simple" version (or the task has none and the human wants one)?
-Write it with the tool — never create `X.simple.md` by hand:
+Write it with the tool — in STE (ASD-STE100 Simplified Technical English:
+short sentences, active voice, plain approved words) — never create
+`X.simple.md` by hand:
 
 ```bash
 curl -s -X POST $B/simple/GL-0019 -H "$H" -d '{"text":"If you fly the same mission twice, the add-ons now react the second time too."}'
@@ -145,7 +147,7 @@ back to you (`brief` shows the decision).
 
 Go through `## Acceptance` one item at a time and actually run each check.
 Then submit with the evidence — and a `walkthrough` (**required**): the
-human's "explain what you did". A few plain-English paragraphs walking them
+human's "explain what you did". A few paragraphs in STE walking them
 through the change — what you changed, how it works, where to look first —
 written like a chat reply, not a diff dump (file:line only where it pins
 something down). It lands in the item's `## Walkthrough` and opens on the
@@ -181,7 +183,7 @@ curl -s "$B/query?status=in_review" -H "$H"
 curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","summary":"Acceptance 1–3 rerun locally, all green — the change does what the task asked.","note":"acceptance 1–3 rerun locally, all green"}'
 ```
 
-- `verdict` is `ok` or `issues`; `summary` is required — plain-English for
+- `verdict` is `ok` or `issues`; `summary` is required — in STE, for
   the human: what you verified and why the verdict. `needs_human: true`
   marks "ok, but the human should decide" — never auto-accepted.
 - A broken submission goes back to its holder (claim kept — they fix and

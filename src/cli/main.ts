@@ -6,7 +6,7 @@ import { initCmd } from "./commands/init.js";
 import { guardCmd, hooksCmd } from "./commands/guard.js";
 import { skillsCmd } from "./commands/skills.js";
 import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
-import { AUTHORING_RULES, TEMPLATE_EXAMPLE } from "../core/files/template.js";
+import { AUTHORING_RULES, TEMPLATE_EXAMPLE, WRITING_RULES } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
 import { runCmd, waitCmd } from "./commands/run.js";
@@ -140,13 +140,13 @@ server "teamengage" if your IDE has it configured — same tools, same rules.
 4. claim <id>                                — then work only in returned paths
 5. log <id> {note} / ask <id> {question}     — progress / blockers
 6. submit <id> {commits, tests, notes, walkthrough} — hand to the human
-   (walkthrough: plain-English "what I changed and how it works")
+   (walkthrough: in STE — "what I changed and how it works")
 You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
 
 Reviewing (a second session, never the holder): query status=in_review lists
 submissions; review <id> {verdict: ok|issues, summary, note, needs_human?}
-records your verdict for the human — summary and note in plain English saying
+records your verdict for the human — summary and note in STE saying
 what you verified and why; needs_human marks "ok, but the human should
 decide" (never auto-accepted). bounce <id> {reason, summary} sends broken
 work back to its holder (max 2 in a row; a holder on another machine or no
@@ -155,6 +155,9 @@ strand). Accept/reject stay human-only.
 
 A wrong "## Evidence" line is never rewritten — supersede <id> {line,
 correct, reason} appends a correction naming the old line; it stays visible.
+
+## Writing — ASD-STE100 Simplified Technical English
+${WRITING_RULES}
 
 ## ${AUTHORING_RULES}`;
 

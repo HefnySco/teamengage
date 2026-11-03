@@ -87,7 +87,7 @@ export function registerWriteTools(
     "note",
     {
       description:
-        "Add a note (multi-line markdown) to an item: appended to the task file's ## Notes with a timestamp. " +
+        "Add a note (multi-line markdown, in STE) to an item: appended to the task file's ## Notes with a timestamp. " +
         "Use it for findings worth keeping in the task; progress goes in log. No claim needed.",
       inputSchema: { id: z.string(), text: z.string() },
     },
@@ -109,7 +109,8 @@ export function registerWriteTools(
     "simple",
     {
       description:
-        "Write the item's plain-English version for the human (a short, non-technical explanation of what and why). " +
+        "Write the item's plain-English version for the human in STE (ASD-STE100 Simplified Technical English — " +
+        "a short, non-technical explanation of what and why). " +
         "Creates or replaces <task>.simple.md and links it — never create .simple.md files by hand. No claim needed.",
       inputSchema: { id: z.string(), text: z.string() },
     },
@@ -184,8 +185,8 @@ export function registerWriteTools(
     {
       description:
         "Hand work to the human with evidence (commits/tests/notes). " +
-        "walkthrough is required — the human's 'explain what you did': a few plain-English paragraphs " +
-        "walking them through the change (what you changed, how it works, what to look at first), " +
+        "walkthrough is required — the human's 'explain what you did': a few short paragraphs in STE " +
+        "(Simplified Technical English) walking them through the change (what you changed, how it works, what to look at first), " +
         "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough.",
       inputSchema: {
         id: z.string(),
@@ -215,7 +216,7 @@ export function registerWriteTools(
       description:
         "Peer-review a submission as a different session than the holder (find them: query status=in_review). " +
         "Read the task file, the Walkthrough and Evidence sections and the actual diff/tests first, then record " +
-        "verdict ok|issues with summary (plain-English prose for the human — what you verified and why the verdict, no jargon) " +
+        "verdict ok|issues with summary (STE prose for the human — what you verified and why the verdict) " +
         "and a specific note for whoever fixes it (findings with file:line). " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
@@ -255,7 +256,7 @@ export function registerWriteTools(
         "the claim is kept so the holder fixes and resubmits — unless the holder is on another machine or no " +
         "longer live, where the claim is released to ready instead (a bounced item must not strand). " +
         "reason is required and goes to the holder; " +
-        "summary is required too — one plain-English sentence for the human, no jargon. " +
+        "summary is required too — one sentence in STE for the human. " +
         "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
         "Each bounce is a failed attempt: on escalation past the holder's tier the claim is released for a stronger agent.",
       inputSchema: { id: z.string(), reason: z.string(), summary: z.string() },
