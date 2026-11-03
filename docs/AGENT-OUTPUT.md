@@ -13,7 +13,13 @@ the daemon does the condensing, not the agent.
   (flags only when they apply).
 - `brief` is the only verbose tool: summary, acceptance, dep outcomes,
   decisions, resolved targets — the minimum needed to do the work.
-- `graph` returns a fenced-free Mermaid `flowchart LR` document.
+- `graph` returns a fenced-free Mermaid `flowchart LR` document. Plans
+  (epics) wear a badge: `@{ shape: docs, label: "ID title · done/total" }`
+  — a stacked-documents silhouette plus the finished-parts fraction; tasks
+  are plain `["ID title"]` boxes. Fill colour still carries the status.
+  Reviewed items end their label with `· AI ✓` / `· AI ✗` (+ `⚑` when the
+  reviewer flagged needs_human, `⏱` when auto-accept is armed) — the same
+  badge the board and inbox show.
 - Agents never see other sessions' data, credentials, or file paths outside
   the workspace unless they are resolved target paths.
 

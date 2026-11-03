@@ -28,6 +28,14 @@ beforeAll(async () => {
   item("GL-0001", { parent: "TE-0001", status: "done" });
   item("GL-0002", { depends_on: "[GL-0001]", parent: "TE-0001", title: '\'q "uote" [x] {y}\'' });
   item("GL-0003", { depends_on: "[GL-0002]", status: "in_progress" });
+  item("GL-0004", {
+    status: "in_review",
+    ai_review: '{verdict: "ok", reviewed_by: "bot@m#1", reviewed_at: "2026-01-01T00:00:00Z", needs_human: true}',
+  });
+  item("GL-0005", {
+    status: "in_review",
+    ai_review: '{verdict: "issues", reviewed_by: "bot@m#1", reviewed_at: "2026-01-01T00:00:00Z"}',
+  });
   idx = await Index.load(plans);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -47,6 +55,14 @@ describe("renderMermaid", () => {
     expect(out).toContain(":::active");
   });
 
+  it("badges plans: stacked-docs shape, n/m parts finished", () => {
+    const out = renderMermaid(idx);
+    expect(out).toContain('TE_0001@{ shape: docs, label: "TE-0001 TE-0001 · 1/2" }');
+    expect(out).toContain("class TE_0001 draft");
+    expect(out).toContain('GL_0001["GL-0001 GL-0001"]');
+    expect(out).not.toContain("GL_0001@{");
+  });
+
   it("escapes quotes and brackets in labels", () => {
     const out = renderMermaid(idx);
     expect(out).not.toContain('"quotey [brackets]"');
@@ -62,7 +78,7 @@ describe("renderMermaid", () => {
 
   it("caps nodes and adds '+N more'", () => {
     const out = renderMermaid(idx, { maxNodes: 2 });
-    expect(out).toContain('+2 more');
+    expect(out).toContain('+4 more');
   });
 
   it("scoped cap keeps BFS order — the root survives, the periphery folds", () => {
@@ -74,6 +90,15 @@ describe("renderMermaid", () => {
     expect(out).toContain("+2 more");
     expect(out).not.toContain("GL_0001[");
     expect(out).not.toContain("TE_0001");
+  });
+
+  it("marks review items: AI ✓/✗, ⚑ needs_human, ⏱ auto-accept armed", () => {
+    const out = renderMermaid(idx, {
+      autoAcceptAt: (i) => (i.meta.id === "GL-0004" ? "2099-01-01T00:00:00Z" : undefined),
+    });
+    expect(out).toContain('GL_0004["GL-0004 GL-0004 · AI ✓ ⚑ ⏱"]');
+    expect(out).toContain('GL_0005["GL-0005 GL-0005 · AI ✗"]');
+    expect(out).not.toContain('GL_0001["GL-0001 GL-0001 ·');
   });
 
   it("filters by status", () => {

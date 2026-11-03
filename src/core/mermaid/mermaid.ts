@@ -14,6 +14,8 @@ export interface MermaidOpts {
   filter?: QueryFilter;
   /** Node cap (default 40); extras collapse into a '+N more' node. */
   maxNodes?: number;
+  /** daemon layer: when an item will auto-accept (ISO) — marks the node ⏱ */
+  autoAcceptAt?: (it: IndexedItem) => string | undefined;
 }
 
 const CLASS_FOR: Record<string, string> = {
@@ -103,6 +105,13 @@ function collect(index: Index, opts: MermaidOpts): Set<string> {
   return out;
 }
 
+// board/inbox vocabulary: AI ✓ | AI ✗ (+ ⚑ needs_human) + ⏱ auto-accept armed
+function reviewMark(it: IndexedItem, opts: MermaidOpts): string {
+  const rv = it.meta.ai_review;
+  if (!rv) return "";
+  return ` · AI ${rv.verdict === "ok" ? "✓" : "✗"}${rv.needs_human ? " ⚑" : ""}${opts.autoAcceptAt?.(it) ? " ⏱" : ""}`;
+}
+
 export function renderMermaid(index: Index, opts: MermaidOpts = {}): string {
   const max = opts.maxNodes ?? 40;
   const all = [...collect(index, opts)];
@@ -114,10 +123,22 @@ export function renderMermaid(index: Index, opts: MermaidOpts = {}): string {
   const shownSet = new Set(shown);
 
   const lines: string[] = ["flowchart LR"];
+  const epicClasses: string[] = [];
   for (const id of shown) {
     const it = index.items.get(id)!;
-    const label = `${id} ${it.meta.title}`;
-    lines.push(`  ${nodeId(id)}["${escLabel(label)}"]:::${CLASS_FOR[it.meta.status] ?? "draft"}`);
+    const cls = CLASS_FOR[it.meta.status] ?? "draft";
+    if (it.meta.type === "epic") {
+      // plans wear a badge: a stacked-documents shape (folder / book-cover
+      // silhouette) + the board's plan-chip fraction — instantly distinct
+      // from plain task boxes. @{ } can't take :::class, so the status
+      // colour is assigned with a `class` statement instead
+      const p = index.planProgress(id);
+      const label = `${id} ${it.meta.title} · ${p?.done ?? 0}/${p?.total ?? 0}${reviewMark(it, opts)}`;
+      lines.push(`  ${nodeId(id)}@{ shape: docs, label: "${escLabel(label)}" }`);
+      epicClasses.push(`  class ${nodeId(id)} ${cls}`);
+    } else {
+      lines.push(`  ${nodeId(id)}["${escLabel(`${id} ${it.meta.title}${reviewMark(it, opts)}`)}"]:::${cls}`);
+    }
   }
   if (hidden > 0) lines.push(`  more["+${hidden} more"]:::draft`);
 
@@ -138,6 +159,7 @@ export function renderMermaid(index: Index, opts: MermaidOpts = {}): string {
     }
   }
   lines.push(...edges.sort());
+  lines.push(...epicClasses);
   lines.push(CLASS_DEFS);
   return lines.join("\n") + "\n";
 }

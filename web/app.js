@@ -249,10 +249,6 @@ const BulbIcon = () => glyph([
 const FlagIcon = () => glyph([
   "M14.778.085A.5.5 0 0 1 15 .5V8a.5.5 0 0 1-.314.464L14.5 8l.186.464-.003.001-.006.003-.023.009a12 12 0 0 1-.397.15c-.264.095-.631.223-1.047.35-.816.252-1.879.523-2.71.523-.847 0-1.548-.28-2.158-.525l-.028-.01C7.68 8.71 7.14 8.5 6.5 8.5c-.7 0-1.638.23-2.437.477A20 20 0 0 0 3 9.342V15.5a.5.5 0 0 1-1 0V.5a.5.5 0 0 1 1 0v.282c.226-.079.496-.17.79-.26C4.606.272 5.67 0 6.5 0c.84 0 1.524.277 2.121.519l.043.018C9.286.788 9.828 1 10.5 1c.7 0 1.638-.23 2.437-.477a20 20 0 0 0 1.349-.476l.019-.007.004-.002h.001",
 ]);
-const HourglassIcon = () => glyph([
-  "M2.5 15a.5.5 0 1 1 0-1h1v-1a4.5 4.5 0 0 1 2.557-4.06c.29-.139.443-.377.443-.59v-.7c0-.213-.154-.451-.443-.59A4.5 4.5 0 0 1 3.5 3V2h-1a.5.5 0 0 1 0-1h11a.5.5 0 0 1 0 1h-1v1a4.5 4.5 0 0 1-2.557 4.06c-.29.139-.443.377-.443.59v.7c0 .213.154.451.443.59A4.5 4.5 0 0 1 12.5 13v1h1a.5.5 0 0 1 0 1zm2-13v1c0 .537.12 1.045.337 1.5h6.326c.216-.455.337-.963.337-1.5V2zm3 6.35c0 .701-.478 1.236-1.011 1.492A3.5 3.5 0 0 0 4.5 13s.866-1.299 3-1.48zm1 0v3.17c2.134.181 3 1.48 3 1.48a3.5 3.5 0 0 0-1.989-3.158C8.978 9.586 8.5 9.052 8.5 8.351z",
-]);
-
 // search field with a × clear button inside (the native type=search one is webkit-only)
 // onEscape may return true to keep the query (e.g. it dismissed a dropdown instead)
 const SearchBox = ({ value, onChange, onKeyDown, onEscape, ...props }) => html`
@@ -427,7 +423,7 @@ const Inbox = ({ onOpen }) => {
   };
   // AI review marker for review rows — a robot between status and title:
   // green = ok, red = flagged (needs a look), grey = not reviewed; a badge
-  // next to it says which: flag = issues, hourglass = ok & auto-accept armed
+  // next to it says which: flag = issues, ⏱ = ok & auto-accept armed
   // (auto_accept_at), tick = ok and waiting on the human
   const aiMark = (id) => {
     const it = byId[id];
@@ -442,7 +438,7 @@ const Inbox = ({ onOpen }) => {
       : r.verdict === "issues"
         ? html`<${FlagIcon} />`
         : at
-          ? html`<${HourglassIcon} />`
+          ? "⏱"
           : html`<${CheckIcon} />`;
     return html`<span class="${cls}" title=${tip}><${RobotIcon} />${badge}</span>`;
   };

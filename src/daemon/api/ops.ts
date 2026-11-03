@@ -308,7 +308,7 @@ export class WorkspaceOps {
   }
 
   graph(opts: MermaidOpts): string {
-    return renderMermaid(this.index, opts);
+    return renderMermaid(this.index, { ...opts, autoAcceptAt: (it) => this.autoAcceptAt(it) });
   }
 
   /** All descendant ids of an item (children recursively, parent-cycle safe). */
