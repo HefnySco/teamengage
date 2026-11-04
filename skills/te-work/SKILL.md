@@ -81,6 +81,16 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 
 - Refused (`claimed on … by …`, target locked) → do **not** work on it.
   Report who holds it and pick something else only if the human agrees.
+- **Stale claim fast path:** a refused claim where the holder's session is
+  over (a closed conversation — `.teamengage/claims/<id>.yaml` names it)
+  stays "live" in daemon memory until `bye` or a restart. Don't dig
+  through daemon internals: restart the daemon
+  (`kill "$(jq -r .pid ~/.teamengage/daemon.json)"` — any `te` command or
+  MCP shim restarts it), then `hello` again with the **same agent name** —
+  dead sessions' claims rebind to you (`resume: <id>` in the hello reply).
+  Other agents' live MCP sessions reconnect and rebind on their own, so
+  this is safe; their curl-minted sessions must `hello` again too. If in
+  doubt the holder may be live, ask the human instead.
 - Exception: an `in_review` item with an `issues` AI verdict can be claimed
   on the claim's machine — the claim and worktree move to you, so fix the
   findings there and `submit` again. Any other `in_review`/`held` item stays
