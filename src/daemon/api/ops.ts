@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveSource, stripFrontmatter } from "../../core/files/source.js";
+import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
+import { parseArtifacts } from "../../core/files/markdown.js";
 import {
   normalizeDomain,
   domainColor,
@@ -1049,6 +1050,51 @@ export class WorkspaceOps {
   async detach(id: string, actor: Session | "human", path: string) {
     this.item(id);
     return this.store.detachArtifact(id, path, this.actorFor(actor));
+  }
+
+  /**
+   * `## Artifacts` of one item, each tagged with its item id. Overlay reads
+   * the task file (item files hold no body there); standard uses the parsed
+   * item file. Own #tags win over the item's domains (parseArtifacts).
+   */
+  private async artifactsOfItem(
+    it: IndexedItem,
+  ): Promise<Array<{ item: string; path: string; caption: string; domains: string[]; sensitive: boolean }>> {
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      const found = await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source);
+      if (!found) return [];
+      return parseArtifacts(sectionBody(found.text, "Artifacts"), it.meta.domains).map((a) => ({
+        ...a,
+        item: it.meta.id,
+      }));
+    }
+    return it.artifacts.map((a) => ({ ...a, item: it.meta.id }));
+  }
+
+  /** Artifacts of an item; for an epic, of its descendants too (each with its item id). */
+  async itemArtifacts(id: string) {
+    const it = this.item(id);
+    const ids = new Set(it.meta.type === "epic" ? [id, ...this.index.descendants(id)] : [id]);
+    const out = [];
+    for (const iid of ids) {
+      const item = this.index.get(iid);
+      if (item) out.push(...(await this.artifactsOfItem(item)));
+    }
+    return out;
+  }
+
+  /** Every artifact in the workspace — the gallery; filter by effective domain and/or project. */
+  async allArtifacts(filter: { domain?: string; project?: string } = {}) {
+    const out = [];
+    for (const it of this.index.items.values()) {
+      if (it.meta.type === "epic") continue;
+      if (filter.project && it.meta.project !== filter.project) continue;
+      for (const a of await this.artifactsOfItem(it)) {
+        if (filter.domain && !a.domains.includes(filter.domain)) continue;
+        out.push({ ...a, status: it.meta.status, project: it.meta.project, updated: it.meta.updated });
+      }
+    }
+    return out.sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
   }
 
   /** Agent asks the human to drop this item — advisory flag, status untouched. */

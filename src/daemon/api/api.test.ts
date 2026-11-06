@@ -1086,3 +1086,42 @@ describe("attach/detach artifacts", () => {
     await expect(ops.detach("WS-0001", agent, "_root/ws-0001-shot.png")).rejects.toThrow(/no artifact/);
   });
 });
+
+describe("artifact file serving and lists", () => {
+  it("serves files under .artifacts, refuses escapes, lists per item and workspace", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const agent = ctx.sessions.hello("art-serve");
+    const root = join(home, "ws");
+    writeFileSync(join(root, "a2.png"), Buffer.from([1, 2]));
+    writeFileSync(join(root, "page.html"), "<html><body>mock</body></html>");
+    await ops.attach("WS-0001", agent, { path: "a2.png", caption: "shot" });
+    await ops.attach("WS-0001", agent, { path: "page.html", caption: "page" });
+    await ops.attach("WS-0001", agent, { path: "a2.png", caption: "ui", domains: ["ui"], sensitive: false }).catch(() => {});
+
+    const file = async (p: string) => api(`/api/artifacts/file?path=${encodeURIComponent(p)}`);
+    const ok = await file("_root/ws-0001-a2.png");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("image/png");
+    const html = await file("_root/ws-0001-page.html");
+    expect(html.status).toBe(200);
+    expect(html.headers.get("content-security-policy")).toBe("sandbox");
+    // escapes: '..' and a symlink pointing outside are refused/404
+    expect((await file("../workspace.yaml")).status).toBe(403);
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync(join(plans, "workspace.yaml"), join(root, ".artifacts", "_root", "link.yaml"));
+    expect((await file("_root/link.yaml")).status).toBe(403);
+    expect((await file("_root/nope.png")).status).toBe(404);
+    // no token → 401
+    const bare = await fetch(`${daemon.url}/api/artifacts/file?path=_root/ws-0001-a2.png`);
+    expect(bare.status).toBe(401);
+
+    const list = (await (await api("/api/items/WS-0001/artifacts")).json()) as Array<{ path: string; item: string }>;
+    expect(list.map((a) => a.path)).toContain("_root/ws-0001-a2.png");
+    expect(list.every((a) => a.item === "WS-0001")).toBe(true);
+    const all = (await (await api("/api/artifacts?domain=ui")).json()) as Array<{ path: string; domains: string[] }>;
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.every((a) => a.domains.includes("ui"))).toBe(true);
+  });
+});

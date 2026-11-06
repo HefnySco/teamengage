@@ -1,9 +1,11 @@
-import { join, relative, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { extname, join, relative, sep } from "node:path";
+import { MIME } from "./ui.js";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
-import { TeError, NotFoundError } from "../../core/model/errors.js";
+import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import { compareIds } from "../../core/address/refs.js";
 import { ItemType } from "../../core/model/item.js";
@@ -90,6 +92,57 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const ops = opsFor(ctx, wsOf(req.query));
       const qq = req.query as { limit?: string; domain?: string };
       return ops.next(Number(qq.limit ?? 10), qq.domain || undefined);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  app.get("/api/items/:id/artifacts", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const ops = opsFor(ctx, wsOf(req.query));
+      return await ops.itemArtifacts(id.toUpperCase());
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  app.get("/api/artifacts", async (req, reply) => {
+    try {
+      const q = req.query as { domain?: string; project?: string };
+      const ops = opsFor(ctx, wsOf(req.query));
+      return await ops.allArtifacts({ domain: q.domain || undefined, project: q.project || undefined });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // Read-only artifact files from <root>/.artifacts/ — real-path containment
+  // stops '..' and symlink escapes; HTML is served under a sandbox CSP so a
+  // mockup page can never run with the UI origin.
+  app.get("/api/artifacts/file", async (req, reply) => {
+    try {
+      const q = req.query as { path?: string };
+      const ops = opsFor(ctx, wsOf(req.query));
+      const rel = String(q.path ?? "");
+      if (!rel || rel.split(/[\\/]/).includes("..") || rel.startsWith("/") || /^[A-Za-z]:/.test(rel)) {
+        throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
+      }
+      const root = join(ops.wsr.ws.root, ".artifacts");
+      let real: string, realRoot: string;
+      try {
+        real = realpathSync(join(root, rel));
+        realRoot = realpathSync(root);
+      } catch {
+        throw new NotFoundError(`artifact not found: ${rel}`);
+      }
+      if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+        throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
+      }
+      const ext = extname(real).toLowerCase();
+      const r = reply.type(MIME[ext] ?? "application/octet-stream").header("cache-control", "no-cache");
+      if (ext === ".html") r.header("content-security-policy", "sandbox");
+      return r.send(readFileSync(real));
     } catch (e) {
       return sendErr(reply, e);
     }
