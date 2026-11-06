@@ -9,6 +9,7 @@ import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE, WRITING_RULES } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { importCmd } from "./commands/import.js";
+import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import {
   approveCmd,
@@ -256,6 +257,8 @@ async function main(argv: string[]): Promise<number> {
       return detachCmd(rest, home);
     case "import":
       return importCmd(rest, home);
+    case "artifacts":
+      return artifactsCmd(rest, home);
     case "run":
       return runCmd(rest, home);
     case "wait":

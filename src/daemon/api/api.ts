@@ -148,6 +148,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // te artifacts import — attach loose .artifacts/ files by name prefix
+  app.post("/api/artifacts/import", async (req, reply) => {
+    try {
+      const b = (req.body ?? {}) as { apply?: boolean };
+      const ops = opsFor(ctx, wsOf(req.query));
+      return await ops.artifactsImport(b.apply === true, "human");
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   app.get("/api/graph", async (req, reply) => {
     try {
       const q = req.query as Record<string, string>;

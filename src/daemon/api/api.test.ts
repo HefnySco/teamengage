@@ -1125,3 +1125,37 @@ describe("artifact file serving and lists", () => {
     expect(all.every((a) => a.domains.includes("ui"))).toBe(true);
   });
 });
+
+describe("artifacts import", () => {
+  it("dry-run plans; --apply attaches and moves; reruns are no-ops", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const root = join(home, "ws");
+    mkdirSync(join(root, ".artifacts"), { recursive: true });
+    writeFileSync(join(root, ".artifacts", "ws0001-pic.png"), Buffer.from([1]));
+    writeFileSync(join(root, ".artifacts", "zz9999-lost.png"), Buffer.from([2]));
+
+    // dry run: plan only, nothing changes
+    const dry = await ops.artifactsImport(false);
+    expect(dry.move).toEqual(["ws0001-pic.png → _root/ws0001-pic.png"]);
+    expect(dry.attach).toEqual(["WS-0001 _root/ws-0001-shot.png", "WS-0001 _root/ws0001-pic.png"]);
+    expect(dry.no_item).toEqual(["zz9999-lost.png"]);
+    expect(dry.already).toContain("_root/ws-0001-priv.png"); // from the earlier attach suite
+    expect(existsSync(join(root, ".artifacts", "ws0001-pic.png"))).toBe(true);
+
+    // apply: the file moves and lands in ## Artifacts
+    const done = await ops.artifactsImport(true);
+    expect(done.applied).toBe(true);
+    expect(existsSync(join(root, ".artifacts", "_root", "ws0001-pic.png"))).toBe(true);
+    const text = readFileSync(join(plans, store.idx.get("WS-0001")!.path), "utf8");
+    expect(text).toContain("- _root/ws0001-pic.png — ws0001-pic.png");
+    expect(existsSync(join(root, ".artifacts", "zz9999-lost.png"))).toBe(true); // never deleted
+
+    // second run: already attached, no new move
+    const again = await ops.artifactsImport(true);
+    expect(again.already).toContain("_root/ws0001-pic.png");
+    expect(again.attach).toEqual([]);
+  });
+});

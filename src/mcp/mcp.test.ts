@@ -92,10 +92,12 @@ describe("MCP tools (MC-0001/2/3)", () => {
     expect(names).toEqual(
       [
         "ask",
+        "attach",
         "bounce",
         "brief",
         "claim",
         "close_plan",
+        "detach",
         "edit",
         "flag_drop",
         "graph",

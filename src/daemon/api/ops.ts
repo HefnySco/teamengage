@@ -1097,6 +1097,80 @@ export class WorkspaceOps {
     return out.sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
   }
 
+  /**
+   * Import loose files from `.artifacts/` (GL-0121): a file named
+   * `<prefix><digits>-<name>` attaches to item `<PREFIX>-<digits>` through
+   * the same code as attach (caption = the file name). Root-level files move
+   * to `.artifacts/<project>/`. `apply: false` only reports the plan;
+   * unmatched and already-attached files are reported, never deleted.
+   */
+  async artifactsImport(apply: boolean, actor: Session | "human" = "human") {
+    const { mkdir, readdir, rename } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    const { basename, dirname, join, relative, sep } = await import("node:path");
+    const root = this.wsr.ws.root;
+    const dir = join(root, ".artifacts");
+    const out = {
+      applied: apply,
+      move: [] as string[],
+      attach: [] as string[],
+      already: [] as string[],
+      no_item: [] as string[],
+      errors: [] as string[],
+    };
+    if (!existsSync(dir)) return out;
+    const files: string[] = [];
+    const walk = async (d: string): Promise<void> => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) await walk(p);
+        else if (e.isFile()) files.push(p);
+      }
+    };
+    await walk(dir);
+    for (const abs of files.sort()) {
+      const rel = relative(dir, abs).split(sep).join("/"); // path under .artifacts/
+      const base = basename(abs);
+      const m = /^([a-z]+)-?(\d+)-.+/i.exec(base);
+      const id = m ? `${m[1]}-${m[2]}`.toUpperCase() : "";
+      const it = id ? this.index.get(id) : undefined;
+      if (!it) {
+        out.no_item.push(rel);
+        continue;
+      }
+      const project = it.meta.project ?? "_root";
+      const target = rel.includes("/") ? rel : `${project}/${base}`;
+      const attached = (await this.artifactsOfItem(it)).some((a) => a.path === target);
+      if (attached) {
+        out.already.push(target);
+        continue;
+      }
+      if (target !== rel) {
+        // a loose file at the root of .artifacts/ moves under <project>/;
+        // a clash with different content is reported, never overwritten
+        const absTarget = join(dir, target);
+        if (existsSync(absTarget) && !(await readFile(absTarget)).equals(await readFile(abs))) {
+          out.errors.push(`${rel}: ${target} exists with different content — left in place`);
+          continue;
+        }
+        out.move.push(`${rel} → ${target}`);
+        if (apply && !existsSync(absTarget)) {
+          await mkdir(dirname(absTarget), { recursive: true });
+          await rename(abs, absTarget);
+        }
+      }
+      out.attach.push(`${id} ${target}`);
+      if (apply) {
+        try {
+          await this.attach(id, actor, { path: `.artifacts/${target}`, caption: base });
+        } catch (e) {
+          out.errors.push(`${target}: ${(e as Error).message}`);
+        }
+      }
+    }
+    return out;
+  }
+
   /** Agent asks the human to drop this item — advisory flag, status untouched. */
   async flagDrop(id: string, session: Session, reason?: string) {
     const it = this.item(id);
