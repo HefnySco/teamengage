@@ -162,6 +162,20 @@ export interface ItemDoc {
   sections: Section[];
 }
 
+/**
+ * One file attached to an item — a `## Artifacts` list line:
+ * `- <path under .artifacts/> — <caption> [#domain ...] [!sensitive]`.
+ * `domains` is the effective set: the line's own #tags, else the item's.
+ */
+export interface Artifact {
+  /** workspace-relative path under `.artifacts/` (e.g. `andruav/an0133-v2-sms.png`) */
+  path: string;
+  caption: string;
+  domains: string[];
+  /** `!sensitive` — the file may hold private data */
+  sensitive: boolean;
+}
+
 /** turn derivation per DESIGN §5. */
 export function turnOf(status: Status): Turn {
   return status === "draft" || status === "hold" || status === "in_review" || status === "waiting"

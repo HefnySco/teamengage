@@ -55,6 +55,21 @@ describe("Index", () => {
     expect(idx.get("TE-0001")!.children).toContain("GL-0002");
   });
 
+  it("## Artifacts lines land on the indexed item; no #tags → the item's domains", async () => {
+    writeItem(
+      "GL-0010",
+      { domains: "[android, comm]" },
+      "## Summary\nx\n\n## Artifacts\n- andruav/a1.png — plain shot\n- p/b.png — tagged shot #webclient\n- p/c.png — secret !sensitive\n",
+    );
+    const idx = await Index.load(plans);
+    const it = idx.get("GL-0010")!;
+    expect(it.artifacts).toEqual([
+      { path: "andruav/a1.png", caption: "plain shot", domains: ["android", "comm"], sensitive: false },
+      { path: "p/b.png", caption: "tagged shot", domains: ["webclient"], sensitive: false },
+      { path: "p/c.png", caption: "secret", domains: ["android", "comm"], sensitive: true },
+    ]);
+  });
+
   it("claimed items are not ready", async () => {
     mkdirSync(join(plans, "claims"), { recursive: true });
     writeFileSync(

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join, relative, isAbsolute } from "node:path";
 import { parseItemFile, parseMarkdown } from "../files/markdown.js";
 import { parseClaimFile } from "../claims/claims.js";
-import { DecisionMeta, type ItemMeta, type Section, type Status, type Turn, turnOf } from "../model/index.js";
+import { DecisionMeta, type Artifact, type ItemMeta, type Section, type Status, type Turn, turnOf } from "../model/index.js";
 import { parseItemRef, compareIds } from "../address/refs.js";
 import type { Claim } from "../model/claim.js";
 
@@ -47,6 +47,8 @@ export type PlanState = "draft" | "decomposing" | "active" | "done";
 export interface IndexedItem {
   meta: ItemMeta;
   sections: Section[];
+  /** `## Artifacts` lines parsed at index time (domains already resolved) */
+  artifacts: Artifact[];
   path: string;
   claim?: Claim;
   /** derived: any depends_on item (this workspace) not done */
@@ -136,6 +138,7 @@ export class Index {
             idx.items.set(doc.meta.id, {
               meta: doc.meta,
               sections: doc.sections,
+              artifacts: doc.artifacts,
               path: relative(plansDir, file),
               blocked: false,
               paused: false,
@@ -202,6 +205,7 @@ export class Index {
     this.items.set(id, {
       meta: doc.meta,
       sections: doc.sections,
+      artifacts: doc.artifacts,
       path: rel,
       blocked: false,
       paused: false,

@@ -285,6 +285,8 @@ describe("overlay propose writes real task files", () => {
         "- [ ] second AUTO run fires module events",
         "- [ ] ctest -R mission_restart passes",
         "",
+        "## Artifacts",
+        "",
         "## Notes",
         "",
       ].join("\n"),

@@ -1,6 +1,7 @@
 import YAML from "yaml";
 import { ParseError, ConflictMarkersError } from "../model/errors.js";
-import { ItemMeta, type Section } from "../model/index.js";
+import { ItemMeta, type Artifact, type Section } from "../model/index.js";
+import { normalizeDomains } from "../domains/domains.js";
 import type { z, ZodTypeAny } from "zod";
 
 export interface ParsedFile<T> {
@@ -98,8 +99,55 @@ export function parseMarkdown<S extends ZodTypeAny>(
   };
 }
 
-export const parseItemFile = (text: string, path?: string) =>
-  parseMarkdown(text, ItemMeta, path);
+export interface ParsedItemFile extends ParsedFile<ItemMeta> {
+  /** `## Artifacts` lines parsed into entries (see parseArtifacts). */
+  artifacts: Artifact[];
+}
+
+const ARTIFACT_LINE = /^-\s+(\S+)\s+[—–]\s+(.+?)\s*$/;
+
+/**
+ * Parse the `## Artifacts` list — one file per line:
+ * `- <path under .artifacts/> — <caption> [#domain ...] [!sensitive]`.
+ * Trailing #tags are the artifact's own domains; `!sensitive` marks private
+ * content. A line with no #tag inherits `itemDomains` (the item's domains).
+ * Lines that do not match the format are skipped.
+ */
+export function parseArtifacts(body: string | undefined, itemDomains: string[] = []): Artifact[] {
+  const out: Artifact[] = [];
+  if (!body) return out;
+  for (const raw of body.split(/\r?\n/)) {
+    const m = ARTIFACT_LINE.exec(raw.trim());
+    if (!m) continue;
+    const tokens = m[2].split(/\s+/);
+    const own: string[] = [];
+    let sensitive = false;
+    let t: string | undefined;
+    while ((t = tokens.pop()) !== undefined) {
+      if (t === "!sensitive") sensitive = true;
+      else if (/^#\S+$/.test(t)) own.unshift(t);
+      else {
+        tokens.push(t);
+        break;
+      }
+    }
+    out.push({
+      path: m[1],
+      caption: tokens.join(" "),
+      domains: own.length ? normalizeDomains(own) : [...itemDomains],
+      sensitive,
+    });
+  }
+  return out;
+}
+
+export const parseItemFile = (text: string, path?: string): ParsedItemFile => {
+  const doc = parseMarkdown(text, ItemMeta, path);
+  return {
+    ...doc,
+    artifacts: parseArtifacts(getSection(doc, "artifacts"), doc.meta.domains),
+  };
+};
 
 function orderedMeta(meta: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

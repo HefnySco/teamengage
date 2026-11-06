@@ -113,6 +113,66 @@ describe("sections", () => {
   });
 });
 
+describe("artifacts", () => {
+  const WITH_ARTIFACTS = SAMPLE.replace(
+    "## Log\n",
+    `## Artifacts
+- andruav/an0133-v2-sms.png — SMS tab mockup
+- webclient/wc0001-map.png — map view, 3d #webclient #map3d
+- andruav/an0133-phone.png — real phone number shot !sensitive
+
+## Log\n`,
+  );
+
+  it("parses plain, #tagged and !sensitive lines into item.artifacts", () => {
+    const doc = parseItemFile(WITH_ARTIFACTS);
+    expect(doc.artifacts).toEqual([
+      {
+        path: "andruav/an0133-v2-sms.png",
+        caption: "SMS tab mockup",
+        domains: [],
+        sensitive: false,
+      },
+      {
+        path: "webclient/wc0001-map.png",
+        caption: "map view, 3d",
+        domains: ["webclient", "map3d"],
+        sensitive: false,
+      },
+      {
+        path: "andruav/an0133-phone.png",
+        caption: "real phone number shot",
+        domains: [],
+        sensitive: true,
+      },
+    ]);
+  });
+
+  it("a line with no #tags inherits the item's domains", () => {
+    const text = WITH_ARTIFACTS.replace(
+      "depends_on: [GL-0012]",
+      "domains: [android, comm]\ndepends_on: [GL-0012]",
+    );
+    const doc = parseItemFile(text);
+    expect(doc.artifacts[0].domains).toEqual(["android", "comm"]);
+    expect(doc.artifacts[2].domains).toEqual(["android", "comm"]);
+    // own #tags still win over the item's
+    expect(doc.artifacts[1].domains).toEqual(["webclient", "map3d"]);
+  });
+
+  it("skips lines that do not match the format; no section → []", () => {
+    const text = SAMPLE.replace(
+      "## Log\n",
+      "## Artifacts\nnot a list line\n- missingcaption.png\n- p/x.png — real line\n\n## Log\n",
+    );
+    const doc = parseItemFile(text);
+    expect(doc.artifacts).toEqual([
+      { path: "p/x.png", caption: "real line", domains: [], sensitive: false },
+    ]);
+    expect(parseItemFile(SAMPLE).artifacts).toEqual([]);
+  });
+});
+
 describe("meta changes", () => {
   it("changed meta re-emits canonically with fixed key order and flow arrays", () => {
     const doc = parseItemFile(SAMPLE);

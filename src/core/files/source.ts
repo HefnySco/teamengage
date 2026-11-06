@@ -212,6 +212,7 @@ export function setRelatesLine(text: string, relates: string[]): string {
 
 /** Headings the item/task files manage — draft edits may not rewrite these. */
 export const PROTECTED_SECTIONS = new Set([
+  "artifacts",
   "notes",
   "review",
   "evidence",

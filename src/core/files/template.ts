@@ -47,6 +47,8 @@ export function renderTaskBody(d: TaskDraft): string {
     "",
     // an idea is a source document — no acceptance checklist
     ...(idea ? [] : ["## Acceptance", ...acceptance, ""]),
+    "## Artifacts",
+    "",
     "## Notes",
     "",
   ].join("\n");

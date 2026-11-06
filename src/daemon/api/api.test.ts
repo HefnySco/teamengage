@@ -964,6 +964,9 @@ describe("editDraft: agent rewrites a draft", () => {
     await expect(
       ops.editDraft(id, planner, { reason: "r", sections: { Notes: "forged" } }),
     ).rejects.toThrow(/managed by TeamEngage/);
+    await expect(
+      ops.editDraft(id, planner, { reason: "r", sections: { Artifacts: "forged" } }),
+    ).rejects.toThrow(/managed by TeamEngage/);
 
     // clears: tier "" → cleared, parent "" → cleared, deps [] → cleared
     await ops.editDraft(id, planner, { reason: "undo", parent: null, depends_on: [], tier: null });
