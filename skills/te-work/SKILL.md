@@ -5,6 +5,14 @@ description: Implement, continue or pick up a task from a TeamEngage-tracked tas
 
 # te-work — execute a task through TeamEngage
 
+**Writing rule — ASD-STE100, always.** Every text you write in TeamEngage —
+`note`, `log`, `ask`, `simple`, `walkthrough`, `review`/`bounce` summaries
+and notes, `handoff`, `flag_drop` — is written in ASD-STE100 Simplified
+Technical English: short sentences, one idea each, active voice, plain
+approved words, one word per meaning. Technical names (files, functions,
+field names) stay as-is. This applies to everything the human reads and
+everything another agent works from — no vague prose.
+
 The task bank is shared with the human and with other agents (Claude Code,
 Devin, Gemini, …) on this and other machines. TeamEngage records who is
 working on what. Work **only** through it: claim before you touch code, hand

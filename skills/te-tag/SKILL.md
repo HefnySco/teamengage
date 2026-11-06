@@ -5,6 +5,10 @@ description: Go over TeamEngage tasks that have no domain and tag each with the 
 
 # te-tag — tag untagged tasks with domains
 
+**Writing rule — ASD-STE100, always.** The plan you show the human and any
+`note` you write is ASD-STE100 Simplified Technical English: short
+sentences, one idea each, active voice, plain approved words.
+
 Domains are hashtag-like labels (`#mavlink`, `#webclient`, `#security` …).
 A task can have several; the human filters the board and agents pick work
 by them (`next?domain=…`). Keyword suggestions already ran — what is left

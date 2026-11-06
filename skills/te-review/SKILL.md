@@ -5,6 +5,13 @@ description: Peer-review a TeamEngage task another session submitted — list wh
 
 # te-review — peer-review another session's submission
 
+**Writing rule — ASD-STE100, always.** `summary`, `note`, and bounce
+`reason`/`summary` are ASD-STE100 Simplified Technical English: short
+sentences, one idea each, active voice, plain approved words. The review
+report must read like a chat reply to the human — no vague text, no
+compressed log dumps. file:line and commit shas only where they pin a
+finding down.
+
 A second pair of eyes before the human looks. You are the reviewer — **not** the
 holder of the claim and **not** the decider. What you produce is a verdict + note
 the human reads, or a bounce reason the submitter reads. Final accept stays with

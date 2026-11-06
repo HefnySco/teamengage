@@ -5,6 +5,12 @@ description: Break a goal into TeamEngage tasks in a task-folder (overlay) works
 
 # te-plan — turn a goal into TeamEngage tasks
 
+**Writing rule — ASD-STE100, always.** Every text you write — task titles,
+`## Summary`, `## Acceptance`, `simple` versions, `note`s, questions —
+is ASD-STE100 Simplified Technical English: short sentences, one idea each,
+active voice, plain approved words. Technical names stay as-is. No vague
+prose — the human reads all of it and other agents work from it.
+
 You are writing tasks that **other agents** will claim and execute, and that
 the human will approve and accept. A good task can be picked up cold by an
 agent that has never seen this conversation: it says what to change, where,
