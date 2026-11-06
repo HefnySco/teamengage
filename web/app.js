@@ -2606,7 +2606,52 @@ const Sync = () => {
 };
 
 // ---- shell ------------------------------------------------------------------------
-const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, domains: Domains, archive: Archive };
+// ---- artifacts gallery: every attached file in the workspace (GL-0120) -----
+const Artifacts = () => {
+  const { data: arts } = useApi("/api/artifacts", []);
+  const [q, setQ] = useState("");
+  const [domain, setDomain] = useState("");
+  const [project, setProject] = useState("");
+  const [viewing, setViewing] = useState(null);
+  if (!arts) return html`<p class="text-secondary">loading…</p>`;
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const list = arts.filter((a) => {
+    if (domain && !(a.domains ?? []).includes(domain)) return false;
+    if (project && a.project !== project) return false;
+    const hay = `${a.caption} ${a.path}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+  const domains = [...new Set(arts.flatMap((a) => a.domains ?? []))].sort();
+  const projects = [...new Set(arts.map((a) => a.project).filter(Boolean))].sort();
+  return html`
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+      <${SearchBox} value=${q} onChange=${setQ} placeholder="search caption / file name" />
+      <select class="form-select form-select-sm w-auto" value=${project} onChange=${(e) => setProject(e.target.value)}>
+        <option value="">all projects</option>
+        ${projects.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}
+      </select>
+      <${DomainChips} ds=${domains} active=${domain} onClick=${(d) => setDomain(domain === d ? "" : d)} />
+      <span class="text-secondary small ms-auto">${list.length} / ${arts.length}</span>
+    </div>
+    ${list.length === 0 && html`<p class="text-secondary">no artifacts${arts.length ? " match the filters" : " yet — attach a file to a task first"}</p>`}
+    <div class="art-strip">
+      ${list.map((a, i) => html`
+        <div class="art-card" key=${a.item + "/" + a.path}>
+          <${ArtThumb} a=${a} onOpen=${() => setViewing(i)} />
+          <div class="d-flex align-items-center gap-1 mt-1">
+            <a class="item id" onClick=${() => nav(`item/${a.item}`)}>${a.item}</a>
+            <${Badge} s=${a.status} />
+          </div>
+        </div>`)}
+    </div>
+    ${viewing !== null && list.length
+      ? html`<${ArtViewer} arts=${list} i=${viewing} onClose=${() => setViewing(null)}
+          onNav=${(d) => setViewing(Math.max(0, Math.min(list.length - 1, viewing + d)))} />`
+      : ""}
+  `;
+};
+
+const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {
