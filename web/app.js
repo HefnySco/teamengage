@@ -1894,8 +1894,101 @@ const DomainEditor = ({ id, ds, onChanged }) => {
 const ActBtn = ({ variant = "outline-secondary", title, disabled, onClick, children }) => html`
   <button class="btn btn-sm btn-${variant} act-btn" disabled=${disabled} title=${title} onClick=${onClick}>${children}</button>`;
 
+// ---- artifacts: thumbnail strip + popup viewer (GL-0119/0120) ---------------
+const ART_IMG = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
+const artExt = (p) => (p.split(".").pop() ?? "").toLowerCase();
+const artUrl = (p) => `/api/artifacts/file?path=${encodeURIComponent(p)}`;
+
+/** One tile in the strip: image thumbnail, or an icon tile for documents. */
+const ArtThumb = ({ a, onOpen }) => {
+  const [unblur, setUnblur] = useState(false);
+  const ext = artExt(a.path);
+  const blurred = a.sensitive && !unblur;
+  return html`<button class="art-tile${blurred ? " art-blur" : ""}"
+    title=${a.caption + (a.sensitive ? " — sensitive (click to reveal)" : "")}
+    onClick=${() => (blurred ? setUnblur(true) : onOpen())}>
+    <span class="art-box">
+      ${ART_IMG.has(ext)
+        ? html`<img src=${artUrl(a.path)} alt=${a.caption} loading="lazy" />`
+        : html`<span class="art-ico">${ext === "pdf" ? "PDF" : ext === "html" ? "HTML" : (ext || "?").toUpperCase().slice(0, 4)}</span>`}
+      ${a.sensitive && html`<span class="art-sens">sensitive</span>`}
+    </span>
+    <span class="art-cap">${a.caption}</span>
+  </button>`;
+};
+
+/** Popup viewer: large view, caption, item id, domain chips, prev/next, Esc. */
+const ArtViewer = ({ arts, i, onClose, onNav }) => {
+  const [unblur, setUnblur] = useState(false);
+  useEffect(() => setUnblur(false), [i]);
+  useEffect(() => {
+    const f = (e) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft") onNav(-1);
+      else if (e.key === "ArrowRight") onNav(1);
+    };
+    addEventListener("keydown", f);
+    return () => removeEventListener("keydown", f);
+  }, [i, arts.length]);
+  const a = arts[i];
+  if (!a) return null;
+  const ext = artExt(a.path);
+  const blurred = a.sensitive && !unblur;
+  return html`
+    <div class="modal-backdrop show"></div>
+    <div class="modal d-block" tabindex="-1" onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header py-2 d-flex align-items-center gap-2">
+            <b class="modal-title fs-6 text-truncate">${a.caption}</b>
+            <a class="item id" onClick=${() => nav(`item/${a.item}`)}>${a.item}</a>
+            <span class="ms-auto d-flex align-items-center gap-2">
+              <${DomainTags} ds=${a.domains} />
+              <a class="btn btn-sm btn-outline-secondary py-0" target="_blank" rel="noopener" href=${artUrl(a.path)} title="open the raw file">open</a>
+              <button type="button" class="btn-close" title="close" onClick=${onClose}></button>
+            </span>
+          </div>
+          <div class="modal-body art-view${blurred ? " art-blur" : ""}" onClick=${() => setUnblur(true)}>
+            ${ART_IMG.has(ext)
+              ? html`<img src=${artUrl(a.path)} alt=${a.caption} />`
+              : ext === "html"
+                ? html`<iframe sandbox="" src=${artUrl(a.path)} title=${a.caption}></iframe>`
+                : ext === "pdf"
+                  ? html`<iframe src=${artUrl(a.path)} title=${a.caption}></iframe>`
+                  : html`<div class="art-ico-lg">${(ext || "?").toUpperCase()}</div>`}
+            ${a.sensitive && blurred && html`<div class="art-sens-hint">sensitive — click to reveal</div>`}
+          </div>
+          <div class="modal-footer py-1 d-flex align-items-center">
+            <button class="btn btn-sm btn-outline-secondary" disabled=${i <= 0} onClick=${() => onNav(-1)}>← prev</button>
+            <span class="text-secondary small mx-auto">${i + 1} / ${arts.length}</span>
+            <button class="btn btn-sm btn-outline-secondary" disabled=${i >= arts.length - 1} onClick=${() => onNav(1)}>next →</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+};
+
+/** The strip on an item page — grouped by item id for epics. */
+const ArtStrip = ({ arts, onOpen }) => {
+  if (!arts?.length) return null;
+  const byItem = {};
+  for (const a of arts) (byItem[a.item] ??= []).push(a);
+  const grouped = Object.keys(byItem).length > 1;
+  return html`<div class="art-strip">
+    ${grouped
+      ? Object.entries(byItem).map(([iid, list]) => html`
+          <div class="art-group" key=${iid}>
+            <a class="item id art-gid" onClick=${() => nav(`item/${iid}`)}>${iid}</a>
+            ${list.map((a) => html`<${ArtThumb} key=${a.path} a=${a} onOpen=${() => onOpen(arts.indexOf(a))} />`)}
+          </div>`)
+      : arts.map((a) => html`<${ArtThumb} key=${a.path} a=${a} onOpen=${() => onOpen(arts.indexOf(a))} />`)}
+  </div>`;
+};
+
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
+  const { data: arts } = useApi(`/api/items/${id}/artifacts`, [id]);
+  const [viewing, setViewing] = useState(null); // artifact index being viewed
   const [picked, setTab] = useState(null);
   const [mdView, setMdView] = useState(loadMdView);
   const toggleMd = () => {
@@ -1903,7 +1996,7 @@ const ItemView = ({ id }) => {
     setMdView(v);
     saveMdView(v);
   };
-  useEffect(() => setTab(null), [id]);
+  useEffect(() => { setTab(null); setViewing(null); }, [id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
   const st = it.meta.status;
@@ -2115,6 +2208,9 @@ const ItemView = ({ id }) => {
           ${(it.meta.deliveries ?? []).map((d) => html`<div class="text-secondary small">delivery ${d.resource} ${d.merge_commit?.slice(0, 12)} — ${d.pushed ? "pushed" : "not pushed"}</div>`)}`}
       </div>
     </div>
+    <${ArtStrip} arts=${arts} onOpen=${(i) => setViewing(i)} />
+    ${viewing !== null && arts?.length ? html`<${ArtViewer} arts=${arts} i=${viewing}
+      onClose=${() => setViewing(null)} onNav=${(d) => setViewing(Math.max(0, Math.min(arts.length - 1, viewing + d)))} />` : ""}
     ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!closed && d.meta.id === ownLast}
       onChange=${(text) => act("change_answer", { text })} />`)}
     ${b.deps.length > 0 && html`

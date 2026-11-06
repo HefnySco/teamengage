@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { MIME } from "./ui.js";
 import { z } from "zod";
