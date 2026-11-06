@@ -49,6 +49,32 @@ function version(): string {
   return pkg.version;
 }
 
+// help on a tty, like droneengage_studio's sim/ctl help: command green,
+// <params>/[flags] yellow, description white; plain off a tty / NO_COLOR
+const PARAM_RX = /<[^>]*>|\[[^\]]*\]|\.\.\.|--\S+/g;
+const printUsage = (doc: string) => {
+  if (!process.stdout.isTTY || process.env.NO_COLOR) {
+    process.stdout.write(doc);
+    return;
+  }
+  const [green, yellow, white, reset] = ["\x1b[32m", "\x1b[33m", "\x1b[37m", "\x1b[0m"];
+  const out = doc.split("\n").map((line) => {
+    // "usage: <cmd>" — the label white, the command like a usage row
+    const mu = /^(usage:\s+)(.*)$/.exec(line);
+    if (mu) return `${white}${mu[1]}${reset}${green}${mu[2].replace(PARAM_RX, `${yellow}$&${green}`)}${reset}`;
+    // a usage row is "  <cmd><2+ spaces><description>"
+    const m = /^( {2}\S.*?)(?:( {2,})(\S.*))?$/.exec(line);
+    if (!m) return line.trim() ? `${white}${line}${reset}` : line;
+    const [, cmd, pad, desc] = m;
+    // flag rows (-x, --x) and `default:` lines are params — yellow
+    if (cmd.trimStart().startsWith("-") || (desc ?? "").startsWith("default:")) {
+      return `${yellow}${cmd}${reset}${desc ? `${pad}${white}${desc}${reset}` : ""}`;
+    }
+    return `${green}${cmd.replace(PARAM_RX, `${yellow}$&${green}`)}${reset}${desc ? `${pad}${white}${desc}${reset}` : ""}`;
+  });
+  process.stdout.write(out.join("\n"));
+};
+
 const USAGE = `te — TeamEngage: you plan and decide, your AI agents do the work
 
 the loop
@@ -183,12 +209,12 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (args.length === 0 || ((args.includes("--help") || args.includes("-h")) && args[0] !== "run")) {
-    process.stdout.write(USAGE);
+    printUsage(USAGE);
     return 0;
   }
   const [cmd, ...rest] = args;
   if (cmd === "help") {
-    process.stdout.write(rest[0] === "all" ? USAGE_ALL : USAGE);
+    printUsage(rest[0] === "all" ? USAGE_ALL : USAGE);
     return 0;
   }
   const home = process.env.TEAMENGAGE_HOME;
