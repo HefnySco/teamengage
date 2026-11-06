@@ -108,6 +108,11 @@ const USAGE_ALL = `te — every command
   reparent <ID> <PARENT|--off>   set or clear an item's parent epic (plan membership)
   rollback <ID> [--yes]  restore claim snapshots onto live targets
   import <folder|file> [--type t]  import Markdown task files (--type idea for a source doc)
+  attach <ID> <file> --caption "…" [--domain x]… [--sensitive]
+             add a file to the item's ## Artifacts (copied to .artifacts/)
+  detach <ID> <path>   remove an artifact line — the file stays
+  artifacts import [--apply]   attach loose .artifacts/ files by name prefix
+             (<prefix><digits>-<name> → <PREFIX>-<digits>; dry run without --apply)
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
@@ -121,6 +126,7 @@ const USAGE_ALL = `te — every command
              copies go stale and teach agents an outdated protocol)
   guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
   daemon     run the daemon in the foreground
+             systemd service (Linux): npm run autorun (install) | npm run restart | scripts/service.sh stop|status
 
 options:
   --ws <name>  pick a workspace when several are registered
