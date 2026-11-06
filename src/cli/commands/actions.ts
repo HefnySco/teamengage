@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { daemonApi } from "../client.js";
 
 /**
@@ -283,6 +284,53 @@ export async function rollbackCmd(args: string[], home?: string): Promise<number
   }
   const r = (await act("rollback", [id, ...args.filter((a) => a.startsWith("--"))], { force: args.includes("--force") }, home)) as number;
   return r;
+}
+
+/**
+ * `te attach <ID> <file> --caption "…" [--domain x]… [--sensitive]` — copy a
+ * file (inside the task folder) to `.artifacts/<project>/<id>-<name>` and add
+ * the line to the item's `## Artifacts`. `te detach <ID> <path>` removes the
+ * line; the file stays.
+ */
+export async function attachCmd(args: string[], home?: string): Promise<number> {
+  const sensitive = args.includes("--sensitive");
+  const filtered = args.filter((a) => a !== "--sensitive");
+  const [id, file] = positional(filtered);
+  const caption = opt(args, "--caption") ?? "";
+  const domains: string[] = [];
+  for (let i = 0; i < args.length; i++) if (args[i] === "--domain" && args[i + 1]) domains.push(args[++i]);
+  if (!id || !file || !caption) {
+    process.stderr.write(
+      'usage: te attach <ID> <file> --caption "…" [--domain x]... [--sensitive]\n' +
+        "the file must live inside the task folder — it is copied to .artifacts/<project>/<id>-<name>\n",
+    );
+    return 2;
+  }
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/attach${wsQ(args)}`,
+    { path: resolve(file), caption, domains, sensitive },
+    home,
+  )) as { path?: string; already?: boolean; warning?: string };
+  process.stdout.write(`${id.toUpperCase()} → .artifacts/${r.path}${r.already ? " (already attached)" : ""}\n`);
+  if (r.warning) process.stderr.write(`warning: ${r.warning}\n`);
+  return 0;
+}
+
+export async function detachCmd(args: string[], home?: string): Promise<number> {
+  const [id, p] = positional(args);
+  if (!id || !p) {
+    process.stderr.write("usage: te detach <ID> <path-under-.artifacts>\n");
+    return 2;
+  }
+  await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/detach${wsQ(args)}`,
+    { path: p },
+    home,
+  );
+  process.stdout.write(`${id.toUpperCase()} → detached ${p} (file kept)\n`);
+  return 0;
 }
 
 export async function renumberCmd(args: string[], home?: string): Promise<number> {

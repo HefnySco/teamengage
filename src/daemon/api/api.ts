@@ -555,6 +555,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
   act("close_plan", (ops, id) => ops.closePlan(id));
   act("reopen_plan", (ops, id) => ops.reopenPlan(id));
+  act("attach", (ops, id, b) =>
+    ops.attach(id, "human", {
+      path: String(b.path ?? ""),
+      caption: String(b.caption ?? ""),
+      domains: Array.isArray(b.domains) ? b.domains.map(String) : undefined,
+      sensitive: b.sensitive === true,
+    }),
+  );
+  act("detach", (ops, id, b) => ops.detach(id, "human", String(b.path ?? "")));
 
   // ---- domains vocabulary --------------------------------------------------
   const route = (method: "GET" | "POST", path: string, fn: (ops: WorkspaceOps, req: { params: unknown; body: unknown; query: unknown }) => Promise<unknown>) =>

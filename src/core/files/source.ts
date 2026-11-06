@@ -273,6 +273,60 @@ export function setTouches(text: string, touches: string[]): string {
   return lines.join(eol);
 }
 
+/** The body of the last `## <heading>` section (outside code fences), or undefined. */
+export function sectionBody(text: string, heading: string): string | undefined {
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let at = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(l)) at = i;
+  });
+  if (at === -1) return undefined;
+  const end = headings.find((h) => h > at) ?? lines.length;
+  return lines.slice(at + 1, end).join("\n");
+}
+
+/**
+ * Remove the lines matching `pred` from the last `## <heading>` section
+ * (outside code fences). Returns the new text, or undefined when no line
+ * matched. A section left empty keeps its heading.
+ */
+export function removeSectionLines(
+  text: string,
+  heading: string,
+  pred: (line: string) => boolean,
+): string | undefined {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let at = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(l)) at = i;
+  });
+  if (at === -1) return undefined;
+  const next = headings.find((h) => h > at) ?? lines.length;
+  let end = next;
+  while (end - 1 > at && lines[end - 1].trim() === "") end--;
+  const body = lines.slice(at + 1, end);
+  const kept = body.filter((l) => !pred(l));
+  if (kept.length === body.length) return undefined;
+  const after = lines.slice(next);
+  const out = [
+    ...lines.slice(0, at + 1),
+    ...(kept.length ? ["", ...kept] : []),
+    ...(after.length ? ["", ...after] : [""]),
+  ];
+  return out.join(eol);
+}
+
 /** Header of a daemon-written note block: `**YYYY-MM-DD HH:MM · who**`. */
 const NOTE_HEADER = /^\*\*(\d{4}-\d\d-\d\d \d\d:\d\d) · (\S+)\*\*\s*$/;
 

@@ -143,6 +143,20 @@ curl -s -X POST $B/simple/GL-0019 -H "$H" -d '{"text":"If you fly the same missi
 It creates (or replaces) the companion file next to the task, tags and links
 it, and the web page shows it under "simple". No claim needed.
 
+### Attaching files (mockups, screenshots)
+
+A file worth showing on the task page goes into `## Artifacts` — never by
+hand, never in `## Notes`. Put the file inside the task folder first, then:
+
+```bash
+curl -s -X POST $B/attach/GL-0019 -H "$H" -d '{"path":"mockups/home.png","caption":"home tab mockup","domains":["ui"]}'
+```
+
+The file is copied to `.artifacts/<project>/<id>-<name>` and the line is
+added for you — no claim needed. `sensitive: true` marks `!sensitive` (the
+file still goes into the plans repo — check the warning). `detach` removes a
+line, keeps the file.
+
 ## 6. Unsure? Ask — don't guess
 
 ```bash

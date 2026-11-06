@@ -1024,6 +1024,33 @@ export class WorkspaceOps {
     });
   }
 
+  /**
+   * Attach a file to an item's `## Artifacts` — any session may attach to
+   * any item, no claim needed (like ask): planners attach mockups to drafts.
+   * `sensitive` marks the line `!sensitive` and returns a warning — the file
+   * goes into the plans git repo.
+   */
+  async attach(
+    id: string,
+    actor: Session | "human",
+    a: { path: string; caption: string; domains?: string[]; sensitive?: boolean },
+  ) {
+    this.item(id);
+    const r = await this.store.attachArtifact(id, a, this.actorFor(actor));
+    return {
+      ...r,
+      ...(a.sensitive
+        ? { warning: ".artifacts/ is part of the plans git repo — a !sensitive file stays visible there" }
+        : {}),
+    };
+  }
+
+  /** Remove one `## Artifacts` line — the file on disk stays. Any session, no claim. */
+  async detach(id: string, actor: Session | "human", path: string) {
+    this.item(id);
+    return this.store.detachArtifact(id, path, this.actorFor(actor));
+  }
+
   /** Agent asks the human to drop this item — advisory flag, status untouched. */
   async flagDrop(id: string, session: Session, reason?: string) {
     const it = this.item(id);

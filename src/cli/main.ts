@@ -36,6 +36,8 @@ import {
   rollbackCmd,
   renumberCmd,
   reparentCmd,
+  attachCmd,
+  detachCmd,
 } from "./commands/actions.js";
 
 function version(): string {
@@ -248,6 +250,10 @@ async function main(argv: string[]): Promise<number> {
       return renumberCmd(rest, home);
     case "reparent":
       return reparentCmd(rest, home);
+    case "attach":
+      return attachCmd(rest, home);
+    case "detach":
+      return detachCmd(rest, home);
     case "import":
       return importCmd(rest, home);
     case "run":

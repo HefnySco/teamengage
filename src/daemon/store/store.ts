@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import type { Document as YamlDocument } from "yaml";
 import { existsSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Index } from "../../core/index/index.js";
 import { EventLog, eventFileName } from "../../core/events/log.js";
 import {
@@ -11,6 +11,7 @@ import {
   appendLog,
   appendToSection,
   emitFrontmatter,
+  parseArtifacts,
 } from "../../core/files/markdown.js";
 import {
   withTeTag,
@@ -26,12 +27,17 @@ import {
   setParentLine,
   setRelatesLine,
   replaceSection,
+  sectionBody,
+  removeSectionLines,
   PROTECTED_SECTIONS,
 } from "../../core/files/source.js";
 import { normalizeDomain, normalizeDomains, type DomainDef } from "../../core/domains/domains.js";
 
 /** keywords: trimmed, lowercase, unique. */
 const normalizeKeywords = (k: string[]) => [...new Set(k.map((w) => w.trim().toLowerCase()).filter(Boolean))];
+
+/** File types `attach` allows under `.artifacts/` (documents and mockups only). */
+const ARTIFACT_TYPES = new Set(["png", "jpg", "webp", "gif", "svg", "pdf", "html", "md", "txt", "json", "csv"]);
 import {
   filePrefix,
   nextTaskNumber,
@@ -1063,6 +1069,152 @@ export class PlansStore {
       if (path !== it.path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return { path };
+    });
+  }
+
+  /**
+   * Attach a file to an item's `## Artifacts`. The source must resolve under
+   * the workspace root; it is copied to
+   * `.artifacts/<project>/<id-lowercase>-<basename>` unless it already sits
+   * under `.artifacts/` (then it is only referenced). A `..` path, a file
+   * outside the root, a disallowed type, a file over `artifacts.max_mb` or a
+   * name clash with different content are refused. The list line is written
+   * to the task file (overlay) or the item file (standard); attaching the
+   * same path twice is a no-op. Any actor may attach — no claim, no state
+   * change.
+   */
+  attachArtifact(
+    id: string,
+    a: { path: string; caption: string; domains?: string[]; sensitive?: boolean },
+    actor: Actor,
+  ): Promise<{ path: string; copied: boolean; already: boolean }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const caption = (a.caption ?? "").trim();
+      if (!caption) throw new ValidationError("attach needs {path, caption} — the caption is empty");
+      const given = (a.path ?? "").replace(/\\/g, "/");
+      if (!given || given.split("/").includes("..")) {
+        throw new ValidationError("attach: '..' is not allowed in the path");
+      }
+      const absSrc = resolve(this.ws.root, given);
+      const underRoot = relative(this.ws.root, absSrc);
+      if (underRoot.startsWith("..") || isAbsolute(underRoot)) {
+        throw new ValidationError(`attach: ${a.path} is outside the task folder`);
+      }
+      const st = await stat(absSrc).catch(() => undefined);
+      if (!st?.isFile()) throw new NotFoundError(`attach: file not found: ${a.path}`);
+      const ext = extname(absSrc).slice(1).toLowerCase();
+      if (!ARTIFACT_TYPES.has(ext)) {
+        throw new ValidationError(
+          `attach: .${ext || "?"} is not an allowed artifact type (png jpg webp gif svg pdf html md txt json csv)`,
+        );
+      }
+      const maxMb = this.ws.config.artifacts.max_mb;
+      if (st.size > maxMb * 1024 * 1024) {
+        throw new ValidationError(
+          `attach: ${a.path} is ${(st.size / 1048576).toFixed(1)} MB — over artifacts.max_mb (${maxMb} MB)`,
+        );
+      }
+
+      const artifactsRoot = join(this.ws.root, ".artifacts");
+      const inside = relative(artifactsRoot, absSrc);
+      let rel: string;
+      let copied = false;
+      if (inside && !inside.startsWith("..") && !isAbsolute(inside)) {
+        rel = inside.split(sep).join("/");
+      } else {
+        const project = it.meta.project ?? "_root";
+        const safe = basename(absSrc).replace(/[^A-Za-z0-9._-]+/g, "-");
+        rel = `${project}/${id.toLowerCase()}-${safe}`;
+        const absDest = join(artifactsRoot, rel);
+        if (existsSync(absDest)) {
+          if (!(await readFile(absDest)).equals(await readFile(absSrc))) {
+            throw new ConflictError(`attach: .artifacts/${rel} already exists with different content`);
+          }
+        } else {
+          await mkdir(dirname(absDest), { recursive: true });
+          await copyFile(absSrc, absDest);
+          copied = true;
+        }
+      }
+
+      const tags = normalizeDomains(a.domains ?? [])
+        .map((d) => `#${d}`)
+        .join(" ");
+      const line = `- ${rel} — ${caption}${tags ? ` ${tags}` : ""}${a.sensitive ? " !sensitive" : ""}`;
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      const log = [`- ${now} ${who} attached .artifacts/${rel} — ${caption}`];
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const existing = parseArtifacts(sectionBody(found.text, "Artifacts"));
+        if (existing.some((x) => x.path === rel)) return { path: rel, copied, already: true };
+        const out = appendSection(found.text, "Artifacts", line);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log);
+        await this.commitPaths([it.path], `te: ${id} attach ${rel} by ${who}`);
+        await this.stageTaskFiles([found.path]);
+      } else {
+        if (doc.artifacts.some((x) => x.path === rel)) return { path: rel, copied, already: true };
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log, [
+          { heading: "Artifacts", text: `${line}\n` },
+        ]);
+        await this.commitPaths([it.path], `te: ${id} attach ${rel} by ${who}`);
+      }
+      if (copied) await this.stageTaskFiles([`.artifacts/${rel}`]);
+      await this.index.upsertFile(absItem);
+      return { path: rel, copied, already: false };
+    });
+  }
+
+  /**
+   * Remove one `## Artifacts` line — the file on disk stays. Refused when the
+   * item has no artifact with that path.
+   */
+  detachArtifact(id: string, path: string, actor: Actor): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const want = (path ?? "").trim();
+      if (!want) throw new ValidationError("detach needs {path}");
+      const isLine = (l: string) => /^-\s+(\S+)\s+[—–]/.exec(l.trim())?.[1] === want;
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      const log = [`- ${now} ${who} detached .artifacts/${want}`];
+      const commit = `te: ${id} detach ${want} by ${who}`;
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const out = removeSectionLines(found.text, "Artifacts", isLine);
+        if (out === undefined) throw new NotFoundError(`${id}: no artifact '${want}' in ## Artifacts`);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log);
+        await this.commitPaths([it.path], commit);
+        await this.stageTaskFiles([found.path]);
+      } else {
+        const out = removeSectionLines(doc.raw.text, "Artifacts", isLine);
+        if (out === undefined) throw new NotFoundError(`${id}: no artifact '${want}' in ## Artifacts`);
+        await this.writeItemDoc(absItem, out, meta, log);
+        await this.commitPaths([it.path], commit);
+      }
+      await this.index.upsertFile(absItem);
+      return { path: want };
     });
   }
 

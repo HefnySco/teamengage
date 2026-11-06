@@ -802,3 +802,31 @@ describe("nothing TeamEngage writes is left untracked (commit: false)", () => {
     expect(git("rev-parse", "HEAD")).toBe(head); // staged, not committed
   });
 });
+
+describe("attach in overlay mode", () => {
+  it("the line goes to the task file's ## Artifacts, the file is copied and staged", async () => {
+    const t13 = byLegacy("TASK-13-rerun");
+    const id = t13.meta.id;
+    writeFileSync(join(root, "global", "mock.png"), Buffer.from([7, 7]));
+    const r = await post(`/api/items/${id}/attach`, { path: "global/mock.png", caption: "mockup" });
+    expect(r.path).toBe(`global/${id.toLowerCase()}-mock.png`);
+    const dest = join(root, ".artifacts", "global", `${id.toLowerCase()}-mock.png`);
+    expect(existsSync(dest)).toBe(true);
+    const task = readFileSync(join(root, t13.meta.source!), "utf8");
+    expect(task).toContain("## Artifacts");
+    expect(task).toContain(`- global/${id.toLowerCase()}-mock.png — mockup`);
+    // the item file logs it but holds no artifact line (task file is the content)
+    const itemText = readFileSync(join(plans, t13.path), "utf8");
+    expect(itemText).not.toContain("- global/");
+    expect(itemText).toContain("attached .artifacts/global/");
+    // task file and artifact are staged, not committed (commit: false)
+    const status = git("status", "--porcelain", "--untracked-files=all");
+    expect(status.split("\n").find((l) => l.endsWith(t13.meta.source!))).toMatch(/^[AM]/);
+    expect(status.split("\n").find((l) => l.endsWith(`-mock.png`))).toMatch(/^A /);
+
+    // detach removes the line, keeps the file
+    await post(`/api/items/${id}/detach`, { path: `global/${id.toLowerCase()}-mock.png` });
+    expect(readFileSync(join(root, t13.meta.source!), "utf8")).not.toContain(`- global/${id.toLowerCase()}-mock.png`);
+    expect(existsSync(dest)).toBe(true);
+  });
+});

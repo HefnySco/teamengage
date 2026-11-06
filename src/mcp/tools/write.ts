@@ -157,6 +157,62 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "attach",
+    {
+      description:
+        "Attach a file to an item's ## Artifacts: copies it to <root>/.artifacts/<project>/<id-lowercase>-<basename> " +
+        "(no copy when the file already sits under .artifacts/), adds '- <path> — <caption> [#domain …] [!sensitive]' " +
+        "and a log entry. Any session may attach to any item — no claim needed (like ask); planners attach mockups to drafts. " +
+        "Refused: a '..' path or a file outside the task folder, a name clash with different content, a file over " +
+        "workspace.yaml artifacts.max_mb (default 5), a type outside png jpg webp gif svg pdf html md txt json csv. " +
+        "sensitive: true tags the line !sensitive — the file still goes into the plans git repo, and the reply warns.",
+      inputSchema: {
+        id: z.string(),
+        path: z.string(),
+        caption: z.string(),
+        domains: z.array(z.string()).optional(),
+        sensitive: z.boolean().optional(),
+      },
+    },
+    async ({ id, path, caption, domains, sensitive }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.attach(id, s, { path, caption, domains, sensitive });
+        return okText(
+          `attached .artifacts/${r.path} → ${id}${r.already ? " (already attached)" : ""}` +
+            (r.warning ? `\nwarning: ${r.warning}` : ""),
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "detach",
+    {
+      description:
+        "Remove one line from an item's ## Artifacts — the file on disk stays. Any session, no claim needed.",
+      inputSchema: { id: z.string(), path: z.string() },
+    },
+    async ({ id, path }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.detach(id, s, path);
+        return okText(`detached .artifacts/${path} from ${id} (file kept)`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "ask",
     {
       description: "Record a question → item waits for the human.",
@@ -373,7 +429,7 @@ export function registerWriteTools(
       description:
         "Rewrite a DRAFT — any of: title, summary, acceptance (replaces the whole checklist), touches " +
         "(the **Touches:** line), depends_on, parent (\"\" clears), relates, targets, tier (any clears), domains, " +
-        "sections ({\"## Heading\": new body}; ## Notes/Review/Evidence/Walkthrough/Handoff/Log/History are managed — refused). " +
+        "sections ({\"## Heading\": new body}; ## Artifacts/Notes/Review/Evidence/Walkthrough/Handoff/Log/History are managed — refused). " +
         "Only drafts: for anything else ask the human to move it back to draft first (that is the go-ahead). " +
         "reason says why. Planner tiers only (standard/heavy). It stays a draft — the human approves the new version.",
       inputSchema: {

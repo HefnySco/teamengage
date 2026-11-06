@@ -164,6 +164,7 @@ EXAMPLES
   curl -s -X POST ${base}/agent/claim/MP-0002 -H "X-TE-Session: $T"
   curl -s -X POST ${base}/agent/log/MP-0002 -H "X-TE-Session: $T" -d '{"note":"tests green"}'
   curl -s -X POST ${base}/agent/ask/MP-0002 -H "X-TE-Session: $T" -d '{"question":"A or B?","options":["A","B"]}'
+  curl -s -X POST ${base}/agent/attach/MP-0002 -H "X-TE-Session: $T" -d '{"path":"mockups/home.png","caption":"home tab mockup"}'
   curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed","walkthrough":"Added a retry loop in connect(): …"}'
 
 Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.

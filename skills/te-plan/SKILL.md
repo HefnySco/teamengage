@@ -172,6 +172,9 @@ Field notes:
   additive edit.
 - `simple`: add when the human will want a plain-English version in STE
   (for an existing task: `curl -s -X POST $B/simple/<id> -H "$H" -d '{"text":"…"}'`).
+- mockups and screenshots belong in `## Artifacts` — attach them to the new
+  draft (no claim needed): put the file in the task folder, then
+  `curl -s -X POST $B/attach/<id> -H "$H" -d '{"path":"mockups/home.png","caption":"home tab"}'`.
 - Write every field in STE (ASD-STE100 Simplified Technical English):
   short sentences, active voice, plain approved words.
 

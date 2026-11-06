@@ -120,6 +120,8 @@ export const WorkspaceConfig = z
      * from ever being pushed). Unset: each branch's upstream remote.
      */
     sync_remotes: z.array(z.string()).default([]),
+    /** attached files (`## Artifacts`): max_mb caps one file's size (attach refuses bigger) */
+    artifacts: z.object({ max_mb: z.number().positive().default(5) }).default({}),
     /** linked workspaces: name → workspace root path. */
     links: z.record(z.string(), z.string()).default({}),
   })

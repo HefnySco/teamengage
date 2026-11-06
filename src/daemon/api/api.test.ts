@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -1033,5 +1033,56 @@ describe("reject --release and dead-holder takeover", () => {
     expect(c.claim.holder).toBe(s2.id);
     expect(store.idx.get(id)!.meta.status).toBe("in_progress");
     expect(ops.findings().some((f) => f.kind === "dead_claim" && f.item === id)).toBe(false);
+  });
+});
+
+describe("attach/detach artifacts", () => {
+  it("attach copies the file, writes the line and logs; detach removes only the line", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const agent = ctx.sessions.hello("art-agent");
+    const root = join(home, "ws");
+    writeFileSync(join(root, "shot.png"), Buffer.from([1, 2, 3, 4]));
+
+    // on a ready item, no claim needed
+    const r = await ops.attach("WS-0001", agent, { path: "shot.png", caption: "home" });
+    expect(r).toMatchObject({ path: "_root/ws-0001-shot.png", copied: true, already: false });
+    expect(existsSync(join(root, ".artifacts", "_root", "ws-0001-shot.png"))).toBe(true);
+    const itemText = () => readFileSync(join(plans, store.idx.get("WS-0001")!.path), "utf8");
+    expect(itemText()).toContain("- _root/ws-0001-shot.png — home");
+    expect(itemText()).toContain("attached .artifacts/_root/ws-0001-shot.png");
+    // second attach of the same path is a no-op
+    expect((await ops.attach("WS-0001", agent, { path: "shot.png", caption: "home" })).already).toBe(true);
+    // works on a draft too (WS-0003 is draft)
+    await ops.attach("WS-0003", agent, { path: "shot.png", caption: "d" });
+    expect(readFileSync(join(plans, store.idx.get("WS-0003")!.path), "utf8")).toContain("- _root/ws-0003-shot.png — d");
+
+    // refusals: '..', missing file, bad type, oversized
+    await expect(ops.attach("WS-0001", agent, { path: "../shot.png", caption: "x" })).rejects.toThrow(/\.\./);
+    await expect(ops.attach("WS-0001", agent, { path: "nope.png", caption: "x" })).rejects.toThrow(/not found/);
+    writeFileSync(join(root, "evil.exe"), "x");
+    await expect(ops.attach("WS-0001", agent, { path: "evil.exe", caption: "x" })).rejects.toThrow(/not an allowed artifact type/);
+    const big = join(root, "big.png");
+    writeFileSync(big, Buffer.alloc(6 * 1024 * 1024, 0));
+    await expect(ops.attach("WS-0001", agent, { path: "big.png", caption: "x" })).rejects.toThrow(/max_mb/);
+    // name clash: different content under the same dest name
+    writeFileSync(join(root, "shot.png"), Buffer.from([9, 9, 9]));
+    await expect(ops.attach("WS-0001", agent, { path: "shot.png", caption: "x" })).rejects.toThrow(/different content/);
+
+    // sensitive: !sensitive tag on the line + warning in the reply
+    writeFileSync(join(root, "priv.png"), Buffer.from([5]));
+    const s = await ops.attach("WS-0001", agent, { path: "priv.png", caption: "private", domains: ["ui"], sensitive: true });
+    expect(s.warning).toMatch(/plans git repo/);
+    expect(itemText()).toContain("- _root/ws-0001-priv.png — private #ui !sensitive");
+
+    // detach removes the line, keeps the file
+    const d = await ops.detach("WS-0001", agent, "_root/ws-0001-shot.png");
+    expect(d.path).toBe("_root/ws-0001-shot.png");
+    expect(itemText()).not.toContain("- _root/ws-0001-shot.png — home");
+    expect(itemText()).toContain("detached .artifacts/_root/ws-0001-shot.png");
+    expect(existsSync(join(root, ".artifacts", "_root", "ws-0001-shot.png"))).toBe(true);
+    await expect(ops.detach("WS-0001", agent, "_root/ws-0001-shot.png")).rejects.toThrow(/no artifact/);
   });
 });
