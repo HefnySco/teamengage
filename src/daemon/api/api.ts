@@ -118,8 +118,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   });
 
   // Read-only artifact files from <root>/.artifacts/ — real-path containment
-  // stops '..' and symlink escapes; HTML is served under a sandbox CSP so a
-  // mockup page can never run with the UI origin.
+  // stops '..' and symlink escapes; HTML/HTM/SVG are served under a sandbox
+  // CSP so a mockup page or inline SVG can never run with the UI origin.
   app.get("/api/artifacts/file", async (req, reply) => {
     try {
       const q = req.query as { path?: string };
@@ -141,7 +141,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       }
       const ext = extname(real).toLowerCase();
       const r = reply.type(MIME[ext] ?? "application/octet-stream").header("cache-control", "no-cache");
-      if (ext === ".html") r.header("content-security-policy", "sandbox");
+      if (ext === ".html" || ext === ".htm" || ext === ".svg") r.header("content-security-policy", "sandbox");
       return r.send(readFileSync(real));
     } catch (e) {
       return sendErr(reply, e);

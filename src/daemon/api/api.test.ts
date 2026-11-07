@@ -1096,17 +1096,29 @@ describe("artifact file serving and lists", () => {
     const root = join(home, "ws");
     writeFileSync(join(root, "a2.png"), Buffer.from([1, 2]));
     writeFileSync(join(root, "page.html"), "<html><body>mock</body></html>");
+    writeFileSync(join(root, "icon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
     await ops.attach("WS-0001", agent, { path: "a2.png", caption: "shot" });
     await ops.attach("WS-0001", agent, { path: "page.html", caption: "page" });
+    await ops.attach("WS-0001", agent, { path: "icon.svg", caption: "icon" });
     await ops.attach("WS-0001", agent, { path: "a2.png", caption: "ui", domains: ["ui"], sensitive: false }).catch(() => {});
 
     const file = async (p: string) => api(`/api/artifacts/file?path=${encodeURIComponent(p)}`);
     const ok = await file("_root/ws-0001-a2.png");
     expect(ok.status).toBe(200);
     expect(ok.headers.get("content-type")).toBe("image/png");
+    expect(ok.headers.get("content-security-policy")).toBeNull();
     const html = await file("_root/ws-0001-page.html");
     expect(html.status).toBe(200);
     expect(html.headers.get("content-security-policy")).toBe("sandbox");
+    const svg = await file("_root/ws-0001-icon.svg");
+    expect(svg.status).toBe(200);
+    expect(svg.headers.get("content-security-policy")).toBe("sandbox");
+    // .htm is not an allowed attach type — drop it into .artifacts/ directly
+    // (name carries no item id, so artifacts import files it under no_item)
+    writeFileSync(join(root, ".artifacts", "_root", "page.htm"), "<html><body>htm</body></html>");
+    const htm = await file("_root/page.htm");
+    expect(htm.status).toBe(200);
+    expect(htm.headers.get("content-security-policy")).toBe("sandbox");
     // escapes: '..' and a symlink pointing outside are refused/404
     expect((await file("../workspace.yaml")).status).toBe(403);
     const { symlinkSync } = await import("node:fs");
@@ -1141,7 +1153,7 @@ describe("artifacts import", () => {
     const dry = await ops.artifactsImport(false);
     expect(dry.move).toEqual(["ws0001-pic.png → _root/ws0001-pic.png"]);
     expect(dry.attach).toEqual(["WS-0001 _root/ws-0001-shot.png", "WS-0001 _root/ws0001-pic.png"]);
-    expect(dry.no_item).toEqual(["zz9999-lost.png"]);
+    expect(dry.no_item).toEqual(["_root/page.htm", "zz9999-lost.png"]);
     expect(dry.already).toContain("_root/ws-0001-priv.png"); // from the earlier attach suite
     expect(existsSync(join(root, ".artifacts", "ws0001-pic.png"))).toBe(true);
 
