@@ -4,6 +4,7 @@ import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/s
 import { parseArtifacts } from "../../core/files/markdown.js";
 import {
   normalizeDomain,
+  normalizeDomains,
   domainColor,
   rankDomains,
   type DomainDef,
@@ -46,6 +47,9 @@ export interface Links {
   index(name: string): Index | undefined;
   missing(): string[];
 }
+
+/** Title/summary words that mark an item as a fix — it always carries `bug`. */
+const FIX_WORDS = /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
 
 export class WorkspaceOps {
   constructor(
@@ -701,9 +705,32 @@ export class WorkspaceOps {
     }>,
     actor: Session | "human",
   ) {
+    // Every non-idea item lands with at least one domain: explicit, else
+    // inferred from title/touches/summary via the workspace vocabulary; a
+    // fix (type `bug`, or fix words in title/summary) always carries `bug`.
+    // An item that still has none is refused — an untagged task is
+    // invisible to domain filters and suggestions.
+    const defs = await this.store.currentDomains();
+    const enriched = drafts.map((d, i) => {
+      let domains = normalizeDomains(d.domains ?? []);
+      if (!domains.length && d.type !== "idea") {
+        domains = rankDomains(
+          { strong: [d.title, ...(d.touches ?? [])].join("\n"), lead: d.summary ?? "", body: "" },
+          defs,
+        );
+      }
+      const isFix = d.type === "bug" || FIX_WORDS.test(`${d.title}\n${d.summary ?? ""}`);
+      if (isFix && !domains.includes("bug")) domains = [...domains, "bug"];
+      if (!domains.length && d.type !== "idea") {
+        throw new ValidationError(
+          `propose item ${i} '${d.title}': no domain given and none inferred — a task needs at least one domain`,
+        );
+      }
+      return { ...d, domains };
+    });
     void this.actorFor(actor);
     const r = await this.store.createItems(
-      drafts.map((d) => ({ type: d.type ?? "task", ...d })),
+      enriched.map((d) => ({ type: d.type ?? "task", ...d })),
       this.actorFor(actor),
     );
     // autonomy: solo — an agent's follow-up/fix of known work needs no

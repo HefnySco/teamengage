@@ -223,7 +223,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
     expect(text(g as never)).toContain("flowchart LR");
     const p = await client.callTool({
       name: "propose",
-      arguments: { items: [{ title: "new thing", project: undefined }] },
+      arguments: { items: [{ title: "new thing", domains: ["meta"], project: undefined }] },
     });
     expect(text(p as never)).toMatch(/proposed WS-0004/);
     const it4 = ctx.workspaces.get("ws")!.store.idx.get("WS-0004")!;

@@ -722,8 +722,8 @@ describe("autonomy: solo", () => {
       const p = await ops.propose(
         [
           { title: "Fix of base", depends_on: [base] },
-          { title: "Free-standing idea" },
-          { type: "epic", title: "Big plan", depends_on: [base] },
+          { title: "Free-standing idea", domains: ["meta"] },
+          { type: "epic", title: "Big plan", depends_on: [base], domains: ["meta"] },
         ],
         agent,
       );
@@ -1169,5 +1169,39 @@ describe("artifacts import", () => {
     const again = await ops.artifactsImport(true);
     expect(again.already).toContain("_root/ws0001-pic.png");
     expect(again.attach).toEqual([]);
+  });
+});
+
+describe("propose domain tags", () => {
+  it("a task always lands with a domain; fixes get #bug; ideas are exempt", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const agent = ctx.sessions.hello("dom-agent");
+    const domainsOf = async (id: string) => store.idx.get(id)!.meta.domains;
+
+    // explicit domains win; a fix title still gains #bug on top
+    const tagged = await ops.propose([{ title: "Fix telemetry drop", domains: ["telemetry"] }], agent);
+    expect(await domainsOf(tagged.ids[0])).toEqual(["telemetry", "bug"]);
+
+    // nothing given: the title is matched against the vocabulary (telemetry
+    // was just added) and the inferred domain is applied
+    const inferred = await ops.propose([{ title: "Improve telemetry charts" }], agent);
+    expect(await domainsOf(inferred.ids[0])).toEqual(["telemetry"]);
+
+    // a fix gets #bug even when inference found it nothing else
+    const bare = await ops.propose([{ title: "Repair zzz wobble" }], agent);
+    expect(await domainsOf(bare.ids[0])).toEqual(["bug"]);
+    // type `bug` always carries the domain
+    const bt = await ops.propose([{ type: "bug", title: "Zzz wobble" }], agent);
+    expect(await domainsOf(bt.ids[0])).toEqual(["bug"]);
+
+    // nothing given and nothing inferable → refused, no item created
+    await expect(ops.propose([{ title: "Zzz qqq wobble" }], agent)).rejects.toThrow(/domain/);
+
+    // ideas are exempt — an untagged source document is fine
+    const idea = await ops.propose([{ type: "idea", title: "Zzz qqq wobble" }], agent);
+    expect(await domainsOf(idea.ids[0])).toEqual([]);
   });
 });

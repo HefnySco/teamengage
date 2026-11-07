@@ -146,6 +146,10 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   "relates" (reference only — no ordering, no gate). Plain-English version
   for the human, in STE: simple <id> {text} (writes and links X.simple.md)
   — never by hand.
+- Every task carries at least one domain (#tag). Give domains in propose,
+  or they are inferred from the title/touches/summary — a proposal where
+  nothing applies is refused. A fix (type bug, or fix/bug/defect/
+  regression words in title or summary) always gets #bug.
 - Never edit or remove the "te:" frontmatter line; never move files into
   done/ — status lives in TeamEngage, the human moves files.
 - Notes worth keeping in a task: note <id> {text} (appends to its "## Notes").

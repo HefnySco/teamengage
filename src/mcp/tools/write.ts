@@ -547,6 +547,8 @@ export function registerWriteTools(
         "In a task-folder workspace each item becomes <project>/TASK-NN-<slug>.md (epics: PHASE-NN-…, " +
         "ideas: IDEA-NN-… — source documents an agent can be asked to plan from; never claimed) " +
         "from the standard template — give acceptance criteria an agent can check and the repos/paths it touches. " +
+        "Every task needs at least one domain — give them in domains, or they are inferred from title/touches/summary; " +
+        "a fix (type `bug`, or fix/bug/defect/regression words in title or summary) always gets the `bug` domain. " +
         "depends_on/parent/relates may use #N for the N-th (0-based) earlier item of the same call; " +
         "relates links an item to its sources (e.g. the idea(s) it was generated from) — reference only. " +
         "tier = the least capable model that can do it (light: mechanical/one-file; standard: normal feature/fix; heavy: cross-cutting/design-heavy). " +
