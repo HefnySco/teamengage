@@ -265,6 +265,11 @@ export class WorkspaceOps {
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
       return { ref, status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown" };
     });
+    const found_by = (it.meta.found_by ?? []).map((ref) => {
+      const parsed = parseItemRef(ref);
+      const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
+      return { ref, status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown" };
+    });
     const wsName = this.wsr.ws.config.name;
     const referenced_by = [...this.index.items.values()]
       .filter(
@@ -280,7 +285,7 @@ export class WorkspaceOps {
           }),
       )
       .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
-    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
+    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
   }
 
   /**
@@ -697,6 +702,7 @@ export class WorkspaceOps {
       depends_on?: string[];
       parent?: string;
       relates?: string[];
+      found_by?: string[];
       summary?: string;
       acceptance?: string[];
       touches?: string[];
@@ -730,6 +736,10 @@ export class WorkspaceOps {
       return { ...d, domains };
     });
     void this.actorFor(actor);
+    // found_by refs: `#N` points into this batch (checked by the store); others must exist
+    for (const d of drafts) {
+      this.assertFoundBy("", (d.found_by ?? []).filter((r) => !/^#\d+$/.test(r.trim())));
+    }
     const r = await this.store.createItems(
       enriched.map((d) => ({ type: d.type ?? "task", ...d })),
       this.actorFor(actor),
@@ -1255,6 +1265,7 @@ export class WorkspaceOps {
       depends_on?: string[];
       parent?: string | null;
       relates?: string[];
+      found_by?: string[];
       targets?: string[];
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
@@ -1273,6 +1284,7 @@ export class WorkspaceOps {
     if (change.depends_on) this.assertDeps(id, change.depends_on);
     if (change.parent) this.assertParent(id, change.parent);
     if (change.relates) this.assertRefs(id, change.relates);
+    if (change.found_by) this.assertFoundBy(id, change.found_by);
     for (const t of change.targets ?? []) parseTargetRef(t); // throws on a bad ref
     return this.store.editDraft(id, change, this.actorFor(actor));
   }
@@ -1289,6 +1301,30 @@ export class WorkspaceOps {
     this.item(id);
     this.assertRefs(id, relates);
     return this.store.setRelates(id, relates, this.actorFor("human"));
+  }
+
+  /** Human: replace an item's found_by (any status). Reference only — checked here. */
+  async setFoundBy(id: string, foundBy: string[]) {
+    this.item(id);
+    this.assertFoundBy(id, foundBy);
+    return this.store.setFoundBy(id, foundBy, this.actorFor("human"));
+  }
+
+  /**
+   * found_by refs: each must parse and name an existing item (local index or
+   * a linked workspace), and not the item itself. An unknown id is a
+   * VALIDATION error. Reference only — no cycle checks, never ordering.
+   */
+  private assertFoundBy(id: string, refs: string[]) {
+    const wsName = this.wsr.ws.config.name;
+    for (const r of refs) {
+      const parsed = parseItemRef(r); // throws ValidationError on bad refs
+      const here = parsed.workspace === undefined || parsed.workspace === wsName;
+      if (here && parsed.id === id) throw new ValidationError(`found_by: ${id} may not reference itself`);
+      if (here ? !this.index.get(parsed.id) : this.links?.statusOf(r) === undefined) {
+        throw new ValidationError(`found_by: unknown item ${r}`);
+      }
+    }
   }
 
   /**

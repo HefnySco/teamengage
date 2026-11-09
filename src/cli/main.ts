@@ -22,6 +22,7 @@ import {
   unflagCmd,
   depsCmd,
   relateCmd,
+  foundByCmd,
   holdCmd,
   archiveCmd,
   keyCmd,
@@ -120,6 +121,7 @@ const USAGE_ALL = `te — every command
   undrop <ID>         restore a dropped item back to draft
   unflag <ID>         dismiss an agent's drop flag — the item stays
   deps <ID> [REF…|--off]   replace an item's depends_on (--off clears)
+  found-by <ID> [REF…|--off] set where the problem was found — reference only, no ordering
   relate <ID> [REF…|--off] replace an item's relates — loose refs like source ideas
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
   unhold <ID>         release a hold → ready
@@ -249,6 +251,8 @@ async function main(argv: string[]): Promise<number> {
       return unflagCmd(rest, home);
     case "deps":
       return depsCmd(rest, home);
+    case "found-by":
+      return foundByCmd(rest, home);
     case "relate":
       return relateCmd(rest, home);
     case "hold":

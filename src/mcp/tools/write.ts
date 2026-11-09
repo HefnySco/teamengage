@@ -432,7 +432,7 @@ export function registerWriteTools(
     {
       description:
         "Rewrite a DRAFT — any of: title, summary, acceptance (replaces the whole checklist), touches " +
-        "(the **Touches:** line), depends_on, parent (\"\" clears), relates, targets, tier (any clears), domains, " +
+        "(the **Touches:** line), depends_on, parent (\"\" clears), relates, found_by (ids of items where the problem was found; [] clears), targets, tier (any clears), domains, " +
         "sections ({\"## Heading\": new body}; ## Artifacts/Notes/Review/Evidence/Walkthrough/Handoff/Log/History are managed — refused). " +
         "Only drafts: for anything else ask the human to move it back to draft first (that is the go-ahead). " +
         "reason says why. Planner tiers only (standard/heavy). It stays a draft — the human approves the new version.",
@@ -446,13 +446,14 @@ export function registerWriteTools(
         depends_on: z.array(z.string()).optional(),
         parent: z.string().optional(),
         relates: z.array(z.string()).optional(),
+        found_by: z.array(z.string()).optional(),
         targets: z.array(z.string()).optional(),
         tier: z.enum(["light", "standard", "heavy", "any"]).optional(),
         domains: z.array(z.string()).optional(),
         sections: z.record(z.string(), z.string()).optional(),
       },
     },
-    async ({ id, reason, title, summary, acceptance, touches, depends_on, parent, relates, targets, tier, domains, sections }) => {
+    async ({ id, reason, title, summary, acceptance, touches, depends_on, parent, relates, found_by, targets, tier, domains, sections }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
@@ -467,6 +468,7 @@ export function registerWriteTools(
           depends_on,
           parent: parent === "" ? null : parent,
           relates,
+          found_by,
           targets,
           tier: tier === "any" ? null : tier,
           domains,
@@ -555,6 +557,7 @@ export function registerWriteTools(
         "a fix (type `bug`, or fix/bug/defect/regression words in title or summary) always gets the `bug` domain. " +
         "depends_on/parent/relates may use #N for the N-th (0-based) earlier item of the same call; " +
         "relates links an item to its sources (e.g. the idea(s) it was generated from) — reference only. " +
+        "found_by lists the item ids where the problem this item fixes was found — reference only, never ordering. " +
         "tier = the least capable model that can do it (light: mechanical/one-file; standard: normal feature/fix; heavy: cross-cutting/design-heavy). " +
         "Drafts proposed by a light-tier session wait for a stronger session's vet.",
       inputSchema: {
@@ -567,6 +570,7 @@ export function registerWriteTools(
             depends_on: z.array(z.string()).optional(),
             parent: z.string().optional(),
             relates: z.array(z.string()).optional(),
+            found_by: z.array(z.string()).optional(),
             summary: z.string().optional(),
             acceptance: z.array(z.string()).optional(),
             touches: z.array(z.string()).optional(),

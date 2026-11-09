@@ -18,6 +18,8 @@ export interface TaskDraft {
   parent?: string;
   /** loose references (e.g. the ideas a plan was generated from) — no ordering */
   relates?: string[];
+  /** items where the problem was found — reference only */
+  found_by?: string[];
   /** repos / paths the work touches, free text (`droneengage_mavlink: src/mission/**`) */
   touches?: string[];
   /** checkable acceptance criteria, one per line */
@@ -34,6 +36,7 @@ export function renderTaskBody(d: TaskDraft): string {
     if (d.parent) block.push(`**Parent:** ${d.parent}`);
   }
   if (d.relates?.length) block.push(`**Relates:** ${d.relates.join(", ")}`);
+  if (d.found_by?.length) block.push(`**Found by:** ${d.found_by.join(", ")}`);
   if (!idea) block.push(`**Touches:** ${d.touches?.length ? d.touches.join("; ") : "TBD"}`);
   const acceptance = d.acceptance?.length
     ? d.acceptance.map((a) => `- [ ] ${a.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`)

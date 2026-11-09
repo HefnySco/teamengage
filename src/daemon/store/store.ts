@@ -26,6 +26,7 @@ import {
   setDependsLine,
   setParentLine,
   setRelatesLine,
+  setFoundByLine,
   replaceSection,
   sectionBody,
   removeSectionLines,
@@ -317,6 +318,7 @@ export class PlansStore {
       depends_on?: string[];
       parent?: string;
       relates?: string[];
+      found_by?: string[];
       summary?: string;
       acceptance?: string[];
       touches?: string[];
@@ -353,6 +355,7 @@ export class PlansStore {
           depends_on: raw.depends_on?.map((r) => local(r, at)),
           parent: raw.parent === undefined ? undefined : local(raw.parent, at),
           relates: raw.relates?.map((r) => local(r, at)),
+          found_by: raw.found_by?.map((r) => local(r, at)),
         };
         const project = d.project;
         const prefix = project
@@ -404,6 +407,7 @@ export class PlansStore {
           depends_on: d.depends_on ?? [],
           parent: d.parent,
           relates: d.relates ?? [],
+          ...(d.found_by?.length ? { found_by: d.found_by } : {}),
           domains: normalizeDomains(d.domains ?? []),
           ...(d.tier ? { tier: d.tier } : {}),
           ...(actor.kind === "agent" && actor.tier ? { authored_tier: actor.tier } : {}),
@@ -1286,6 +1290,7 @@ export class PlansStore {
       depends_on?: string[];
       parent?: string | null;
       relates?: string[];
+      found_by?: string[];
       targets?: string[];
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
@@ -1323,6 +1328,11 @@ export class PlansStore {
       if (change.relates) {
         meta.relates = change.relates;
         what.push(`relates → ${change.relates.join(", ") || "nothing"}`);
+      }
+      if (change.found_by) {
+        if (change.found_by.length) meta.found_by = change.found_by;
+        else delete meta.found_by;
+        what.push(`found_by → ${change.found_by.join(", ") || "nothing"}`);
       }
       if (change.targets) {
         meta.targets = change.targets;
@@ -1375,6 +1385,7 @@ export class PlansStore {
         if (change.depends_on) out = setDependsLine(out, change.depends_on);
         if (change.parent !== undefined) out = setParentLine(out, change.parent ?? undefined);
         if (change.relates) out = setRelatesLine(out, change.relates);
+        if (change.found_by) out = setFoundByLine(out, change.found_by);
         if (change.touches) {
           out = setTouches(out, change.touches);
           what.push("touches");
@@ -1470,6 +1481,47 @@ export class PlansStore {
       }
       await this.commitPaths([it.path], `te: ${id} relates → ${what}`);
       return { relates };
+    });
+  }
+
+  /**
+   * Set an item's found_by (human — callers check). Loose references only —
+   * no ordering, no gate. Overlay mode rewrites the task file's
+   * `**Found by:**` line so doc and meta stay in sync. `[]` removes the key.
+   */
+  setFoundBy(id: string, foundBy: string[], actor: Actor): Promise<{ found_by: string[] }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const cur = it.meta.found_by ?? [];
+      if (cur.length === foundBy.length && cur.every((r, i) => r === foundBy[i])) return { found_by: foundBy };
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const what = foundBy.length ? foundBy.join(", ") : "nothing";
+      await this.rewriteItem(
+        id,
+        (m) => {
+          const { found_by: _old, ...rest } = m;
+          return (foundBy.length ? { ...rest, found_by: foundBy } : rest) as typeof m;
+        },
+        [`- ${now} ${who} found_by → ${what}`],
+      );
+      if (this.ws.config.mode === "overlay" && it.meta.source) {
+        const found = await resolveSource(this.ws.root, id, it.meta.source);
+        if (found) {
+          const out = setFoundByLine(found.text, foundBy);
+          if (out !== found.text) {
+            const abs = join(this.ws.root, found.path);
+            await writeFileAtomic(abs, out);
+            this.onFileWrite?.(abs, out);
+            await this.stageTaskFiles([found.path]);
+          }
+        }
+      }
+      await this.commitPaths([it.path], `te: ${id} found_by → ${what}`);
+      return { found_by: foundBy };
     });
   }
 

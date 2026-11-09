@@ -93,6 +93,8 @@ export const ItemMeta = z
     depends_on: z.array(ItemRef).default([]),
     parent: ItemRef.optional(),
     relates: z.array(ItemRef).default([]),
+    /** items where the problem this item fixes was found — reference only, no ordering, no gate; omitted when empty */
+    found_by: z.array(ItemRef).optional(),
     priority: z.number().int().min(1).max(5).default(2),
     version: z.number().int().min(1).default(1),
     created: DateStr.optional(),

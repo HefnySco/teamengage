@@ -153,6 +153,32 @@ export async function relateCmd(args: string[], home?: string): Promise<number> 
   return 0;
 }
 
+/**
+ * `te found-by <ID> [refs…]` — set an item's found_by (loose references,
+ * the items where the problem was found); `--off` clears it.
+ */
+export async function foundByCmd(args: string[], home?: string): Promise<number> {
+  const off = args.includes("--off");
+  const [id, ...refs] = positional(args.filter((a) => a !== "--off"));
+  if (!id || (!refs.length && !off)) {
+    process.stderr.write("usage: te found-by <ID> [REF…|--off]\n");
+    return 2;
+  }
+  // uppercase the id part only — a `ws:` workspace prefix stays as written
+  const ref = (r: string) => {
+    const i = r.indexOf(":");
+    return i === -1 ? r.toUpperCase() : `${r.slice(0, i)}:${r.slice(i + 1).toUpperCase()}`;
+  };
+  const r = (await daemonApi(
+    "POST",
+    `/api/items/${encodeURIComponent(id.toUpperCase())}/found-by${wsQ(args)}`,
+    { found_by: off ? [] : refs.map(ref) },
+    home,
+  )) as { found_by?: string[] };
+  process.stdout.write(`${id.toUpperCase()} → found by ${r.found_by?.join(", ") || "nothing"}\n`);
+  return 0;
+}
+
 /** `te hold <ID> [reason]` — park a draft/ready item; agents can't see or claim it. */
 export async function holdCmd(args: string[], home?: string): Promise<number> {
   const [id, ...rest] = positional(args);

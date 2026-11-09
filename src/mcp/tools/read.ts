@@ -169,6 +169,9 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         for (const r of b.relates) {
           lines.push(`relates ${r.ref} ${r.status}`);
         }
+        for (const r of b.found_by) {
+          lines.push(`found by ${r.ref} ${r.status}`);
+        }
         for (const r of b.referenced_by) {
           lines.push(`referenced by ${r.ref} ${r.status}`);
         }

@@ -65,6 +65,7 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
     item: { meta: Record<string, unknown>; sections: { heading: string; body: string }[] };
     deps: Array<{ ref: string; status: string; outcome: string }>;
     relates?: Array<{ ref: string; status: string }>;
+    found_by?: Array<{ ref: string; status: string }>;
     referenced_by?: Array<{ ref: string; status: string }>;
     decisions: Array<{ meta: { id: string; title: string } }>;
     targets: Array<{ ref: string; kind: string; path?: string }>;
@@ -86,6 +87,7 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
   }
   for (const d of b.deps) process.stdout.write(`dep ${d.ref} ${d.status}\n`);
   for (const r of b.relates ?? []) process.stdout.write(`relates ${r.ref} ${r.status}\n`);
+  for (const r of b.found_by ?? []) process.stdout.write(`found by ${r.ref} ${r.status}\n`);
   for (const r of b.referenced_by ?? []) process.stdout.write(`referenced by ${r.ref} ${r.status}\n`);
   for (const d of b.decisions) process.stdout.write(`decision ${d.meta.id}: ${d.meta.title}\n`);
   for (const t of b.targets) process.stdout.write(`target ${t.ref} → ${t.kind}${t.path ? ` ${t.path}` : ""}\n`);

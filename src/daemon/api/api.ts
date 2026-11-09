@@ -430,6 +430,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           depends_on: list("depends_on"),
           parent: d.parent === undefined ? undefined : String(d.parent),
           relates: list("relates"),
+          found_by: list("found_by"),
           summary: d.summary === undefined ? undefined : String(d.summary),
           acceptance: list("acceptance"),
           touches: list("touches"),
@@ -571,6 +572,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   );
   act("relate", (ops, id, b) =>
     ops.setRelates(id, Array.isArray(b.relates) ? b.relates.map(String) : []),
+  );
+  act("found-by", (ops, id, b) =>
+    ops.setFoundBy(id, Array.isArray(b.found_by) ? b.found_by.map(String) : []),
   );
   act("undrop", (ops, id) => ops.undrop(id));
   act("complete", (ops, id, b) => ops.complete(id, b.note ? String(b.note) : undefined));

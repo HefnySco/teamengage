@@ -414,6 +414,48 @@ describe("ideas and relates", () => {
     expect(String(self.message)).toMatch(/itself/);
   });
 
+  it("found_by: written to meta + file line, validated, reference only, absent when unused", async () => {
+    const { ids: src } = await store().createItems([{ type: "task", title: "Where it was found", project: "global" }], human);
+    const [origin] = src;
+    // unknown id refused (VALIDATION), nothing written
+    const bad = await post("/api/propose", {
+      items: [{ type: "task", title: "Bad origin", project: "global", domains: ["x"], found_by: ["GL-9999"] }],
+    });
+    expect(bad.error).toBe("VALIDATION");
+    expect(String(bad.message)).toMatch(/unknown item GL-9999/);
+
+    const ok = (await post("/api/propose", {
+      items: [{ type: "task", title: "Fix found by origin", project: "global", domains: ["x"], found_by: [origin] }],
+    })) as { ids: string[]; files: string[] };
+    const [fix] = ok.ids;
+    expect(store().idx.get(fix)!.meta.found_by).toEqual([origin]);
+    expect(readFileSync(join(root, ok.files[0]), "utf8")).toContain(`**Found by:** ${origin}`);
+
+    // brief shows it
+    const b = (await (await api(`/api/items/${fix}`)).json()) as { found_by: Array<{ ref: string }> };
+    expect(b.found_by.map((r) => r.ref)).toEqual([origin]);
+
+    // reference only: the origin is still a draft, yet the fix is approved, offered by next and claimable
+    expect(store().idx.get(origin)!.meta.status).toBe("draft");
+    expect((await post(`/api/items/${fix}/approve`, {})).error).toBeUndefined();
+    const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
+    expect(next.map((i) => i.meta.id)).toContain(fix);
+    expect((await post(`/api/items/${fix}/claim`, {})).error).toBeUndefined();
+
+    // found-by endpoint: validates, sets, clears
+    expect(String((await post(`/api/items/${origin}/found-by`, { found_by: [origin] })).message)).toMatch(/itself/);
+    expect((await post(`/api/items/${origin}/found-by`, { found_by: [fix] })).found_by).toEqual([fix]);
+    expect(store().idx.get(origin)!.meta.found_by).toEqual([fix]);
+    await post(`/api/items/${origin}/found-by`, { found_by: [] });
+    expect(store().idx.get(origin)!.meta.found_by).toBeUndefined();
+
+    // an item without found_by keeps no key in its item file and no line in its task file
+    const plain = readFileSync(join(plans, store().idx.get(origin)!.path), "utf8");
+    expect(plain).not.toMatch(/^found_by:/m);
+    const { files } = await store().createItems([{ type: "task", title: "Plain one", project: "global" }], human);
+    expect(readFileSync(join(root, files[0]), "utf8")).not.toContain("Found by");
+  });
+
   it("the web UI can capture one: POST /api/propose as the human", async () => {
     const ws = (await (await api("/api/workspace")).json()) as { name: string; projects: Array<{ name: string }> };
     expect(ws.name).toBe("tasks");

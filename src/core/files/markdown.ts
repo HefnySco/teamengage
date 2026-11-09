@@ -25,6 +25,7 @@ const META_KEY_ORDER = [
   "depends_on",
   "parent",
   "relates",
+  "found_by",
   "priority",
   "version",
   "created",
