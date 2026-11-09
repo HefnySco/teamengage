@@ -976,3 +976,12 @@ details.sec > .sec-bd {
 /* gallery page */
 .art-card { width: 10rem; }
 .art-card .art-box { width: 10rem; height: 6.5rem; }
+
+/* idea state chips on the board filter row */
+.plan-chip.clickable {
+  cursor: pointer;
+}
+.plan-chip.on {
+  background: color-mix(in srgb, var(--ps) 35%, transparent);
+  font-weight: 600;
+}

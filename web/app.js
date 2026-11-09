@@ -130,6 +130,38 @@ const PLAN_CHIP = {
 };
 // ghost micro-chip: graph glyph + n/m fraction — the colour carries the state, the title the words;
 // clicking opens the plan's dependency graph
+// ---- idea state — derived in the browser from the items that name the idea in relates
+const IDEA_STATES = ["unplanned", "planned", "in_progress", "done"];
+const IDEA_STATE_CLS = { unplanned: "ps-draft", planned: "ps-decomposing", in_progress: "ps-active", done: "ps-done" };
+// statuses: the status of every item that references the idea (dropped ones do not count)
+const ideaStateOf = (statuses) => {
+  const live = statuses.filter((st) => st !== "dropped");
+  const done = live.filter((st) => st === "done").length;
+  const total = live.length;
+  let state = "planned";
+  if (total === 0) state = "unplanned";
+  else if (done === total) state = "done";
+  else if (live.some((st) => ["in_progress", "waiting", "in_review", "done"].includes(st))) state = "in_progress";
+  return { state, done, total };
+};
+// id → { state, done, total } for every idea in a list of board rows
+const ideaStates = (rows) => {
+  const by = new Map();
+  for (const r of rows) {
+    for (const ref of r.relates ?? []) {
+      if (!by.has(ref)) by.set(ref, []);
+      by.get(ref).push(r.status);
+    }
+  }
+  const out = new Map();
+  for (const r of rows) if (r.type === "idea") out.set(r.id, ideaStateOf(by.get(r.id) ?? []));
+  return out;
+};
+const IdeaChip = ({ st }) => {
+  if (!st) return null;
+  return html`<span class="plan-chip ${IDEA_STATE_CLS[st.state]}" title="idea ${st.state.replace("_", " ")} — ${st.done} of ${st.total} items that name it are done">${st.state.replace("_", " ")} ${st.done}/${st.total}</span>`;
+};
+
 const PlanBadge = ({ i }) => {
   if (!i.plan_state) return null;
   const id = i.id ?? i.meta?.id; // list rows are flat; the item page nests it under meta
@@ -920,6 +952,12 @@ const Board = ({ onOpen }) => {
   const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
   const [hidePlans, setHidePlansState] = useState(() => loadSearch("te.board.noplans") === "1");
   const [domShowAll, setDomShowAll] = useState(false);
+  const [ideaFilter, setIdeaFilterState] = useState(() => (IDEA_STATES.includes(loadSearch("te.board.idea")) ? loadSearch("te.board.idea") : ""));
+  const setIdeaFilter = (v) => {
+    const nv = v === ideaFilter ? "" : v; // clicking the active state clears it
+    setIdeaFilterState(nv);
+    saveSearch("te.board.idea", nv);
+  };
   const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
   const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
   const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
@@ -945,7 +983,11 @@ const Board = ({ onOpen }) => {
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
   const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
   const inPlans = hidePlans ? inAi.filter((i) => !(i.type === "epic" && i.plan_state)) : inAi;
-  const hits = words.length ? inPlans.filter((i) => matches(i, words)) : inPlans;
+  const ideaSt = ideaStates(data);
+  const inIdea = ideaFilter ? inPlans.filter((i) => i.type === "idea" && ideaSt.get(i.id)?.state === ideaFilter) : inPlans;
+  const hits = words.length ? inIdea.filter((i) => matches(i, words)) : inIdea;
+  const ideaCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
+  for (const v of ideaSt.values()) ideaCounts[v.state] += 1;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -1028,7 +1070,7 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${hidePlans ? "btn-outline-secondary" : "btn-plans"}"
         title=${hidePlans ? "plan cards hidden — click to show plans (epics) again" : "hide plan cards — epics with a plan leave the board"}
         onClick=${() => setHidePlans(!hidePlans)}><${GraphIcon} /> plans</button>
-      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans || ideaFilter) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
         onClose=${() => setIdeaOpen(false)}
         onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
@@ -1039,6 +1081,12 @@ const Board = ({ onOpen }) => {
       ${!domShowAll && domEntries.length > 12 && html`<span class="triage-tag clickable" onClick=${() => setDomShowAll(true)}>+${domEntries.length - 12} more</span>`}
       <span class="small text-body-tertiary">${untagged} untagged</span>
       ${domain && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setDomain(domain)}>clear</button>`}
+    </div>`}
+    ${ideaSt.size > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
+      <span class="small text-body-tertiary me-1">Ideas</span>
+      ${IDEA_STATES.map((k) => html`<span key=${k} class="plan-chip clickable ${IDEA_STATE_CLS[k]} ${ideaFilter === k ? "on" : ""}" role="button"
+        title="show only ${k.replace("_", " ")} ideas (click again to clear)" onClick=${() => setIdeaFilter(k)}>${k.replace("_", " ")} <span class="n">${ideaCounts[k]}</span></span>`)}
+      ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
     <div class="board-cols">
       ${STATUSES.map((s) => {
@@ -1069,6 +1117,7 @@ const Board = ({ onOpen }) => {
                     <div class="d-flex align-items-center gap-1">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
+                      ${i.type === "idea" && html`<${IdeaChip} st=${ideaSt.get(i.id)} />`}
                       <span class="ms-auto d-flex align-items-center gap-1">
                         ${i.type === "idea" && html`<span class="te-idea" title="idea — a source document; agents plan from it, it is never claimed"><${BulbIcon} /></span>`}
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
@@ -2151,6 +2200,18 @@ const ItemView = ({ id }) => {
       <span class="text-secondary">referenced by ←</span>
       ${(b.referenced_by ?? []).length === 0 ? html`<span class="text-secondary">nothing yet</span>` : b.referenced_by.map(depLink)}
     </div>`}
+    ${it.meta.type === "idea" && (() => {
+      const ist = ideaStateOf((b.referenced_by ?? []).map((r) => r.status));
+      const pct = ist.total ? Math.round((100 * ist.done) / ist.total) : 0;
+      return html`<div class="idea-progress d-flex align-items-center gap-2 mb-2 small">
+        <span class="text-secondary">idea</span>
+        <span class="plan-chip ${IDEA_STATE_CLS[ist.state]}">${ist.state.replace("_", " ")}</span>
+        <div class="progress flex-grow-1" style="max-width:16rem;height:.5rem" role="progressbar" aria-valuenow=${pct} aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-bar bg-success" style=${`width:${pct}%`}></div>
+        </div>
+        <span>${ist.done} of ${ist.total} done</span>
+      </div>`;
+    })()}
     <details class="disc">
       <summary class="disc-bar"><span class="caret"></span><span class="disc-t fw-semibold">details</span>
         <span>v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${(it.meta.domains ?? []).map((d) => " #" + d).join("")}${it.claim ? ` · claim ${it.claim.holder}@${it.claim.machine}` : ""}</span>
