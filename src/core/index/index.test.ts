@@ -266,6 +266,25 @@ describe("found_here and plan_problems", () => {
   });
 });
 
+describe("idea state", () => {
+  it("derives unplanned / planned / in_progress / done from relates", async () => {
+    writeItem("ID-0001", { type: "idea", status: "ready" });
+    writeItem("ID-0002", { type: "idea", status: "ready" });
+    writeItem("ID-0003", { type: "idea", status: "ready" });
+    writeItem("ID-0004", { type: "idea", status: "ready" });
+    writeItem("ID-0010", { status: "done", relates: "[ID-0002]" });
+    writeItem("ID-0011", { status: "ready", relates: "[ID-0002, ID-0004]" });
+    writeItem("ID-0012", { status: "done", relates: "[ID-0003]" });
+    writeItem("ID-0013", { status: "dropped", relates: "[ID-0003]" });
+    const idx = await Index.load(plans);
+    expect(idx.get("ID-0001")!.idea_state).toBe("unplanned");
+    expect(idx.get("ID-0002")!.idea_state).toBe("in_progress");
+    expect(idx.get("ID-0003")!.idea_state).toBe("done");
+    expect(idx.get("ID-0004")!.idea_state).toBe("planned");
+    expect(idx.get("ID-0010")!.idea_state).toBeUndefined();
+  });
+});
+
 describe("500-item fixture", () => {
   it("loads in < 300ms", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-big-"));

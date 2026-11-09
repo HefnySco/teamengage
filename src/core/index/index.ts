@@ -44,6 +44,17 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
 /** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
 export type PlanState = "draft" | "decomposing" | "active" | "done";
 
+/** Idea state — derived from the items that name the idea in relates, never stored. */
+export type IdeaState = "unplanned" | "planned" | "in_progress" | "done";
+
+/** Pure rule: statuses of every item that names the idea. */
+export function ideaStateOf(statuses: Status[]): IdeaState {
+  if (statuses.length === 0) return "unplanned";
+  if (statuses.every((s) => s === "done" || s === "dropped")) return "done";
+  if (statuses.some((s) => s === "in_progress" || s === "in_review" || s === "waiting" || s === "done")) return "in_progress";
+  return "planned";
+}
+
 /** A problem item: type bug, or any item carrying the bug domain. */
 export function isProblemItem(meta: ItemMeta): boolean {
   return meta.type === "bug" || (meta.domains ?? []).includes("bug");
@@ -73,6 +84,10 @@ export interface IndexedItem {
   plan_state?: PlanState;
   /** epics only: finished/total over all non-epic descendants */
   plan_progress?: { done: number; total: number };
+  /** ideas only: derived state from the items that name the idea in relates */
+  idea_state?: IdeaState;
+  /** ideas only: done/total over the items that name the idea (dropped not counted) */
+  idea_progress?: { done: number; total: number };
   /** derived: problem items (bug type or bug domain) whose found_by names this item */
   found_here: { id: string; status: Status }[];
   /** epics only: problem items found in this plan or its parts, open vs done */
@@ -347,6 +362,32 @@ export class Index {
       }
     }
     for (const it of this.items.values()) it.plan_problems = this.planProblems(it.meta.id);
+    // idea state: reverse of relates, ideas only
+    const named = new Map<string, Status[]>();
+    for (const it of this.items.values()) {
+      for (const ref of it.meta.relates ?? []) {
+        try {
+          const p = parseItemRef(ref);
+          if (p.workspace || p.id === it.meta.id) continue;
+          const l = named.get(p.id) ?? [];
+          l.push(it.meta.status);
+          named.set(p.id, l);
+        } catch {
+          /* bad ref → validator finding */
+        }
+      }
+    }
+    for (const it of this.items.values()) {
+      if (it.meta.type !== "idea") {
+        it.idea_state = undefined;
+        it.idea_progress = undefined;
+        continue;
+      }
+      const sts = named.get(it.meta.id) ?? [];
+      it.idea_state = ideaStateOf(sts);
+      const live = sts.filter((s) => s !== "dropped");
+      it.idea_progress = { done: live.filter((s) => s === "done").length, total: live.length };
+    }
   }
 
   /** Change the review_unblocks rule and re-derive blocked/ready. */
