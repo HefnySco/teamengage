@@ -282,6 +282,8 @@ describe("idea state", () => {
     expect(idx.get("ID-0003")!.idea_state).toBe("done");
     expect(idx.get("ID-0004")!.idea_state).toBe("planned");
     expect(idx.get("ID-0010")!.idea_state).toBeUndefined();
+    expect(idx.query({ type: "idea", idea_state: "unplanned" }).map((i) => i.meta.id)).toEqual(["ID-0001"]);
+    expect(idx.query({ type: "idea", idea_state: "in_progress" }).map((i) => i.meta.id)).toEqual(["ID-0002"]);
   });
 });
 

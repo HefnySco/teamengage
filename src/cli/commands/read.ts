@@ -29,10 +29,43 @@ const row = (i: ItemRow) => {
   return `${i.id} ${i.status} "${i.title}"${flags ? `  ${flags}` : ""}`;
 };
 
+interface IdeaRow {
+  id: string;
+  title: string;
+  idea_state?: string;
+  idea_progress?: { done: number; total: number };
+}
+
+/** Table of ideas: id, title, state, done, total. Optional --state filter. */
+export async function ideasCmd(args: string[], home?: string): Promise<number> {
+  const q = ["type=idea", wsQ(args), opt(args, "--state") ? `state=${encodeURIComponent(opt(args, "--state")!)}` : ""]
+    .filter(Boolean)
+    .join("&");
+  const items = (await daemonApi("GET", `/api/items?${q}`, undefined, home)) as IdeaRow[];
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify(items, null, 2) + "\n");
+    return 0;
+  }
+  const rows = items.map((i) => [
+    i.id,
+    i.title,
+    i.idea_state ?? "-",
+    String(i.idea_progress?.done ?? 0),
+    String(i.idea_progress?.total ?? 0),
+  ]);
+  const head = ["id", "title", "state", "done", "total"];
+  const w = head.map((h, c) => Math.max(h.length, ...rows.map((r) => r[c].length)));
+  const fmt = (r: string[]) => r.map((v, c) => v.padEnd(w[c])).join("  ").trimEnd();
+  process.stdout.write(fmt(head) + "\n");
+  for (const r of rows) process.stdout.write(fmt(r) + "\n");
+  return 0;
+}
+
 export async function lsCmd(args: string[], home?: string): Promise<number> {
   const q = [
     wsQ(args),
     opt(args, "--status") ? `status=${opt(args, "--status")}` : "",
+    opt(args, "--state") ? `state=${opt(args, "--state")}` : "",
     opt(args, "--type") ? `type=${opt(args, "--type")}` : "",
     opt(args, "--project") ? `project=${opt(args, "--project")}` : "",
     opt(args, "--domain") ? `domain=${opt(args, "--domain")}` : "",

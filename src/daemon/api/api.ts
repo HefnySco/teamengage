@@ -50,6 +50,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const items = ops.query({
         status: q.status as never,
         type: q.type,
+        idea_state: (q.state || undefined) as never,
         project: q.project,
         resource: q.resource,
         text: q.text,
@@ -71,6 +72,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ...(i.meta.type === "epic"
           ? { plan_state: i.plan_state, plan_progress: i.plan_progress, plan_problems: i.plan_problems }
           : {}),
+        ...(i.meta.type === "idea" ? { idea_state: i.idea_state, idea_progress: i.idea_progress } : {}),
         found_here: i.found_here,
       }));
     } catch (e) {

@@ -7,7 +7,7 @@ import { guardCmd, hooksCmd } from "./commands/guard.js";
 import { skillsCmd } from "./commands/skills.js";
 import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE, WRITING_RULES } from "../core/files/template.js";
-import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
+import { lsCmd, ideasCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
 import { originBackfillCmd } from "./commands/backfill.js";
 import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
@@ -111,7 +111,8 @@ const USAGE_ALL = `te — every command
   run [--watch] [--max n] [--dry-run]   start this machine's agents on ready tasks
   wait [--notify] [--any] [--timeout d]  block until something new needs you
   sync [--leave] [--dry-run] [-m msg] [--status]   plans + code to/from your other machines
-  ls [--status s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
+  ideas [--state unplanned|planned|in_progress|done] [--json]  table: id, title, state, done, total
+  ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   validate [--json]
@@ -227,6 +228,8 @@ async function main(argv: string[]): Promise<number> {
       return initCmd(rest, home);
     case "ls":
       return lsCmd(rest, home);
+    case "ideas":
+      return ideasCmd(rest, home);
     case "show":
       return showCmd(rest, home);
     case "graph":

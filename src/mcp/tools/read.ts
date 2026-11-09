@@ -192,11 +192,12 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "query",
     {
       description:
-        "Search items by status/type/project/domain/resource/text; q = board search (all words in id/title/file/#domains).",
+        "Search items by status/type/state/project/domain/resource/text; state = idea state (unplanned|planned|in_progress|done) for type idea; q = board search (all words in id/title/file/#domains).",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),
         type: z.string().optional(),
+        state: z.string().optional(),
         project: z.string().optional(),
         resource: z.string().optional(),
         text: z.string().optional(),
@@ -210,6 +211,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const items = ops.query({
           status: args.status as never,
           type: args.type,
+          idea_state: args.state as never,
           project: args.project,
           domain: args.domain,
           resource: args.resource,

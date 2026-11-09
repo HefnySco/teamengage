@@ -99,6 +99,8 @@ export interface IndexedItem {
 export interface QueryFilter {
   status?: Status | Status[];
   type?: string;
+  /** ideas only: derived idea state; items that are not ideas never match */
+  idea_state?: IdeaState;
   project?: string;
   /** items touching this resource name */
   resource?: string;
@@ -516,6 +518,7 @@ export class Index {
       if (f.domain && !i.meta.domains.includes(f.domain)) return false;
       if (!matchesSearch(i.meta, f.q)) return false;
       if (f.type && i.meta.type !== f.type) return false;
+      if (f.idea_state && i.idea_state !== f.idea_state) return false;
       if (f.project && i.meta.project !== f.project) return false;
       if (f.claimed !== undefined && Boolean(i.claim) !== f.claimed) return false;
       if (f.resource && !i.meta.targets.some((t) => t.startsWith(`@${f.resource}`))) return false;
