@@ -107,7 +107,9 @@ Judge the **logic**:
   `**Touches:**`. Drive-by refactors and unrelated cleanups widen what must
   be reviewed — flag them. Changes outside Touches are an `issues` finding;
   if that work is genuinely needed, the fix is a new dependent task
-  (`propose`, `depends_on` = this one), never a wider Touches on this task.
+  (`propose`, `depends_on` = this one), never a wider Touches on this task. A bug you find
+  in review gets its own task with `found_by` = this task (reference only),
+  not `depends_on`.
 - **Tests as claims.** Green tests can still assert the wrong thing. When an
   acceptance item says "verify X", check the test exercises X, not that a
   test exists. Spot-check a test run only when the diff gives you a reason

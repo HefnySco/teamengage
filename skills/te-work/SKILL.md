@@ -110,7 +110,8 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   `depends_on` set to this one, for the human to approve. (If `hello`
   prints `autonomy: solo`, such a follow-up lands `ready` at once — the
   propose reply lists it under `ready`; it is still a separate task, never
-  folded into this one.)
+  folded into this one.) A task for a problem you found on the way gets
+  `found_by` = this task, not `depends_on`: `found_by` is reference only.
 
 ## 5. Work
 

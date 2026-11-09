@@ -65,6 +65,9 @@ Agents create tasks with `propose`; in a task-folder workspace it writes
 `<project>/TASK-NN-<slug>.md` from the standard template
 ([TASK-FORMAT.md](TASK-FORMAT.md), `te template`).
 
+A task for a problem an agent found names the item where it found it in
+`found_by` (reference only), not in `depends_on`.
+
 Skills (Claude Code and Devin use the same `SKILL.md` format), all
 curl-only, no MCP needed:
 
