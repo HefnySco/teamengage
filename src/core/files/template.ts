@@ -162,6 +162,8 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   acceptance — not while working, reviewing or taking over a fix. Work that
   needs more → propose a new task that depends on the original (its own
   Touches + acceptance); the human approves it and it is reviewed on its own.
+  A task for a problem you found (a bug) names the item where you found it in
+  found_by, not in depends_on. found_by is reference only: no ordering, no gate.
   Exceptions while a task is a draft: a planner may rewrite any of it with
   edit <id> {…fields, reason} (title, summary, acceptance, touches,
   depends_on, parent, tier, domains); rescope <id> still covers
