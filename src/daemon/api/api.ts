@@ -69,8 +69,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),
         ...(i.meta.type === "epic"
-          ? { plan_state: i.plan_state, plan_progress: i.plan_progress }
+          ? { plan_state: i.plan_state, plan_progress: i.plan_progress, plan_problems: i.plan_problems }
           : {}),
+        found_here: i.found_here,
       }));
     } catch (e) {
       return sendErr(reply, e);

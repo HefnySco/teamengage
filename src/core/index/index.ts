@@ -44,6 +44,11 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
 /** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
 export type PlanState = "draft" | "decomposing" | "active" | "done";
 
+/** A problem item: type bug, or any item carrying the bug domain. */
+export function isProblemItem(meta: ItemMeta): boolean {
+  return meta.type === "bug" || (meta.domains ?? []).includes("bug");
+}
+
 export interface IndexedItem {
   meta: ItemMeta;
   sections: Section[];
@@ -68,6 +73,10 @@ export interface IndexedItem {
   plan_state?: PlanState;
   /** epics only: finished/total over all non-epic descendants */
   plan_progress?: { done: number; total: number };
+  /** derived: problem items (bug type or bug domain) whose found_by names this item */
+  found_here: { id: string; status: Status }[];
+  /** epics only: problem items found in this plan or its parts, open vs done */
+  plan_problems?: { open: number; done: number };
   /** set when the file can't be parsed — index keeps it, validator reports it */
   invalid?: string;
 }
@@ -144,6 +153,7 @@ export class Index {
               paused: false,
               blocks: [],
               children: [],
+              found_here: [],
               ready: false,
               turn: "agent",
             });
@@ -211,6 +221,7 @@ export class Index {
       paused: false,
       blocks: [],
       children: [],
+      found_here: [],
       ready: false,
       turn: "agent",
     });
@@ -323,6 +334,19 @@ export class Index {
       it.plan_state = this.planState(it.meta.id);
       it.plan_progress = this.planProgress(it.meta.id);
     }
+    // found_here: reverse of found_by, problem items only
+    for (const it of this.items.values()) it.found_here = [];
+    for (const it of this.items.values()) {
+      if (!isProblemItem(it.meta)) continue;
+      for (const ref of it.meta.found_by ?? []) {
+        try {
+          this.items.get(parseItemRef(ref).id)?.found_here.push({ id: it.meta.id, status: it.meta.status });
+        } catch {
+          /* bad ref → validator finding */
+        }
+      }
+    }
+    for (const it of this.items.values()) it.plan_problems = this.planProblems(it.meta.id);
   }
 
   /** Change the review_unblocks rule and re-derive blocked/ready. */
@@ -371,6 +395,30 @@ export class Index {
       }
     }
     return { done, total };
+  }
+
+  /**
+   * Epics only: problem items found in the plan or any of its parts
+   * (found_here), plus problem items that are themselves parts. Each counted
+   * once. `open` is any status except done/dropped; dropped counts in neither.
+   */
+  planProblems(id: string): { open: number; done: number } | undefined {
+    const it = this.items.get(id);
+    if (!it || it.meta.type !== "epic") return undefined;
+    const seen = new Map<string, Status>();
+    for (const nid of [id, ...this.descendants(id)]) {
+      const n = this.items.get(nid);
+      if (!n) continue;
+      for (const f of n.found_here) seen.set(f.id, this.items.get(f.id)?.meta.status ?? f.status);
+      if (nid !== id && isProblemItem(n.meta)) seen.set(nid, n.meta.status);
+    }
+    let open = 0;
+    let done = 0;
+    for (const st of seen.values()) {
+      if (st === "done") done += 1;
+      else if (st !== "dropped") open += 1;
+    }
+    return { open, done };
   }
 
   /** All descendant ids — children recursively; a parent cycle just stops, never loops. */

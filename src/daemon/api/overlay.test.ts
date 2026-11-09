@@ -414,6 +414,22 @@ describe("ideas and relates", () => {
     expect(String(self.message)).toMatch(/itself/);
   });
 
+  it("found_here: item brief and list return problem items that name the item", async () => {
+    const { ids } = await store().createItems([{ type: "task", title: "Found here origin", project: "global" }], human);
+    const [origin] = ids;
+    const ok = (await post("/api/propose", {
+      items: [
+        { type: "bug", title: "Bug found here", project: "global", domains: ["x"], found_by: [origin] },
+        { type: "task", title: "Plain task found here", project: "global", domains: ["x"], found_by: [origin] },
+      ],
+    })) as { ids: string[] };
+    const b = (await (await api(`/api/items/${origin}`)).json()) as { found_here: Array<{ id: string; status: string }> };
+    expect(b.found_here.map((r) => r.id)).toEqual([ok.ids[0]]);
+    expect(b.found_here[0].status).toBeTruthy();
+    const list = (await (await api("/api/items")).json()) as Array<{ id: string; found_here: Array<{ id: string }> }>;
+    expect(list.find((i) => i.id === origin)!.found_here.map((r) => r.id)).toEqual([ok.ids[0]]);
+  });
+
   it("found_by: written to meta + file line, validated, reference only, absent when unused", async () => {
     const { ids: src } = await store().createItems([{ type: "task", title: "Where it was found", project: "global" }], human);
     const [origin] = src;

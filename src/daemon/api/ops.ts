@@ -285,7 +285,7 @@ export class WorkspaceOps {
           }),
       )
       .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
-    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
+    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, found_here: it.found_here, plan_problems: it.plan_problems, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
   }
 
   /**

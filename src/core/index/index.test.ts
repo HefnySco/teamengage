@@ -250,6 +250,22 @@ describe("plan_state and plan_progress (epics)", () => {
   });
 });
 
+describe("found_here and plan_problems", () => {
+  it("counts a bug-type item and a bug-domain item, open and done, through parts", async () => {
+    writeItem("FH-0001", { type: "epic" });
+    writeItem("FH-0002", { parent: "FH-0001" });
+    writeItem("FH-0003", { type: "bug", found_by: "[FH-0002]" });
+    writeItem("FH-0004", { domains: "[bug]", status: "done", found_by: "[FH-0001]" });
+    writeItem("FH-0005", { found_by: "[FH-0002]" }); // plain task: not a problem
+    const idx = await Index.load(plans);
+    expect(idx.get("FH-0002")!.found_here).toEqual([{ id: "FH-0003", status: "ready" }]);
+    expect(idx.get("FH-0001")!.found_here).toEqual([{ id: "FH-0004", status: "done" }]);
+    expect(idx.get("FH-0005")!.found_here).toEqual([]);
+    expect(idx.get("FH-0001")!.plan_problems).toEqual({ open: 1, done: 1 });
+    expect(idx.get("FH-0002")!.plan_problems).toBeUndefined();
+  });
+});
+
 describe("500-item fixture", () => {
   it("loads in < 300ms", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-big-"));
