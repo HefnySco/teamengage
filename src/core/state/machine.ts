@@ -50,9 +50,10 @@ export type Action =
    * (advisory: no status change, the human still accepts). Not the holder.
    * `summary` is the plain-English line for the human; `note` the technical
    * detail for whoever fixes it. `needs_human` marks an "ok, but…" verdict —
-   * it keeps the accept strictly the human's (no auto-accept).
+   * it keeps the accept strictly the human's (no auto-accept). `report` is the
+   * optional multi-line decision report for the human; nothing parses it.
    */
-  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean }
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string }
   /**
    * A second agent session bounces a broken submission back to its holder
    * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
@@ -258,6 +259,26 @@ function ev(
  * Apply `action` to `meta`. Returns the new meta (status, question, updated)
  * plus log lines, event records and daemon effects — or throws a typed error.
  */
+/** ## Review entry with a report: the report first, the agents' note last. */
+function reviewWithReport(
+  stamp: string,
+  who: string,
+  verdict: string,
+  needsHuman: boolean,
+  summary: string | undefined,
+  report: string,
+  note: string | undefined,
+): string {
+  const indent = (s: string) =>
+    s
+      .trim()
+      .split("\n")
+      .map((l) => (l ? `  ${l}` : ""))
+      .join("\n");
+  const head = `- ${stamp} ${who} ${verdict}${needsHuman ? " — needs your call" : ""}${summary ? ` — ${summary}` : ""}`;
+  return `${head}\n\n${indent(report)}\n${note ? `\n  Technical note: ${note}\n` : ""}`;
+}
+
 export function transition(
   meta: ItemMeta,
   action: Action,
@@ -463,6 +484,7 @@ export function transition(
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
         ...(action.needs_human ? { needs_human: true } : {}),
+        ...(action.report ? { report: action.report } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
       // an issues verdict only records the review: it never releases the claim.
@@ -483,9 +505,11 @@ export function transition(
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
         heading: "Review",
-        text: action.summary
-          ? `- ${stamp} ${who} ${action.verdict}${action.needs_human ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
-          : `- ${stamp} ${who} ${verdict}${action.needs_human ? " (needs the human's call)" : ""}\n`,
+        text: action.report
+          ? reviewWithReport(stamp, who, action.verdict, !!action.needs_human, action.summary, action.report, action.note)
+          : action.summary
+            ? `- ${stamp} ${who} ${action.verdict}${action.needs_human ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
+            : `- ${stamp} ${who} ${verdict}${action.needs_human ? " (needs the human's call)" : ""}\n`,
       });
       return out;
     }

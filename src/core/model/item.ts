@@ -51,6 +51,8 @@ export const AiReview = z.object({
    * Such a review is never auto-accepted under autonomy: solo.
    */
   needs_human: z.boolean().optional(),
+  /** Multi-line plain report for the human. Agents use summary and note. */
+  report: z.string().optional(),
 });
 export type AiReview = z.infer<typeof AiReview>;
 

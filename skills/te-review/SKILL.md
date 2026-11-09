@@ -129,9 +129,35 @@ Judge the **logic**:
 
 ```bash
 curl -s -X POST $B/review/GL-0019 -H "$H" \
-  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","note":"I restarted the daemon twice with --debug and the counter kept its value both times, and the 4 ctest cases pass on the claim branch — acceptance items 1–3 check out and the diff stays inside **Touches:**."}'
+  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","report":"Verdict: OK.\n\nWhat the reviewer checked:\n1. The counter keeps its value after 2 restarts.\n2. The 4 ctest cases pass on the claim branch.\n\nBottom line: The work meets every acceptance item. You can accept it.","note":"I restarted the daemon twice with --debug and the counter kept its value both times, and the 4 ctest cases pass on the claim branch — acceptance items 1–3 check out and the diff stays inside **Touches:**."}'
 ```
 
+- `report` is the **default output for the human** — always give it. It is
+  a short multi-line decision report in STE, and the page shows it first.
+  Use this layout. Number the items across sections, and leave out a section
+  that has no items (never leave out `Verdict` or `Bottom line`):
+
+  ```text
+  Verdict: OK — but the human must decide.
+
+  What the reviewer checked:
+  1. The removed code is really gone. The search finds no V1 names in `src`.
+  2. The unit tests pass. All 24 pass.
+  3. The build passed. The reviewer did not run it again.
+
+  What the reviewer could not check:
+  4. One acceptance item stays open, because <why>. <What this means>.
+
+  Small notes:
+  5. <A point that needs no action now.>
+
+  Bottom line: <one or two sentences: what the human must decide>.
+  ```
+
+  Say what each item means for the decision. Say clearly when you trust the
+  submitter's report and did not run a check yourself. Agents do not read
+  `report`, so keep every marker (`unverifiable:`, `trivial:`, `follow-up
+  task needed`) in `note`.
 - `summary` is **required** — one sentence in STE for the human, no
   jargon: what the verdict means. _"The fix works but error reporting was
   left out"_, not _"missing stderr propagation in run()"_. It is what the

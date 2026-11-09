@@ -127,6 +127,7 @@ export function promptFor(mode: Mode, id: string, name: string, base: string, to
       `Use the te-review skill to review ${id}. ${session} You did not write this code. ` +
       `Check every acceptance item of ${id} against its branch diff and run its tests. ` +
       `Record review ok, or review issues with one sentence naming the failed acceptance item and a note a coder can act on. ` +
+      `Also give report, the decision report for the human that the te-review skill describes. ` +
       `Ok but not yours to call (risky area, an unverifiable step, unclear acceptance)? Set needs_human so it never auto-accepts. ` +
       `${common}\nFinal reply: exactly one line — "${id} ok" or "${id} issues: <summary>".`
     );

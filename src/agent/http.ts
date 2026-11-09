@@ -122,7 +122,8 @@ RULES
      status=in_review): review records your verdict for the human, bounce
      sends broken work back to the holder. Never review your own submission.
      Both need a summary — in STE, for the human: what you verified
-     and why the verdict. "ok, but the human should decide" → set
+     and why the verdict. Also give report: the multi-line decision report
+     for the human (see the te-review skill). "ok, but the human should decide" → set
      needs_human so the accept is never automatic.
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,

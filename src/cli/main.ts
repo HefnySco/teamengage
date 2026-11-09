@@ -180,7 +180,7 @@ You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
 
 Reviewing (a second session, never the holder): query status=in_review lists
-submissions; review <id> {verdict: ok|issues, summary, note, needs_human?}
+submissions; review <id> {verdict: ok|issues, summary, note, report, needs_human?}
 records your verdict for the human — summary and note in STE saying
 what you verified and why; needs_human marks "ok, but the human should
 decide" (never auto-accepted). bounce <id> {reason, summary} sends broken

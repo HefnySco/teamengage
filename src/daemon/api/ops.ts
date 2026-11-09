@@ -566,6 +566,7 @@ export class WorkspaceOps {
     note?: string,
     summary?: string,
     needsHuman?: boolean,
+    report?: string,
   ) {
     const it = this.item(id);
     const claim = it.claim;
@@ -573,7 +574,7 @@ export class WorkspaceOps {
       id,
       it.meta.version,
       this.actorFor(session),
-      { type: "review", verdict, note, summary, needs_human: needsHuman },
+      { type: "review", verdict, note, summary, needs_human: needsHuman, report },
       { holderAway: () => this.holderAway(this.item(id)) },
     );
     // an `issues` verdict on a holder that can't act released the claim

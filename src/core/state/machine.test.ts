@@ -305,6 +305,41 @@ describe("effects", () => {
 });
 
 describe("review / bounce (AI peer review of a submission)", () => {
+  it("review report: the human reads it first, and agents keep summary and note", () => {
+    const report = "Verdict: OK.\n\nWhat the reviewer checked:\n1. The tests pass.\n\nBottom line: You can accept it.";
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "ok", summary: "The work is good.", note: "unverifiable: flight test", report, needs_human: true },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.summary).toBe("The work is good.");
+    expect(r.meta.ai_review?.note).toBe("unverifiable: flight test");
+    expect(r.meta.ai_review?.report).toBe(report);
+    expect(r.sectionWrites).toEqual([
+      {
+        heading: "Review",
+        text:
+          `- ${NOW} ${agent2.session} ok — needs your call — The work is good.\n\n` +
+          `  Verdict: OK.\n\n  What the reviewer checked:\n  1. The tests pass.\n\n  Bottom line: You can accept it.\n` +
+          `\n  Technical note: unverifiable: flight test\n`,
+      },
+    ]);
+  });
+
+  it("review without a report keeps the old one-line entry", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "ok", summary: "The work is good.", note: "checked" },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.report).toBeUndefined();
+    expect(r.sectionWrites).toEqual([
+      { heading: "Review", text: `- ${NOW} ${agent2.session} ok — The work is good. (checked)\n` },
+    ]);
+  });
+
   it("review records the marker without touching status or turn; latest wins", () => {
     const r = transition(
       item("in_review"),

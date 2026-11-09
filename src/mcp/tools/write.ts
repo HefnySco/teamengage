@@ -274,6 +274,9 @@ export function registerWriteTools(
         "Read the task file, the Walkthrough and Evidence sections and the actual diff/tests first, then record " +
         "verdict ok|issues with summary (STE prose for the human — what you verified and why the verdict) " +
         "and a specific note for whoever fixes it (findings with file:line). " +
+        "Also give report: the multi-line decision report for the human, in STE, with the sections Verdict, " +
+        "What the reviewer checked, What the reviewer could not check, Small notes and Bottom line. " +
+        "Agents read summary and note, so keep any note markers there. " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
         "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
@@ -285,15 +288,16 @@ export function registerWriteTools(
         summary: z.string(),
         note: z.string().optional(),
         needs_human: z.boolean().optional(),
+        report: z.string().optional(),
       },
     },
-    async ({ id, verdict, summary, note, needs_human }) => {
+    async ({ id, verdict, summary, note, needs_human, report }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.review(id, s, verdict, note, summary, needs_human);
+        const r = await o.review(id, s, verdict, note, summary, needs_human, report);
         return okText(
           `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}` +
             (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
