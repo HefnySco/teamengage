@@ -8,6 +8,7 @@ import { skillsCmd } from "./commands/skills.js";
 import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE, WRITING_RULES } from "../core/files/template.js";
 import { lsCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
+import { originBackfillCmd } from "./commands/backfill.js";
 import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
@@ -121,6 +122,7 @@ const USAGE_ALL = `te — every command
   undrop <ID>         restore a dropped item back to draft
   unflag <ID>         dismiss an agent's drop flag — the item stays
   deps <ID> [REF…|--off]   replace an item's depends_on (--off clears)
+  origin-backfill [--apply] [--keep IDs] move old origin links from depends_on to found_by (dry run unless --apply; human only)
   found-by <ID> [REF…|--off] set where the problem was found — reference only, no ordering
   relate <ID> [REF…|--off] replace an item's relates — loose refs like source ideas
   hold <ID> [reason]  park a draft/ready item (agents can't see or claim it)
@@ -251,6 +253,8 @@ async function main(argv: string[]): Promise<number> {
       return unflagCmd(rest, home);
     case "deps":
       return depsCmd(rest, home);
+    case "origin-backfill":
+      return originBackfillCmd(rest, home);
     case "found-by":
       return foundByCmd(rest, home);
     case "relate":
