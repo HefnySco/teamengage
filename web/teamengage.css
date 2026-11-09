@@ -365,6 +365,10 @@
   --ps: var(--te-ps-done);
   --ps-em: var(--bs-success-text-emphasis);
 }
+.ps-problem {
+  --ps: var(--bs-danger);
+  --ps-em: var(--bs-danger-text-emphasis);
+}
 .bcard.plan {
   background: color-mix(in srgb, var(--ps) 9%, var(--bs-tertiary-bg));
   border-color: color-mix(in srgb, var(--ps) 35%, var(--bs-border-color-translucent));

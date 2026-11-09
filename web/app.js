@@ -162,6 +162,14 @@ const IdeaChip = ({ st }) => {
   return html`<span class="plan-chip ${IDEA_STATE_CLS[st.state]}" title="idea ${st.state.replace("_", " ")} — ${st.done} of ${st.total} items that name it are done">${st.state.replace("_", " ")} ${st.done}/${st.total}</span>`;
 };
 
+// ---- found problems — open/done problem counts on a plan (from the index), shown as a chip
+const ProblemChip = ({ p }) => {
+  if (!p || p.open + p.done === 0) return null;
+  return html`<span class="plan-chip ${p.open > 0 ? "ps-problem" : "ps-done"}"
+    title="problems found in this plan: ${p.open} open, ${p.done} done">problems ${p.open} open / ${p.done} done</span>`;
+};
+const hasFound = (i) => (i.found_by ?? []).length > 0 || (i.found_here ?? []).length > 0;
+
 const PlanBadge = ({ i }) => {
   if (!i.plan_state) return null;
   const id = i.id ?? i.meta?.id; // list rows are flat; the item page nests it under meta
@@ -952,6 +960,11 @@ const Board = ({ onOpen }) => {
   const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
   const [hidePlans, setHidePlansState] = useState(() => loadSearch("te.board.noplans") === "1");
   const [domShowAll, setDomShowAll] = useState(false);
+  const [foundOnly, setFoundOnlyState] = useState(() => loadSearch("te.board.found") === "1");
+  const setFoundOnly = (v) => {
+    setFoundOnlyState(v);
+    saveSearch("te.board.found", v ? "1" : "");
+  };
   const [ideaFilter, setIdeaFilterState] = useState(() => (IDEA_STATES.includes(loadSearch("te.board.idea")) ? loadSearch("te.board.idea") : ""));
   const setIdeaFilter = (v) => {
     const nv = v === ideaFilter ? "" : v; // clicking the active state clears it
@@ -985,7 +998,9 @@ const Board = ({ onOpen }) => {
   const inPlans = hidePlans ? inAi.filter((i) => !(i.type === "epic" && i.plan_state)) : inAi;
   const ideaSt = ideaStates(data);
   const inIdea = ideaFilter ? inPlans.filter((i) => i.type === "idea" && ideaSt.get(i.id)?.state === ideaFilter) : inPlans;
-  const hits = words.length ? inIdea.filter((i) => matches(i, words)) : inIdea;
+  const inFound = foundOnly ? inIdea.filter(hasFound) : inIdea;
+  const hits = words.length ? inFound.filter((i) => matches(i, words)) : inFound;
+  const foundCount = data.filter(hasFound).length;
   const ideaCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
   for (const v of ideaSt.values()) ideaCounts[v.state] += 1;
   const domainCounts = {};
@@ -1070,7 +1085,10 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${hidePlans ? "btn-outline-secondary" : "btn-plans"}"
         title=${hidePlans ? "plan cards hidden — click to show plans (epics) again" : "hide plan cards — epics with a plan leave the board"}
         onClick=${() => setHidePlans(!hidePlans)}><${GraphIcon} /> plans</button>
-      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans || ideaFilter) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      <button class="btn btn-sm ${foundOnly ? "btn-warning" : "btn-outline-secondary"}"
+        title=${foundOnly ? "showing only found problems and the items that found them — click to clear" : "show only items with found_by or found_here"}
+        onClick=${() => setFoundOnly(!foundOnly)}>Found problems <span class="n">${foundCount}</span></button>
+      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans || ideaFilter || foundOnly) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
         onClose=${() => setIdeaOpen(false)}
         onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
@@ -1187,7 +1205,7 @@ const PlanNode = ({ i, depth, tree }) => {
           }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
         <span class="id text-nowrap">${i.id}</span>
         <${StarBtn} i=${i} reload=${tree.reload} />
-        ${isPlan ? html`<${PlanBadge} i=${i} />` : html`<${Badge} s=${i.status} />`}
+        ${isPlan ? html`<${PlanBadge} i=${i} /><${ProblemChip} p=${i.plan_problems} />` : html`<${Badge} s=${i.status} />`}
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
@@ -2130,7 +2148,7 @@ const ItemView = ({ id }) => {
     <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
       <span class="id flex-shrink-0">${it.meta.id}</span>
       <${Badge} s=${st} />
-      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} />`}
+      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${ProblemChip} p=${it.plan_problems} />`}
       ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
@@ -2187,6 +2205,12 @@ const ItemView = ({ id }) => {
         : html`<span class="sep">·</span><span class="text-secondary">when:</span>${polLine}
           ${st === "done" && html`<span class="text-secondary" title="done satisfies dependents under every setting — this is stored policy for a rerun">applies if reopened</span>`}`}
     </div>
+    ${((b.found_by ?? []).length > 0 || (b.found_here ?? []).length > 0) && html`
+    <div class="chain st-${st}">
+      ${(b.found_by ?? []).length > 0 && html`<span class="text-secondary">Found by</span>${b.found_by.map(depLink)}`}
+      ${(b.found_by ?? []).length > 0 && (b.found_here ?? []).length > 0 && html`<span class="sep">·</span>`}
+      ${(b.found_here ?? []).length > 0 && html`<span class="text-secondary">Problems found</span>${b.found_here.map((f) => depLink({ ref: f.id, status: f.status }))}`}
+    </div>`}
     ${(it.meta.type === "idea" || (b.relates ?? []).length > 0 || (b.referenced_by ?? []).length > 0) && html`
     <div class="chain st-${st}">
       <span class="text-secondary">relates</span>
