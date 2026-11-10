@@ -7,8 +7,8 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
-  rmSync,
   symlinkSync,
+  unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -197,7 +197,7 @@ export async function skillsCmd(args: string[], home?: string, srcDir?: string):
             }
           }
           if (!ours) continue;
-          rmSync(path);
+          unlinkSync(path); // a symlink — unlink drops the link; rmSync throws EISDIR on dir targets (Node 24)
           process.stdout.write(`removed ${path}\n`);
         }
         continue;
