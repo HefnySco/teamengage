@@ -75,7 +75,8 @@ function collect(index: Index, opts: MermaidOpts): Set<string> {
     for (const it of index.items.values()) if (passesFilter(it, opts.filter)) out.add(it.meta.id);
     return out;
   }
-  // BFS over depends_on (both directions) + parent/children from each root
+  // BFS over depends_on (both directions) + parent/children + found links
+  // (found_by forward, found_here problems back) from each root
   const queue: Array<[string, number]> = [];
   for (const r of opts.roots) {
     const id = parseItemRef(r).id;
@@ -101,6 +102,13 @@ function collect(index: Index, opts: MermaidOpts): Set<string> {
         if (!p.workspace && index.items.has(p.id)) queue.push([p.id, d + 1]);
       } catch { /* ignore */ }
     }
+    for (const ref of it.meta.found_by ?? []) {
+      try {
+        const p = parseItemRef(ref);
+        if (!p.workspace && index.items.has(p.id)) queue.push([p.id, d + 1]);
+      } catch { /* ignore */ }
+    }
+    for (const f of it.found_here) queue.push([f.id, d + 1]);
   }
   return out;
 }
@@ -155,6 +163,14 @@ export function renderMermaid(index: Index, opts: MermaidOpts = {}): string {
       try {
         const p = parseItemRef(it.meta.parent);
         if (!p.workspace && shownSet.has(p.id)) edges.push(`  ${nodeId(p.id)} -.-> ${nodeId(id)}`);
+      } catch { /* ignore */ }
+    }
+    // found_by: a thick edge from the finding item to the problem — distinct
+    // from depends_on (solid) and parent (dotted)
+    for (const ref of it.meta.found_by ?? []) {
+      try {
+        const p = parseItemRef(ref);
+        if (!p.workspace && shownSet.has(p.id)) edges.push(`  ${nodeId(p.id)} ==> ${nodeId(id)}`);
       } catch { /* ignore */ }
     }
   }

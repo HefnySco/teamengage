@@ -36,6 +36,8 @@ beforeAll(async () => {
     status: "in_review",
     ai_review: '{verdict: "issues", reviewed_by: "bot@m#1", reviewed_at: "2026-01-01T00:00:00Z"}',
   });
+  // a problem found by GL-0002 — no parent, so it sits outside TE-0001's subtree
+  item("GL-0006", { type: "bug", found_by: "[GL-0002]" });
   idx = await Index.load(plans);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -78,18 +80,19 @@ describe("renderMermaid", () => {
 
   it("caps nodes and adds '+N more'", () => {
     const out = renderMermaid(idx, { maxNodes: 2 });
-    expect(out).toContain('+4 more');
+    expect(out).toContain('+5 more');
   });
 
   it("scoped cap keeps BFS order — the root survives, the periphery folds", () => {
-    // GL-0003 <- GL-0002 <- {GL-0001, TE-0001}: alphabetical order would cut the
-    // searched root itself; BFS order drops the two furthest nodes instead
+    // GL-0003 <- GL-0002 <- {GL-0001, TE-0001, GL-0006(found_here)}: alphabetical
+    // order would cut the searched root itself; BFS order drops the furthest instead
     const out = renderMermaid(idx, { roots: ["GL-0003"], maxNodes: 2 });
     expect(out).toContain("GL_0003");
     expect(out).toContain("GL_0002");
-    expect(out).toContain("+2 more");
+    expect(out).toContain("+3 more");
     expect(out).not.toContain("GL_0001[");
     expect(out).not.toContain("TE_0001");
+    expect(out).not.toContain("GL_0006");
   });
 
   it("marks review items: AI ✓/✗, ⚑ needs_human, ⏱ auto-accept armed", () => {
@@ -105,6 +108,28 @@ describe("renderMermaid", () => {
     const out = renderMermaid(idx, { filter: { status: "done" } });
     expect(out).toContain("GL_0001");
     expect(out).not.toContain("GL_0002");
+  });
+
+  it("walks found links: a found_by problem joins scoped graphs with a thick edge", () => {
+    // GL-0006 is outside TE-0001's subtree but reachable from the plan root
+    // through GL-0002's found_here
+    const out = renderMermaid(idx, { roots: ["TE-0001"] });
+    expect(out).toContain("GL_0006[");
+    expect(out).toContain("GL_0002 ==> GL_0006");
+    // and the problem itself walks back to its finding item
+    expect(renderMermaid(idx, { roots: ["GL-0006"] })).toContain("GL_0002 ==> GL_0006");
+  });
+
+  it("plan-scope render shows a found_by problem outside the subtree", () => {
+    // mirrors /api/graph?under=: subtree ids plus problems found in them,
+    // rendered at depth 0 (DE-0134)
+    const scope = ["TE-0001", ...idx.descendants("TE-0001")];
+    for (const nid of [...scope]) {
+      for (const f of idx.items.get(nid)!.found_here) scope.push(f.id);
+    }
+    const out = renderMermaid(idx, { roots: scope, depth: 0 });
+    expect(out).toContain("GL_0006[");
+    expect(out).toContain("GL_0002 ==> GL_0006");
   });
 
   it("output parses as a real mermaid flowchart (CR-0010)", async () => {

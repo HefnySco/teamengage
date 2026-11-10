@@ -177,6 +177,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       if (q.under) {
         const root = ops.item(q.under).meta.id;
         const scope = new Set([root, ...ops.descendants(root)]);
+        // problems found in the plan or any part join the graph — they sit
+        // outside the subtree but the problems chip counts them (DE-0134)
+        for (const nid of [...scope]) {
+          for (const f of ops.item(nid).found_here) scope.add(f.id);
+        }
         return {
           count: ops.query(filter).filter((i) => scope.has(i.meta.id)).length,
           mermaid: ops.graph({ roots: [...scope], depth: 0, filter, maxNodes: 80 }),
