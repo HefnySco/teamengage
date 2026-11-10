@@ -207,4 +207,62 @@ describe("daemon server", () => {
       rmSync(e2eHome, { recursive: true, force: true });
     }
   }, 90_000);
+
+  it("a second teamengaged exits promptly instead of hanging", async () => {
+    const e2eHome = mkdtempSync(join(tmpdir(), "te-second-"));
+    const wsRoot = join(e2eHome, "ws");
+    const plans = join(wsRoot, ".teamengage");
+    mkdirSync(join(plans, "items", "WS"), { recursive: true });
+    mkdirSync(join(e2eHome, ".teamengage"), { recursive: true });
+    writeFileSync(
+      join(e2eHome, ".teamengage", "workspaces.yaml"),
+      `workspaces:\n  ws: { root: ${wsRoot} }\n`,
+    );
+    writeFileSync(
+      join(plans, "workspace.yaml"),
+      "name: ws\nprefix: WS\nresources:\n  self: { kind: git, path: . }\n",
+    );
+    execFileSync("git", ["init", "-b", "main"], { cwd: plans });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: plans });
+
+    const spawnDaemon = () =>
+      spawn(
+        process.execPath,
+        [join(process.cwd(), "node_modules", "vite-node", "vite-node.mjs"), "src/daemon/main.ts"],
+        { env: { ...process.env, TEAMENGAGE_HOME: e2eHome }, cwd: process.cwd() },
+      );
+    const first = spawnDaemon();
+    try {
+      // wait for the first instance to write daemon.json
+      const djPath = daemonJsonPath(e2eHome);
+      for (let i = 0; i < 300 && !existsSync(djPath); i++) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      expect(readDaemonInfo(e2eHome)).not.toBeNull();
+
+      // the second instance must print the message and exit 0 — not hang
+      const second = spawnDaemon();
+      let out = "";
+      second.stdout.on("data", (d) => (out += d));
+      const code = await new Promise<number | null>((resolve) => {
+        const t = setTimeout(() => resolve(null), 20_000);
+        second.on("exit", (c) => {
+          clearTimeout(t);
+          resolve(c);
+        });
+      });
+      if (code === null) second.kill("SIGKILL"); // hung — clean up before failing
+      expect(code).toBe(0);
+      expect(out).toContain("already running");
+      expect(second.exitCode).toBe(0);
+      // the first instance is still the only live daemon
+      expect(readDaemonInfo(e2eHome)?.pid).toBe(first.pid);
+    } finally {
+      first.kill("SIGKILL");
+      rmSync(e2eHome, { recursive: true, force: true });
+    }
+  }, 90_000);
 });

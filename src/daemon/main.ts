@@ -117,6 +117,15 @@ async function main(): Promise<number | undefined> {
 
   const registry = loadRegistry(home);
 
+  // already serving? report and exit before any store/watcher/overlay is
+  // started — those hold event-loop handles, so exiting after they start
+  // leaves a hung process
+  const already = await runningDaemon(home);
+  if (already) {
+    process.stdout.write(`teamengaged already running at http://127.0.0.1:${already.port}\n`);
+    return 0;
+  }
+
   const ctx: DaemonCtx = {
     home: home ?? "",
     machine,
@@ -169,7 +178,13 @@ async function main(): Promise<number | undefined> {
   // startDaemon) may have come up meanwhile
   running = await runningDaemon(home);
   if (running) {
-    // second start: report the live instance and exit 0
+    // a daemon started while the workspaces loaded — close what we opened
+    // (watchers/overlays hold event-loop handles), then report and exit
+    for (const w of ctx.workspaces.values()) {
+      await w.watcher?.close();
+      await w.overlay?.close();
+      await w.store.enqueue(async () => {}); // drain queued writes
+    }
     process.stdout.write(`teamengaged already running at http://127.0.0.1:${running.port}\n`);
     return 0;
   }
