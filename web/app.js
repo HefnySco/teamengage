@@ -130,9 +130,11 @@ const PLAN_CHIP = {
 };
 // ghost micro-chip: graph glyph + n/m fraction — the colour carries the state, the title the words;
 // clicking opens the plan's dependency graph
-// ---- idea state — derived in the browser from the items that name the idea in relates
+// ---- idea state — the API serves idea_state/idea_progress on idea rows (the canonical index
+// rule); the local copy below only fills in for daemons too old to serve them
 const IDEA_STATES = ["unplanned", "planned", "in_progress", "done"];
 const IDEA_STATE_CLS = { unplanned: "ps-draft", planned: "ps-decomposing", in_progress: "ps-active", done: "ps-done" };
+const servedIdea = (i) => (i.idea_state ? { state: i.idea_state, done: i.idea_progress?.done ?? 0, total: i.idea_progress?.total ?? 0 } : undefined);
 // statuses: the status of every item that references the idea (dropped ones do not count)
 const ideaStateOf = (statuses) => {
   const live = statuses.filter((st) => st !== "dropped");
@@ -154,7 +156,7 @@ const ideaStates = (rows) => {
     }
   }
   const out = new Map();
-  for (const r of rows) if (r.type === "idea") out.set(r.id, ideaStateOf(by.get(r.id) ?? []));
+  for (const r of rows) if (r.type === "idea") out.set(r.id, servedIdea(r) ?? ideaStateOf(by.get(r.id) ?? []));
   return out;
 };
 const IdeaChip = ({ st }) => {
@@ -2225,7 +2227,7 @@ const ItemView = ({ id }) => {
       ${(b.referenced_by ?? []).length === 0 ? html`<span class="text-secondary">nothing yet</span>` : b.referenced_by.map(depLink)}
     </div>`}
     ${it.meta.type === "idea" && (() => {
-      const ist = ideaStateOf((b.referenced_by ?? []).map((r) => r.status));
+      const ist = servedIdea(it) ?? ideaStateOf((b.referenced_by ?? []).map((r) => r.status));
       const pct = ist.total ? Math.round((100 * ist.done) / ist.total) : 0;
       return html`<div class="idea-progress d-flex align-items-center gap-2 mb-2 small">
         <span class="text-secondary">idea</span>
