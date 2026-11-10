@@ -1205,3 +1205,50 @@ describe("propose domain tags", () => {
     expect(await domainsOf(idea.ids[0])).toEqual([]);
   });
 });
+
+describe("idea fields in the item API (DE-0133)", () => {
+  it("ideas return idea_state and idea_progress in list and item; other types do not", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "idea", title: "unplanned thought" },
+        { type: "idea", title: "planned thought" },
+        { type: "task", title: "works on the planned thought", relates: ["#1"] },
+        { type: "task", title: "plain task" },
+      ],
+      human,
+    );
+    const [ideaSolo, ideaPlanned, , plain] = ids;
+
+    // GET /api/items — each idea row carries the derived fields
+    const list = (await (await api("/api/items?type=idea")).json()) as Array<{
+      id: string;
+      idea_state?: string;
+      idea_progress?: { done: number; total: number };
+    }>;
+    expect(list.find((i) => i.id === ideaSolo)).toMatchObject({
+      idea_state: "unplanned",
+      idea_progress: { done: 0, total: 0 },
+    });
+    expect(list.find((i) => i.id === ideaPlanned)).toMatchObject({
+      idea_state: "planned",
+      idea_progress: { done: 0, total: 1 },
+    });
+
+    // GET /api/items/:id — the item object carries them too
+    const brief = (await (await api(`/api/items/${ideaPlanned}`)).json()) as {
+      item: { idea_state?: string; idea_progress?: { done: number; total: number } };
+    };
+    expect(brief.item.idea_state).toBe("planned");
+    expect(brief.item.idea_progress).toEqual({ done: 0, total: 1 });
+
+    // items that are not ideas never carry the fields
+    const tasks = (await (await api("/api/items?type=task")).json()) as Array<Record<string, unknown>>;
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks.some((i) => "idea_state" in i || "idea_progress" in i)).toBe(false);
+    const plainBrief = (await (await api(`/api/items/${plain}`)).json()) as { item: Record<string, unknown> };
+    expect("idea_state" in plainBrief.item).toBe(false);
+    expect("idea_progress" in plainBrief.item).toBe(false);
+  });
+});
