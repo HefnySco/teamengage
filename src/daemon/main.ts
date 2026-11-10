@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import {
@@ -30,6 +30,44 @@ import { WorkspaceOps } from "./api/ops.js";
 
 /** Default agent-facing port — a stable URL for `GET /agent`. */
 const DEFAULT_PORT = 4747;
+
+/** pid liveness probe — signal 0 checks without delivering. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Serialize daemon startup. Two teamengaged in the same load window both pass
+ * runningDaemon() — neither has written daemon.json yet — and then both bind.
+ * An O_EXCL lock file closes the window: the first writer proceeds, the other
+ * reports the already-running daemon. A lock whose pid is dead is stale (the
+ * holder died mid-start) and is taken over.
+ * Returns "acquired", the live holder's pid, or -1 when the lock kept
+ * churning (treated as held).
+ */
+function acquireDaemonLock(lockPath: string): number | "acquired" {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      writeFileSync(lockPath, `${process.pid}\n`, { flag: "wx" });
+      return "acquired";
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const holder = Number(readFileSync(lockPath, "utf8"));
+    if (holder && pidAlive(holder)) return holder;
+    try {
+      unlinkSync(lockPath); // stale — take over; losers of this race see the new file
+    } catch {
+      /* already replaced */
+    }
+  }
+  return -1;
+}
 /**
  * teamengaged — one instance per machine (DESIGN §6.1).
  * Loads every registered workspace, serializes all plan writes through each
@@ -46,6 +84,37 @@ async function main(): Promise<number | undefined> {
     writeFileSync(machinePath, `name: ${hostname()}\n${MACHINE_RUN_TEMPLATE}`);
   }
   const machine = loadMachineConfig(home).name;
+
+  // one daemon per machine: a healthy one answers /health — report and exit.
+  // Checked before the workspace load so a second start stays cheap.
+  let running = await runningDaemon(home);
+  if (running) {
+    process.stdout.write(`teamengaged already running at http://127.0.0.1:${running.port}\n`);
+    return 0;
+  }
+
+  // same-window starts both pass that check — the lock decides which proceeds
+  const lockPath = join(teDir, "daemon.lock");
+  const holder = acquireDaemonLock(lockPath);
+  if (holder !== "acquired") {
+    running = await runningDaemon(home);
+    process.stdout.write(
+      running
+        ? `teamengaged already running at http://127.0.0.1:${running.port}\n`
+        : holder > 0
+          ? `teamengaged already running (pid ${holder}, starting up)\n`
+          : `teamengaged already running\n`,
+    );
+    return 0;
+  }
+  process.on("exit", () => {
+    try {
+      if (Number(readFileSync(lockPath, "utf8")) === process.pid) unlinkSync(lockPath);
+    } catch {
+      /* replaced or gone */
+    }
+  });
+
   const registry = loadRegistry(home);
 
   const ctx: DaemonCtx = {
@@ -96,7 +165,9 @@ async function main(): Promise<number | undefined> {
     }
   }
 
-  const running = await runningDaemon(home);
+  // recheck after the load: a daemon that never took the lock (embedded
+  // startDaemon) may have come up meanwhile
+  running = await runningDaemon(home);
   if (running) {
     // second start: report the live instance and exit 0
     process.stdout.write(`teamengaged already running at http://127.0.0.1:${running.port}\n`);

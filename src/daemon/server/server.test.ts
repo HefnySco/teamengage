@@ -135,4 +135,76 @@ describe("daemon server", () => {
       rmSync(e2eHome, { recursive: true, force: true });
     }
   }, 90_000);
+
+  it("two simultaneous starts: exactly one daemon binds, the other exits already-running", async () => {
+    const e2eHome = mkdtempSync(join(tmpdir(), "te-race-"));
+    const wsRoot = join(e2eHome, "ws");
+    const plans = join(wsRoot, ".teamengage");
+    mkdirSync(join(plans, "items", "WS"), { recursive: true });
+    mkdirSync(join(e2eHome, ".teamengage"), { recursive: true });
+    writeFileSync(
+      join(e2eHome, ".teamengage", "workspaces.yaml"),
+      `workspaces:\n  ws: { root: ${wsRoot} }\n`,
+    );
+    writeFileSync(
+      join(plans, "workspace.yaml"),
+      "name: ws\nprefix: WS\nresources:\n  self: { kind: git, path: . }\n",
+    );
+    execFileSync("git", ["init", "-b", "main"], { cwd: plans });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: plans });
+
+    const spawnDaemon = () => {
+      const child = spawn(
+        process.execPath,
+        [join(process.cwd(), "node_modules", "vite-node", "vite-node.mjs"), "src/daemon/main.ts"],
+        { env: { ...process.env, TEAMENGAGE_HOME: e2eHome }, cwd: process.cwd() },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      const exited = new Promise<number | null>((res) => child.on("exit", res));
+      return { child, out: () => out, exited };
+    };
+    const a = spawnDaemon();
+    const b = spawnDaemon();
+    try {
+      // the loser exits during the winner's load window — wait for that exit
+      // plus the winner's daemon.json (60s covers slow vite-node cold starts)
+      const djPath = daemonJsonPath(e2eHome);
+      const deadline = Date.now() + 60_000;
+      let loser: { code: number | null; out: string } | null = null;
+      let codeA: number | null | undefined;
+      let codeB: number | null | undefined;
+      void a.exited.then((c) => (codeA = c));
+      void b.exited.then((c) => (codeB = c));
+      while (Date.now() < deadline) {
+        const oneDone = codeA !== undefined || codeB !== undefined;
+        if (oneDone && existsSync(djPath)) break;
+        if (codeA !== undefined && codeB !== undefined) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (codeA !== undefined && codeB !== undefined) {
+        throw new Error(`both daemons exited — a: ${a.out()} | b: ${b.out()}`);
+      }
+      const alive = codeA !== undefined ? b : a;
+      loser = { code: (codeA !== undefined ? codeA : codeB) ?? null, out: codeA !== undefined ? a.out() : b.out() };
+      expect(loser.code).toBe(0);
+      expect(loser.out).toMatch(/teamengaged already running/);
+      // the winner is the surviving daemon — it answers /health
+      const info = readDaemonInfo(e2eHome);
+      expect(info).not.toBeNull();
+      const res = await fetch(`http://127.0.0.1:${info!.port}/health`);
+      expect(res.status).toBe(200);
+      alive.child.kill("SIGTERM");
+      const code = await Promise.race([alive.exited, new Promise<null>((r) => setTimeout(() => r(null), 30_000))]);
+      expect(code).toBe(0);
+    } finally {
+      a.child.kill("SIGKILL");
+      b.child.kill("SIGKILL");
+      rmSync(e2eHome, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
