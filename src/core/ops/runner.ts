@@ -177,12 +177,18 @@ export async function execJob(opts: ExecJobOptions): Promise<ExecOutcome> {
   }
 }
 
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
 /**
  * The DNS short name, kebab-cased — `mhefnyDT.local` and `mhefnyDT` are
  * the same machine. Only the first label counts: the domain suffix
  * (.local, .lan, …) differs between the machine file and the hostname.
+ * An IPv4 literal keeps every label — "15.235.101.105" is not "15" (DE-0152).
  */
-const hostKey = (name: string) => kebab(name.trim().split(".")[0] ?? "");
+export const hostKey = (name: string) => {
+  const n = name.trim();
+  return IPV4.test(n) ? kebab(n) : kebab(n.split(".")[0] ?? "");
+};
 
 /**
  * Deploy guard (GL-0287): a target that names a `machine:` may only be
