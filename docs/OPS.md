@@ -261,6 +261,80 @@ One machine can be in many envs — reach differs per network
 unknown machine id in an env or an edge, duplicate ids, a secret in an
 ssh field and a kind/via outside the lists.
 
+### Add a machine
+
+There is no form and no `add` command. You write the file.
+
+1. Make `machines/<id>.machine.md`. Copy a similar machine to start.
+   Use a lowercase kebab id — other case is converted.
+2. Set the fields you need: `host`, `tier`, `ssh` (paths and user
+   names only), `roles`, `apps`, `folders`, `databases`, `rules`,
+   `handled_by` and `edges`. Write free notes below the frontmatter.
+3. Add the machine to one or more env files under `machines:`, with
+   its `row` and `col`. Add the `reach` edges that are true in that
+   env.
+4. Run `te validate`, then `te machines show <id>`.
+
+### Edit a machine
+
+1. Edit `machines/<id>.machine.md`. Keep the `id`: env files, edges
+   and targets use it. To rename, change every reference too —
+   `te validate` reports the ones you miss.
+2. Put values that differ per computer in `<id>.machine.local` next to
+   the file (git-ignored). Its values replace the shared ones. Mark the
+   computer you work on with `runner: true` in its own `.machine.local`.
+3. Run `te validate`. Open `#/ops/machines` to see the diagram.
+
+### Add a deploy
+
+A deploy has three parts. Make all three.
+
+1. **Deploy edge** — in the file of the machine that runs the deploy:
+
+   ```yaml
+   edges:
+     - { kind: deploy, to: cloud-ardupilot/de_web_shadow, repo: ~/de_code/droneengage_webclient_react }
+   ```
+
+2. **Target** — in `.teamengage/workspace.yaml` under `targets:`, with
+   `machine:` and `app:` that exist in `machines/`:
+
+   ```yaml
+   targets:
+     cloud-web-shadow:
+       machine: cloud-ardupilot
+       app: de_web_shadow
+       service: web
+       env: shadow
+       probe: 'curl -sk -m 10 https://cloud.ardupilot.org:8002/version.json'
+   ```
+
+3. **Playbook** — `ops/<name>.playbook.yaml` with `target:` set to the
+   target id. Use `start: human` and a gate step for production.
+
+Run `te validate`, then `te ops start <playbook>`.
+
+The deploy guard (`deployGuard` in `src/core/ops/runner.ts`) refuses
+a job when the runner machine has no `deploy` edge to the target
+machine. It checks only the machine part of `to:` — the part before
+`/`. It does not check the app or the `repo`, so one deploy edge to a
+machine allows every target on that machine.
+
+### Machine and env commands
+
+| Command | What it prints |
+|---|---|
+| `te machines` (or `te machines list`) | one line per machine: id, tier, host, roles |
+| `te machines show <id>` | rules first, then the fields, then the notes |
+| `te machines graph [--env <id>]` | machines in dev, test and prod rows, one line per edge; with `--env`, the env network and its reach edges |
+| `te machines probe [--env <id>]` | runs the reach probes of the env (the active env when `--env` is not given); one line per edge with status and reason |
+| `te env` | the active env and how it was selected (`manual` or wifi) |
+| `te env use <id>` | stores a manual env choice in the runner's `.machine.local` |
+
+Env selection order: the manual choice wins; else the env whose
+`network:` list holds the current wifi name; else none. `te env use`
+needs a runner machine — a `.machine.local` with `runner: true`.
+
 ## Where the records live
 
 | What | Path |
