@@ -275,3 +275,93 @@ describe("sync_remotes and submodules", () => {
     expect(g(home, "--git-dir", join(home, "dry.git"), "branch")).toBe("");
   });
 });
+
+describe("mirror_remotes", () => {
+  /** repo `app` with origin + USB remotes, task folder Tasks/ beside it. */
+  async function setup(yaml: string) {
+    const top = mkdtempSync(join(home, "mir-"));
+    const repo = join(top, "app");
+    mkdirSync(repo, { recursive: true });
+    g(repo, "init", "-q", "-b", "master");
+    ident(repo);
+    commitFile(repo, "a", "1\n");
+    g(home, "init", "-q", "--bare", join(top, "origin.git"));
+    g(home, "init", "-q", "--bare", join(top, "usb.git"));
+    g(repo, "remote", "add", "origin", join(top, "origin.git"));
+    g(repo, "remote", "add", "USB", join(top, "usb.git"));
+    const tasks = join(top, "Tasks");
+    mkdirSync(join(tasks, ".teamengage", "items", "WS"), { recursive: true });
+    writeFileSync(join(tasks, ".teamengage", "workspace.yaml"), yaml);
+    writeFileSync(join(tasks, ".teamengage", "items", "WS", "WS-0001.md"), item("WS-0001", "in_progress"));
+    const ws = resolveWorkspace(tasks, { home });
+    const store = new PlansStore(ws, "w");
+    await store.init();
+    return { top, repo, originBare: join(top, "origin.git"), usbBare: join(top, "usb.git"), wsr: { ws, store } as WorkspaceRuntime };
+  }
+  const yaml = (extra = "") => `name: m\nprefix: M\nrepos: ["../app"]\nmirror_remotes: [USB]\n${extra}`;
+  const mirror = (r: { mirrors?: { remote: string; done: string[]; problems: string[]; skipped?: string }[] }, name = "USB") =>
+    r.mirrors?.find((m) => m.remote === name);
+
+  it("a bare mirror receives the base branch and an open te/* branch", async () => {
+    const s = await setup(yaml());
+    g(s.repo, "checkout", "-q", "-b", "te/WS-0001-x");
+    commitFile(s.repo, "f.txt", "x\n");
+    g(s.repo, "checkout", "-q", "master");
+    const [r] = await syncCode(s.wsr, { home });
+    expect(r.problems).toEqual([]);
+    expect(g(s.originBare, "branch", "--list", "te/*")).toContain("te/WS-0001-x");
+    expect(g(s.usbBare, "branch", "--list", "master")).toContain("master");
+    expect(g(s.usbBare, "branch", "--list", "te/*")).toContain("te/WS-0001-x");
+    expect(mirror(r)?.done).toEqual(["pushed master (new on USB)", "pushed te/WS-0001-x (new on USB)"]);
+  });
+
+  it("a mirror that is ahead fast-forwards the local base branch", async () => {
+    const s = await setup(yaml());
+    await syncCode(s.wsr, { home }); // both remotes get master
+    // another machine commits on top of the mirror only
+    const other = join(s.top, "other");
+    g(s.top, "clone", "-q", s.usbBare, other);
+    ident(other);
+    commitFile(other, "usb.txt", "u\n");
+    g(other, "push", "-q", "origin", "master");
+    const [r] = await syncCode(s.wsr, { home });
+    expect(mirror(r)?.done).toContain("pulled master (+1)");
+    expect(g(s.repo, "log", "-1", "--format=%s", "master")).toBe("edit usb.txt");
+  });
+
+  it("a mirror URL that points to a missing path is skipped as not mounted", async () => {
+    const s = await setup(yaml());
+    g(s.repo, "remote", "set-url", "USB", join(s.top, "not-mounted.git"));
+    const [r] = await syncCode(s.wsr, { home });
+    expect(r.problems).toEqual([]);
+    const m = mirror(r);
+    expect(m?.skipped).toBe("not mounted");
+    expect(m?.done).toEqual([]);
+    expect(m?.problems).toEqual([]);
+  });
+
+  it("a diverged mirror branch is reported and the local branch does not change", async () => {
+    const s = await setup(yaml());
+    await syncCode(s.wsr, { home }); // both remotes get master
+    commitFile(s.repo, "local.txt", "l\n"); // local work, unpushed
+    const other = join(s.top, "other");
+    g(s.top, "clone", "-q", s.usbBare, other);
+    ident(other);
+    commitFile(other, "usb.txt", "u\n");
+    g(other, "push", "-q", "origin", "master");
+    const before = g(s.repo, "rev-parse", "master");
+    const [r] = await syncCode(s.wsr, { home });
+    expect(mirror(r)?.problems.join("\n")).toMatch(/master: diverged from USB/);
+    expect(g(s.repo, "rev-parse", "master")).toBe(before);
+    expect(g(s.usbBare, "log", "-1", "--format=%s", "master")).toBe("edit usb.txt"); // mirror untouched
+  });
+
+  it("a repo with no sync_remotes match still pushes to its mirror", async () => {
+    const s = await setup(yaml('sync_remotes: [origin_local]\n'));
+    const [r] = await syncCode(s.wsr, { home });
+    expect(r.skipped).toBe("no origin_local remote");
+    expect(mirror(r)?.done).toContain("pushed master (new on USB)");
+    expect(g(s.usbBare, "branch", "--list", "master")).toContain("master");
+    expect(g(s.originBare, "branch", "--list", "master")).toBe(""); // not an allowed remote — untouched
+  });
+});

@@ -15,6 +15,7 @@ import { resourceRoots } from "../../core/config/config.js";
 import { ClaimRefusedError } from "../../core/model/errors.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { WorkspaceRuntime } from "../server/context.js";
+import { hasRef, mirrorNotMounted, repoMirrors } from "./mirror.js";
 
 /**
  * Plans-repo sync (SY-0001/2, RS-0004). TeamEngage pushes nothing on its own (principle
@@ -546,17 +547,100 @@ export async function commitAndPushPlans(
   });
 }
 
+// ---- mirror remotes (USB etc.) ---------------------------------------------
+
+/** One mirror remote's share of a plans sync. */
+export interface PlansMirrorReport {
+  remote: string;
+  done: string[];
+  problems: string[];
+  /** set when the mirror was not used on purpose, e.g. "not mounted" */
+  skipped?: string;
+}
+
+/**
+ * The plans repo's mirror pass (`te sync`): each workspace `mirror_remotes`
+ * entry the repo has is fetched, fast-forwarded and pushed with the same
+ * rules as the primary remote. Per-mirror failures are report lines — a
+ * mirror never fails the sync. Never throws.
+ */
+export async function syncPlansMirrors(
+  wsr: WorkspaceRuntime,
+  branch: string,
+  excludeRemote?: string,
+  opts: { home?: string } = {},
+): Promise<PlansMirrorReport[]> {
+  const out: PlansMirrorReport[] = [];
+  const names = wsr.ws.config.mirror_remotes ?? [];
+  if (!names.length || !branch || branch === "HEAD") return out;
+  let repo: string;
+  let mirrors: string[];
+  try {
+    repo = await plansRepoTop(wsr);
+    mirrors = await repoMirrors(repo, names, excludeRemote);
+  } catch {
+    return out;
+  }
+  for (const name of mirrors) {
+    const rep: PlansMirrorReport = { remote: name, done: [], problems: [] };
+    out.push(rep);
+    try {
+      if (await mirrorNotMounted(repo, name, opts.home)) {
+        rep.skipped = "not mounted";
+        continue;
+      }
+      const rRef = `refs/remotes/${name}/${branch}`;
+      try {
+        await git(repo, ["fetch", "-q", "--prune", name, `+refs/heads/${branch}:${rRef}`], { timeoutMs: 60_000 });
+      } catch (e) {
+        // a fresh (empty) mirror has no branch yet — the push below creates it
+        if (!/couldn't find remote ref/i.test((e as Error).message)) throw e;
+      }
+      const remoteHas = await hasRef(repo, rRef);
+      const localHas = await hasRef(repo, `refs/heads/${branch}`);
+      if (remoteHas && localHas) {
+        const ab = await aheadBehind(repo, rRef, `refs/heads/${branch}`);
+        if (ab.ahead > 0 && ab.behind > 0) {
+          rep.problems.push(`${branch}: diverged from ${name} (${ab.ahead} local, ${ab.behind} mirror) — resolve it yourself, te sync never merges`);
+        } else if (ab.behind > 0) {
+          try {
+            await git(repo, ["merge", "--ff-only", "-q", rRef], { timeoutMs: 60_000 });
+            rep.done.push(`pulled ${branch} (+${ab.behind}) from ${name}`);
+            await wsr.store.reindex();
+            void wsr.overlay?.rescan();
+          } catch (e) {
+            rep.problems.push(`${branch}: ${name} is ahead (${ab.behind}) but the fast-forward was refused: ${(e as Error).message.split("\n")[0]}`);
+          }
+        } else if (ab.ahead > 0) {
+          await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
+          rep.done.push(`pushed ${branch} (+${ab.ahead}) to ${name}`);
+        } else {
+          rep.done.push("up to date");
+        }
+      } else if (localHas) {
+        await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
+        rep.done.push(`pushed ${branch} (new on ${name})`);
+      }
+    } catch (e) {
+      rep.problems.push(`${name}: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
+  return out;
+}
+
 /**
  * Sync now (human-pressed): pull → commit → push in one run against the
- * chosen remote (default upstream). Task-folder changes are stashed around
- * the pull and committed after it. Stops at the first step needing judgment
- * — diverged history or an unstash conflict is reported, never merged.
+ * chosen remote (default upstream), then the same for each mirror remote.
+ * Task-folder changes are stashed around the pull and committed after it.
+ * Stops at the first step needing judgment — diverged history or an unstash
+ * conflict is reported, never merged.
  */
 export async function syncNow(
   wsr: WorkspaceRuntime,
   message: string,
   remote?: string,
-): Promise<{ remote: string; pulled: number; committed: number; pushed: boolean; status: PlansGitStatus }> {
+  opts: { home?: string } = {},
+): Promise<{ remote: string; pulled: number; committed: number; pushed: boolean; status: PlansGitStatus; mirrors: PlansMirrorReport[] }> {
   return wsr.store.enqueue(async () => {
     const p = await pullIn(wsr, remote, true);
     const mid = p.status;
@@ -577,6 +661,7 @@ export async function syncNow(
       }
       await git(st.repo, ["fetch", "-q", r.name, mid.branch], { timeoutMs: 20_000 }).catch(() => {});
     }
-    return { remote: r.name, pulled: p.pulled, committed, pushed, status: markFetched(await plansGitStatus(wsr), r.name, true) };
+    const mirrors = await syncPlansMirrors(wsr, mid.branch, p.remote, opts);
+    return { remote: r.name, pulled: p.pulled, committed, pushed, status: markFetched(await plansGitStatus(wsr), r.name, true), mirrors };
   });
 }

@@ -6,6 +6,7 @@ import { parseTargetRef } from "../../core/address/refs.js";
 import type { Claim } from "../../core/model/claim.js";
 import { repoForResource, worktreePath } from "../effects/effects.js";
 import type { WorkspaceRuntime } from "../server/context.js";
+import { mirrorNotMounted, repoMirrors } from "./mirror.js";
 
 /**
  * Code sync between the human's machines (home ↔ work). The plans repo
@@ -28,6 +29,17 @@ export interface CodeSyncReport {
   /** what needs the human: diverged branches, dirty checkouts, offline */
   problems: string[];
   /** not synced on purpose (no allowed remote, not a working repo) — not a problem */
+  skipped?: string;
+  /** mirror remotes (workspace `mirror_remotes`) this repo has — synced after the primary */
+  mirrors?: MirrorSyncReport[];
+}
+
+/** One mirror remote's share of a code sync. */
+export interface MirrorSyncReport {
+  remote: string;
+  done: string[];
+  problems: string[];
+  /** set when the mirror was not used on purpose, e.g. "not mounted" */
   skipped?: string;
 }
 
@@ -197,31 +209,17 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     }
     const allowed = wsr.ws.config.sync_remotes ?? [];
     const remote = await pickRemote(repo, base, allowed);
+    // extra remotes this repo actually has (USB mirror etc.) — synced after the primary
+    const mirrors = await repoMirrors(repo, wsr.ws.config.mirror_remotes ?? [], remote);
     if (!remote) {
       if (allowed.length) rep.skipped = `no ${allowed.join("/")} remote`;
       else rep.problems.push("no git remote — this code stays on this machine (add one: git remote add origin <url>)");
-      continue;
-    }
-    rep.remote = remote;
-    try {
-      const fetchRefs = (refspecs: string[]) =>
-        git(repo, ["fetch", "-q", "--prune", remote, ...refspecs], { timeoutMs: opts.fetchTimeoutMs ?? 60_000 });
-      const teRefs = `+refs/heads/te/*:refs/remotes/${remote}/te/*`;
-      await fetchRefs([`+refs/heads/${base}:refs/remotes/${remote}/${base}`, teRefs]).catch(async (e: Error) => {
-        // a fresh (empty) remote has no base branch yet — the first push creates it
-        if (!/couldn't find remote ref/i.test(e.message)) throw e;
-        await fetchRefs([teRefs]);
-      });
-    } catch (e) {
-      rep.problems.push(`could not fetch from ${remote} — offline? (${(e as Error).message.split("\n")[0]})`);
-      continue;
+      if (!mirrors.length) continue;
+    } else {
+      rep.remote = remote;
     }
 
-    /** run a git step and report it — or, dry, only report it */
-    const act = async (desc: string, gitArgs: string[]) => {
-      if (!dry) await git(repo, gitArgs, { timeoutMs: 90_000, humanPush: gitArgs[0] === "push" });
-      rep.done.push(`${w}${desc}`);
-    };
+    // repo-level gates shared by every remote this repo syncs through
     let push = pushWanted;
     if (push) {
       const subs = await unpushedSubmodules(repo);
@@ -232,67 +230,107 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
     }
     const checkedOut = new Map<string, string>();
     for (const w of await worktreeList(repo)) if (w.branch) checkedOut.set(w.branch, w.path);
-    const rBase = `refs/remotes/${remote}/${base}`;
-    const remoteBase = await hasRef(repo, rBase);
-    const localBase = await hasRef(repo, `refs/heads/${base}`);
 
-    // ---- base branch: accepted work ----
-    if (remoteBase && localBase) {
-      const ab = await aheadBehind(repo, rBase, `refs/heads/${base}`);
-      if (ab.ahead > 0 && ab.behind > 0) {
-        rep.problems.push(`${base}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — merge or rebase it yourself`);
-      } else if (ab.behind > 0 && pull) {
-        const p = dry ? undefined : await fastForward(repo, base, rBase, checkedOut);
-        if (p) rep.problems.push(p);
-        else rep.done.push(`${w}pulled ${base} (+${ab.behind})`);
-      } else if (ab.ahead > 0 && push) {
-        await act(`pushed ${base} (+${ab.ahead})`, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`]);
+    /** fetch → fast-forward → push for one remote; results land in `into` */
+    const syncRemote = async (name: string, into: { done: string[]; problems: string[] }): Promise<void> => {
+      /** run a git step and report it — or, dry, only report it */
+      const act = async (desc: string, gitArgs: string[]) => {
+        if (!dry) await git(repo, gitArgs, { timeoutMs: 90_000, humanPush: gitArgs[0] === "push" });
+        into.done.push(`${w}${desc}`);
+      };
+      try {
+        const fetchRefs = (refspecs: string[]) =>
+          git(repo, ["fetch", "-q", "--prune", name, ...refspecs], { timeoutMs: opts.fetchTimeoutMs ?? 60_000 });
+        const teRefs = `+refs/heads/te/*:refs/remotes/${name}/te/*`;
+        await fetchRefs([`+refs/heads/${base}:refs/remotes/${name}/${base}`, teRefs]).catch(async (e: Error) => {
+          // a fresh (empty) remote has no base branch yet — the first push creates it
+          if (!/couldn't find remote ref/i.test(e.message)) throw e;
+          await fetchRefs([teRefs]);
+        });
+      } catch (e) {
+        into.problems.push(`could not fetch from ${name} — offline? (${(e as Error).message.split("\n")[0]})`);
+        return;
       }
-    } else if (localBase && push) {
-      await act(`pushed ${base} (new on ${remote})`, ["push", "-q", remote, `refs/heads/${base}:refs/heads/${base}`]);
-    } else if (remoteBase && pull) {
-      await act(`pulled ${base} (new here)`, ["branch", "-q", base, rBase]);
-    }
 
-    // a plain repo is worked in place — say what can't travel
+      const rBase = `refs/remotes/${name}/${base}`;
+      const remoteBase = await hasRef(repo, rBase);
+      const localBase = await hasRef(repo, `refs/heads/${base}`);
+
+      // ---- base branch: accepted work ----
+      if (remoteBase && localBase) {
+        const ab = await aheadBehind(repo, rBase, `refs/heads/${base}`);
+        if (ab.ahead > 0 && ab.behind > 0) {
+          into.problems.push(`${base}: diverged from ${name} (${ab.ahead} local, ${ab.behind} remote) — merge or rebase it yourself`);
+        } else if (ab.behind > 0 && pull) {
+          const p = dry ? undefined : await fastForward(repo, base, rBase, checkedOut);
+          if (p) into.problems.push(p);
+          else into.done.push(`${w}pulled ${base} (+${ab.behind})`);
+        } else if (ab.ahead > 0 && push) {
+          await act(`pushed ${base} (+${ab.ahead})`, ["push", "-q", name, `refs/heads/${base}:refs/heads/${base}`]);
+        }
+      } else if (localBase && push) {
+        await act(`pushed ${base} (new on ${name})`, ["push", "-q", name, `refs/heads/${base}:refs/heads/${base}`]);
+      } else if (remoteBase && pull) {
+        await act(`pulled ${base} (new here)`, ["branch", "-q", base, rBase]);
+      }
+
+      // ---- te/* work branches: open work travels, finished work is pruned ----
+      const local = new Set((await refs(repo, "refs/heads/te/")).map((s) => s.slice("refs/heads/".length)));
+      const remotePrefix = `refs/remotes/${name}/`;
+      const theirs = new Set((await refs(repo, `${remotePrefix}te/`)).map((s) => s.slice(remotePrefix.length)));
+
+      for (const b of [...new Set([...local, ...theirs])].sort()) {
+        const rRef = `${remotePrefix}${b}`;
+        if (!open(b)) {
+          // finished work: drop the remote copy once the base holds it
+          if (push && theirs.has(b) && remoteBase && (await git(repo, ["merge-base", "--is-ancestor", rRef, rBase]).then(() => true, () => false))) {
+            await act(`pruned ${b} on ${name} (merged)`, ["push", "-q", name, "--delete", b]).catch(() => {});
+          }
+          continue;
+        }
+        if (local.has(b) && theirs.has(b)) {
+          const ab = await aheadBehind(repo, rRef, `refs/heads/${b}`);
+          if (ab.ahead > 0 && ab.behind > 0) {
+            into.problems.push(`${b}: diverged from ${name} (${ab.ahead} local, ${ab.behind} remote) — the task was worked on both machines; merge it yourself`);
+          } else if (ab.behind > 0 && pull) {
+            const p = dry ? undefined : await fastForward(repo, b, rRef, checkedOut);
+            if (p) into.problems.push(p);
+            else into.done.push(`${w}pulled ${b} (+${ab.behind})`);
+          } else if (ab.ahead > 0 && push) {
+            await act(`pushed ${b} (+${ab.ahead})`, ["push", "-q", name, `refs/heads/${b}:refs/heads/${b}`]);
+          }
+        } else if (local.has(b) && push) {
+          await act(`pushed ${b} (new on ${name})`, ["push", "-q", name, `refs/heads/${b}:refs/heads/${b}`]);
+        } else if (theirs.has(b) && pull) {
+          await act(`pulled ${b} (new here)`, ["branch", "-q", b, rRef]);
+        }
+        // uncommitted work in a live worktree can't travel — say so
+        const at = checkedOut.get(b);
+        if (at && (await isDirty(at))) {
+          into.problems.push(`${b}: uncommitted changes in ${at} stay on this machine — use te sync --leave to commit them before you go`);
+        }
+      }
+    };
+
+    if (remote) await syncRemote(remote, rep);
+
+    // a plain repo is worked in place — say what can't travel (once, repo-level)
     if (!t.base && (await isDirty(repo, false))) {
       rep.problems.push(`uncommitted changes on ${base} stay on this machine — commit them, then sync again`);
     }
 
-    // ---- te/* work branches: open work travels, finished work is pruned ----
-    const local = new Set((await refs(repo, "refs/heads/te/")).map((s) => s.slice("refs/heads/".length)));
-    const remotePrefix = `refs/remotes/${remote}/`;
-    const theirs = new Set((await refs(repo, `${remotePrefix}te/`)).map((s) => s.slice(remotePrefix.length)));
-
-    for (const b of [...new Set([...local, ...theirs])].sort()) {
-      const rRef = `${remotePrefix}${b}`;
-      if (!open(b)) {
-        // finished work: drop the remote copy once the base holds it
-        if (push && theirs.has(b) && remoteBase && (await git(repo, ["merge-base", "--is-ancestor", rRef, rBase]).then(() => true, () => false))) {
-          await act(`pruned ${b} on ${remote} (merged)`, ["push", "-q", remote, "--delete", b]).catch(() => {});
+    // mirror remotes: same rules as the primary; a dead mirror never fails the sync
+    if (mirrors.length) {
+      const mrep: MirrorSyncReport[] = [];
+      rep.mirrors = mrep;
+      for (const name of mirrors) {
+        if (await mirrorNotMounted(repo, name, opts.home)) {
+          mrep.push({ remote: name, done: [], problems: [], skipped: "not mounted" });
+          continue;
         }
-        continue;
-      }
-      if (local.has(b) && theirs.has(b)) {
-        const ab = await aheadBehind(repo, rRef, `refs/heads/${b}`);
-        if (ab.ahead > 0 && ab.behind > 0) {
-          rep.problems.push(`${b}: diverged from ${remote} (${ab.ahead} local, ${ab.behind} remote) — the task was worked on both machines; merge it yourself`);
-        } else if (ab.behind > 0 && pull) {
-          const p = dry ? undefined : await fastForward(repo, b, rRef, checkedOut);
-          if (p) rep.problems.push(p);
-          else rep.done.push(`${w}pulled ${b} (+${ab.behind})`);
-        } else if (ab.ahead > 0 && push) {
-          await act(`pushed ${b} (+${ab.ahead})`, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`]);
-        }
-      } else if (local.has(b) && push) {
-        await act(`pushed ${b} (new on ${remote})`, ["push", "-q", remote, `refs/heads/${b}:refs/heads/${b}`]);
-      } else if (theirs.has(b) && pull) {
-        await act(`pulled ${b} (new here)`, ["branch", "-q", b, rRef]);
-      }
-      // uncommitted work in a live worktree can't travel — say so
-      const at = checkedOut.get(b);
-      if (at && (await isDirty(at))) {
-        rep.problems.push(`${b}: uncommitted changes in ${at} stay on this machine — use te sync --leave to commit them before you go`);
+        const m: MirrorSyncReport = { remote: name, done: [], problems: [] };
+        mrep.push(m);
+        await syncRemote(name, m);
       }
     }
   }

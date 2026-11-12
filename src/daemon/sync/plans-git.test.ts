@@ -178,3 +178,45 @@ describe("stash → pull → unstash and sync now", () => {
     expect(r.status.changes).toEqual([]);
   });
 });
+
+describe("mirror_remotes for the plans repo", () => {
+  it("sync now pushes to the mirror and fast-forwards from it", async () => {
+    const mirror = join(home, "plans-usb.git");
+    g(home, "init", "-q", "--bare", "-b", "main", mirror);
+    const d = join(home, "d");
+    g(home, "clone", "-q", join(home, "remote.git"), d);
+    g(d, "config", "user.email", "t@t");
+    g(d, "config", "user.name", "t");
+    // enable the mirror in the workspace config and add the remote
+    const wy = join(d, "Tasks", ".teamengage", "workspace.yaml");
+    writeFileSync(wy, `${readFileSync(wy, "utf8")}mirror_remotes: [USB]\n`);
+    g(d, "add", "Tasks/.teamengage/workspace.yaml");
+    g(d, "commit", "-qm", "mirror config");
+    g(d, "remote", "add", "USB", mirror);
+    const wsD = resolveWorkspace(join(d, "Tasks"), { home });
+    const storeD = new PlansStore(wsD, "desktop-m");
+    await storeD.init();
+    const wsrD = { ws: wsD, store: storeD } as WorkspaceRuntime;
+
+    // local work → sync now → the mirror receives it
+    writeFileSync(join(d, "Tasks", "TASK-08-s.md"), "# eight\n");
+    const r1 = await syncNow(wsrD, "Tasks: eight", undefined, { home });
+    expect(r1.pushed).toBe(true);
+    expect(r1.mirrors.find((m) => m.remote === "USB")?.done).toEqual(["pushed main (new on USB)"]);
+    expect(g(home, "--git-dir", mirror, "log", "-1", "--format=%s", "main")).toBe("Tasks: eight");
+
+    // a commit that reaches only the mirror fast-forwards the plans repo
+    const e = join(home, "e2");
+    g(home, "clone", "-q", mirror, e);
+    g(e, "config", "user.email", "t@t");
+    g(e, "config", "user.name", "t");
+    writeFileSync(join(e, "Tasks", "TASK-09-r.md"), "# nine\n");
+    g(e, "add", "-A");
+    g(e, "commit", "-qm", "nine via usb");
+    g(e, "push", "-q", "origin", "main");
+    const r2 = await syncNow(wsrD, "Tasks: noop", undefined, { home });
+    expect(r2.pushed).toBe(false);
+    expect(r2.mirrors.find((m) => m.remote === "USB")?.done).toEqual(["pulled main (+1) from USB"]);
+    expect(existsSync(join(d, "Tasks", "TASK-09-r.md"))).toBe(true);
+  });
+});
