@@ -989,3 +989,14 @@ details.sec > .sec-bd {
   background: color-mix(in srgb, var(--ps) 35%, transparent);
   font-weight: 600;
 }
+
+/* ops job stepper (GL-0276) */
+.ops-steps { list-style: none; margin: 0; padding: 0; }
+.ops-step { position: relative; padding: 0 0 .9rem 1.5rem; margin-left: .5rem; border-left: 2px solid var(--bs-border-color); }
+.ops-step:last-child { border-left-color: transparent; padding-bottom: .2rem; }
+.ops-step .ops-dot { position: absolute; left: -.55rem; top: 0; width: 1.05rem; height: 1.05rem; border-radius: 50%; background: var(--bs-body-bg); border: 2px solid var(--bs-border-color); display: flex; align-items: center; justify-content: center; font-size: .68rem; line-height: 1; color: var(--bs-secondary-color); }
+.ops-step.passed .ops-dot { border-color: var(--bs-success); color: var(--bs-success); }
+.ops-step.failed .ops-dot { border-color: var(--bs-danger); color: var(--bs-danger); }
+.ops-step.running .ops-dot { border-color: var(--bs-warning); color: var(--bs-warning); }
+.ops-step.skipped .ops-dot { color: var(--bs-secondary-color); }
+.ops-step.cursor .ops-dot { box-shadow: 0 0 0 .2rem color-mix(in srgb, var(--bs-warning) 35%, transparent); }

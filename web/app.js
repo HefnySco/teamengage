@@ -2688,9 +2688,17 @@ function refreshInboxBadge(d) {
   const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
   a.dataset.count = n || "";
 }
+// nav count on "ops": live jobs (running, waiting, failed)
+function refreshOpsBadge(jobs) {
+  const a = document.querySelector('#nav a[data-r="ops"]');
+  if (!a || !Array.isArray(jobs)) return;
+  const n = jobs.filter((j) => ["running", "waiting", "failed"].includes(j.status)).length;
+  a.dataset.count = n || "";
+}
 const pollNavBadges = () => {
   api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
   api("/api/inbox").then(refreshInboxBadge).catch(() => {});
+  api("/api/ops/jobs").then(refreshOpsBadge).catch(() => {});
 };
 setTimeout(pollNavBadges, 500);
 setInterval(pollNavBadges, 60_000);
@@ -2719,6 +2727,140 @@ const Sync = () => {
       ${s.pushed.map((d) => html`<div class="list-group-item"><span class="id">${d.item}</span> ${d.resource} → ${d.remotes.join(", ")}</div>`)}
       ${!s.pushed.length && html`<div class="list-group-item text-secondary">none seen yet</div>`}
     </div>
+  `;
+};
+
+// ---- Ops (GL-0276): playbook jobs — filterable list + per-job stepper ------
+const OPS_JOB_BADGE = {
+  running: "text-bg-warning", waiting: "text-bg-info", failed: "text-bg-danger",
+  stopped: "text-bg-secondary", succeeded: "text-bg-success", aborted: "text-bg-dark",
+};
+const OPS_STEP_MARK = { pending: "·", running: "▸", passed: "✓", failed: "✗", skipped: "—" };
+const OPS_LIVE = ["running", "waiting", "failed"];
+
+const Ops = () => {
+  const jid = route().split("/")[1];
+  return jid ? html`<${OpsJob} id=${decodeURIComponent(jid)} />` : html`<${OpsList} />`;
+};
+
+const OpsList = () => {
+  const [f, setF] = useState({ playbook: "", target: "", status: "", machine: "" });
+  const qs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const { data: jobs } = useApi(`/api/ops/jobs${qs ? "?" + qs : ""}`, [qs]);
+  const { data: pbs } = useApi("/api/ops/playbooks");
+  const { data: targets } = useApi("/api/ops/targets");
+  if (!jobs) return html`<p class="text-secondary">loading…</p>`;
+  const playbooks = (pbs ?? []).map((l) => l.playbook?.name).filter(Boolean).sort();
+  const targetIds = Object.keys(targets ?? {}).sort();
+  const machines = [...new Set(jobs.map((j) => j.machine))].sort();
+  const sel = (key, label, values) => html`
+    <select class="form-select form-select-sm w-auto" value=${f[key]} onChange=${(e) => setF({ ...f, [key]: e.target.value })}>
+      <option value="">${label}</option>
+      ${values.map((v) => html`<option key=${v} value=${v}>${v}</option>`)}
+    </select>`;
+  return html`
+    <h2 class="h4 mb-3">Ops</h2>
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+      ${sel("playbook", "all playbooks", playbooks)}
+      ${sel("target", "all targets", targetIds)}
+      ${sel("status", "all statuses", Object.keys(OPS_JOB_BADGE))}
+      ${sel("machine", "all machines", machines)}
+      <span class="text-secondary small ms-auto">${jobs.length} job(s)</span>
+    </div>
+    ${!jobs.length && html`<p class="text-secondary">no ops jobs yet — start one with <code>te ops start &lt;playbook&gt;</code></p>`}
+    <div class="list-group">
+      ${jobs.map((j) => html`
+        <a class="list-group-item list-group-item-action d-flex align-items-center gap-2" href=${`#/ops/${encodeURIComponent(j.id)}`}>
+          <span class="id">${j.id}</span>
+          <b>${j.playbook}</b>
+          ${j.kind === "rollback" ? html`<span class="badge text-bg-secondary">rollback of ${j.rollback_of}</span>` : ""}
+          ${j.target ? html`<span class="text-secondary small">${j.target}</span>` : ""}
+          ${j.version ? html`<span class="small text-secondary">${j.version}</span>` : ""}
+          <span class="ms-auto small text-secondary">${j.machine} · ${ago(j.started.ts)}</span>
+          <span class=${`badge ${OPS_JOB_BADGE[j.status] ?? "text-bg-secondary"}`}>${j.status}</span>
+        </a>`)}
+    </div>
+  `;
+};
+
+const OpsJob = ({ id }) => {
+  const { data: job, err, reload } = useApi(`/api/ops/job/${encodeURIComponent(id)}`, [id]);
+  const { data: pbs } = useApi("/api/ops/playbooks");
+  const { data: ws } = useApi("/api/workspace");
+  const [busy, setBusy] = useState(false);
+  if (err) return html`<p class="text-danger">${String(err)}</p>`;
+  if (!job) return html`<p class="text-secondary">loading…</p>`;
+  const pb = (pbs ?? []).find((l) => l.playbook?.name === job.playbook)?.playbook;
+  const specs = job.step_specs ?? pb?.steps ?? [];
+  const spec = specs[job.cursor];
+  const atGate = job.status === "waiting" && spec?.kind === "gate";
+  const live = OPS_LIVE.includes(job.status);
+  const act = async (path, body) => {
+    setBusy(true);
+    try { await post(path, body); reload(); }
+    catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  const bug = async (s) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await post("/api/propose", {
+        items: [{
+          title: `ops ${job.playbook}: step ${s.id} failed`,
+          summary: `Ops job ${job.id} (${job.playbook}${job.target ? ` on ${job.target}` : ""}) failed at step '${s.id}' on ${job.machine}${s.exit_code !== undefined ? ` (exit ${s.exit_code})` : ""}.${s.output_tail ? `\n\noutput tail:\n${s.output_tail.split("\n").slice(-10).join("\n")}` : ""}`,
+          project: ws?.projects?.[0]?.name,
+          found_by: [job.id],
+        }],
+      });
+      toast(`bug task ${r.ids?.[0] ?? ""} drafted`, "success");
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  return html`
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+      <a href="#/ops" class="text-decoration-none small">‹ ops</a>
+      <h2 class="h4 mb-0">${job.id}</h2>
+      <span class=${`badge ${OPS_JOB_BADGE[job.status] ?? "text-bg-secondary"}`}>${job.status}</span>
+      ${job.kind === "rollback" && html`<span class="badge text-bg-secondary">rollback of <a href=${`#/ops/${encodeURIComponent(job.rollback_of)}`}>${job.rollback_of}</a></span>`}
+      ${job.rollback_job && html`<span class="badge text-bg-secondary">rollback: <a href=${`#/ops/${encodeURIComponent(job.rollback_job)}`}>${job.rollback_job}</a></span>`}
+      <span class="ms-auto d-flex gap-1">
+        ${atGate && html`<button class="btn btn-sm btn-success" disabled=${busy}
+          onClick=${async () => (await confirmDialog(`approve step '${job.steps[job.cursor]?.id}'?`, spec.instruction ?? "", { ok: "approve" })) && act(`/api/ops/approve/${id}`, { step: job.steps[job.cursor].id })}>Approve</button>`}
+        ${job.status === "failed" && html`<button class="btn btn-sm btn-outline-warning" disabled=${busy} onClick=${() => act(`/api/ops/resume/${id}`, {})}>Resume</button>`}
+        ${live && html`<button class="btn btn-sm btn-outline-danger" disabled=${busy}
+          onClick=${async () => (await confirmDialog(`abort job ${job.id}?`, "The cursor step is cancelled and the target lock is released.", { ok: "abort", danger: true })) && act(`/api/ops/abort/${id}`, {})}>Abort</button>`}
+      </span>
+    </div>
+    <div class="small text-secondary mb-2">
+      ${job.playbook}${job.target ? ` on ${job.target}` : ""} · ${job.machine} · started ${ago(job.started.ts)} ago by ${job.started.by}
+      ${job.version ? ` · version ${job.version}` : ""}
+    </div>
+    ${Object.keys(job.params ?? {}).length > 0 && html`<div class="small text-secondary mb-2">params: ${Object.entries(job.params).map(([k, v]) => `${k}=${v}`).join("  ")}</div>`}
+    <details class="small mb-2"><summary class="text-secondary">playbook sha256</summary><code>${job.playbook_sha256}</code></details>
+    <ol class="ops-steps">
+      ${job.steps.map((s, i) => {
+        const sp = specs[i];
+        return html`<li key=${s.id} class=${`ops-step ${s.status} ${i === job.cursor && live ? "cursor" : ""}`}>
+          <span class="ops-dot">${OPS_STEP_MARK[s.status] ?? "?"}</span>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <b>${s.id}</b>
+            ${sp?.kind ? html`<span class="text-secondary small">${sp.kind}</span>` : ""}
+            <span class=${`badge ${OPS_JOB_BADGE[s.status === "passed" ? "succeeded" : s.status === "skipped" ? "stopped" : s.status] ?? "text-bg-secondary"}`}>${s.status}</span>
+            ${i === job.cursor && live ? html`<span class="small text-secondary">◂ cursor</span>` : ""}
+            ${s.status === "failed" && html`<button class="btn btn-sm btn-outline-secondary py-0" disabled=${busy} onClick=${() => bug(s)}>create bug task</button>`}
+            <span class="ms-auto small text-secondary">
+              ${s.started ? ago(s.started) + " ago" : ""}${s.session ? ` · ${s.session}` : ""}${s.exit_code !== undefined ? ` · exit ${s.exit_code}` : ""}
+            </span>
+          </div>
+          ${sp?.instruction && (s.status === "pending" || s.status === "running") && i === job.cursor
+            ? html`<div class="small text-secondary mt-1">${sp.instruction}</div>` : ""}
+          ${s.reason ? html`<div class="small text-secondary mt-1">skipped: ${s.reason}</div>` : ""}
+          ${s.evidence ? html`<details class="small mt-1"><summary class="text-secondary">evidence</summary><pre class="mb-0 mt-1 p-2 bg-body-tertiary rounded">${s.evidence}</pre></details>` : ""}
+          ${s.output_tail ? html`<details class="small mt-1"><summary class="text-secondary">output tail${s.output_sha256 ? ` · ${s.output_sha256.slice(0, 12)}` : ""}</summary><pre class="mb-0 mt-1 p-2 bg-body-tertiary rounded">${s.output_tail}</pre></details>` : ""}
+        </li>`;
+      })}
+    </ol>
   `;
 };
 
@@ -2768,7 +2910,7 @@ const Artifacts = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, domains: Domains, artifacts: Artifacts, archive: Archive };
+const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {
