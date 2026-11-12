@@ -405,6 +405,7 @@ stay human-only.
 | `te env` | the active env and how it was selected (`manual` or wifi) |
 | `te env use <id>` | stores a manual env choice in the runner's `.machine.local` |
 | `te machines note <id> "text"` | adds a human note to the machine and opens a ready task to apply it |
+| `te machines rename <old> <new>` | renames a machine: file, id and every env/edge/target/probe reference |
 | `te ops note <playbook> "text"` | adds a human note to `ops/<playbook>.notes.md` and opens a ready task to apply it |
 
 Env selection order: the manual choice wins; else the env whose
