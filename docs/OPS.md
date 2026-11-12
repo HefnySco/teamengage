@@ -367,12 +367,39 @@ A note block in the file:
 rpi5 holds the IMX500 camera on /dev/video0 — never unplug it while de_camera runs
 ```
 
+### Running now: what each app on a machine runs
+
+The machine side panel (`#/ops/machines`) and `te machines show <id>` show
+a **running now** section — one line per app of the machine. TeamEngage
+joins the records for you: the targets that name this machine and app,
+the last **succeeded** job of each target (its version is the deploy
+ledger), and the last stored probe of each target.
+
+Each app has a state:
+
+| State | What it means |
+|---|---|
+| `deployed` | a job and a probe agree, or a job ran and there is no probe |
+| `drift` | the stored probe version differs from the job version |
+| `unknown` | a target names the app, but it has no job and no probe |
+| `no_target` | no target names this app |
+
+The line shows the app name, port, `prod` or `shadow` badge, the version,
+how long ago the evidence landed, and a link to the job. A failed or
+aborted job never counts as deployed. In the side panel the section sits
+right after the rules on a prod machine and after the apps on other
+tiers.
+
+The view runs nothing: it shows the stored job records and the stored
+probe results only. To refresh a probe, use the probe buttons — they
+stay human-only.
+
 ### Machine and env commands
 
 | Command | What it prints |
 |---|---|
 | `te machines` (or `te machines list`) | one line per machine: id, tier, host, roles |
-| `te machines show <id>` | rules first, then the fields, then the notes |
+| `te machines show <id>` | rules, then `running now` (the four states above), then the fields, then the notes |
 | `te machines graph [--env <id>]` | machines in dev, test and prod rows, one line per edge; with `--env`, the env network and its reach edges |
 | `te machines probe [--env <id>]` | runs the reach probes of the env (the active env when `--env` is not given); one line per edge with status and reason |
 | `te env` | the active env and how it was selected (`manual` or wifi) |

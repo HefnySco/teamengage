@@ -8,7 +8,8 @@ import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
 import { loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ProbeResult, type ReachProbeResult } from "../../core/ops/probe.js";
-import { loadMachines } from "../../core/ops/machine.js";
+import { loadMachines, type Machine } from "../../core/ops/machine.js";
+import { deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
 import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseNotes, readNotes } from "../../core/ops/notes.js";
 import { WorkspaceOps } from "./ops.js";
 import { basename } from "node:path";
@@ -119,10 +120,33 @@ export function opsMachines(wsr: WorkspaceRuntime) {
   };
 }
 
-export function opsMachine(wsr: WorkspaceRuntime, id: string) {
+/**
+ * The deployed join's inputs (GL-0305): workspace targets, every job of
+ * every runner and the stored probes — read-only, no probe runs.
+ */
+function deployedInputs(wsr: WorkspaceRuntime, ctx: DaemonCtx) {
+  return {
+    targets: opsTargets(wsr),
+    jobs: jobStore(wsr, ctx).listAll(),
+    probes: opsProbes(ctx),
+  };
+}
+
+function deployedOf(machine: Machine, wsr: WorkspaceRuntime, ctx: DaemonCtx): DeployedApp[] {
+  const { targets, jobs, probes } = deployedInputs(wsr, ctx);
+  return deployedForMachine(machine, targets, jobs, probes);
+}
+
+export function opsMachine(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
   const l = loadMachines(wsr.ws.root).find((x) => x.machine?.id === id);
   if (!l?.machine) throw new NotFoundError(`machine '${id}' not under machines/`);
-  return { ...l.machine, file: l.file, notes: bodyWithoutNotes(l.body ?? ""), human_notes: parseNotes(l.body ?? "") };
+  return {
+    ...l.machine,
+    file: l.file,
+    notes: bodyWithoutNotes(l.body ?? ""),
+    human_notes: parseNotes(l.body ?? ""),
+    deployed: deployedOf(l.machine, wsr, ctx),
+  };
 }
 
 /**
@@ -184,12 +208,16 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
     ),
   );
   const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id === l.env.id;
+  const { targets, jobs, probes } = deployedInputs(wsr, ctx);
   return {
     ...l.env,
     file: l.file,
     active,
     notes: l.body ?? "",
-    machines: l.env.machines.map((p) => ({ ...p, machine: machines.get(p.id) })),
+    machines: l.env.machines.map((p) => {
+      const m = machines.get(p.id);
+      return { ...p, machine: m ? { ...m, deployed: deployedForMachine(m, targets, jobs, probes) } : undefined };
+    }),
     probes: loadReachProbes(l.env.id, ctx.home),
   };
 }
@@ -498,7 +526,7 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
   });
   app.get("/api/ops/machines/:id", async (req, reply) => {
     try {
-      return opsMachine(opsWsr(ctx, wsOf(req.query)), (req.params as { id: string }).id);
+      return opsMachine(opsWsr(ctx, wsOf(req.query)), ctx, (req.params as { id: string }).id);
     } catch (e) {
       return sendOpsErr(reply, e);
     }

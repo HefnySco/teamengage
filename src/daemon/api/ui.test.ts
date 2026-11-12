@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -67,14 +67,14 @@ describe("ops UI API (GL-0276)", () => {
     mkdirSync(join(plans, "items", "WS"), { recursive: true });
     writeFileSync(
       join(plans, "workspace.yaml"),
-      "name: ws\nprefix: WS\ntargets:\n  stage: { title: staging, service: auth, env: staging, probe: 'echo v1.0.0' }\n  slow: { title: slow, service: auth, env: prod, probe: 'sleep 5', probe_timeout_ms: 200 }\n  unprobed: { title: no probe, service: auth, env: dev }\n",
+      `name: ws\nprefix: WS\ntargets:\n  stage: { title: staging, service: auth, env: staging, probe: 'echo v1.0.0', machine: box, app: myapp }\n  slow: { title: slow, service: auth, env: prod, probe: 'sleep 5', probe_timeout_ms: 200 }\n  unprobed: { title: no probe, service: auth, env: dev }\n  panel: { machine: box, app: sideapp, probe: 'touch ${home2}/probe-ran' }\n`,
     );
     mkdirSync(join(root, "ops"), { recursive: true });
     mkdirSync(join(root, "machines"), { recursive: true });
     mkdirSync(join(root, "envs"), { recursive: true });
     const doc = (fm: Record<string, unknown>, body = "") => `---\n${YAML.stringify(fm)}---\n${body}`;
     writeFileSync(join(root, "machines", "lap.machine.md"), doc({ id: "lap", host: hostname(), tier: "dev", roles: ["runner"], rules: ["never cut over by hand"] }, "the laptop\n"));
-    writeFileSync(join(root, "machines", "box.machine.md"), doc({ id: "box", host: "box.local", tier: "prod", ssh: { user: "pi", key: "~/.ssh/box" } }));
+    writeFileSync(join(root, "machines", "box.machine.md"), doc({ id: "box", host: "box.local", tier: "prod", ssh: { user: "pi", key: "~/.ssh/box" }, apps: [{ name: "myapp", port: 8080, env: "prod" }, { name: "sideapp", port: 8081 }] }));
     writeFileSync(
       join(root, "envs", "work.env.md"),
       doc({
@@ -233,6 +233,29 @@ describe("ops UI API (GL-0276)", () => {
     expect(env.machines.find((p: { id: string }) => p.id === "box").machine.host).toBe("box.local");
     expect(env.reach[0]).toMatchObject({ from: "lap", to: "box", via: "ssh" });
     expect(Array.isArray(env.probes)).toBe(true);
+  });
+
+  // GL-0305: the deployed join — apps × targets × last succeeded job ×
+  // stored probe, computed by TeamEngage; reading it runs no probe
+  it("GET machines/<id> and envs/<id> return deployed — last job + stored probe, no probe runs", async () => {
+    const box = await (await fetch(`${daemon2.url}/api/ops/machines/box`, { headers: cookie() })).json();
+    const myapp = box.deployed.find((a: { name: string }) => a.name === "myapp");
+    // the earlier test left job v2.0.0 succeeded and probe v1.0.0 on stage — drift
+    expect(myapp.state).toBe("drift");
+    expect(myapp.targets[0].drift).toBe(true);
+    expect(myapp.targets[0].job).toMatchObject({ version: "v2.0.0", machine: "test" });
+    expect(myapp.targets[0].job.finished).toBeTruthy();
+    expect(myapp.targets[0].probe).toMatchObject({ version: "v1.0.0", ok: true });
+    const sideapp = box.deployed.find((a: { name: string }) => a.name === "sideapp");
+    expect(sideapp.state).toBe("unknown"); // target 'panel' has no job and no stored probe
+    const lap = await (await fetch(`${daemon2.url}/api/ops/machines/lap`, { headers: cookie() })).json();
+    expect(lap.deployed).toEqual([]); // lap has no apps
+    const env = await (await fetch(`${daemon2.url}/api/ops/envs/work`, { headers: cookie() })).json();
+    const ebox = env.machines.find((p: { id: string }) => p.id === "box").machine;
+    expect(ebox.deployed.find((a: { name: string }) => a.name === "myapp").state).toBe("drift");
+    // reading the panel ran no probe: the 'panel' probe's sentinel file does not exist
+    expect(existsSync(join(home2, "probe-ran"))).toBe(false);
+    expect(existsSync(join(home2, ".teamengage", "ops-probes", "panel.json"))).toBe(false);
   });
 
   it("POST /api/ops/envs/:id/probe is human-only; the wrong wifi answers not_expected without ssh", async () => {

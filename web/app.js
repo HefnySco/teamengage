@@ -2944,6 +2944,38 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
   const machineTargets = m ? Object.entries(targets ?? {}).filter(([, t]) => t.machine === m.id) : [];
   const lastOk = {};
   for (const j of (jobs ?? []).filter((x) => x.status === "succeeded" && x.version)) if (!lastOk[j.target]) lastOk[j.target] = j;
+
+  // GL-0305: the 'running now' section — the API joins apps, targets, the
+  // last succeeded job and the stored probe into m.deployed; one line per
+  // app. The view runs no probe: it shows the stored results only.
+  const primaryDep = (list) => {
+    let best, bestTs = "";
+    for (const t of list ?? []) {
+      const ts = t.job?.finished ?? t.probe?.ts ?? "";
+      if (ts > bestTs) { bestTs = ts; best = t; }
+    }
+    return best;
+  };
+  const runningNow = m?.deployed?.length ? html`<div class="mt-2"><div class="small fw-bold text-secondary">running now</div>
+    <ul class="small mb-2 ps-3">${m.deployed.map((a) => {
+      const t = primaryDep(a.targets);
+      const version = t?.job?.version ?? t?.probe?.version;
+      const ts = t?.job?.finished ?? t?.probe?.ts;
+      return html`<li key=${a.name}>
+        ${a.name}${a.port ? ` :${a.port}` : ""}
+        ${a.env ? html` <span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span>` : ""}
+        ${version ? ` ${version}` : ""}
+        ${ts ? html` <span class="text-secondary">${ago(ts)} ago</span>` : ""}
+        ${t?.job ? html` <a href=${`#/ops/${encodeURIComponent(t.job.id)}`} title=${`job ${t.job.id} on ${t.job.machine}`}>${t.job.id}</a>` : ""}
+        ${a.state === "drift"
+          ? html` <span class="badge text-bg-warning" title=${`probe ${t?.probe?.version ?? "?"} ≠ job ${t?.job?.version ?? "?"}`}>drift</span>`
+          : a.state === "unknown"
+            ? html` <span class="badge text-bg-secondary" title=${`${a.targets.map((x) => x.target).join(", ")} — no job and no probe`}>unknown</span>`
+            : a.state === "no_target"
+              ? html` <span class="text-secondary">no target</span>`
+              : ""}
+      </li>`;
+    })}</ul></div>` : "";
   // ---- edge routing (GL-0302): boxes sit on a row/col grid; the bands between
   // rows and columns are box-free channels. An edge exits and enters box edges,
   // travels inside those channels, and never crosses a box that is not its end.
@@ -3053,8 +3085,10 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
         </div>
         ${m.rules?.length ? html`<div class="mt-2"><div class="small fw-bold text-secondary">rules</div>
           <ul class="small mb-2 ps-3">${m.rules.map((r) => html`<li class=${/never|hands off|no deploys/i.test(r) ? "text-danger" : ""}>${r}</li>`)}</ul></div>` : ""}
+        ${m.tier === "prod" ? runningNow : ""}
         ${m.apps?.length ? html`<div><div class="small fw-bold text-secondary">apps</div>
           <ul class="small mb-2 ps-3">${m.apps.map((a) => html`<li>${a.name}${a.port ? ` :${a.port}` : ""}${a.env ? html` <span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span>` : ""}</li>`)}</ul></div>` : ""}
+        ${m.tier !== "prod" ? runningNow : ""}
         ${m.folders?.length ? html`<div><div class="small fw-bold text-secondary">folders</div>
           <ul class="small mb-2 ps-3">${m.folders.map((f) => html`<li><code>${f.path}</code>${f.purpose ? ` — ${f.purpose}` : ""}</li>`)}</ul></div>` : ""}
         ${m.databases?.length ? html`<div><div class="small fw-bold text-secondary">databases</div>

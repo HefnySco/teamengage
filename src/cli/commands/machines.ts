@@ -1,7 +1,13 @@
 import YAML from "yaml";
+import { hostname } from "node:os";
 import { daemonApi } from "../client.js";
 import { kebab, loadMachines, type LoadedMachine } from "../../core/ops/machine.js";
 import { currentEnv, loadEnvs, setEnvPin, wifiName, type Env } from "../../core/ops/env.js";
+import { resolveWorkspace } from "../../core/config/config.js";
+import { JobStore } from "../../core/ops/job.js";
+import { loadProbes } from "../../core/ops/probe.js";
+import { deployedAppLine, deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
+import { runnerMachine } from "../../core/ops/runner.js";
 
 /**
  * `te machines` / `te env` (GL-0288) — the human/agent window onto the
@@ -27,11 +33,16 @@ async function root(home?: string): Promise<string> {
 
 export { currentEnv, wifiName };
 
-function showMachine(l: LoadedMachine): void {
+function showMachine(l: LoadedMachine, deployed?: DeployedApp[]): void {
   const m = l.machine!;
   if (m.rules.length) {
     console.log("rules:");
     for (const r of m.rules) console.log(`  - ${r}`);
+  }
+  // GL-0305: what runs on the machine now — the same join the Ops panel shows
+  if (deployed?.length) {
+    console.log("running now:");
+    for (const a of deployed) console.log(`  ${deployedAppLine(a)}`);
   }
   const { rules: _rules, runner: _runner, ...rest } = m;
   const fm = Object.fromEntries(Object.entries(rest).filter(([, v]) => !(Array.isArray(v) && !v.length) && !(typeof v === "object" && v !== null && !Array.isArray(v) && !Object.keys(v).length)));
@@ -76,7 +87,11 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     if (!id) return console.log("usage: te machines show <id>"), 4;
     const l = loadMachines(root_).find((x) => x.machine?.id === kebab(id));
     if (!l?.machine) return console.log(`no machine '${id}' under machines/`), 4;
-    showMachine(l);
+    // the deployed join reads job files and stored probes — never runs a probe
+    const ws = resolveWorkspace(root_, { home });
+    const jobs = new JobStore(root_, ws.plansDir, runnerMachine(root_, hostname())?.id ?? hostname()).listAll();
+    const deployed = deployedForMachine(l.machine, ws.config.targets, jobs, loadProbes(home));
+    showMachine(l, deployed);
     return 0;
   }
   if (sub === "probe") {
