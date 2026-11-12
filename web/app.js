@@ -2739,9 +2739,21 @@ const OPS_STEP_MARK = { pending: "·", running: "▸", passed: "✓", failed: "�
 const OPS_LIVE = ["running", "waiting", "failed"];
 
 const Ops = () => {
-  const jid = route().split("/")[1];
-  return jid ? html`<${OpsJob} id=${decodeURIComponent(jid)} />` : html`<${OpsList} />`;
+  const seg = route().split("/");
+  const sub = seg[1] ? decodeURIComponent(seg[1]) : "";
+  if (sub === "playbooks") return html`<${OpsPlaybooks} />`;
+  if (sub === "playbook") return html`<${OpsPlaybook} name=${decodeURIComponent(seg[2] ?? "")} />`;
+  return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsList} />`;
 };
+
+const OpsTabs = ({ view }) => html`
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <h2 class="h4 mb-0">Ops</h2>
+    <span class="d-flex gap-2 small">
+      <a href="#/ops" class=${view === "jobs" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>jobs</a>
+      <a href="#/ops/playbooks" class=${view === "playbooks" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>playbooks</a>
+    </span>
+  </div>`;
 
 const OpsList = () => {
   const [f, setF] = useState({ playbook: "", target: "", status: "", machine: "" });
@@ -2759,7 +2771,7 @@ const OpsList = () => {
       ${values.map((v) => html`<option key=${v} value=${v}>${v}</option>`)}
     </select>`;
   return html`
-    <h2 class="h4 mb-3">Ops</h2>
+    <${OpsTabs} view="jobs" />
     <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
       ${sel("playbook", "all playbooks", playbooks)}
       ${sel("target", "all targets", targetIds)}
@@ -2861,6 +2873,124 @@ const OpsJob = ({ id }) => {
         </li>`;
       })}
     </ol>
+  `;
+};
+
+// ---- Ops playbooks (GL-0277): the ops/*.playbook.yaml files, read-only steps, start form
+const OpsPlaybooks = () => {
+  const { data: pbs } = useApi("/api/ops/playbooks");
+  const { data: jobs } = useApi("/api/ops/jobs");
+  if (!pbs) return html`<p class="text-secondary">loading…</p>`;
+  const last = {};
+  for (const j of jobs ?? []) if (!last[j.playbook] || j.started.ts > last[j.playbook].started.ts) last[j.playbook] = j;
+  return html`
+    <${OpsTabs} view="playbooks" />
+    ${!pbs.length && html`<p class="text-secondary">no playbooks — write <code>ops/&lt;name&gt;.playbook.yaml</code> in the task folder</p>`}
+    <div class="list-group">
+      ${pbs.map((l) => {
+        const pb = l.playbook;
+        if (!pb)
+          return html`<div class="list-group-item" key=${l.file}>
+            <span class="id">${l.file}</span> <span class="badge text-bg-danger">does not parse</span>
+            <div class="small text-secondary mt-1">${l.error}</div>
+          </div>`;
+        const j = last[pb.name];
+        return html`<a class="list-group-item list-group-item-action d-flex align-items-center gap-2" key=${l.file} href=${`#/ops/playbook/${encodeURIComponent(pb.name)}`}>
+          <b>${pb.name}</b>
+          ${pb.title ? html`<span class="small text-secondary">${pb.title}</span>` : ""}
+          ${pb.target ? html`<span class="badge text-bg-secondary">${pb.target}</span>` : ""}
+          <span class="small text-secondary">start: ${pb.start}${pb.min_tier ? ` · ${pb.min_tier}+ tier` : ""}</span>
+          <span class="ms-auto small text-secondary">
+            ${j ? html`last job <a href=${`#/ops/${encodeURIComponent(j.id)}`} onClick=${(e) => e.stopPropagation()}><span class=${`badge ${OPS_JOB_BADGE[j.status] ?? "text-bg-secondary"}`}>${j.status}</span></a> ${ago(j.started.ts)} ago` : "no jobs yet"}
+          </span>
+          <code class="small text-secondary" title=${l.sha256}>${l.sha256.slice(0, 12)}</code>
+        </a>`;
+      })}
+    </div>
+  `;
+};
+
+const OpsPlaybook = ({ name }) => {
+  const { data: pbs } = useApi("/api/ops/playbooks");
+  const { data: targets } = useApi("/api/ops/targets");
+  const { data: jobs } = useApi(`/api/ops/jobs?playbook=${encodeURIComponent(name)}`, [name]);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  if (!pbs) return html`<p class="text-secondary">loading…</p>`;
+  const l = pbs.find((x) => x.playbook?.name === name);
+  if (!l?.playbook) return html`<p class="text-danger">playbook ${name} not found under ops/</p>`;
+  const pb = l.playbook;
+  const last = [...(jobs ?? [])].sort((a, b) => b.started.ts.localeCompare(a.started.ts))[0];
+  const openForm = () =>
+    setForm({
+      target: pb.target ?? "",
+      params: Object.fromEntries(pb.params.map((p) => [p.name, p.default ?? ""])),
+    });
+  const start = async () => {
+    setBusy(true);
+    try {
+      const job = await post("/api/ops/start", {
+        playbook: pb.name,
+        target: form.target || undefined,
+        params: Object.fromEntries(Object.entries(form.params).filter(([, v]) => v !== "")),
+      });
+      nav(`ops/${job.id}`);
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  return html`
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+      <a href="#/ops/playbooks" class="text-decoration-none small">‹ playbooks</a>
+      <h2 class="h4 mb-0">${pb.name}</h2>
+      <span class="small text-secondary">start: ${pb.start}${pb.min_tier ? ` · ${pb.min_tier}+ tier` : ""}</span>
+      <span class="ms-auto"><button class="btn btn-sm btn-primary" disabled=${busy} onClick=${openForm}>Start</button></span>
+    </div>
+    ${pb.title ? html`<div class="small mb-1">${pb.title}</div>` : ""}
+    ${pb.description ? html`<div class="small text-secondary mb-2">${pb.description}</div>` : ""}
+    <div class="small text-secondary mb-2">
+      ${pb.target ? `target ${pb.target} · ` : ""}${pb.steps.length} steps${pb.cwd ? ` · cwd ${pb.cwd}` : ""}
+      ${last ? html` · last job <a href=${`#/ops/${encodeURIComponent(last.id)}`}><span class=${`badge ${OPS_JOB_BADGE[last.status] ?? "text-bg-secondary"}`}>${last.status}</span></a> ${ago(last.started.ts)} ago${last.playbook_sha256 !== l.sha256 ? html` <span class="badge text-bg-warning" title="the playbook file changed since this job pinned it">file changed since</span>` : ""}` : ""}
+    </div>
+    <details class="small mb-2"><summary class="text-secondary">sha256</summary><code>${l.sha256}</code></details>
+    ${form && html`
+      <div class="card card-body mb-3">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <b class="small">start ${pb.name}</b>
+          <select class="form-select form-select-sm w-auto" value=${form.target} onChange=${(e) => setForm({ ...form, target: e.target.value })}>
+            <option value="">no target</option>
+            ${Object.keys(targets ?? {}).sort().map((t) => html`<option key=${t} value=${t}>${t}</option>`)}
+          </select>
+          <span class="ms-auto d-flex gap-1">
+            <button class="btn btn-sm btn-primary" disabled=${busy} onClick=${start}>run</button>
+            <button class="btn btn-sm btn-outline-secondary" disabled=${busy} onClick=${() => setForm(null)}>cancel</button>
+          </span>
+        </div>
+        ${pb.params.map((p) => html`
+          <div class="d-flex align-items-center gap-2 mt-2" key=${p.name}>
+            <label class="small text-secondary" style=${{ minWidth: "10em" }}>${p.name}${p.required ? " *" : ""}</label>
+            <input class="form-control form-control-sm" value=${form.params[p.name] ?? ""}
+              placeholder=${p.default ?? ""}
+              onInput=${(e) => setForm({ ...form, params: { ...form.params, [p.name]: e.target.value } })} />
+          </div>`)}
+        ${!pb.params.length && html`<div class="small text-secondary mt-2">this playbook has no params</div>`}
+      </div>`}
+    <div class="list-group">
+      ${pb.steps.map((s) => html`
+        <div class="list-group-item" key=${s.id}>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <b>${s.id}</b>
+            ${s.title ? html`<span class="small">${s.title}</span>` : ""}
+            <span class="badge text-bg-secondary">${s.kind}</span>
+            ${s.optional ? html`<span class="small text-secondary">optional</span>` : ""}
+            ${s.on_fail && s.on_fail !== "fail" ? html`<span class="small text-secondary">on_fail: ${s.on_fail}</span>` : ""}
+            ${(s.kind === "cmd" || s.kind === "check") && s.expect_exit !== undefined && s.expect_exit !== 0 ? html`<span class="ms-auto small text-secondary">expect exit ${s.expect_exit}</span>` : ""}
+          </div>
+          ${s.run ? html`<pre class="small mb-0 mt-1 p-2 bg-body-tertiary rounded">${s.run}</pre>` : ""}
+          ${s.check ? html`<div class="small text-secondary mt-1">check:</div><pre class="small mb-0 p-2 bg-body-tertiary rounded">${s.check}</pre>` : ""}
+          ${s.rollback ? html`<div class="small text-secondary mt-1">rollback:</div><pre class="small mb-0 p-2 bg-body-tertiary rounded">${s.rollback}</pre>` : ""}
+          ${s.instruction ? html`<div class="small text-secondary mt-1">${s.instruction}</div>` : ""}
+        </div>`)}
+    </div>
   `;
 };
 

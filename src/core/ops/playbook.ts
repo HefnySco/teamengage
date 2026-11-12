@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
@@ -66,6 +67,8 @@ export type Playbook = z.infer<typeof Playbook>;
 export interface LoadedPlaybook {
   /** workspace-relative path, e.g. ops/auth-shadow-deploy.playbook.yaml */
   file: string;
+  /** sha256 of the file text — the value a job pins at start */
+  sha256: string;
   playbook?: Playbook;
   error?: string;
 }
@@ -78,12 +81,15 @@ export function loadPlaybooks(root: string): LoadedPlaybook[] {
   for (const name of readdirSync(dir).filter((n) => n.endsWith(".playbook.yaml")).sort()) {
     const file = join(dir, name);
     const rel = `ops/${name}`;
+    let sha256 = "";
     try {
-      const parsed = Playbook.safeParse(YAML.parse(readFileSync(file, "utf8")));
-      if (parsed.success) out.push({ file: rel, playbook: parsed.data });
-      else out.push({ file: rel, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
+      const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+      sha256 = createHash("sha256").update(text).digest("hex");
+      const parsed = Playbook.safeParse(YAML.parse(text));
+      if (parsed.success) out.push({ file: rel, sha256, playbook: parsed.data });
+      else out.push({ file: rel, sha256, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
     } catch (e) {
-      out.push({ file: rel, error: (e as Error).message.split("\n")[0] });
+      out.push({ file: rel, sha256, error: (e as Error).message.split("\n")[0] });
     }
   }
   return out;
