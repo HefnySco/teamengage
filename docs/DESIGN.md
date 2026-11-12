@@ -39,11 +39,13 @@ same plan concurrently. That is TeamEngage's reason to exist.
 5. **Evidence before done.** Agents *submit*; the human *accepts*.
 6. **Ask, don't guess.** Ambiguity becomes a recorded question; the agent moves on.
 7. **Never push for the human.** TeamEngage commits and merges locally; pushing
-   is the human's call. The one exception is the human asking for a sync
-   (`te sync`, or **sync now** / **Commit & Push** on the Sync page). It
+   is the human's call. Two exceptions: the human asking for a sync
+   (`te sync`, or **sync now** / **Commit & Push** on the Sync page) — it
    fast-forwards and pushes the plans repo, then each code repo's base
    branch and open `te/*` task branches through their upstream remotes,
-   refusing anything diverged. Agents can't reach it.
+   refusing anything diverged, and agents can't reach it; and deploy
+   commands, which run only from a playbook, by the `te ops` CLI, under
+   that playbook's start policy (§14) — never ad hoc by an agent.
 8. **Minimal agent output.** Tools return IDs and one-liners; detail on request.
 9. **Small schema.** Add fields only when a real workflow needs them.
 
@@ -65,6 +67,9 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items. |
 | **Session** | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`. |
 | **Event** | Append-only record of every change (who, where, what, when, why). |
+| **Playbook** | A permanent ordered step list for repeatable operations — deploys, syncs. Lives in the plans repo, versioned with it (§14). |
+| **Job** | One execution of a playbook against a target: state machine, step results, deployed version (§14). |
+| **Target** | A deploy slot declared in `workspace.yaml` — a host, a service, an environment (§14). |
 
 ## 4. On-disk layout
 
@@ -575,3 +580,201 @@ Content is never copied: `brief` reads the task file live.
 ## 13. Open questions
 
 None currently.
+
+## 14. Ops — playbooks, jobs and targets
+
+Items track one-time work: written once, accepted once. Deploys and
+syncs are different — the same ordered steps run many times, and each
+run needs a record: which step ran, what it printed, where it stopped.
+Ops makes that repeatable. A **playbook** is a permanent step list,
+versioned in the plans repo. A **job** is one execution of a playbook
+against a target, recorded step by step. A **target** is a deploy slot
+— a host, a service, an environment.
+
+Names are fixed: `Playbook`, `Job`, `Target` — `plan` and `run` are
+already taken by items and sessions. CLI is `te ops`, UI route is `ops`.
+
+### 14.1 Layout
+
+```
+<task-folder>/ops/<name>.playbook.yaml   # playbooks — synced with the plans repo
+.teamengage/ops/jobs/<machine>/<job-id>.yaml   # job records, one writer per machine
+.teamengage/ops/locks/<target>.yaml      # target locks (one live job per target)
+~/.teamengage/ops-logs/<job>/<step>.log  # full step logs — per machine, never synced
+```
+
+Job ids are `<machine>-<NNNN>`; each machine writes only its own folder,
+so plans-git convergence never conflicts on job records (principle 2).
+
+### 14.2 Playbook schema
+
+`<root>/ops/<name>.playbook.yaml`, parsed with zod:
+
+| Field | Meaning |
+|---|---|
+| `name` | playbook id — the file basename |
+| `title`, `description` | human text |
+| `target` | default target id from `workspace.yaml` |
+| `start` | `human` (default) or `agent` — who may start a job |
+| `min_tier` | least agent tier that may start it (when `start: agent`) |
+| `cwd` | step working directory — default the workspace root |
+| `params` | `[{name, default, required}]` — substituted into `run` |
+| `secret_env` | env names whose values are masked in posted output |
+| `version_from` | step id — its last non-empty output line becomes the deployed version |
+| `steps` | ordered steps, see below |
+
+Step fields:
+
+| Field | Meaning |
+|---|---|
+| `id`, `title` | step id and human text |
+| `kind` | `cmd` (run, exit code decides), `check` (run, verifies), `agent` (agent works, writes evidence), `gate` (human-only approve) |
+| `run` | shell — required on `cmd`/`check`, forbidden on `agent`/`gate` |
+| `expect_exit` | expected exit code — default `0` |
+| `timeout` | default `10m` |
+| `on_fail` | `fail` (default — job fails) or `stop` (job ends `stopped`: checked, nothing to do) |
+| `optional` | may be skipped, with a reason |
+| `rollback` | shell run by `te ops rollback` in reverse order |
+| `instruction` | markdown for `agent`/`gate` steps |
+
+Example — the cloud auth shadow deploy:
+
+```yaml
+# ops/auth-shadow-deploy.playbook.yaml
+name: auth-shadow-deploy
+title: Deploy the authenticator to the shadow root on cloud.ardupilot.org
+description: Build, rsync to the shadow root, install, restart the shadow service, verify.
+target: cloud_auth
+start: human
+min_tier: standard
+params:
+  - { name: ref, default: master, required: true }
+secret_env: [DE_DEPLOY_KEY]
+version_from: version
+steps:
+  - id: build
+    title: Install and build
+    kind: cmd
+    run: npm ci && npm run build
+    timeout: 15m
+  - id: sync
+    title: rsync dist to the shadow root
+    kind: cmd
+    run: rsync -az --delete --exclude-from deploy/rsync.exclude dist/ root@cloud.ardupilot.org:/opt/auth_shadow/
+    rollback: ssh root@cloud.ardupilot.org "rsync -a /opt/auth_backup/dist/ /opt/auth_shadow/dist/"
+  - id: restart
+    title: Restart the shadow service
+    kind: cmd
+    run: ssh root@cloud.ardupilot.org "pm2 restart auth_shadow --update-env"
+    rollback: ssh root@cloud.ardupilot.org "pm2 restart auth_shadow"
+  - id: health
+    title: Health check
+    kind: check
+    run: curl -fsS -o /dev/null -w '%{http_code}\n' https://cloud.ardupilot.org/shadow/health | grep -q '^200$'
+    on_fail: fail
+  - id: version
+    title: Read the deployed version
+    kind: check
+    run: ssh root@cloud.ardupilot.org "node -p 'require(\"/opt/auth_shadow/package.json\").version'"
+  - id: confirm
+    title: Human confirms the shadow works
+    kind: gate
+    instruction: Open the shadow URL, sign in, check that sessions list.
+```
+
+Targets live in `workspace.yaml`:
+
+```yaml
+targets:
+  cloud_auth:
+    title: cloud.ardupilot.org production
+    service: auth_shadow
+    env: prod
+    probe: ssh root@cloud.ardupilot.org "node -p 'require(\"/opt/auth_shadow/package.json\").version'"
+    ssh_opts: "-o ConnectTimeout=10"
+```
+
+`probe` is a read-only shell that prints the deployed version — the only
+playbook-adjacent command the daemon itself may run (§14.5).
+
+`te validate` reports: an unknown `target`, duplicate step ids, a `run`
+on a `gate`/`agent` step, a `cmd`/`check` step without `run`, an unknown
+`version_from`.
+
+### 14.3 Job record
+
+`.teamengage/ops/jobs/<machine>/<job-id>.yaml`:
+
+```yaml
+id: laptop-0007
+playbook: auth-shadow-deploy
+playbook_sha256: "…"          # pinned at start — edited playbook mid-job is refused
+target: cloud_auth
+kind: run                     # or: rollback (names the source job)
+status: running               # running | waiting | failed | stopped | succeeded | aborted
+params: { ref: master }
+started: { ts: "…", by: "laptop / human-or-session" }
+cursor: 2                     # only the step at the cursor may start or take a result
+version: "…"                  # on success: last non-empty line of the version_from step
+steps:
+  - id: build
+    status: passed            # pending | running | passed | failed | skipped
+    exit_code: 0
+    output_tail: "…"          # last 100 lines, secrets masked
+    output_sha256: "…"
+    evidence: "…"             # agent steps write their evidence here
+    session: "devin@laptop#a1f3"
+    started: "…"
+    ended: "…"
+```
+
+Every job change also goes to the existing event log, so the UI updates
+live over SSE.
+
+### 14.4 Job state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> running
+    running --> waiting : agent or gate step at the cursor
+    waiting --> running : step result / gate approve posted
+    running --> failed : a step failed (on_fail: fail)
+    running --> stopped : a check failed (on_fail: stop — nothing to do)
+    running --> succeeded : last step passed
+    failed --> running : resume — same machine only
+    failed --> aborted : abort
+    stopped --> [*]
+    succeeded --> [*]
+    aborted --> [*]
+```
+
+Rules:
+
+- A cursor points at the current step. Only the step at the cursor may
+  start or take a result — a result for any other step is refused with
+  `OPS_ORDER`. Steps can't be skipped silently: only an `optional` step,
+  and only with a recorded reason.
+- The job pins `playbook_sha256` at start. A result arriving while the
+  playbook file hashes differently is refused with
+  `OPS_PLAYBOOK_CHANGED` — the job and the playbook can't drift apart.
+- A job start takes `.teamengage/ops/locks/<target>.yaml`, checked
+  against fetched plans like a claim — a lock from another machine
+  refuses with `target busy: job <id> on <machine>`; offline the lock
+  proceeds, marked unsynced. `succeeded`/`stopped`/`aborted` release it;
+  a `failed` job keeps it until resume or abort. **One live job per
+  target, across sessions and machines.** Resume is same-machine only.
+- `te ops rollback <job>` opens a `kind: rollback` job linked to the
+  source: the `rollback` commands of the passed steps, in reverse order;
+  steps without `rollback` show as skipped. Same target lock, same start
+  policy. The two records name each other.
+
+### 14.5 The trust boundary
+
+**The daemon never executes playbook commands.** It validates, locks,
+stores and accepts step results in order — `te ops exec` runs the
+commands in `bash` and posts results. The one exception is the
+read-only target `probe`, which the human may start from the UI. The
+start policy (`start: human|agent` + `min_tier`) decides who may start
+each playbook; `gate` steps are human-only. This ordering and these
+gates prevent skipped steps and mistakes by an honest agent — they are
+not a defence against a hostile local user.
