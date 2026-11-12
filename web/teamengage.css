@@ -1014,7 +1014,8 @@ details.sec > .sec-bd {
 .ops-edge-reach-ok { stroke: var(--bs-secondary-color); }
 .ops-edge-reach-bad { stroke: var(--bs-danger); stroke-width: 2; }
 .ops-edge-reach-none { stroke: var(--bs-secondary-color); stroke-dasharray: 2 4; opacity: .6; }
-.ops-key { display: inline-block; width: 1.6rem; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: .3rem; }
+.ops-key { display: inline-block; width: 1.7rem; height: .55rem; vertical-align: -.1rem; margin-right: .35rem; }
+.ops-key .ops-edge { stroke-width: 2; }
 .ops-node { cursor: pointer; }
 .ops-node-rect { fill: var(--bs-tertiary-bg); stroke: var(--bs-border-color); stroke-width: 1.4; }
 .ops-tier-prod { stroke: var(--bs-danger); }
@@ -1024,8 +1025,9 @@ details.sec > .sec-bd {
 .ops-node-sel .ops-node-rect { stroke-width: 2.6; stroke: var(--bs-primary); }
 .ops-node-title { fill: var(--bs-body-color); font-size: .8rem; font-weight: 600; }
 .ops-node-sub { fill: var(--bs-secondary-color); font-size: .62rem; }
-.ops-panel { flex: 0 1 340px; min-width: 260px; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); }
+.ops-panel { flex: 0 1 340px; min-width: 0; max-width: 100%; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); overflow-wrap: anywhere; }
 @media (max-width: 575.98px) {
   .ops-panel { flex: 1 1 100%; }
-  .ops-diagram { flex-basis: 100%; }
+  .ops-diagram { flex-basis: 100%; min-width: 0; }
+  .ops-machines { min-width: 0; max-width: 100%; }
 }

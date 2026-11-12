@@ -2896,7 +2896,8 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
   const reachState = (r) => {
     const p = probes.get(`${r.from}>${r.to}>${r.via}`);
     if (!p) return "reach_none";
-    return p.status === "ok" ? "reach_ok" : "reach_bad"; // fail + not_expected both draw red
+    if (p.status === "ok") return "reach_ok";
+    return p.status === "fail" || p.status === "not_expected" ? "reach_bad" : "reach_none"; // not_probed draws like unprobed
   };
   const edges = [
     ...(env.machines ?? []).flatMap((p) => (p.machine?.edges ?? []).filter((e) => pos.has(e.to.split("/")[0])).map((e) => ({ from: p.id, to: e.to.split("/")[0], kind: e.kind, cls: OPS_EDGE_CLASS[e.kind] ?? "ops-edge-talks", label: e.kind }))),
@@ -2917,6 +2918,76 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
   const machineTargets = m ? Object.entries(targets ?? {}).filter(([, t]) => t.machine === m.id) : [];
   const lastOk = {};
   for (const j of (jobs ?? []).filter((x) => x.status === "succeeded" && x.version)) if (!lastOk[j.target]) lastOk[j.target] = j;
+  // ---- edge routing (GL-0302): boxes sit on a row/col grid; the bands between
+  // rows and columns are box-free channels. An edge exits and enters box edges,
+  // travels inside those channels, and never crosses a box that is not its end.
+  const grid = new Map(env.machines.map((p) => [p.id, { col: p.col, row: p.row }]));
+  const boxOf = (id) => { const a = pos.get(id); return { x: a.x, y: a.y, w: NW, h: NH }; };
+  const boxes = new Map(env.machines.map((p) => [p.id, boxOf(p.id)]));
+  const SIDE = {
+    right: (b) => [b.x + b.w, b.y + b.h / 2], left: (b) => [b.x, b.y + b.h / 2],
+    top: (b) => [b.x + b.w / 2, b.y], bottom: (b) => [b.x + b.w / 2, b.y + b.h],
+  };
+  const rowGapY = (r) => PAD + r * GY + NH + (GY - NH) / 2;          // channel below row r
+  const colGapX = (c) => PAD + c * GX + NW + (GX - NW) / 2;          // channel right of col c
+  const laneV = (row, below) => (below ? (row === rows - 1 ? H - PAD / 2 : rowGapY(row)) : (row === 0 ? PAD / 2 : rowGapY(row - 1)));
+  const laneH = (col, right) => (right ? (col === cols - 1 ? W - PAD / 2 : colGapX(col)) : (col === 0 ? PAD / 2 : colGapX(col - 1)));
+  const segRect = (x1, y1, x2, y2, r) => {
+    if (Math.max(x1, x2) < r.x || Math.min(x1, x2) > r.x + r.w || Math.max(y1, y2) < r.y || Math.min(y1, y2) > r.y + r.h) return false;
+    const inside = (x, y) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h;
+    if (inside(x1, y1) || inside(x2, y2)) return true;
+    const hit = (ax, ay, bx, by, cx, cy, dx, dy) => {
+      const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+      const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+      const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+      return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+    };
+    const rc = [[r.x, r.y, r.x + r.w, r.y], [r.x + r.w, r.y, r.x + r.w, r.y + r.h], [r.x + r.w, r.y + r.h, r.x, r.y + r.h], [r.x, r.y + r.h, r.x, r.y]];
+    return rc.some(([ex1, ey1, ex2, ey2]) => hit(x1, y1, x2, y2, ex1, ey1, ex2, ey2));
+  };
+  const pathClear = (pts, from, to) => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+      for (const [id, r] of boxes) if (id !== from && id !== to && segRect(x1, y1, x2, y2, r)) return false;
+    }
+    return true;
+  };
+  const routeEdge = (from, to) => {
+    if (from === to) return null;
+    const A = boxOf(from), B = boxOf(to), ga = grid.get(from), gb = grid.get(to);
+    if (!ga || !gb) return null;
+    const ac = [A.x + NW / 2, A.y + NH / 2], bc = [B.x + NW / 2, B.y + NH / 2];
+    const cands = [];
+    // direct edge-to-edge when the boxes share a row or column
+    if (ga.row === gb.row) cands.push(ga.col < gb.col ? [SIDE.right(A), SIDE.left(B)] : [SIDE.left(A), SIDE.right(B)]);
+    if (ga.col === gb.col) cands.push(ga.row < gb.row ? [SIDE.bottom(A), SIDE.top(B)] : [SIDE.top(A), SIDE.bottom(B)]);
+    // one-bend routes: exit toward b on one axis, enter toward a on the other
+    const exH = bc[0] >= ac[0] ? "right" : "left", exV = bc[1] >= ac[1] ? "bottom" : "top";
+    const enH = ac[0] >= bc[0] ? "right" : "left", enV = ac[1] >= bc[1] ? "bottom" : "top";
+    cands.push([SIDE[exH](A), [SIDE[enV](B)[0], SIDE[exH](A)[1]], SIDE[enV](B)]);
+    cands.push([SIDE[exV](A), [SIDE[exV](A)[0], SIDE[enH](B)[1]], SIDE[enH](B)]);
+    // channel routes — always clear: row-gap lanes for x-travel, col-gap lanes for y-travel
+    const vFirst = [
+      SIDE[gb.row >= ga.row ? "bottom" : "top"](A),
+      [ac[0], laneV(ga.row, gb.row >= ga.row)],
+      [gb.col > 0 ? colGapX(gb.col - 1) : gb.col < cols - 1 ? colGapX(gb.col) : W - PAD / 2, laneV(ga.row, gb.row >= ga.row)],
+      [gb.col > 0 ? colGapX(gb.col - 1) : gb.col < cols - 1 ? colGapX(gb.col) : W - PAD / 2, laneV(gb.row, ga.row >= gb.row)],
+      [bc[0], laneV(gb.row, ga.row >= gb.row)],
+      SIDE[ga.row >= gb.row ? "bottom" : "top"](B),
+    ];
+    const hFirst = [
+      SIDE[gb.col >= ga.col ? "right" : "left"](A),
+      [laneH(ga.col, gb.col >= ga.col), ac[1]],
+      [laneH(ga.col, gb.col >= ga.col), gb.row > 0 ? rowGapY(gb.row - 1) : gb.row < rows - 1 ? rowGapY(gb.row) : H - PAD / 2],
+      [laneH(gb.col, ga.col >= gb.col), gb.row > 0 ? rowGapY(gb.row - 1) : gb.row < rows - 1 ? rowGapY(gb.row) : H - PAD / 2],
+      [laneH(gb.col, ga.col >= gb.col), bc[1]],
+      SIDE[ga.col >= gb.col ? "right" : "left"](B),
+    ];
+    cands.push(vFirst, hFirst);
+    const ok = cands.find((pts) => pathClear(pts, from, to));
+    return ok ?? vFirst;
+  };
   return html`
     <div class="ops-machines">
       <div class="ops-diagram">
@@ -2926,10 +2997,12 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" class="ops-arrow" /></marker>
           </defs>
           ${edges.map((e, i) => {
-            const a = pos.get(e.from), b = pos.get(e.to);
-            return html`<line key=${i} x1=${a.x + NW / 2} y1=${a.y + NH / 2} x2=${b.x + NW / 2} y2=${b.y + NH / 2} class=${`ops-edge ${e.cls}`} marker-end="url(#arr)">
+            const pts = routeEdge(e.from, e.to);
+            if (!pts) return null;
+            const d = pts.map((p, j) => `${j ? "L" : "M"}${p[0]} ${p[1]}`).join(" ");
+            return html`<path key=${i} d=${d} class=${`ops-edge ${e.cls}`} marker-end="url(#arr)">
               <title>${e.from} → ${e.to} (${e.label})${e.probe?.reason ? ` — ${e.probe.reason}` : ""}${e.note ? ` — ${e.note}` : ""}</title>
-            </line>`;
+            </path>`;
           })}
           ${env.machines.map((p) => {
             const a = pos.get(p.id);
@@ -2942,13 +3015,8 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
           })}
         </svg>
         <div class="small text-secondary d-flex gap-3 flex-wrap mt-1">
-          <span><span class="ops-key ops-edge-deploy"></span>deploy</span>
-          <span><span class="ops-key ops-edge-sync"></span>sync</span>
-          <span><span class="ops-key ops-edge-shadow"></span>shadow_of</span>
-          <span><span class="ops-key ops-edge-talks"></span>talks_to</span>
-          <span><span class="ops-key ops-edge-reach-ok"></span>reach ok</span>
-          <span><span class="ops-key ops-edge-reach-bad"></span>reach failed / not expected</span>
-          <span><span class="ops-key ops-edge-reach-none"></span>reach unprobed</span>
+          ${[["ops-edge-deploy", "deploy"], ["ops-edge-sync", "sync"], ["ops-edge-shadow", "shadow_of"], ["ops-edge-talks", "talks_to"], ["ops-edge-reach-ok", "reach ok"], ["ops-edge-reach-bad", "reach failed / not expected"], ["ops-edge-reach-none", "reach unprobed / not probed here"]].map(([cls, label]) => html`
+            <span key=${cls}><svg class="ops-key" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" class=${`ops-edge ${cls}`} /></svg>${label}</span>`)}
         </div>
       </div>
       ${m ? html`<div class="ops-panel">
