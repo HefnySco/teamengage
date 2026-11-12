@@ -29,6 +29,8 @@ export const EnvReach = z.object({
   from: z.string().min(1).transform(kebab),
   to: z.string().min(1).transform(kebab),
   via: z.string().min(1), // checked against REACH_VIA as a finding
+  /** false = the edge is not expected in this env — the probe answers not_expected and runs nothing */
+  expected: z.boolean().optional(),
   note: z.string().optional(),
 });
 

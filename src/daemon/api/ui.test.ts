@@ -77,7 +77,15 @@ describe("ops UI API (GL-0276)", () => {
     writeFileSync(join(root, "machines", "box.machine.md"), doc({ id: "box", host: "box.local", tier: "prod", ssh: { user: "pi", key: "~/.ssh/box" } }));
     writeFileSync(
       join(root, "envs", "work.env.md"),
-      doc({ id: "work", network: ["MHEFNY4G"], machines: [{ id: "lap", row: 0 }, { id: "box", row: 1 }], reach: [{ from: "lap", to: "box", via: "ssh" }] }),
+      doc({
+        id: "work",
+        network: ["MHEFNY4G"],
+        machines: [{ id: "lap", row: 0 }, { id: "box", row: 1 }],
+        reach: [
+          { from: "lap", to: "box", via: "ssh" },
+          { from: "box", to: "lap", via: "ssh" },
+        ],
+      }),
     );
     writeFileSync(
       join(root, "ops", "demo.playbook.yaml"),
@@ -238,13 +246,18 @@ describe("ops UI API (GL-0276)", () => {
     const r = await fetch(`${daemon2.url}/api/ops/envs/work/probe`, { method: "POST", headers: cookie() });
     expect(r.status).toBe(200);
     const results = await r.json();
-    expect(results).toHaveLength(1);
+    expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ env: "work", from: "lap", to: "box", via: "ssh", status: "not_expected", reason: "needs network MHEFNY4G", output: "" });
+    // GL-0301: the box→lap edge does not run from this machine — not_probed, nothing executed
+    expect(results[1]).toMatchObject({ env: "work", from: "box", to: "lap", via: "ssh", status: "not_probed", output: "" });
+    expect(results[1].reason).toContain("not probed from here");
     // stored machine-local under <home>/ops-probes/reach/
     const stored = JSON.parse(readFileSync(join(home2, ".teamengage", "ops-probes", "reach", "work.json"), "utf8"));
     expect(stored[0].status).toBe("not_expected");
+    expect(stored[1].status).toBe("not_probed");
     const env = await (await fetch(`${daemon2.url}/api/ops/envs/work`, { headers: cookie() })).json();
     expect(env.probes[0].reason).toBe("needs network MHEFNY4G");
+    expect(env.probes[1].status).toBe("not_probed");
     expect((await fetch(`${daemon2.url}/api/ops/envs/ghost/probe`, { method: "POST", headers: cookie() })).status).toBe(404);
   });
 

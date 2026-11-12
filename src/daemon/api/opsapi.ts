@@ -210,9 +210,11 @@ export async function opsReachProbes(
   if (!l?.env) throw new NotFoundError(`env '${envId}' not under envs/`);
   const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, x.machine] as const] : [])));
   const wifi = wifiName() || undefined;
+  // only edges whose `from` is this machine run here — the rest answer 'not probed from here'
+  const runner = runnerMachine(wsr.ws.root, hostname())?.id ?? "";
   const results: ReachProbeResult[] = [];
   for (const r of l.env.reach) {
-    const run = await runReachProbe(l.env, r, machines, { wifi, cwd: wsr.ws.root });
+    const run = await runReachProbe(l.env, r, machines, { wifi, cwd: wsr.ws.root, runner });
     results.push({ env: l.env.id, from: r.from, to: r.to, via: r.via, by: "human", ...run });
   }
   saveReachProbes(l.env.id, results, ctx.home);

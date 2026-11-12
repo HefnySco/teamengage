@@ -34,36 +34,69 @@ export const ProbeResult = z.object({
 });
 export type ProbeResult = z.infer<typeof ProbeResult>;
 
-/** Run a probe command under bash; resolves even on non-zero exit / timeout — the result record carries the failure. */
-export function runProbe(command: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<Omit<ProbeResult, "target" | "by">> {
+interface Captured {
+  /** combined stdout+stderr tail */
+  out: string;
+  /** stdout tail only — reach probes read the https status code from it */
+  stdout: string;
+  code: number | null;
+  timedOut: boolean;
+  error?: string;
+}
+
+/** Spawn file+args with no shell — probe fields never reach a command line as text. */
+function capture(file: string, args: string[], opts: { cwd?: string; timeoutMs?: number }): Promise<Captured> {
   const timeoutMs = opts.timeoutMs ?? PROBE_TIMEOUT_MS;
   return new Promise((resolve) => {
     let out = "";
+    let stdout = "";
     let timedOut = false;
-    const child = execFile("bash", ["-c", command], { cwd: opts.cwd }, () => {});
+    const child = execFile(file, args, { cwd: opts.cwd }, () => {});
     const kill = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, timeoutMs);
-    child.stdout?.on("data", (d) => (out += d));
+    child.stdout?.on("data", (d) => {
+      const s = String(d);
+      out += s;
+      stdout = (stdout + s).slice(-OUTPUT_TAIL);
+    });
     child.stderr?.on("data", (d) => (out += d));
     child.on("error", (e) => {
       clearTimeout(kill);
-      resolve({ ts: new Date().toISOString(), ok: false, timeout: false, output: out.slice(-OUTPUT_TAIL), error: e.message });
+      resolve({ out: out.slice(-OUTPUT_TAIL), stdout, code: null, timedOut: false, error: e.message });
     });
     child.on("close", (code) => {
       clearTimeout(kill);
-      const tail = out.slice(-OUTPUT_TAIL);
-      resolve({
-        ts: new Date().toISOString(),
-        ok: !timedOut && code === 0,
-        timeout: timedOut,
-        exit_code: code ?? undefined,
-        version: versionFromTail(tail),
-        output: tail,
-      });
+      resolve({ out: out.slice(-OUTPUT_TAIL), stdout, code, timedOut });
     });
   });
+}
+
+function toProbeResult(c: Captured): Omit<ProbeResult, "target" | "by"> {
+  return {
+    ts: new Date().toISOString(),
+    ok: !c.timedOut && !c.error && c.code === 0,
+    timeout: c.timedOut,
+    exit_code: c.code ?? undefined,
+    version: versionFromTail(c.out),
+    output: c.out,
+    error: c.error,
+  };
+}
+
+/** Run a probe command under bash; resolves even on non-zero exit / timeout — the result record carries the failure. */
+export function runProbe(command: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<Omit<ProbeResult, "target" | "by">> {
+  return capture("bash", ["-c", command], opts).then(toProbeResult);
+}
+
+/** argv variant of runProbe — the result also carries the stdout tail. */
+export function runProbeArgv(
+  file: string,
+  args: string[],
+  opts: { cwd?: string; timeoutMs?: number } = {},
+): Promise<Omit<ProbeResult, "target" | "by"> & { stdout: string }> {
+  return capture(file, args, opts).then((c) => ({ ...toProbeResult(c), stdout: c.stdout }));
 }
 
 function probesDir(home?: string): string {
@@ -113,24 +146,32 @@ export const ReachProbeResult = z.object({
   via: z.string(),
   by: z.string(),
   ts: z.string(),
-  /** ok | fail | not_expected — the wifi precondition failed before any command ran */
-  status: z.enum(["ok", "fail", "not_expected"]),
-  /** short reason on fail/not_expected: timeout, DNS, auth refused, refused, unreachable, exit N, needs network X */
+  /** ok | fail | not_expected | not_probed — a precondition answered before any command ran */
+  status: z.enum(["ok", "fail", "not_expected", "not_probed"]),
+  /** short reason on fail/not_expected/not_probed: timeout, DNS, auth refused, refused, unreachable, exit N, needs network X, not probed from here */
   reason: z.string().optional(),
   output: z.string().default(""),
 });
 export type ReachProbeResult = z.infer<typeof ReachProbeResult>;
 
-/** The read-only command that proves a machine is reachable by `via` — undefined when the record lacks what it needs. */
-export function reachCommand(m: { host?: string; ssh: Record<string, string> }, via: string): string | undefined {
+/** The read-only argv that proves a machine is reachable by `via` — undefined when the record lacks what it needs. */
+export interface ReachProbeCmd {
+  file: string;
+  args: string[];
+}
+
+export function reachCommand(m: { host?: string; ssh: Record<string, string> }, via: string): ReachProbeCmd | undefined {
   if (!m.host) return undefined;
   if (via === "ssh" || via === "git") {
-    const key = m.ssh.key ? ` -i ${m.ssh.key}` : "";
-    const port = m.ssh.port ? ` -p ${m.ssh.port}` : "";
-    const user = m.ssh.user ? `${m.ssh.user}@` : "";
-    return `ssh -o BatchMode=yes -o ConnectTimeout=5${key}${port} ${user}${m.host} true`;
+    const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
+    if (m.ssh.key) args.push("-i", m.ssh.key);
+    if (m.ssh.port) args.push("-p", m.ssh.port);
+    args.push(`${m.ssh.user ? `${m.ssh.user}@` : ""}${m.host}`, "true");
+    return { file: "ssh", args };
   }
-  if (via === "https") return `curl -s -o /dev/null -w '%{http_code}' -m 5 https://${m.host}/ | grep -q '^[0-9]'`;
+  // curl prints the http_code on stdout; '000' means the request never got an answer.
+  // -S keeps error text on stderr — plain -s silences it, which hid the DNS reason.
+  if (via === "https") return { file: "curl", args: ["-s", "-S", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", `https://${m.host}/`] };
   return undefined;
 }
 
@@ -145,28 +186,41 @@ export function probeReason(output: string, timeout: boolean, code: number | und
 }
 
 /**
- * Run one reach edge. `wifi` is the current network name — when the env
- * names networks and this wifi is not one of them, nothing runs.
+ * Run one reach edge. `edge.expected === false` answers 'not expected'
+ * and an edge whose `from` is not `opts.runner` answers 'not probed from
+ * here' — both before any command runs. `wifi` is the current network
+ * name — when the env names networks and this wifi is not one of them,
+ * nothing runs.
  */
 export async function runReachProbe(
   env: { id: string; network: string[] },
-  edge: { from: string; to: string; via: string },
+  edge: { from: string; to: string; via: string; expected?: boolean; note?: string },
   machines: ReadonlyMap<string, { host?: string; ssh: Record<string, string> }>,
-  opts: { wifi?: string; cwd?: string; timeoutMs?: number } = {},
+  opts: { wifi?: string; cwd?: string; timeoutMs?: number; runner?: string } = {},
 ): Promise<Omit<ReachProbeResult, "env" | "from" | "to" | "via" | "by">> {
+  if (edge.expected === false) {
+    return { ts: new Date().toISOString(), status: "not_expected", reason: edge.note ? `not expected — ${edge.note}` : "not expected", output: "" };
+  }
+  if (opts.runner !== undefined && edge.from !== opts.runner) {
+    const reason = opts.runner ? `not probed from here — runs on ${edge.from}` : "runner machine unknown — not probed";
+    return { ts: new Date().toISOString(), status: "not_probed", reason, output: "" };
+  }
   if (env.network.length && !(opts.wifi && env.network.includes(opts.wifi))) {
     return { ts: new Date().toISOString(), status: "not_expected", reason: `needs network ${env.network.join(" or ")}`, output: "" };
   }
   const m = machines.get(edge.to);
-  const command = m ? reachCommand(m, edge.via) : undefined;
-  if (!command) {
+  const cmd = m ? reachCommand(m, edge.via) : undefined;
+  if (!cmd) {
     return { ts: new Date().toISOString(), status: "fail", reason: m ? `no '${edge.via}' probe for ${edge.to}` : `no machine '${edge.to}'`, output: "" };
   }
-  const r = await runProbe(command, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? REACH_PROBE_TIMEOUT_MS });
+  const r = await runProbeArgv(cmd.file, cmd.args, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? REACH_PROBE_TIMEOUT_MS });
+  // an https probe is ok only when curl printed a real http_code — '000' means no answer
+  const httpCode = edge.via === "https" ? r.stdout.trim() : "";
+  const ok = r.ok && (edge.via !== "https" || (/^[1-5]\d\d$/.test(httpCode)));
   return {
     ts: r.ts,
-    status: r.ok ? "ok" : "fail",
-    reason: r.ok ? undefined : probeReason(r.output, r.timeout, r.exit_code),
+    status: ok ? "ok" : "fail",
+    reason: ok ? undefined : probeReason(r.output, r.timeout, r.exit_code),
     output: r.output,
   };
 }

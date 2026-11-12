@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runProbe, saveProbe, loadProbes, probePath, runReachProbe, reachCommand, probeReason, saveReachProbes, loadReachProbes, type ReachProbeResult } from "./probe.js";
@@ -79,14 +79,59 @@ describe("reach probe (GL-0289)", () => {
     expect(probeReason(direct.output, direct.timeout, direct.exit_code)).toBe("timeout");
   });
 
-  it("reachCommand builds BatchMode ssh for ssh/git and an https GET for https", () => {
+  it("reachCommand builds BatchMode ssh argv for ssh/git and a https GET argv for https", () => {
     const m = { host: "h.local", ssh: { user: "root", key: "~/.ssh/k", port: "2222" } };
-    expect(reachCommand(m, "ssh")).toBe("ssh -o BatchMode=yes -o ConnectTimeout=5 -i ~/.ssh/k -p 2222 root@h.local true");
-    expect(reachCommand(m, "git")).toContain("ssh -o BatchMode=yes");
-    expect(reachCommand(m, "https")).toContain("curl -s -o /dev/null");
+    expect(reachCommand(m, "ssh")).toEqual({
+      file: "ssh",
+      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-i", "~/.ssh/k", "-p", "2222", "root@h.local", "true"],
+    });
+    expect(reachCommand(m, "git")?.file).toBe("ssh");
+    expect(reachCommand(m, "https")).toEqual({
+      file: "curl",
+      args: ["-s", "-S", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", "https://h.local/"],
+    });
     expect(reachCommand({ host: "", ssh: {} }, "ssh")).toBeUndefined();
     expect(probeReason("ssh: Permission denied (publickey).", false, 255)).toBe("auth refused");
     expect(probeReason("Could not resolve hostname x", false, 255)).toBe("DNS");
+  });
+
+  it("GL-0301: an https probe on an unresolvable host fails with reason DNS", async () => {
+    const dead = new Map([["box", { host: "no-such-host.invalid", ssh: {} }]]);
+    const r = await runReachProbe({ id: "e", network: [] }, { from: "a", to: "box", via: "https" }, dead, { timeoutMs: 8000 });
+    expect(r.status).toBe("fail");
+    expect(r.reason).toBe("DNS");
+  });
+
+  it("GL-0301: a host value with shell text cannot create a file — argv, no shell", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "te-inj-")), "pwned");
+    const evil = new Map([["box", { host: `x; touch ${marker}`, ssh: {} }]]);
+    const r = await runReachProbe({ id: "e", network: [] }, { from: "a", to: "box", via: "https" }, evil, { timeoutMs: 8000 });
+    expect(r.status).toBe("fail");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("GL-0301: an edge whose from is not the runner answers not_probed and runs nothing", async () => {
+    const m = new Map([["box", { host: "localhost", ssh: {} }]]);
+    const r = await runReachProbe({ id: "e", network: [] }, { from: "desktop", to: "box", via: "ssh" }, m, { runner: "laptop" });
+    expect(r.status).toBe("not_probed");
+    expect(r.reason).toContain("not probed from here");
+    expect(r.output).toBe("");
+    // the runner's own edge still runs — ssh to localhost answers ok or fail, never not_probed
+    const own = await runReachProbe({ id: "e", network: [] }, { from: "laptop", to: "box", via: "ssh" }, m, { runner: "laptop", timeoutMs: 5000 });
+    expect(own.status === "ok" || own.status === "fail").toBe(true);
+  });
+
+  it("GL-0301: an edge with expected:false answers not_expected without a run", async () => {
+    const m = new Map([["box", { host: "localhost", ssh: {} }]]);
+    const r = await runReachProbe(
+      { id: "e", network: [] },
+      { from: "a", to: "box", via: "ssh", expected: false, note: "unreachable here" },
+      m,
+      { runner: "a" },
+    );
+    expect(r.status).toBe("not_expected");
+    expect(r.reason).toBe("not expected — unreachable here");
+    expect(r.output).toBe("");
   });
 
   it("save/load reach probes round-trip per env and merge by edge", () => {
