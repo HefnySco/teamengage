@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { expandTilde } from "../../core/config/config.js";
-import { git, isRepo, isDirty, remotes, aheadBehind, worktreeList } from "../../resources/git/git.js";
+import { git, isRepo, isDirty, remotes, aheadBehind, worktreeList, gitErrorSummary } from "../../resources/git/git.js";
 import { parseTargetRef } from "../../core/address/refs.js";
 import type { Claim } from "../../core/model/claim.js";
 import { repoForResource, worktreePath } from "../effects/effects.js";
@@ -248,7 +248,7 @@ export async function syncCode(wsr: WorkspaceRuntime, opts: CodeSyncOpts = {}): 
           await fetchRefs([teRefs]);
         });
       } catch (e) {
-        into.problems.push(`could not fetch from ${name} — offline? (${(e as Error).message.split("\n")[0]})`);
+        into.problems.push(`could not fetch from ${name} — offline? (${gitErrorSummary(e)})`);
         return;
       }
 

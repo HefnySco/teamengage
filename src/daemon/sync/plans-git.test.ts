@@ -120,6 +120,12 @@ describe("choosing the remote", () => {
     await expect(pullPlans(wsB, "nope")).rejects.toThrow(/no remote named 'nope'/);
     expect((await pullPlans(wsB, "backupDT")).pulled).toBe(0);
   });
+
+  it("refuses push and pull to a remote whose local path is missing (USB not mounted)", async () => {
+    g(b, "remote", "add", "USBgone", join(home, "not-mounted", "Tasks.git"));
+    await expect(commitAndPushPlans(wsB, "x", "USBgone")).rejects.toThrow(/USBgone is not mounted/);
+    await expect(pullPlans(wsB, "USBgone")).rejects.toThrow(/USBgone is not mounted/);
+  });
 });
 
 describe("Commit (local only)", () => {

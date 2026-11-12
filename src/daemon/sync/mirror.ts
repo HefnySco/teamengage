@@ -44,6 +44,25 @@ export function localRemotePath(url: string): string | undefined {
 }
 
 /**
+ * The local path remote `name` points at when it does not exist — the USB
+ * mirror is not mounted. Undefined for network remotes (they are never
+ * "not mounted"), for existing paths, and for repos without the remote.
+ */
+export async function missingLocalRemotePath(
+  repo: string,
+  name: string,
+  home?: string,
+): Promise<string | undefined> {
+  const url = await remoteUrl(repo, name);
+  if (!url) return undefined;
+  const p = localRemotePath(url);
+  if (p === undefined) return undefined;
+  const expanded = expandTilde(p, home);
+  const abs = isAbsolute(expanded) ? expanded : resolve(repo, expanded);
+  return existsSync(abs) ? undefined : abs;
+}
+
+/**
  * True when the remote's URL is a local path that does not exist — the USB
  * mirror is not mounted. Network remotes and existing paths return false.
  */
@@ -52,13 +71,7 @@ export async function mirrorNotMounted(
   name: string,
   home?: string,
 ): Promise<boolean> {
-  const url = await remoteUrl(repo, name);
-  if (!url) return false;
-  const p = localRemotePath(url);
-  if (p === undefined) return false;
-  const expanded = expandTilde(p, home);
-  const abs = isAbsolute(expanded) ? expanded : resolve(repo, expanded);
-  return !existsSync(abs);
+  return (await missingLocalRemotePath(repo, name, home)) !== undefined;
 }
 
 /** `git rev-parse --verify -q <ref>` as a boolean. */

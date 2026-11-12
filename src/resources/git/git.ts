@@ -62,6 +62,17 @@ export async function git(repo: string, args: string[], opts: RunOpts = {}): Pro
   }
 }
 
+/**
+ * One line that says why a `git()` call failed, for reports: the first
+ * stderr line (the real reason, e.g. "fatal: … does not appear to be a git
+ * repository") beats execFile's "Command failed: …" first line.
+ */
+export function gitErrorSummary(e: unknown): string {
+  const err = e as GitError;
+  const line = err.stderr?.split("\n").map((l) => l.trim()).find(Boolean);
+  return line ?? String((e as Error)?.message ?? e).split("\n")[0];
+}
+
 export async function isRepo(path: string): Promise<boolean> {
   try {
     const out = await git(path, ["rev-parse", "--is-inside-work-tree"]);

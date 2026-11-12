@@ -9,6 +9,7 @@ import {
   aheadBehind,
   remoteBranchesContaining,
   revParse,
+  gitErrorSummary,
 } from "../../resources/git/git.js";
 import { parseClaimFile, claimToYaml, targetsOverlap, resolveDoubleClaim } from "../../core/claims/claims.js";
 import { resourceRoots } from "../../core/config/config.js";
@@ -17,7 +18,7 @@ import type { Claim } from "../../core/model/claim.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { parseLockText, type TargetLock } from "../../core/ops/lock.js";
 import { OpsError } from "../../core/ops/job.js";
-import { hasRef, mirrorNotMounted, repoMirrors } from "./mirror.js";
+import { hasRef, mirrorNotMounted, missingLocalRemotePath, repoMirrors } from "./mirror.js";
 
 /**
  * Plans-repo sync (SY-0001/2, RS-0004). TeamEngage pushes nothing on its own (principle
@@ -476,6 +477,16 @@ function pickRemote(st: PlansGitStatus, name?: string): PlansRemote {
   return r;
 }
 
+/**
+ * Refuse early when the chosen remote is a local path that does not exist —
+ * an unmounted USB mirror. A fetch/push would only fail with a bare git
+ * error; name the cause instead.
+ */
+async function assertRemoteMounted(repo: string, r: PlansRemote): Promise<void> {
+  const missing = await missingLocalRemotePath(repo, r.name);
+  if (missing) throw new ClaimRefusedError(`${r.name} is not mounted — ${missing} does not exist`);
+}
+
 /** A pull/push contacted `name` — it answered, so the returned status may claim it verified. */
 function markFetched(st: PlansGitStatus, name: string, fetched: boolean | undefined): PlansGitStatus {
   const r = st.remotes.find((x) => x.name === name);
@@ -498,6 +509,7 @@ async function pullIn(
   const r0 = pickRemote(first, remote);
   const before = await plansGitStatus(wsr, { fetch: r0.name });
   const r = pickRemote(before, r0.name);
+  await assertRemoteMounted(before.repo, r);
   if (!r.fetched) throw new ClaimRefusedError(`could not fetch from ${r.name} (${r.fetchUrl}) — offline?`);
   if (!r.ref) throw new ClaimRefusedError(`${r.name} has no branch ${before.branch}`);
   if (r.behind === 0) return { remote: r.name, pulled: 0, stashed: false, status: before };
@@ -515,7 +527,7 @@ async function pullIn(
     await git(before.repo, ["merge", "--ff-only", r.ref], { timeoutMs: 60_000 });
   } catch (e) {
     throw new ClaimRefusedError(
-      `pull refused by git (local uncommitted changes collide?): ${(e as Error).message.split("\n")[0]}` +
+      `pull refused by git (local uncommitted changes collide?): ${gitErrorSummary(e)}` +
         (stashed ? " — your changes are safe in the stash (git stash pop)" : ""),
     );
   }
@@ -584,6 +596,7 @@ export async function commitAndPushPlans(
     if (!first.branch || first.branch === "HEAD") throw new ClaimRefusedError("the task folder is not on a branch");
     const before = await plansGitStatus(wsr, { fetch: r0.name });
     const r = pickRemote(before, r0.name);
+    await assertRemoteMounted(before.repo, r);
     if (r.ref && r.behind > 0) throw new ClaimRefusedError(`behind ${r.name} by ${r.behind} commit(s) — pull from ${r.name} first`);
     const committed = await commitTaskFolder(wsr, before, message);
     const now = pickRemote(await plansGitStatus(wsr), r.name);
@@ -591,7 +604,7 @@ export async function commitAndPushPlans(
     try {
       await git(before.repo, ["push", r.name, `HEAD:refs/heads/${before.branch}`], { timeoutMs: 90_000, humanPush: true });
     } catch (e) {
-      throw new ClaimRefusedError(`push to ${r.name} failed: ${(e as Error).message.split("\n")[0]}`);
+      throw new ClaimRefusedError(`push to ${r.name} failed: ${gitErrorSummary(e)}`);
     }
     // refresh our view of that remote's branch
     await git(before.repo, ["fetch", "-q", r.name, before.branch!], { timeoutMs: 20_000 }).catch(() => {});
@@ -666,7 +679,7 @@ export async function syncPlansMirrors(
               await wsr.store.reindex();
               void wsr.overlay?.rescan();
             } catch (e) {
-              rep.problems.push(`${branch}: ${name} is ahead (${ab.behind}) but the fast-forward was refused: ${(e as Error).message.split("\n")[0]}`);
+              rep.problems.push(`${branch}: ${name} is ahead (${ab.behind}) but the fast-forward was refused: ${gitErrorSummary(e)}`);
             }
           }
         } else if (ab.ahead > 0) {
@@ -680,7 +693,7 @@ export async function syncPlansMirrors(
         rep.done.push(`${w}pushed ${branch} (new on ${name})`);
       }
     } catch (e) {
-      rep.problems.push(`${name}: ${(e as Error).message.split("\n")[0]}`);
+      rep.problems.push(`${name}: ${gitErrorSummary(e)}`);
     }
   }
   return out;
@@ -714,7 +727,7 @@ export async function syncNow(
         pushed = true;
       } catch (e) {
         throw new ClaimRefusedError(
-          `${p.pulled ? `pulled ${p.pulled}, ` : ""}${committed ? `committed ${committed}, ` : ""}but push to ${r.name} failed: ${(e as Error).message.split("\n")[0]}`,
+          `${p.pulled ? `pulled ${p.pulled}, ` : ""}${committed ? `committed ${committed}, ` : ""}but push to ${r.name} failed: ${gitErrorSummary(e)}`,
         );
       }
       await git(st.repo, ["fetch", "-q", r.name, mid.branch], { timeoutMs: 20_000 }).catch(() => {});
