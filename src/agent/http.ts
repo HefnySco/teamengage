@@ -175,6 +175,8 @@ OPS — playbooks and jobs (repeatable deploys; the daemon never runs the comman
   te ops exec runs each step in bash and posts the result with ops_step.
   ops_approve is human-only: an agent session gets FORBIDDEN.
   Read 'te machines show <id>' before you act on a machine — its rules come first.
+  A task "Apply note to machine/playbook ..." turns a human note into YAML —
+  follow the te-ops skill, section 7 "Apply a machine or playbook note".
 
 EXAMPLES
   T=$(curl -s -X POST ${base}/agent/hello -d '{"agent":"gemini-cli"}' | sed -n 's/^token //p')

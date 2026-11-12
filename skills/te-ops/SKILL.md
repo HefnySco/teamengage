@@ -112,6 +112,68 @@ te ops status <job-id>
 `on_fail: stop` decided the run is not needed — that is a clean stop,
 not a failure. `failed` goes back to step 5.
 
+## 7. Apply a machine or playbook note
+
+The human writes notes in their own words. TeamEngage keeps each note in
+the file and opens a ready task "Apply note to machine <id>" or "Apply
+note to playbook <name>". You turn the note into a YAML change. Claim,
+work and submit the task as usual (te-work).
+
+A note block looks like this:
+
+```markdown
+### note 2026-11-12T13:30:00.000Z · pending · DE-0150
+the human's words
+```
+
+A machine note is under `## Human notes` in `machines/<id>.machine.md`.
+A playbook note is in `ops/<name>.notes.md`.
+
+Do this:
+
+1. Read the note. Then read the whole file that you change: the machine
+   file, or the playbook YAML. Also read `docs/OPS.md`, section
+   "Machines and envs", for the fields.
+2. Change only what the note asks. Do not tidy, reorder or reword other
+   fields.
+3. Put each fact in the right field:
+   - a running service and its port → `apps:` (`name`, `port`, `env:
+     prod|shadow`, `path`);
+   - a folder and what it holds → `folders:` (`path`, `purpose`);
+   - a database file → `databases:`;
+   - "never …", "only …", "do not …" → `rules:`;
+   - the agent or skill that handles the machine → `handled_by:`;
+   - "X deploys to Y", "X is the shadow of Y", "X talks to Y" →
+     `edges:` (`deploy` with `to: machine/app` and `repo:`, `shadow_of`,
+     `talks_to`, `sync`);
+   - "reachable from X only on network N" → a `reach` edge in the env
+     file, not in the machine file. If the env file is not in your
+     Touches, ask.
+4. Write a rule as one short STE sentence, but keep the human's meaning.
+   When you are not sure of the meaning, keep the human's words.
+5. Never write a password, a token or key text into a file. If the note
+   holds one, do not copy it. Ask the human to keep it outside the
+   plans repo, and write only a reference (a key path, an env var name).
+6. When the note is unclear, or has two meanings, `ask` on the task. Do
+   not guess.
+7. Keep the human's note text in the file. Change only its mark from
+   `pending` to `applied`. Keep the timestamp and the task id:
+   `### note <ts> · applied · <task id>`.
+8. Run `te validate`. It must be clean.
+9. Submit. Put the unified diff of the changed file in the walkthrough
+   (`git diff --no-index` of a copy, or `diff -u old new`), so the human
+   sees the exact YAML change.
+
+For a playbook note, also:
+
+- never change a `run:` command, remove a `gate` step or change
+  `start: human`, unless the note asks for that change in clear words;
+- a new step goes where the note says. When the note does not say, ask;
+- a job pins the playbook sha256. Do not edit a playbook while a job of
+  it is live (`te ops jobs`) — wait, or ask the human;
+- the human accepts every playbook change. Auto-accept does not take
+  this task.
+
 ## Never
 
 - edit a playbook file while a job of it is live — later results are
