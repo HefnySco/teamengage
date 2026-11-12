@@ -67,7 +67,7 @@ beforeAll(async () => {
   root = join(home, "ws");
   const plans = join(root, ".teamengage");
   mkdirSync(join(plans, "items", "WS"), { recursive: true });
-  writeFileSync(join(plans, "workspace.yaml"), "name: ws\nprefix: WS\n");
+  writeFileSync(join(plans, "workspace.yaml"), "name: ws\nprefix: WS\ntargets:\n  t1: { title: test target, probe: echo v1.0.0 }\n");
   mkdirSync(join(root, "ops"), { recursive: true });
   writeFileSync(
     join(root, "ops", "three.playbook.yaml"),
@@ -264,5 +264,16 @@ describe("te ops", () => {
     // the rollback commands ran in reverse order — s2 had none
     const order = readFileSync(join(root, "order.txt"), "utf8").trim().split("\n");
     expect(order).toEqual(["s1", "s2", "s3", "r3", "r1"]);
+  });
+
+  it("te ops probe runs the target probe through the daemon and reports the version", async () => {
+    const { code, text } = await capture(() => opsCmd(["probe", "t1"], home));
+    expect(code).toBe(0);
+    expect(text).toContain("t1: ok — v1.0.0");
+    expect(JSON.parse(readFileSync(join(home, ".teamengage", "ops-probes", "t1.json"), "utf8")).version).toBe("v1.0.0");
+    // no target argument probes every target that declares a probe
+    const all = await capture(() => opsCmd(["probe"], home));
+    expect(all.code).toBe(0);
+    expect(all.text).toContain("t1: ok");
   });
 });

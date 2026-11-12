@@ -2741,19 +2741,83 @@ const OPS_LIVE = ["running", "waiting", "failed"];
 const Ops = () => {
   const seg = route().split("/");
   const sub = seg[1] ? decodeURIComponent(seg[1]) : "";
+  if (sub === "jobs") return html`<${OpsList} />`;
   if (sub === "playbooks") return html`<${OpsPlaybooks} />`;
   if (sub === "playbook") return html`<${OpsPlaybook} name=${decodeURIComponent(seg[2] ?? "")} />`;
-  return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsList} />`;
+  return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsMatrix} />`;
 };
 
 const OpsTabs = ({ view }) => html`
   <div class="d-flex align-items-center gap-3 mb-3">
     <h2 class="h4 mb-0">Ops</h2>
     <span class="d-flex gap-2 small">
-      <a href="#/ops" class=${view === "jobs" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>jobs</a>
+      <a href="#/ops" class=${view === "matrix" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>matrix</a>
+      <a href="#/ops/jobs" class=${view === "jobs" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>jobs</a>
       <a href="#/ops/playbooks" class=${view === "playbooks" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>playbooks</a>
     </span>
   </div>`;
+
+// ---- Ops matrix (GL-0278): service rows × env columns; a cell holds the
+// last succeeded job (the ledger) and the stored probe — drift when they differ
+const OpsMatrix = () => {
+  const { data: targets } = useApi("/api/ops/targets");
+  const { data: jobs } = useApi("/api/ops/jobs");
+  const { data: probes, reload } = useApi("/api/ops/probes");
+  const [busy, setBusy] = useState("");
+  if (!targets || !jobs || !probes) return html`<p class="text-secondary">loading…</p>`;
+  const ids = Object.keys(targets).sort();
+  const lastOk = {};
+  for (const j of jobs) if (j.status === "succeeded" && j.target && (!lastOk[j.target] || j.started.ts > lastOk[j.target].started.ts)) lastOk[j.target] = j;
+  const services = [...new Set(ids.map((t) => targets[t].service ?? "—"))].sort();
+  const envs = [...new Set(ids.map((t) => targets[t].env ?? "—"))].sort();
+  const byServiceEnv = (s, e) => ids.filter((t) => (targets[t].service ?? "—") === s && (targets[t].env ?? "—") === e);
+  const probe = async (t) => {
+    setBusy(t);
+    try {
+      const r = await post(`/api/ops/probe/${encodeURIComponent(t)}`, {});
+      toast(r.timeout ? `${t}: probe timed out` : r.ok ? `${t}: ${r.version ?? "no version"}` : `${t}: probe failed (exit ${r.exit_code ?? "?"})`, r.ok ? "success" : "danger");
+      reload();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(""); }
+  };
+  return html`
+    <${OpsTabs} view="matrix" />
+    ${!ids.length && html`<p class="text-secondary">no targets — declare <code>targets:</code> in workspace.yaml</p>`}
+    <table class="table table-sm ops-matrix">
+      <thead>
+        <tr><th></th>${envs.map((e) => html`<th key=${e}>${e}</th>`)}</tr>
+      </thead>
+      <tbody>
+        ${services.map((s) => html`
+          <tr key=${s}>
+            <th>${s}</th>
+            ${envs.map((e) => html`
+              <td key=${e}>
+                ${byServiceEnv(s, e).map((t) => {
+                  const j = lastOk[t];
+                  const p = probes[t];
+                  const drift = p?.version && j?.version && p.version !== j.version;
+                  return html`<div class="ops-cell" key=${t}>
+                    <div class="d-flex align-items-center gap-1">
+                      <b title=${targets[t].title ?? t}>${t}</b>
+                      ${j ? html`<a href=${`#/ops/${encodeURIComponent(j.id)}`} class="text-decoration-none">${j.version ?? "—"}</a>` : html`<span class="text-secondary">—</span>`}
+                      ${drift ? html`<span class="badge text-bg-warning" title=${`probe says ${p.version}, ledger says ${j.version}`}>drift: ${p.version}</span>` : ""}
+                      ${p?.timeout ? html`<span class="badge text-bg-danger" title="the probe was killed at the timeout">probe timeout</span>` : ""}
+                      ${p && !p.timeout && !p.ok ? html`<span class="badge text-bg-danger" title=${p.error ?? ""}>probe exit ${p.exit_code ?? "?"}</span>` : ""}
+                      ${targets[t].probe ? html`<button class="btn btn-sm btn-outline-secondary py-0 ms-auto" disabled=${busy === t} onClick=${() => probe(t)}>${busy === t ? "…" : "probe now"}</button>` : ""}
+                    </div>
+                    <div class="small text-secondary">
+                      ${j ? `${j.params.commit ?? j.params.ref ?? ""}${(j.params.commit ?? j.params.ref) ? " · " : ""}${ago(j.started.ts)} ago · ${j.machine}${j.started.by !== "human" ? ` · ${j.started.by}` : ""}` : "no succeeded job"}
+                      ${p && !drift && p.ok ? ` · probe ${ago(p.ts)} ago` : ""}
+                    </div>
+                  </div>`;
+                })}
+              </td>`)}
+          </tr>`)}
+      </tbody>
+    </table>
+  `;
+};
 
 const OpsList = () => {
   const [f, setF] = useState({ playbook: "", target: "", status: "", machine: "" });

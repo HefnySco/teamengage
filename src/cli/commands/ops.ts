@@ -4,6 +4,7 @@ import { teHome } from "../../core/config/config.js";
 import { execJob, type ExecOutcome } from "../../core/ops/runner.js";
 import { jobPlaybook, type Job } from "../../core/ops/job.js";
 import type { LoadedPlaybook } from "../../core/ops/playbook.js";
+import type { ProbeResult } from "../../core/ops/probe.js";
 
 /**
  * `te ops` — the ops runner's human surface. It talks to the daemon's
@@ -78,6 +79,25 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
       case "targets": {
         const t = await api<unknown>("GET", `/api/ops/targets${ws}`, undefined, home);
         return console.log(json ? JSON.stringify(t, null, 2) : formatTargets(t)), 0;
+      }
+      case "probe": {
+        const targets = await api<Record<string, { probe?: string }>>("GET", `/api/ops/targets${ws}`, undefined, home);
+        const one = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+        const ids = one ? [one] : Object.keys(targets).filter((k) => targets[k].probe).sort();
+        if (!ids.length) return console.log(one ? `target '${one}' has no probe command` : "no targets with a probe command"), 4;
+        const results: ProbeResult[] = [];
+        let bad = 0;
+        for (const t of ids) {
+          const r = await api<ProbeResult>("POST", `/api/ops/probe/${encodeURIComponent(t)}${ws}`, {}, home);
+          results.push(r);
+          if (!json) {
+            const what = r.timeout ? "timeout" : r.ok ? `ok — ${r.version ?? "no version line"}` : `exit ${r.exit_code ?? "?"}${r.error ? ` — ${r.error}` : ""}`;
+            console.log(`${t}: ${what}`);
+          }
+          if (!r.ok) bad = 1;
+        }
+        if (json) console.log(JSON.stringify(one ? results[0] : results, null, 2));
+        return bad;
       }
       case "jobs": {
         const jobs = await api<Job[]>("GET", `/api/ops/jobs${ws}`, undefined, home);

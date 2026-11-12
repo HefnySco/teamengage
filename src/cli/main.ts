@@ -112,7 +112,7 @@ const USAGE_ALL = `te — every command
   run [--watch] [--max n] [--dry-run]   start this machine's agents on ready tasks
   wait [--notify] [--any] [--timeout d]  block until something new needs you
   sync [--leave] [--dry-run] [-m msg] [--status]   plans + code to/from your other machines
-  ops list|targets|jobs|start|exec|status|approve|abort|resume [--ws w] [--json]
+  ops list|targets|jobs|start|exec|status|approve|abort|resume|probe [--ws w] [--json]
                    playbook jobs — exec runs the steps, posts results (exit 0/1/2/3)
   ideas [--state unplanned|planned|in_progress|done] [--json]  table: id, title, state, done, total
   ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]

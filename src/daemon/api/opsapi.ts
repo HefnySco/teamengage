@@ -7,6 +7,7 @@ import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
+import { loadProbes, runProbe, saveProbe, PROBE_TIMEOUT_MS, type ProbeResult } from "../../core/ops/probe.js";
 import { checkRemoteTargetLock, commitPlans } from "../sync/sync.js";
 import { ForbiddenError, NotFoundError, ParseError, ValidationError } from "../../core/model/errors.js";
 import { tierRank } from "../../core/model/item.js";
@@ -73,6 +74,27 @@ function mustJob(store: JobStore, id: string): Job {
 
 export function opsJob(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string): Job {
   return mustJob(jobStore(wsr, ctx), id);
+}
+
+/** stored probe results — machine-local files under <home>/ops-probes/, never synced */
+export function opsProbes(ctx: DaemonCtx): Record<string, ProbeResult> {
+  return loadProbes(ctx.home);
+}
+
+/**
+ * Run a target's probe — the one command the daemon itself executes
+ * (DESIGN §14.5): read-only, killed at 30 s (or the target's
+ * probe_timeout_ms). Human-only: a session identity refuses.
+ */
+export async function opsProbe(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: string, session?: Session): Promise<ProbeResult> {
+  if (session) throw new ForbiddenError("probes are human-only — an agent session cannot start one");
+  const t = wsr.ws.config.targets[target];
+  if (!t) throw new NotFoundError(`target '${target}' not in workspace.yaml targets:`);
+  if (!t.probe) throw new ValidationError(`target '${target}' has no probe command in workspace.yaml`);
+  const run = await runProbe(t.probe, { cwd: wsr.ws.root, timeoutMs: (t.probe_timeout_ms as number | undefined) ?? PROBE_TIMEOUT_MS });
+  const result: ProbeResult = { target, by: "human", ...run };
+  saveProbe(result, ctx.home);
+  return result;
 }
 
 function playbookByName(wsr: WorkspaceRuntime, name: string): Playbook {
@@ -322,6 +344,23 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
     try {
       const { id } = req.params as { id: string };
       return opsJob(opsWsr(ctx, wsOf(req.query)), ctx, id);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/probes", async (_req, reply) => {
+    try {
+      return opsProbes(ctx);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.post("/api/ops/probe/:target", async (req, reply) => {
+    try {
+      const { target } = req.params as { target: string };
+      // an agent session identity on the human API refuses — probes are human-only
+      const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
+      return await opsProbe(opsWsr(ctx, wsOf(req.query)), ctx, target, session);
     } catch (e) {
       return sendOpsErr(reply, e);
     }
