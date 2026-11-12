@@ -111,6 +111,12 @@ describe("te machines", () => {
     expect(text.indexOf("rules:")).toBeLessThan(text.indexOf("id: lap"));
   });
 
+  it("probe runs the env's reach edges through the daemon — wrong wifi answers not_expected", async () => {
+    const { code, text } = await capture(() => machinesCmd(["probe", "--env", "work"], home));
+    expect(code).toBe(0);
+    expect(text).toContain("lap --ssh--> rpi5  not_expected (needs network MHEFNY4G)");
+  });
+
   it("graph prints dev/test/prod rows and one line per edge; --env adds reach lines", async () => {
     const { code, text } = await capture(() => machinesCmd(["graph", "--env", "work"], home));
     expect(code).toBe(0);

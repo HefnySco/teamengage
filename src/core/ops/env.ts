@@ -1,8 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import YAML from "yaml";
 import type { Finding } from "../validate/validate.js";
 import { kebab, splitFrontmatter } from "./machine.js";
+import { runnerMachine } from "./runner.js";
 
 /**
  * Envs (DESIGN §14): one `envs/<id>.env.md` file per diagram — a group of
@@ -99,4 +103,64 @@ export function envFindings(loaded: LoadedEnv[], machineIds: ReadonlySet<string>
     }
   }
   return out;
+}
+
+/**
+ * The active env (GL-0288/0289): a manual `env:` pin in the runner
+ * machine's .machine.local wins; else the env whose `network:` list holds
+ * the current wifi name; else none. Shared by the CLI (te env) and the
+ * daemon (the active flag on the machines API) — lives here so the
+ * daemon never imports from cli/.
+ */
+export function wifiName(): string {
+  try {
+    return execFileSync("iwgetid", ["-r"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    /* no iwgetid or not on wifi */
+  }
+  try {
+    const out = execFileSync("nmcli", ["-t", "-f", "ACTIVE,SSID", "dev", "wifi"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return out.split("\n").find((l) => l.startsWith("yes:"))?.slice(4) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** The `env:` pinned in the runner machine's .machine.local — raw read; the Machine schema strips it. */
+export function runnerLocalFile(root: string): { file: string; data: Record<string, unknown> } | undefined {
+  const m = runnerMachine(root, hostname());
+  if (!m) return undefined;
+  const file = join(root, "machines", `${m.id}.machine.local`);
+  if (!existsSync(file)) return { file, data: {} };
+  const data = (YAML.parse(readFileSync(file, "utf8")) ?? {}) as Record<string, unknown>;
+  return { file, data };
+}
+
+/** The active env: manual pin in the runner's .machine.local, else wifi-name match. */
+export function currentEnv(
+  root: string,
+  envs: LoadedEnv[],
+  wifi: string | undefined,
+): { env?: Env; how: "manual" | "wifi" | "none" } {
+  const pinned = runnerLocalFile(root)?.data.env;
+  if (typeof pinned === "string") {
+    return { env: envs.flatMap((l) => (l.env ? [l.env] : [])).find((e) => e.id === pinned), how: "manual" };
+  }
+  if (wifi) {
+    const hit = envs.flatMap((l) => (l.env ? [l.env] : [])).find((e) => e.network.includes(wifi));
+    if (hit) return { env: hit, how: "wifi" };
+  }
+  return { how: "none" };
+}
+
+/** Pin an env in the runner machine's .machine.local — returns the file written. */
+export function setEnvPin(root: string, envId: string): string | undefined {
+  const local = runnerLocalFile(root);
+  if (!local) return undefined;
+  local.data.env = kebab(envId);
+  writeFileSync(local.file, YAML.stringify(local.data));
+  return local.file;
 }

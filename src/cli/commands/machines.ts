@@ -1,12 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
-import { join } from "node:path";
 import YAML from "yaml";
 import { daemonApi } from "../client.js";
 import { kebab, loadMachines, type LoadedMachine } from "../../core/ops/machine.js";
-import { loadEnvs, type Env, type LoadedEnv } from "../../core/ops/env.js";
-import { runnerMachine } from "../../core/ops/runner.js";
+import { currentEnv, loadEnvs, setEnvPin, wifiName, type Env } from "../../core/ops/env.js";
 
 /**
  * `te machines` / `te env` (GL-0288) — the human/agent window onto the
@@ -29,49 +24,7 @@ async function root(home?: string): Promise<string> {
   return wsc.root;
 }
 
-/** The current wifi SSID — iwgetid first, nmcli fallback; empty when neither is here. */
-export function wifiName(): string {
-  try {
-    return execFileSync("iwgetid", ["-r"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
-    /* no iwgetid or not on wifi */
-  }
-  try {
-    const out = execFileSync("nmcli", ["-t", "-f", "ACTIVE,SSID", "dev", "wifi"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return out.split("\n").find((l) => l.startsWith("yes:"))?.slice(4) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/** The `env:` pinned in the runner machine's .machine.local — raw read, the Machine schema strips it. */
-function runnerLocalFile(root_: string): { file: string; data: Record<string, unknown> } | undefined {
-  const m = runnerMachine(root_, hostname());
-  if (!m) return undefined;
-  const file = join(root_, "machines", `${m.id}.machine.local`);
-  if (!existsSync(file)) return { file, data: {} };
-  const data = (YAML.parse(readFileSync(file, "utf8")) ?? {}) as Record<string, unknown>;
-  return { file, data };
-}
-
-/** The active env: manual pin in the runner's .machine.local, else wifi-name match. */
-export function currentEnv(
-  root_: string,
-  envs: LoadedEnv[],
-  wifi: string | undefined,
-): { env?: Env; how: "manual" | "wifi" | "none" } {
-  const local = runnerLocalFile(root_);
-  const pinned = typeof local?.data.env === "string" ? (local.data.env as string) : undefined;
-  if (pinned) return { env: envs.flatMap((l) => (l.env ? [l.env] : [])).find((e) => e.id === pinned), how: "manual" };
-  if (wifi) {
-    const hit = envs.flatMap((l) => (l.env ? [l.env] : [])).find((e) => e.network.includes(wifi));
-    if (hit) return { env: hit, how: "wifi" };
-  }
-  return { how: "none" };
-}
+export { currentEnv, wifiName };
 
 function showMachine(l: LoadedMachine): void {
   const m = l.machine!;
@@ -125,6 +78,16 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     showMachine(l);
     return 0;
   }
+  if (sub === "probe") {
+    const i = args.indexOf("--env");
+    let envId = i === -1 ? undefined : kebab(args[i + 1]);
+    const envs = loadEnvs(root_);
+    if (!envId) envId = currentEnv(root_, envs, wifiName() || undefined).env?.id;
+    if (!envId) return console.log("no env selected — te machines probe --env <id>"), 4;
+    const results = await daemonApi("POST", `/api/ops/envs/${envId}/probe`, {}, home) as { from: string; to: string; via: string; status: string; reason?: string }[];
+    for (const r of results) console.log(`${r.from} --${r.via}--> ${r.to}  ${r.status}${r.reason ? ` (${r.reason})` : ""}`);
+    return 0;
+  }
   if (sub === "graph") {
     const envId = (() => {
       const i = args.indexOf("--env");
@@ -135,7 +98,7 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     graph(loadMachines(root_), env);
     return 0;
   }
-  console.log("usage: te machines [show <id> | graph [--env <id>]]");
+  console.log("usage: te machines [show <id> | graph [--env <id>] | probe [--env <id>]]");
   return 4;
 }
 
@@ -147,11 +110,9 @@ export async function envCmd(args: string[], home?: string): Promise<number> {
     if (!id) return console.log("usage: te env use <id>"), 4;
     const env = envs.find((l) => l.env?.id === kebab(id));
     if (!env?.env) return console.log(`no env '${id}' under envs/`), 4;
-    const local = runnerLocalFile(root_);
-    if (!local) return console.log("no runner machine record — mark this computer with runner: true in a machines/<id>.machine.local first"), 4;
-    local.data.env = env.env.id;
-    writeFileSync(local.file, YAML.stringify(local.data));
-    console.log(`env ${env.env.id} — manual select stored in ${local.file.replace(`${root_}/`, "")}`);
+    const file = setEnvPin(root_, env.env.id);
+    if (!file) return console.log("no runner machine record — mark this computer with runner: true in a machines/<id>.machine.local first"), 4;
+    console.log(`env ${env.env.id} — manual select stored in ${file.replace(`${root_}/`, "")}`);
     return 0;
   }
   const { env, how } = currentEnv(root_, envs, wifiName() || undefined);

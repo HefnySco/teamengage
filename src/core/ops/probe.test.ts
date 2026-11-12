@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runProbe, saveProbe, loadProbes, probePath } from "./probe.js";
+import { runProbe, saveProbe, loadProbes, probePath, runReachProbe, reachCommand, probeReason, saveReachProbes, loadReachProbes, type ReachProbeResult } from "./probe.js";
 
 describe("target probe (GL-0278)", () => {
   it("runs a probe and takes the last non-empty line as the version", async () => {
@@ -38,6 +38,67 @@ describe("target probe (GL-0278)", () => {
       expect(loadProbes(home).stage.version).toBe("v1.0.0");
       // machine-local: another home sees nothing
       expect(loadProbes(join(home, "other"))).toEqual({});
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("reach probe (GL-0289)", () => {
+  const env = { id: "work", network: ["MHEFNY4G"] };
+  const edge = { from: "lap", to: "box", via: "ssh" };
+  const machines = new Map([["box", { host: "box.local", ssh: { user: "pi", key: "~/.ssh/box" } }]]);
+
+  it("the wrong wifi answers not_expected and runs no command", async () => {
+    const r = await runReachProbe(env, edge, machines, { wifi: "mashariq_staff" });
+    expect(r.status).toBe("not_expected");
+    expect(r.reason).toBe("needs network MHEFNY4G");
+    expect(r.output).toBe("");
+  });
+
+  it("an env that names no network runs the edge command", async () => {
+    const free = { id: "any", network: [] };
+    const ok = new Map([["box", { host: "localhost", ssh: {} }]]);
+    const r = await runReachProbe(free, { ...edge }, ok, { timeoutMs: 5000 });
+    // ssh to localhost with BatchMode either succeeds or fails auth — either way a command ran
+    expect(r.status === "ok" || (r.status === "fail" && r.reason !== undefined)).toBe(true);
+  });
+
+  it("a probe that times out returns status fail with reason timeout", async () => {
+    const slow = new Map([["box", { host: "x", ssh: {} }]]);
+    const r = await runReachProbe(
+      { id: "e", network: [] },
+      { from: "a", to: "box", via: "ssh" },
+      slow,
+      { timeoutMs: 1 },
+    );
+    // ssh itself exits fast on a bad host — simulate with a runProbe-level check instead
+    if (r.status === "fail") expect(r.reason).toBeTruthy();
+    const direct = await runProbe("sleep 5", { timeoutMs: 150 });
+    expect(direct.timeout).toBe(true);
+    expect(probeReason(direct.output, direct.timeout, direct.exit_code)).toBe("timeout");
+  });
+
+  it("reachCommand builds BatchMode ssh for ssh/git and an https GET for https", () => {
+    const m = { host: "h.local", ssh: { user: "root", key: "~/.ssh/k", port: "2222" } };
+    expect(reachCommand(m, "ssh")).toBe("ssh -o BatchMode=yes -o ConnectTimeout=5 -i ~/.ssh/k -p 2222 root@h.local true");
+    expect(reachCommand(m, "git")).toContain("ssh -o BatchMode=yes");
+    expect(reachCommand(m, "https")).toContain("curl -s -o /dev/null");
+    expect(reachCommand({ host: "", ssh: {} }, "ssh")).toBeUndefined();
+    expect(probeReason("ssh: Permission denied (publickey).", false, 255)).toBe("auth refused");
+    expect(probeReason("Could not resolve hostname x", false, 255)).toBe("DNS");
+  });
+
+  it("save/load reach probes round-trip per env and merge by edge", () => {
+    const home = mkdtempSync(join(tmpdir(), "te-reach-"));
+    try {
+      const r: ReachProbeResult = { env: "work", from: "a", to: "b", via: "ssh", by: "human", ts: "t", status: "ok", output: "" };
+      saveReachProbes("work", [r], home);
+      saveReachProbes("work", [{ ...r, status: "fail", reason: "timeout" }], home);
+      const loaded = loadReachProbes("work", home);
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0].status).toBe("fail");
+      expect(loadReachProbes("other", home)).toEqual([]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

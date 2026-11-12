@@ -94,3 +94,107 @@ export function loadProbes(home?: string): Record<string, ProbeResult> {
   }
   return out;
 }
+
+/**
+ * Reach probes (GL-0289): prove one env reach edge is true right now —
+ * ssh BatchMode with a short timeout for `ssh`/`git` edges, an https GET
+ * for `https` edges. Read-only, same rules as target probes: human-only,
+ * results machine-local under <teHome>/ops-probes/reach/<env>.json.
+ * An edge whose env does not expect the current wifi answers
+ * 'not expected: needs network X' and no command runs.
+ */
+
+export const REACH_PROBE_TIMEOUT_MS = 8_000;
+
+export const ReachProbeResult = z.object({
+  env: z.string(),
+  from: z.string(),
+  to: z.string(),
+  via: z.string(),
+  by: z.string(),
+  ts: z.string(),
+  /** ok | fail | not_expected — the wifi precondition failed before any command ran */
+  status: z.enum(["ok", "fail", "not_expected"]),
+  /** short reason on fail/not_expected: timeout, DNS, auth refused, refused, unreachable, exit N, needs network X */
+  reason: z.string().optional(),
+  output: z.string().default(""),
+});
+export type ReachProbeResult = z.infer<typeof ReachProbeResult>;
+
+/** The read-only command that proves a machine is reachable by `via` — undefined when the record lacks what it needs. */
+export function reachCommand(m: { host?: string; ssh: Record<string, string> }, via: string): string | undefined {
+  if (!m.host) return undefined;
+  if (via === "ssh" || via === "git") {
+    const key = m.ssh.key ? ` -i ${m.ssh.key}` : "";
+    const port = m.ssh.port ? ` -p ${m.ssh.port}` : "";
+    const user = m.ssh.user ? `${m.ssh.user}@` : "";
+    return `ssh -o BatchMode=yes -o ConnectTimeout=5${key}${port} ${user}${m.host} true`;
+  }
+  if (via === "https") return `curl -s -o /dev/null -w '%{http_code}' -m 5 https://${m.host}/ | grep -q '^[0-9]'`;
+  return undefined;
+}
+
+/** The short reason a failed probe keeps — maps the noise to one word the human reads. */
+export function probeReason(output: string, timeout: boolean, code: number | undefined): string {
+  if (timeout) return "timeout";
+  if (/Could not resolve|Name or service not known|Temporary failure in name resolution/i.test(output)) return "DNS";
+  if (/Permission denied/i.test(output)) return "auth refused";
+  if (/Connection refused/i.test(output)) return "refused";
+  if (/No route to host|Network is unreachable|connect timed out/i.test(output)) return "unreachable";
+  return `exit ${code ?? "?"}`;
+}
+
+/**
+ * Run one reach edge. `wifi` is the current network name — when the env
+ * names networks and this wifi is not one of them, nothing runs.
+ */
+export async function runReachProbe(
+  env: { id: string; network: string[] },
+  edge: { from: string; to: string; via: string },
+  machines: ReadonlyMap<string, { host?: string; ssh: Record<string, string> }>,
+  opts: { wifi?: string; cwd?: string; timeoutMs?: number } = {},
+): Promise<Omit<ReachProbeResult, "env" | "from" | "to" | "via" | "by">> {
+  if (env.network.length && !(opts.wifi && env.network.includes(opts.wifi))) {
+    return { ts: new Date().toISOString(), status: "not_expected", reason: `needs network ${env.network.join(" or ")}`, output: "" };
+  }
+  const m = machines.get(edge.to);
+  const command = m ? reachCommand(m, edge.via) : undefined;
+  if (!command) {
+    return { ts: new Date().toISOString(), status: "fail", reason: m ? `no '${edge.via}' probe for ${edge.to}` : `no machine '${edge.to}'`, output: "" };
+  }
+  const r = await runProbe(command, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? REACH_PROBE_TIMEOUT_MS });
+  return {
+    ts: r.ts,
+    status: r.ok ? "ok" : "fail",
+    reason: r.ok ? undefined : probeReason(r.output, r.timeout, r.exit_code),
+    output: r.output,
+  };
+}
+
+function reachDir(home?: string): string {
+  return join(probesDir(home), "reach");
+}
+
+/** stored reach results for one env — one file, results keyed by edge */
+export function saveReachProbes(envId: string, results: ReachProbeResult[], home?: string): void {
+  const dir = reachDir(home);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${envId}.json`);
+  let all: ReachProbeResult[] = [];
+  try {
+    all = z.array(ReachProbeResult).parse(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    /* missing or corrupt — start over */
+  }
+  const key = (r: ReachProbeResult) => `${r.from}>${r.to}>${r.via}`;
+  const fresh = new Set(results.map(key));
+  writeFileSync(file, JSON.stringify([...all.filter((r) => !fresh.has(key(r))), ...results], null, 2) + "\n");
+}
+
+export function loadReachProbes(envId: string, home?: string): ReachProbeResult[] {
+  try {
+    return z.array(ReachProbeResult).parse(JSON.parse(readFileSync(join(reachDir(home), `${envId}.json`), "utf8")));
+  } catch {
+    return [];
+  }
+}

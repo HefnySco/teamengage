@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
@@ -70,6 +70,15 @@ describe("ops UI API (GL-0276)", () => {
       "name: ws\nprefix: WS\ntargets:\n  stage: { title: staging, service: auth, env: staging, probe: 'echo v1.0.0' }\n  slow: { title: slow, service: auth, env: prod, probe: 'sleep 5', probe_timeout_ms: 200 }\n  unprobed: { title: no probe, service: auth, env: dev }\n",
     );
     mkdirSync(join(root, "ops"), { recursive: true });
+    mkdirSync(join(root, "machines"), { recursive: true });
+    mkdirSync(join(root, "envs"), { recursive: true });
+    const doc = (fm: Record<string, unknown>, body = "") => `---\n${YAML.stringify(fm)}---\n${body}`;
+    writeFileSync(join(root, "machines", "lap.machine.md"), doc({ id: "lap", host: hostname(), tier: "dev", roles: ["runner"], rules: ["never cut over by hand"] }, "the laptop\n"));
+    writeFileSync(join(root, "machines", "box.machine.md"), doc({ id: "box", host: "box.local", tier: "prod", ssh: { user: "pi", key: "~/.ssh/box" } }));
+    writeFileSync(
+      join(root, "envs", "work.env.md"),
+      doc({ id: "work", network: ["MHEFNY4G"], machines: [{ id: "lap", row: 0 }, { id: "box", row: 1 }], reach: [{ from: "lap", to: "box", via: "ssh" }] }),
+    );
     writeFileSync(
       join(root, "ops", "demo.playbook.yaml"),
       YAML.stringify({ name: "demo", target: "stage", version_from: "a", steps: [{ id: "a", kind: "cmd", run: "true" }] }),
@@ -199,5 +208,43 @@ describe("ops UI API (GL-0276)", () => {
     expect(probe.version).toBe("v1.0.0");
     // the matrix's drift rule: stored probe version ≠ ledger version
     expect(probe.version).not.toBe("v2.0.0");
+  });
+
+  // GL-0289: the machines API serves the GL-0286 files; env probes are
+  // human-only like target probes and answer not_expected on the wrong wifi
+  it("/api/ops/machines and /api/ops/envs serve the fixture data", async () => {
+    const ms = await (await fetch(`${daemon2.url}/api/ops/machines`, { headers: cookie() })).json();
+    expect(ms.runner).toBe("lap");
+    expect(ms.machines.map((m: { id: string }) => m.id).sort()).toEqual(["box", "lap"]);
+    const box = await (await fetch(`${daemon2.url}/api/ops/machines/box`, { headers: cookie() })).json();
+    expect(box.host).toBe("box.local");
+    const envs = await (await fetch(`${daemon2.url}/api/ops/envs`, { headers: cookie() })).json();
+    expect(envs.envs[0].id).toBe("work");
+    const env = await (await fetch(`${daemon2.url}/api/ops/envs/work`, { headers: cookie() })).json();
+    expect(env.machines.map((p: { id: string }) => p.id).sort()).toEqual(["box", "lap"]);
+    expect(env.machines.find((p: { id: string }) => p.id === "box").machine.host).toBe("box.local");
+    expect(env.reach[0]).toMatchObject({ from: "lap", to: "box", via: "ssh" });
+    expect(Array.isArray(env.probes)).toBe(true);
+  });
+
+  it("POST /api/ops/envs/:id/probe is human-only; the wrong wifi answers not_expected without ssh", async () => {
+    // an agent session identity refuses — same rule as target probes
+    const withSession = await fetch(`${daemon2.url}/api/ops/envs/work/probe`, {
+      method: "POST",
+      headers: { ...cookie(), "x-te-session": "agent-session-1" },
+    });
+    expect(withSession.status).toBe(403);
+    // the fixture env names MHEFNY4G — this machine is not on it, so no command runs
+    const r = await fetch(`${daemon2.url}/api/ops/envs/work/probe`, { method: "POST", headers: cookie() });
+    expect(r.status).toBe(200);
+    const results = await r.json();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ env: "work", from: "lap", to: "box", via: "ssh", status: "not_expected", reason: "needs network MHEFNY4G", output: "" });
+    // stored machine-local under <home>/ops-probes/reach/
+    const stored = JSON.parse(readFileSync(join(home2, ".teamengage", "ops-probes", "reach", "work.json"), "utf8"));
+    expect(stored[0].status).toBe("not_expected");
+    const env = await (await fetch(`${daemon2.url}/api/ops/envs/work`, { headers: cookie() })).json();
+    expect(env.probes[0].reason).toBe("needs network MHEFNY4G");
+    expect((await fetch(`${daemon2.url}/api/ops/envs/ghost/probe`, { method: "POST", headers: cookie() })).status).toBe(404);
   });
 });

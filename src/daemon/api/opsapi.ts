@@ -7,7 +7,11 @@ import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
-import { loadProbes, runProbe, saveProbe, PROBE_TIMEOUT_MS, type ProbeResult } from "../../core/ops/probe.js";
+import { loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ProbeResult, type ReachProbeResult } from "../../core/ops/probe.js";
+import { loadMachines } from "../../core/ops/machine.js";
+import { currentEnv, loadEnvs, wifiName } from "../../core/ops/env.js";
+import { runnerMachine } from "../../core/ops/runner.js";
+import { hostname } from "node:os";
 import { checkRemoteTargetLock, commitPlans } from "../sync/sync.js";
 import { ForbiddenError, NotFoundError, ParseError, ValidationError } from "../../core/model/errors.js";
 import { tierRank } from "../../core/model/item.js";
@@ -95,6 +99,78 @@ export async function opsProbe(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: st
   const result: ProbeResult = { target, by: "human", ...run };
   saveProbe(result, ctx.home);
   return result;
+}
+
+/**
+ * Machines + envs over the GL-0286 files (GL-0289): the UI's Machines
+ * view reads these. `active` marks the env select (manual pin or wifi
+ * match) — the same select `te env` prints.
+ */
+export function opsMachines(wsr: WorkspaceRuntime) {
+  const runner = runnerMachine(wsr.ws.root, hostname())?.id;
+  const loaded = loadMachines(wsr.ws.root);
+  return {
+    runner,
+    machines: loaded.flatMap((l) => (l.machine ? [{ ...l.machine, file: l.file }] : [])),
+    errors: loaded.flatMap((l) => (l.error ? [{ file: l.file, error: l.error }] : [])),
+  };
+}
+
+export function opsMachine(wsr: WorkspaceRuntime, id: string) {
+  const l = loadMachines(wsr.ws.root).find((x) => x.machine?.id === id);
+  if (!l?.machine) throw new NotFoundError(`machine '${id}' not under machines/`);
+  return { ...l.machine, file: l.file, notes: l.body ?? "" };
+}
+
+export function opsEnvs(wsr: WorkspaceRuntime) {
+  const loaded = loadEnvs(wsr.ws.root);
+  const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id;
+  return {
+    active,
+    envs: loaded.flatMap((l) => (l.env ? [{ ...l.env, file: l.file, active: l.env.id === active }] : [])),
+    errors: loaded.flatMap((l) => (l.error ? [{ file: l.file, error: l.error }] : [])),
+  };
+}
+
+export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
+  const loaded = loadEnvs(wsr.ws.root);
+  const l = loaded.find((x) => x.env?.id === id);
+  if (!l?.env) throw new NotFoundError(`env '${id}' not under envs/`);
+  const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, x.machine] as const] : [])));
+  const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id === l.env.id;
+  return {
+    ...l.env,
+    file: l.file,
+    active,
+    notes: l.body ?? "",
+    machines: l.env.machines.map((p) => ({ ...p, machine: machines.get(p.id) })),
+    probes: loadReachProbes(l.env.id, ctx.home),
+  };
+}
+
+/**
+ * Run the reach probes of one env — human-only like target probes. Each
+ * reach edge becomes one ReachProbeResult; the wifi precondition inside
+ * runReachProbe answers 'not expected' without running anything.
+ */
+export async function opsReachProbes(
+  wsr: WorkspaceRuntime,
+  ctx: DaemonCtx,
+  envId: string,
+  session?: Session,
+): Promise<ReachProbeResult[]> {
+  if (session) throw new ForbiddenError("probes are human-only — an agent session cannot start one");
+  const l = loadEnvs(wsr.ws.root).find((x) => x.env?.id === envId);
+  if (!l?.env) throw new NotFoundError(`env '${envId}' not under envs/`);
+  const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, x.machine] as const] : [])));
+  const wifi = wifiName() || undefined;
+  const results: ReachProbeResult[] = [];
+  for (const r of l.env.reach) {
+    const run = await runReachProbe(l.env, r, machines, { wifi, cwd: wsr.ws.root });
+    results.push({ env: l.env.id, from: r.from, to: r.to, via: r.via, by: "human", ...run });
+  }
+  saveReachProbes(l.env.id, results, ctx.home);
+  return results;
 }
 
 function playbookByName(wsr: WorkspaceRuntime, name: string): Playbook {
@@ -361,6 +437,43 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       // an agent session identity on the human API refuses — probes are human-only
       const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
       return await opsProbe(opsWsr(ctx, wsOf(req.query)), ctx, target, session);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/machines", async (req, reply) => {
+    try {
+      return opsMachines(opsWsr(ctx, wsOf(req.query)));
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/machines/:id", async (req, reply) => {
+    try {
+      return opsMachine(opsWsr(ctx, wsOf(req.query)), (req.params as { id: string }).id);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/envs", async (req, reply) => {
+    try {
+      return opsEnvs(opsWsr(ctx, wsOf(req.query)));
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/envs/:id", async (req, reply) => {
+    try {
+      return opsEnv(opsWsr(ctx, wsOf(req.query)), ctx, (req.params as { id: string }).id);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.post("/api/ops/envs/:id/probe", async (req, reply) => {
+    try {
+      // an agent session identity on the human API refuses — probes are human-only
+      const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
+      return await opsReachProbes(opsWsr(ctx, wsOf(req.query)), ctx, (req.params as { id: string }).id, session);
     } catch (e) {
       return sendOpsErr(reply, e);
     }
