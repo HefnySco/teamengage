@@ -1000,9 +1000,26 @@ const Board = ({ onOpen }) => {
   const inPlans = hidePlans ? inAi.filter((i) => !(i.type === "epic" && i.plan_state)) : inAi;
   const ideaSt = ideaStates(data);
   const inIdea = ideaFilter ? inPlans.filter((i) => i.type === "idea" && ideaSt.get(i.id)?.state === ideaFilter) : inPlans;
-  const inFound = foundOnly ? inIdea.filter(hasFound) : inIdea;
+  // "found problems" mirrors the plans chip: found_by/found_here links AND
+  // bug items (type bug or #bug) sitting inside a plan's subtree
+  const byIdMap = new Map(data.map((i) => [i.id, i]));
+  const hasEpicAbove = (i) => {
+    const seen = new Set([i.id]);
+    let p = i.parent;
+    while (p && !seen.has(p)) {
+      seen.add(p);
+      const a = byIdMap.get(p);
+      if (!a) return false;
+      if (a.type === "epic") return true;
+      p = a.parent;
+    }
+    return false;
+  };
+  const isPlanProblem = (i) => (i.type === "bug" || (i.domains ?? []).includes("bug")) && hasEpicAbove(i);
+  const foundMatch = (i) => hasFound(i) || isPlanProblem(i);
+  const inFound = foundOnly ? inIdea.filter(foundMatch) : inIdea;
   const hits = words.length ? inFound.filter((i) => matches(i, words)) : inFound;
-  const foundCount = data.filter(hasFound).length;
+  const foundCount = data.filter(foundMatch).length;
   const ideaCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
   for (const v of ideaSt.values()) ideaCounts[v.state] += 1;
   const domainCounts = {};
@@ -1088,7 +1105,7 @@ const Board = ({ onOpen }) => {
         title=${hidePlans ? "plan cards hidden — click to show plans (epics) again" : "hide plan cards — epics with a plan leave the board"}
         onClick=${() => setHidePlans(!hidePlans)}><${GraphIcon} /> plans</button>
       <button class="btn btn-sm ${foundOnly ? "btn-warning" : "btn-outline-secondary"}"
-        title=${foundOnly ? "showing only found problems and the items that found them — click to clear" : "show only items with found_by or found_here"}
+        title=${foundOnly ? "showing only found problems — click to clear" : "show only found problems: items linked by found_by/found_here and bug tasks inside plans"}
         onClick=${() => setFoundOnly(!foundOnly)}>Found problems <span class="n">${foundCount}</span></button>
       ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans || ideaFilter || foundOnly) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
