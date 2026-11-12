@@ -6,6 +6,7 @@ import type { DaemonCtx } from "../daemon/server/context.js";
 import type { AgentBinding } from "../mcp/server/mcp.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
+import { registerOpsTools } from "./ops-tools.js";
 import { AUTHORING_RULES, WRITING_RULES } from "../core/files/template.js";
 import type { ToolResult } from "../mcp/format.js";
 
@@ -48,6 +49,7 @@ function collectTools(binding: AgentBinding, ctx: DaemonCtx): Map<string, Tool> 
   } as unknown as McpServer;
   registerReadTools(collector, binding, ctx);
   registerWriteTools(collector, binding, ctx);
+  registerOpsTools(collector, binding, ctx);
   return tools;
 }
 
@@ -65,6 +67,11 @@ const STATUS: Record<string, number> = {
   CONFLICT: 409,
   CLAIM_REFUSED: 409,
   INVALID_TRANSITION: 409,
+  OPS_ORDER: 409,
+  OPS_PLAYBOOK_CHANGED: 409,
+  OPS_TARGET_BUSY: 409,
+  OPS_STATE: 409,
+  OPS_NOT_OPTIONAL: 400,
   USAGE: 400,
   VALIDATION: 400,
 };
@@ -157,6 +164,16 @@ CALLS  (POST with a JSON body, or GET with query args; <id> may go in the path)
   ${"tool".padEnd(8)} ${"args".padEnd(34)} what it does
 ${rows.join("\n")}
   bye      —                                  end this session (claims stay; hello again to resume)
+
+OPS — playbooks and jobs (repeatable deploys; the daemon never runs the commands)
+  A job runs the steps of a playbook in order. A cursor points at the
+  current step. Only the step at the cursor takes a start, a result or a
+  skip — anything else is refused with OPS_ORDER. A result while the
+  playbook file changed is refused with OPS_PLAYBOOK_CHANGED. Only an
+  optional step skips, and a reason is required. gate steps are human-only.
+  One live job per target across machines — a second start is OPS_TARGET_BUSY.
+  te ops exec runs each step in bash and posts the result with ops_step.
+  ops_approve is human-only: an agent session gets FORBIDDEN.
 
 EXAMPLES
   T=$(curl -s -X POST ${base}/agent/hello -d '{"agent":"gemini-cli"}' | sed -n 's/^token //p')

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
+import { registerOpsApiRoutes } from "./opsapi.js";
 import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import { compareIds } from "../../core/address/refs.js";
@@ -692,4 +693,6 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return sendErr(reply, e);
     }
   });
+
+  registerOpsApiRoutes(app, ctx);
 }
