@@ -22,6 +22,7 @@ export type FindingKind =
   | "dead_claim"
   | "unsynced_claim"
   | "bad_target"
+  | "playbook"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"

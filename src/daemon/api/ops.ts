@@ -19,6 +19,7 @@ import { StarColor, tierRank, type Status } from "../../core/model/item.js";
 import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
+import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -342,12 +343,14 @@ export class WorkspaceOps {
         item: c.item,
         message: `claim by ${c.holder} — its session ended; another agent can take it over (claim), or release it`,
       }));
+    const ops = playbookFindings(loadPlaybooks(this.wsr.ws.root), this.wsr.ws.config.targets);
     return [
       ...validate(this.index, {
         staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
         roots: resourceRoots(this.wsr.ws),
       }),
       ...dead,
+      ...ops,
       ...(this.wsr.overlay?.findings() ?? []),
     ];
   }

@@ -40,6 +40,23 @@ export const ResourceConfig = z.discriminatedUnion("kind", [
 });
 export type ResourceConfig = z.infer<typeof ResourceConfig>;
 
+/**
+ * An Ops target (DESIGN §14): a deploy slot a playbook runs against —
+ * a host, a service, an environment. `probe` is a read-only shell that
+ * prints the deployed version.
+ */
+export const TargetConfig = z
+  .object({
+    title: z.string().optional(),
+    service: z.string().optional(),
+    env: z.string().optional(),
+    probe: z.string().optional(),
+    /** extra args for the ssh transport, e.g. ["-o","ConnectTimeout=10"] */
+    ssh_opts: z.array(z.string()).optional(),
+  })
+  .passthrough();
+export type TargetConfig = z.infer<typeof TargetConfig>;
+
 export const ProjectConfig = z
   .object({
     prefix: Prefix,
@@ -129,6 +146,8 @@ export const WorkspaceConfig = z
      * mirrors.
      */
     mirror_remotes: z.array(z.string()).default([]),
+    /** Ops deploy slots (DESIGN §14): id → host/service/env + read-only probe */
+    targets: z.record(z.string(), TargetConfig).default({}),
     /** attached files (`## Artifacts`): max_mb caps one file's size (attach refuses bigger) */
     artifacts: z.object({ max_mb: z.number().positive().default(5) }).default({}),
     /** linked workspaces: name → workspace root path. */
