@@ -2358,6 +2358,7 @@ const PlansGit = () => {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [note, setNote] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
   const remembered = (k) => {
     try {
       return localStorage.getItem(k) ?? "";
@@ -2390,6 +2391,20 @@ const PlansGit = () => {
   useEffect(() => {
     if (g?.machine && !msg) setMsg(`Tasks: ${g.machine} — ${stamp(new Date())}`);
   }, [g, msg]);
+  // mirror results of the last sync now: one row per repo per mirror remote
+  const mirrorRows = (r) => {
+    const rows = [];
+    const push = (repo, m) =>
+      rows.push({
+        repo,
+        remote: m.remote,
+        text: m.skipped ? m.skipped : m.problems.length ? m.problems.join("; ") : m.done.join(", ") || "up to date",
+        kind: m.skipped ? "muted" : m.problems.length ? "warn" : "ok",
+      });
+    for (const m of r?.plans?.mirrors ?? []) push("plans", m);
+    for (const c of r?.code ?? []) for (const m of c.mirrors ?? []) push(c.resource, m);
+    return rows;
+  };
   const run = async (what, path, body) => {
     setBusy(what);
     setNote(null);
@@ -2398,11 +2413,14 @@ const PlansGit = () => {
       let code = "";
       if (what === "syncnow") {
         // /api/sync-all: plans + code repos; plans errors come back inline
+        setLastSync(mirrorRows(r));
         code = (r.code ?? []).filter((c) => !c.skipped)
           .map((c) => `code ${c.resource}: ${c.done.join(", ") || "up to date"}${c.problems.length ? ` — ⚠ ${c.problems.join("; ")}` : ""}`)
           .join(" · ");
         if (r.plans?.error) throw new Error(`${r.plans.error}${code ? ` · ${code}` : ""}`);
         r = r.plans;
+      } else {
+        setLastSync(null);
       }
       setG(r.status);
       refreshSyncBadge(r.status);
@@ -2640,6 +2658,18 @@ const PlansGit = () => {
       </div>
     </div>`}
     ${note && html`<div class="alert alert-${note.kind} py-1 px-2 small mb-3">${note.text}</div>`}
+    ${lastSync?.length > 0 && html`<div class="card card-body py-2 mb-3">
+      <div class="small fw-semibold mb-1">mirror results — last sync now</div>
+      <table class="table table-sm small mb-0 align-middle">
+        <tbody>
+          ${lastSync.map((m) => html`<tr key=${m.repo + "/" + m.remote}>
+            <td class="text-secondary" style=${{ width: "7rem" }}>${m.repo}</td>
+            <td style=${{ width: "6rem" }}><code>${m.remote}</code></td>
+            <td class=${m.kind === "warn" ? "text-warning" : m.kind === "muted" ? "text-secondary" : ""}>${m.text}</td>
+          </tr>`)}
+        </tbody>
+      </table>
+    </div>`}
     <p class="small text-secondary mb-0">Pull only fast-forwards and stays disabled while verified-up-to-date or diverged; Commit & Push stays disabled while behind — diverged history gets terminal steps above, never an automatic merge.</p>
   `;
 };

@@ -568,9 +568,11 @@ export async function syncPlansMirrors(
   wsr: WorkspaceRuntime,
   branch: string,
   excludeRemote?: string,
-  opts: { home?: string } = {},
+  opts: { home?: string; dryRun?: boolean } = {},
 ): Promise<PlansMirrorReport[]> {
   const out: PlansMirrorReport[] = [];
+  const dry = opts.dryRun ?? false;
+  const w = dry ? "[dry run] " : "";
   const names = wsr.ws.config.mirror_remotes ?? [];
   if (!names.length || !branch || branch === "HEAD") return out;
   let repo: string;
@@ -603,23 +605,27 @@ export async function syncPlansMirrors(
         if (ab.ahead > 0 && ab.behind > 0) {
           rep.problems.push(`${branch}: diverged from ${name} (${ab.ahead} local, ${ab.behind} mirror) — resolve it yourself, te sync never merges`);
         } else if (ab.behind > 0) {
-          try {
-            await git(repo, ["merge", "--ff-only", "-q", rRef], { timeoutMs: 60_000 });
-            rep.done.push(`pulled ${branch} (+${ab.behind}) from ${name}`);
-            await wsr.store.reindex();
-            void wsr.overlay?.rescan();
-          } catch (e) {
-            rep.problems.push(`${branch}: ${name} is ahead (${ab.behind}) but the fast-forward was refused: ${(e as Error).message.split("\n")[0]}`);
+          if (dry) {
+            rep.done.push(`${w}pulled ${branch} (+${ab.behind}) from ${name}`);
+          } else {
+            try {
+              await git(repo, ["merge", "--ff-only", "-q", rRef], { timeoutMs: 60_000 });
+              rep.done.push(`pulled ${branch} (+${ab.behind}) from ${name}`);
+              await wsr.store.reindex();
+              void wsr.overlay?.rescan();
+            } catch (e) {
+              rep.problems.push(`${branch}: ${name} is ahead (${ab.behind}) but the fast-forward was refused: ${(e as Error).message.split("\n")[0]}`);
+            }
           }
         } else if (ab.ahead > 0) {
-          await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
-          rep.done.push(`pushed ${branch} (+${ab.ahead}) to ${name}`);
+          if (!dry) await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
+          rep.done.push(`${w}pushed ${branch} (+${ab.ahead}) to ${name}`);
         } else {
           rep.done.push("up to date");
         }
       } else if (localHas) {
-        await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
-        rep.done.push(`pushed ${branch} (new on ${name})`);
+        if (!dry) await git(repo, ["push", "-q", name, `HEAD:refs/heads/${branch}`], { timeoutMs: 90_000, humanPush: true });
+        rep.done.push(`${w}pushed ${branch} (new on ${name})`);
       }
     } catch (e) {
       rep.problems.push(`${name}: ${(e as Error).message.split("\n")[0]}`);

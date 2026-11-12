@@ -160,12 +160,20 @@ export async function validateCmd(args: string[], home?: string): Promise<number
   return findings.some((f) => f.severity === "error") ? 1 : 0;
 }
 
+interface MirrorReport {
+  remote: string;
+  done: string[];
+  problems: string[];
+  skipped?: string;
+}
+
 interface CodeReport {
   resource: string;
   skipped?: string;
   remote?: string;
   done: string[];
   problems: string[];
+  mirrors?: MirrorReport[];
 }
 
 /**
@@ -196,6 +204,7 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
       behind?: number;
       ahead?: number;
       changes?: number;
+      mirrors?: MirrorReport[];
     };
     code: CodeReport[];
   };
@@ -221,12 +230,28 @@ export async function syncCmd(args: string[], home?: string): Promise<number> {
     ].filter(Boolean);
     w(`plans: ${bits.length ? bits.join(", ") : "up to date"}${r.plans.remote ? ` (${r.plans.remote})` : ""}`);
   }
-  const skipped = r.code.filter((c) => c.skipped);
+  // one line per mirror: a not-mounted mirror is information, not a problem
+  const mirrorLine = (m: MirrorReport) => {
+    if (m.skipped) {
+      w(`  mirror ${m.remote}: ${m.skipped}`);
+      return;
+    }
+    w(`  mirror ${m.remote}: ${m.done.length ? m.done.join(", ") : "up to date"}${m.problems.length ? ` — ! ${m.problems.join("; ")}` : ""}`);
+    trouble += m.problems.length;
+  };
+  for (const m of r.plans.mirrors ?? []) mirrorLine(m);
+  const skipped = r.code.filter((c) => c.skipped && !(c.mirrors ?? []).length);
   for (const c of r.code) {
-    if (c.skipped) continue;
-    w(`code ${c.resource}: ${c.done.length ? c.done.join(", ") : "up to date"}${c.remote ? ` (${c.remote})` : ""}`);
-    for (const p of c.problems) w(`  ! ${p}`);
-    trouble += c.problems.length;
+    const mirrors = c.mirrors ?? [];
+    if (c.skipped && !mirrors.length) continue;
+    if (c.skipped) {
+      w(`code ${c.resource}: skipped (${c.skipped})`);
+    } else {
+      w(`code ${c.resource}: ${c.done.length ? c.done.join(", ") : "up to date"}${c.remote ? ` (${c.remote})` : ""}`);
+      for (const p of c.problems) w(`  ! ${p}`);
+      trouble += c.problems.length;
+    }
+    for (const m of mirrors) mirrorLine(m);
   }
   if (skipped.length) w(`skipped: ${skipped.map((c) => `${c.resource} (${c.skipped})`).join(", ")}`);
   return trouble ? 1 : 0;
