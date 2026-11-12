@@ -15,6 +15,8 @@ import { resourceRoots } from "../../core/config/config.js";
 import { ClaimRefusedError } from "../../core/model/errors.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { WorkspaceRuntime } from "../server/context.js";
+import { parseLockText, type TargetLock } from "../../core/ops/lock.js";
+import { OpsError } from "../../core/ops/job.js";
 import { hasRef, mirrorNotMounted, repoMirrors } from "./mirror.js";
 
 /**
@@ -133,6 +135,56 @@ export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Pr
       );
     }
   }
+}
+
+/** ops/locks/ files at a ref (upstream tracking ref by default). */
+export async function remoteOpsLocks(plansDir: string, ref?: string): Promise<TargetLock[]> {
+  const at = ref ?? (await upstreamRef(plansDir)) ?? "FETCH_HEAD";
+  let listing: string;
+  try {
+    listing = await git(plansDir, ["ls-tree", "-r", "--name-only", at, "ops/locks/"]);
+  } catch {
+    return [];
+  }
+  const out: TargetLock[] = [];
+  for (const path of listing.split("\n").filter((p) => p.endsWith(".yaml"))) {
+    const lock = parseLockText(await showFile(plansDir, at, `./${path}`));
+    if (lock) out.push(lock);
+  }
+  return out;
+}
+
+/**
+ * fetch-before-lock hook for job start (GL-0270) — the lock half of the
+ * fetch-before-claim pattern. In manual mode a reachable remote is fetched
+ * and its pushed `ops/locks/` are read: a lock for the target from another
+ * machine refuses the start with `target busy: job <id> on <machine>`.
+ * Offline → the caller proceeds and marks the lock unsynced.
+ */
+export async function checkRemoteTargetLock(
+  wsr: WorkspaceRuntime,
+  target: string,
+): Promise<{ unsynced: boolean }> {
+  if (wsr.ws.config.sync !== "manual") return { unsynced: false };
+  const fetched = await fetchPlansRepo(wsr.ws.plansDir);
+  if (!fetched) return { unsynced: true };
+  const remote = await remoteOpsLocks(wsr.ws.plansDir);
+  const upstream = await upstreamRef(wsr.ws.plansDir);
+  const behind = upstream
+    ? (await aheadBehind(wsr.ws.plansDir, upstream).catch(() => ({ ahead: 0, behind: 0 }))).behind
+    : 0;
+  for (const l of remote) {
+    if (l.target !== target) continue;
+    // our own machine's remote lock: a pushed copy of a lock we hold — or
+    // already released — locally; the local state is authoritative
+    if (l.machine === wsr.store.machine) continue;
+    const hint = behind > 0 ? " — pull first, the lock may already be released" : "";
+    throw new OpsError("OPS_TARGET_BUSY", `target busy: job ${l.job} on ${l.machine}${hint}`, {
+      job: l.job,
+      machine: l.machine,
+    });
+  }
+  return { unsynced: false };
 }
 
 /**

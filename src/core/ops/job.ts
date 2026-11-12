@@ -5,6 +5,7 @@ import YAML from "yaml";
 import { z } from "zod";
 import { TeError, ValidationError } from "../model/errors.js";
 import { EventLog } from "../events/log.js";
+import { readLockFile, removeLockFile, writeLockFile } from "./lock.js";
 import type { Playbook } from "./playbook.js";
 
 /**
@@ -20,6 +21,7 @@ export type OpsErrorCode =
   | "OPS_ORDER"
   | "OPS_PLAYBOOK_CHANGED"
   | "OPS_NOT_OPTIONAL"
+  | "OPS_TARGET_BUSY"
   | "OPS_STATE";
 
 export class OpsError extends TeError {
@@ -142,8 +144,12 @@ export class JobStore {
     return join(this.teDir, "ops", "jobs", this.machine);
   }
 
-  private path(id: string): string {
-    return join(this.dir(), `${id}.yaml`);
+  private locksDir(): string {
+    return join(this.teDir, "ops", "locks");
+  }
+
+  private path(id: string, machine = this.machine): string {
+    return join(this.teDir, "ops", "jobs", machine, `${id}.yaml`);
   }
 
   private playbookSha(playbook: string): string {
@@ -160,9 +166,35 @@ export class JobStore {
   }
 
   load(id: string): Job | undefined {
-    const p = this.path(id);
+    return this.loadFrom(this.machine, id);
+  }
+
+  private loadFrom(machine: string, id: string): Job | undefined {
+    const p = this.path(id, machine);
     if (!existsSync(p)) return undefined;
-    return Job.parse(YAML.parse(readFileSync(p, "utf8")));
+    const parsed = Job.safeParse(YAML.parse(readFileSync(p, "utf8")));
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  private jobStatus(machine: string, id: string): JobState | undefined {
+    return this.loadFrom(machine, id)?.status;
+  }
+
+  /** a job record from another machine is read-only here — its own machine changes it */
+  private checkOwn(job: Job): void {
+    if (job.machine !== this.machine) {
+      throw new OpsError(
+        "OPS_STATE",
+        `job ${job.id} belongs to ${job.machine} — only that machine may change it`,
+      );
+    }
+  }
+
+  /** terminal states release the target lock; failed keeps it (resume or abort later) */
+  private releaseLock(job: Job): void {
+    if (!job.target) return;
+    const p = removeLockFile(this.locksDir(), job.target, job.id);
+    if (p) this.onFileWrite?.(p, null);
   }
 
   list(): Job[] {
@@ -204,6 +236,7 @@ export class JobStore {
 
   /** guards shared by every step mutation: live job, unchanged playbook, cursor step */
   private guard(job: Job, step_id: string): { step: JobStepRecord; index: number } {
+    this.checkOwn(job);
     if (job.status !== "running" && job.status !== "waiting") {
       throw new OpsError("OPS_STATE", `job ${job.id} is ${job.status} — no step may change`);
     }
@@ -253,7 +286,14 @@ export class JobStore {
    */
   async start(
     playbook: Playbook,
-    args: { params?: Record<string, string>; target?: string; by: string; session?: string },
+    args: {
+      params?: Record<string, string>;
+      target?: string;
+      by: string;
+      session?: string;
+      /** set when the plans remote could not be fetched — the lock is marked unsynced */
+      unsynced?: boolean;
+    },
   ): Promise<Job> {
     const params: Record<string, string> = {};
     for (const p of playbook.params) {
@@ -277,7 +317,34 @@ export class JobStore {
       steps: playbook.steps.map((s) => ({ id: s.id, status: "pending" })),
     });
     this.settle(job, playbook);
+    // one live job per target: a live lock — running, waiting or failed
+    // — refuses the start; a stale lock (finished or missing job) is
+    // simply overwritten
+    if (job.target) {
+      const existing = readLockFile(this.locksDir(), job.target);
+      if (existing) {
+        const st = this.jobStatus(existing.machine, existing.job);
+        if (st === "running" || st === "waiting" || st === "failed") {
+          throw new OpsError(
+            "OPS_TARGET_BUSY",
+            `target busy: job ${existing.job} on ${existing.machine}`,
+            { job: existing.job, machine: existing.machine },
+          );
+        }
+      }
+    }
     this.save(job);
+    if (job.target) {
+      const p = writeLockFile(this.locksDir(), {
+        target: job.target,
+        job: job.id,
+        machine: this.machine,
+        session: args.session,
+        ts: new Date().toISOString(),
+        unsynced: args.unsynced || undefined,
+      });
+      this.onFileWrite?.(p, YAML.stringify(readLockFile(this.locksDir(), job.target)));
+    }
     await this.emit("ops.job.start", args.by, job, { target: job.target, params: job.params });
     return job;
   }
@@ -328,6 +395,7 @@ export class JobStore {
       step.status = "failed";
       job.status = spec.on_fail === "stop" ? "stopped" : "failed";
     }
+    if (job.status === "succeeded" || job.status === "stopped") this.releaseLock(job);
     this.save(job);
     await this.emit("ops.step.result", by, job, { step: step_id, step_status: step.status, ok });
     return job;
@@ -351,6 +419,7 @@ export class JobStore {
     step.ended = now;
     job.cursor += 1;
     this.settle(job, playbook);
+    if (job.status === "succeeded") this.releaseLock(job);
     this.save(job);
     await this.emit("ops.step.skip", by, job, { step: step_id, reason });
     return job;
@@ -358,11 +427,13 @@ export class JobStore {
 
   /** Abort a live job — running, waiting or failed. */
   async abort(job: Job, by: string): Promise<Job> {
+    this.checkOwn(job);
     if (job.status !== "running" && job.status !== "waiting" && job.status !== "failed") {
       throw new OpsError("OPS_STATE", `job ${job.id} is ${job.status} — it cannot abort`);
     }
     const from = job.status;
     job.status = "aborted";
+    this.releaseLock(job);
     this.save(job);
     await this.events.append({
       ts: new Date().toISOString(),
@@ -381,6 +452,7 @@ export class JobStore {
    * back to pending so it can take a new result.
    */
   async resume(job: Job, by: string): Promise<Job> {
+    this.checkOwn(job);
     if (job.status !== "failed") {
       throw new OpsError("OPS_STATE", `job ${job.id} is ${job.status} — only a failed job resumes`);
     }
@@ -388,6 +460,14 @@ export class JobStore {
     const step = job.steps[job.cursor];
     if (step && step.status === "failed") {
       job.steps[job.cursor] = { id: step.id, status: "pending" };
+    }
+    // the lock stays with the job — refresh who holds it now
+    if (job.target) {
+      const lock = readLockFile(this.locksDir(), job.target);
+      if (lock?.job === job.id && lock.session !== by) {
+        const p = writeLockFile(this.locksDir(), { ...lock, session: by });
+        this.onFileWrite?.(p, YAML.stringify(lock));
+      }
     }
     this.save(job);
     await this.events.append({
