@@ -51,6 +51,10 @@ export const TargetConfig = z
     service: z.string().optional(),
     env: z.string().optional(),
     probe: z.string().optional(),
+    /** machine file id this target lives on — deploy edges decide which runners may run jobs */
+    machine: z.string().optional(),
+    /** app name inside the target machine's apps list */
+    app: z.string().optional(),
     /** extra args for the ssh transport, e.g. ["-o","ConnectTimeout=10"] */
     ssh_opts: z.array(z.string()).optional(),
   })

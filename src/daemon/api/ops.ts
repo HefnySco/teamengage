@@ -20,7 +20,7 @@ import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundErro
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
-import { loadMachines, machineFindings } from "../../core/ops/machine.js";
+import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
 import { envFindings, loadEnvs } from "../../core/ops/env.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
@@ -351,6 +351,7 @@ export class WorkspaceOps {
       ...playbookFindings(loadPlaybooks(this.wsr.ws.root), this.wsr.ws.config.targets),
       ...machineFindings(machines),
       ...envFindings(loadEnvs(this.wsr.ws.root), machineIds),
+      ...targetMachineFindings(this.wsr.ws.config.targets, machines),
     ];
     return [
       ...validate(this.index, {

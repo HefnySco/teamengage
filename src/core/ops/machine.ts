@@ -32,6 +32,8 @@ export const MachineApp = z.object({
 export const MachineEdge = z.object({
   kind: z.string().min(1), // checked against EDGE_KINDS as a finding — a bad kind keeps a clear message
   to: z.string().min(1),
+  /** deploy edges may name the repo path the deploy runs from */
+  repo: z.string().optional(),
   note: z.string().optional(),
 });
 
@@ -51,6 +53,8 @@ export const Machine = z.object({
   host: z.string().optional(),
   ip: z.string().optional(),
   tier: z.enum(["dev", "test", "prod"]).optional(),
+  /** set true in a .machine.local file — this record IS the runner machine */
+  runner: z.boolean().optional(),
   ssh: z.record(z.string()).default({}),
   roles: z.array(z.string()).default([]),
   apps: z.array(MachineApp).default([]),
@@ -153,6 +157,31 @@ export function machineFindings(loaded: LoadedMachine[]): Finding[] {
       }
       const to = kebab(e.to.split("/")[0]);
       if (!ids.has(to)) f(l.file, `machine ${m.id}: edge to unknown machine '${to}'`);
+    }
+  }
+  return out;
+}
+
+/**
+ * te validate check (GL-0287): a target's machine must exist in
+ * machines/ and its app must be in that machine's apps list.
+ */
+export function targetMachineFindings(
+  targets: Readonly<Record<string, { machine?: string; app?: string }>>,
+  loaded: LoadedMachine[],
+): Finding[] {
+  const out: Finding[] = [];
+  const f = (t: string, message: string) => out.push({ severity: "error", kind: "machine", path: "workspace.yaml", message: `target '${t}': ${message}` });
+  const machines = new Map(loaded.flatMap((l) => (l.machine ? [[l.machine.id, l.machine] as const] : [])));
+  for (const [t, cfg] of Object.entries(targets)) {
+    if (!cfg.machine) continue;
+    const m = machines.get(kebab(cfg.machine));
+    if (!m) {
+      f(t, `machine '${cfg.machine}' has no machines/${kebab(cfg.machine)}.machine.md`);
+      continue;
+    }
+    if (cfg.app && !m.apps.some((a) => a.name === cfg.app)) {
+      f(t, `app '${cfg.app}' is not in machine ${m.id}'s apps list`);
     }
   }
   return out;

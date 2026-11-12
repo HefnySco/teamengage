@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseDuration } from "../model/workspace.js";
+import { parseDuration, type TargetConfig } from "../model/workspace.js";
 import type { Job } from "./job.js";
 import type { Playbook, PlaybookStep } from "./playbook.js";
+import { kebab, loadMachines, type Machine } from "./machine.js";
 
 /**
  * The ops runner — the only process that ever executes playbook commands.
@@ -173,4 +174,36 @@ export async function execJob(opts: ExecJobOptions): Promise<ExecOutcome> {
       return { state: "paused", job };
     }
   }
+}
+
+/**
+ * Deploy guard (GL-0287): a target that names a `machine:` may only be
+ * worked on from machines that hold a `deploy` edge to it. The runner
+ * resolves the machine record of the current computer — the record with
+ * `runner: true` in its .machine.local file, else a `host` equal to the
+ * hostname. Returns the refusal message, or undefined when the run may
+ * proceed (no target machine, no deploy edges, or this runner is allowed).
+ */
+export function runnerMachine(root: string, hostname: string): Machine | undefined {
+  const machines = loadMachines(root).flatMap((l) => (l.machine ? [l.machine] : []));
+  return machines.find((m) => m.runner) ?? machines.find((m) => m.host && kebab(m.host) === kebab(hostname));
+}
+
+export function deployGuard(
+  root: string,
+  target: TargetConfig | undefined,
+  hostname: string,
+  targetName = "the target",
+): string | undefined {
+  const tm = target?.machine;
+  if (!tm) return undefined;
+  const machines = loadMachines(root).flatMap((l) => (l.machine ? [l.machine] : []));
+  const allowed = machines.flatMap((m) =>
+    m.edges.filter((e) => e.kind === "deploy" && kebab(e.to.split("/")[0]) === kebab(tm)).map((e) => ({ m, e })),
+  );
+  if (!allowed.length) return undefined;
+  const runner = runnerMachine(root, hostname);
+  if (runner && allowed.some((a) => a.m.id === runner.id)) return undefined;
+  const list = allowed.map((a) => `${a.m.id}${a.e.repo ? ` (${a.e.repo})` : ""}`).join(", ");
+  return `${targetName} (machine ${kebab(tm)}) is deployed from ${list}; this runner is ${runner?.id ?? kebab(hostname)}`;
 }

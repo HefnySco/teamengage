@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadMachines, machineFindings } from "./machine.js";
+import { loadMachines, machineFindings, targetMachineFindings } from "./machine.js";
 
 let root: string;
 let dir: string;
@@ -100,5 +100,16 @@ describe("machine files", () => {
     const f = findings().filter((x) => x.path === "machines/edge.machine.md");
     expect(f.some((x) => x.message.includes("'teleport'"))).toBe(true);
     expect(f.some((x) => x.message.includes("unknown machine 'nowhere'"))).toBe(true);
+  });
+
+  it("targetMachineFindings (GL-0287): reports a target whose machine or app is not in machines/", () => {
+    write("web.machine.md", { id: "web", apps: [{ name: "site" }] });
+    const f = targetMachineFindings(
+      { ok: { machine: "web", app: "site" }, ghost: { machine: "ghost" }, badapp: { machine: "web", app: "nope" } },
+      loadMachines(root),
+    );
+    expect(f.filter((x) => x.message.startsWith("target 'ok'"))).toEqual([]);
+    expect(f.some((x) => x.message.includes("target 'ghost'") && x.message.includes("no machines/ghost.machine.md"))).toBe(true);
+    expect(f.some((x) => x.message.includes("target 'badapp'") && x.message.includes("not in machine web's apps list"))).toBe(true);
   });
 });

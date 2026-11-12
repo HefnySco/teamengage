@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
@@ -67,8 +67,16 @@ beforeAll(async () => {
   root = join(home, "ws");
   const plans = join(root, ".teamengage");
   mkdirSync(join(plans, "items", "WS"), { recursive: true });
-  writeFileSync(join(plans, "workspace.yaml"), "name: ws\nprefix: WS\ntargets:\n  t1: { title: test target, probe: echo v1.0.0 }\n");
+  writeFileSync(
+    join(plans, "workspace.yaml"),
+    "name: ws\nprefix: WS\ntargets:\n  t1: { title: test target, probe: echo v1.0.0 }\n  t-dep: { machine: cloud }\n",
+  );
   mkdirSync(join(root, "ops"), { recursive: true });
+  mkdirSync(join(root, "machines"), { recursive: true });
+  const machine = (fm: Record<string, unknown>) => `---\n${YAML.stringify(fm)}---\n`;
+  writeFileSync(join(root, "machines", "cloud.machine.md"), machine({ id: "cloud", title: "cloud vps", apps: [{ name: "web" }] }));
+  writeFileSync(join(root, "machines", "builder.machine.md"), machine({ id: "builder", edges: [{ kind: "deploy", to: "cloud", repo: "~/de_code/app" }] }));
+  writeFileSync(join(root, "machines", "runner-host.machine.md"), machine({ id: "runner-host", host: hostname() }));
   writeFileSync(
     join(root, "ops", "three.playbook.yaml"),
     pb("three", {}, [
@@ -105,6 +113,14 @@ beforeAll(async () => {
       { id: "a", kind: "cmd", run: "echo hi" },
       { id: "gate", kind: "gate", instruction: "confirm on the ops page" },
     ]),
+  );
+  writeFileSync(
+    join(root, "ops", "dep.playbook.yaml"),
+    pb("dep", { target: "t-dep" }, [{ id: "a", kind: "cmd", run: "echo ok" }]),
+  );
+  writeFileSync(
+    join(root, "ops", "linked-t1.playbook.yaml"),
+    pb("linked-t1", { target: "t1" }, [{ id: "a", kind: "cmd", run: "echo ok" }]),
   );
   writeFileSync(
     join(root, "ops", "secret.playbook.yaml"),
@@ -275,5 +291,39 @@ describe("te ops", () => {
     const all = await capture(() => opsCmd(["probe"], home));
     expect(all.code).toBe(0);
     expect(all.text).toContain("t1: ok");
+  });
+
+  it("deploy guard (GL-0287): start on a runner with no deploy edge is refused, naming the allowed machine and repo", async () => {
+    const { code, text } = await capture(() => opsCmd(["start", "dep"], home));
+    expect(code).toBe(3);
+    expect(text).toContain("refused:");
+    expect(text).toContain("t-dep");
+    expect(text).toContain("builder");
+    expect(text).toContain("~/de_code/app");
+    expect(text).toContain("runner-host");
+    // no job was created for the refused start
+    const { text: list } = await capture(() => opsCmd(["jobs"], home));
+    expect(list).not.toContain("dep on t-dep");
+  });
+
+  it("deploy guard: a runner named by the deploy edge starts the job; the same guard runs on exec", async () => {
+    writeFileSync(join(root, "machines", "builder.machine.local"), "runner: true\n");
+    try {
+      const id = await startJob("dep");
+      const j = await job(id);
+      expect(j.target).toBe("t-dep");
+      // allowed runner also passes the exec-time guard
+      const { code } = await capture(() => opsCmd(["exec", id], home));
+      expect(code).toBe(0);
+      expect((await job(id)).status).toBe("succeeded");
+    } finally {
+      rmSync(join(root, "machines", "builder.machine.local"), { force: true });
+    }
+  });
+
+  it("deploy guard: a playbook whose target has no machine starts as before", async () => {
+    const id = await startJob("linked-t1");
+    expect((await job(id)).target).toBe("t1");
+    await capture(() => opsCmd(["abort", id], home));
   });
 });
