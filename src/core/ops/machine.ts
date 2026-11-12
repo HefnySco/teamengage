@@ -17,6 +17,20 @@ import type { Finding } from "../validate/validate.js";
 export const kebab = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+/**
+ * Split an edge `to:` — `machine` or `machine/app`. The machine part is
+ * kebab-converted; the app part keeps its spelling (app names hold
+ * underscores) and compares case-insensitively.
+ */
+export function edgeTarget(to: string): { machine: string; app?: string } {
+  const i = to.indexOf("/");
+  if (i === -1) return { machine: kebab(to) };
+  const app = to.slice(i + 1).trim();
+  return { machine: kebab(to.slice(0, i)), app: app || undefined };
+}
+
+export const sameApp = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
 export const EDGE_KINDS = ["deploy", "sync", "shadow_of", "talks_to"] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -138,6 +152,7 @@ export function machineFindings(loaded: LoadedMachine[]): Finding[] {
   const f = (file: string, message: string) => out.push({ severity: "error", kind: "machine", path: file, message });
   const seen = new Map<string, string>();
   const ids = new Set(loaded.flatMap((l) => (l.machine ? [l.machine.id] : [])));
+  const byId = new Map(loaded.flatMap((l) => (l.machine ? [[l.machine.id, l.machine] as const] : [])));
   for (const l of loaded) {
     if (!l.machine) {
       f(l.file, `machine ${l.file} does not parse: ${l.error}`);
@@ -155,8 +170,23 @@ export function machineFindings(loaded: LoadedMachine[]): Finding[] {
       if (!(EDGE_KINDS as readonly string[]).includes(e.kind)) {
         f(l.file, `machine ${m.id}: edge kind '${e.kind}' is not in ${EDGE_KINDS.join("|")}`);
       }
-      const to = kebab(e.to.split("/")[0]);
-      if (!ids.has(to)) f(l.file, `machine ${m.id}: edge to unknown machine '${to}'`);
+      const { machine: to, app } = edgeTarget(e.to);
+      if (!ids.has(to)) {
+        f(l.file, `machine ${m.id}: edge to unknown machine '${to}'`);
+        continue;
+      }
+      const target = byId.get(to)!;
+      if (app !== undefined && !target.apps.some((a) => sameApp(a.name, app))) {
+        f(l.file, `machine ${m.id}: edge to '${e.to}' names app '${app}', which is not in the apps of ${to}`);
+      }
+      if (e.kind === "deploy" && app === undefined && target.apps.length) {
+        out.push({
+          severity: "warning",
+          kind: "machine",
+          path: l.file,
+          message: `machine ${m.id}: deploy edge to '${to}' names no app — it allows every target on ${to}; write '${to}/<app>'`,
+        });
+      }
     }
   }
   return out;

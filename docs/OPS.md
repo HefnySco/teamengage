@@ -314,11 +314,21 @@ A deploy has three parts. Make all three.
 
 Run `te validate`, then `te ops start <playbook>`.
 
-The deploy guard (`deployGuard` in `src/core/ops/runner.ts`) refuses
-a job when the runner machine has no `deploy` edge to the target
-machine. It checks only the machine part of `to:` — the part before
-`/`. It does not check the app or the `repo`, so one deploy edge to a
-machine allows every target on that machine.
+The deploy guard (`deployGuard` in `src/core/ops/runner.ts`) runs at
+`te ops start` and `te ops exec`. It refuses a job when:
+
+- no deploy edge allows the target. An edge to `machine/app` allows
+  only the target with that `app:`. An edge to `machine` alone allows
+  every target on that machine — `te validate` warns about it;
+- the runner machine does not hold one of the allowing edges;
+- the runner's edge names a `repo:` and the job deploys from another
+  local repo. The job's local repos are its `*_dir` params (resolved
+  against the playbook `cwd`) that are git work trees on this
+  computer — paths on the server are skipped. With no such param, the
+  playbook `cwd` counts when it is a git work tree.
+
+`te validate` reports an edge whose app part is not in the target
+machine's `apps:` list.
 
 ### Machine and env commands
 

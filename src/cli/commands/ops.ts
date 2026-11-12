@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { daemonApi, type ApiError } from "../client.js";
 import { teHome } from "../../core/config/config.js";
-import { deployGuard, execJob, type ExecOutcome } from "../../core/ops/runner.js";
+import { deployGuard, execJob, jobRepoDirs, type ExecOutcome } from "../../core/ops/runner.js";
 import { jobPlaybook, type Job } from "../../core/ops/job.js";
 import type { LoadedPlaybook } from "../../core/ops/playbook.js";
 import type { ProbeResult } from "../../core/ops/probe.js";
@@ -54,14 +54,27 @@ async function api<T>(method: string, path: string, body: unknown, home?: string
   return (await daemonApi(method, path, body, home)) as T;
 }
 
-/** Deploy guard (GL-0287): a refusal message when this runner may not work on the target's machine. */
-async function guardDeploy(target: string | undefined, ws: string, home?: string): Promise<string | undefined> {
+/**
+ * Deploy guard (GL-0287, GL-0296): a refusal message when this runner may
+ * not work on the target's machine and app, or deploys from the wrong
+ * local repo. `job` gives the playbook name and the resolved params.
+ */
+async function guardDeploy(
+  target: string | undefined,
+  ws: string,
+  home: string | undefined,
+  job: { playbook: string; params: Record<string, string> },
+): Promise<string | undefined> {
   if (!target) return undefined;
   const targets = await api<Record<string, TargetConfig>>("GET", `/api/ops/targets${ws}`, undefined, home);
   const cfg = targets[target];
   if (!cfg?.machine) return undefined;
   const wsc = await api<{ root: string }>("GET", `/api/workspace${ws}`, undefined, home);
-  return deployGuard(wsc.root, cfg, hostname(), target);
+  const loaded = await api<LoadedPlaybook[]>("GET", `/api/ops/playbooks${ws}`, undefined, home);
+  const pb = loaded.find((l) => l.playbook?.name === job.playbook)?.playbook;
+  const cwd = pb?.cwd ? resolve(wsc.root, pb.cwd) : wsc.root;
+  const params = { ...Object.fromEntries((pb?.params ?? []).flatMap((p) => (p.default !== undefined ? [[p.name, p.default]] : []))), ...job.params };
+  return deployGuard(wsc.root, cfg, hostname(), target, jobRepoDirs(cwd, params));
 }
 
 /** The target a playbook deploys to, when --target did not say. */
@@ -134,7 +147,7 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
           params[kv.slice(0, eq)] = kv.slice(eq + 1);
         }
         const wanted = opt(args, "--target");
-        const refused = await guardDeploy(wanted ?? (await playbookTarget(name, ws, home)), ws, home);
+        const refused = await guardDeploy(wanted ?? (await playbookTarget(name, ws, home)), ws, home, { playbook: name, params });
         if (refused) return console.log(`refused: ${refused}`), 3;
         const job = await api<Job>("POST", `/api/ops/start${ws}`, {
           playbook: name,
@@ -149,7 +162,7 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         const id = args[1];
         if (!id || id.startsWith("--")) return console.log("usage: te ops exec <job> [--step id] [--json]"), 4;
         const job = await api<Job>("GET", `/api/ops/job/${id}${ws}`, undefined, home);
-        const refused = await guardDeploy(job.target, ws, home);
+        const refused = await guardDeploy(job.target, ws, home, job);
         if (refused) return console.log(`refused: ${refused}`), 3;
         const playbook = await playbookOf(job, ws, home);
         const wsc = await api<{ root: string }>("GET", `/api/workspace${ws}`, undefined, home);

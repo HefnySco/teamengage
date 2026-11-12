@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { parseDuration, type TargetConfig } from "../model/workspace.js";
 import type { Job } from "./job.js";
 import type { Playbook, PlaybookStep } from "./playbook.js";
-import { kebab, loadMachines, type Machine } from "./machine.js";
+import { edgeTarget, kebab, loadMachines, sameApp, type Machine } from "./machine.js";
 
 /**
  * The ops runner — the only process that ever executes playbook commands.
@@ -189,21 +190,72 @@ export function runnerMachine(root: string, hostname: string): Machine | undefin
   return machines.find((m) => m.runner) ?? machines.find((m) => m.host && kebab(m.host) === kebab(hostname));
 }
 
+/** Expand a leading `~` and resolve symlinks when the path exists — two spellings of one folder compare equal. */
+export function canonicalDir(p: string, base = process.cwd()): string {
+  const expanded = p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+  const abs = resolve(base, expanded);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+/**
+ * The local repo folders a job deploys from (GL-0296): every `*_dir`
+ * param, resolved against the playbook cwd, that is a local git work
+ * tree. A `*_dir` that names a path on the remote server (auth-cutover's
+ * scripts_dir, bin_dir) does not exist here and is skipped. With no such
+ * param, the playbook cwd counts when it is a git work tree itself.
+ */
+export function jobRepoDirs(cwd: string, params: Readonly<Record<string, string>>): string[] {
+  const dirs = Object.entries(params)
+    .filter(([k, v]) => k.endsWith("_dir") && v)
+    .map(([, v]) => canonicalDir(v, cwd))
+    .filter((d) => existsSync(join(d, ".git")));
+  if (dirs.length) return [...new Set(dirs)];
+  return existsSync(join(cwd, ".git")) ? [canonicalDir(cwd)] : [];
+}
+
+/**
+ * Deploy guard (GL-0287, GL-0296). The target's machine and app pick the
+ * deploy edges that allow it: an edge to `machine/app` allows only the
+ * target with that app; an edge to `machine` alone allows every target on
+ * the machine (te validate warns about it). The runner must hold one of
+ * the allowing edges. When that edge names a `repo:` and the job has
+ * local repo folders (`repoDirs`), one of them must be the edge's repo.
+ */
 export function deployGuard(
   root: string,
   target: TargetConfig | undefined,
   hostname: string,
   targetName = "the target",
+  repoDirs: readonly string[] = [],
 ): string | undefined {
   const tm = target?.machine;
   if (!tm) return undefined;
+  const machine = kebab(tm);
   const machines = loadMachines(root).flatMap((l) => (l.machine ? [l.machine] : []));
-  const allowed = machines.flatMap((m) =>
-    m.edges.filter((e) => e.kind === "deploy" && kebab(e.to.split("/")[0]) === kebab(tm)).map((e) => ({ m, e })),
+  const toMachine = machines.flatMap((m) =>
+    m.edges
+      .filter((e) => e.kind === "deploy" && edgeTarget(e.to).machine === machine)
+      .map((e) => ({ m, e, app: edgeTarget(e.to).app })),
   );
-  if (!allowed.length) return undefined;
+  if (!toMachine.length) return undefined;
+  const allowed = toMachine.filter((a) => a.app === undefined || (target?.app !== undefined && sameApp(a.app, target.app)));
+  const what = `${targetName} (machine ${machine}${target?.app ? `, app ${target.app}` : ""})`;
+  const describe = (xs: typeof toMachine) =>
+    xs.map((a) => `${a.m.id}${a.app ? ` → ${a.app}` : ""}${a.e.repo ? ` (${a.e.repo})` : ""}`).join(", ");
+  if (!allowed.length) {
+    return `${what} has no deploy edge — the deploy edges to ${machine} allow only: ${describe(toMachine)}`;
+  }
   const runner = runnerMachine(root, hostname);
-  if (runner && allowed.some((a) => a.m.id === runner.id)) return undefined;
-  const list = allowed.map((a) => `${a.m.id}${a.e.repo ? ` (${a.e.repo})` : ""}`).join(", ");
-  return `${targetName} (machine ${kebab(tm)}) is deployed from ${list}; this runner is ${runner?.id ?? kebab(hostname)}`;
+  const mine = runner ? allowed.filter((a) => a.m.id === runner.id) : [];
+  if (!mine.length) {
+    return `${what} is deployed from ${describe(allowed)}; this runner is ${runner?.id ?? kebab(hostname)}`;
+  }
+  if (!repoDirs.length || mine.some((a) => !a.e.repo)) return undefined;
+  const local = new Set(repoDirs.map((d) => canonicalDir(d)));
+  if (mine.some((a) => local.has(canonicalDir(a.e.repo!)))) return undefined;
+  return `${what} deploys from ${mine.map((a) => a.e.repo).join(" or ")} on ${runner!.id}, but this job uses ${repoDirs.join(", ")}`;
 }
