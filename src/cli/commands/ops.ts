@@ -2,7 +2,7 @@ import { join, resolve } from "node:path";
 import { daemonApi, type ApiError } from "../client.js";
 import { teHome } from "../../core/config/config.js";
 import { execJob, type ExecOutcome } from "../../core/ops/runner.js";
-import type { Job } from "../../core/ops/job.js";
+import { jobPlaybook, type Job } from "../../core/ops/job.js";
 import type { LoadedPlaybook } from "../../core/ops/playbook.js";
 
 /**
@@ -36,6 +36,7 @@ const USAGE =
   "  approve <job> [--ws w]                          approve the gate step\n" +
   "  abort <job> [--ws w]                            abort a live job\n" +
   "  resume <job> [--ws w]                           retry a failed job\n" +
+  "  rollback <job> [--ws w]                         start a rollback job for a failed/finished job\n" +
   "exit: 0 done · 1 failed · 2 waiting · 3 refused/locked · 4 usage\n";
 
 function printJob(j: Job): void {
@@ -50,12 +51,12 @@ async function api<T>(method: string, path: string, body: unknown, home?: string
   return (await daemonApi(method, path, body, home)) as T;
 }
 
-/** Load the playbook a job was started from. */
+/** Load the playbook a job was started from; rollback jobs run their frozen step_specs. */
 async function playbookOf(job: Job, ws: string, home?: string) {
   const loaded = await api<LoadedPlaybook[]>("GET", `/api/ops/playbooks${ws}`, undefined, home);
   const hit = loaded.find((l) => l.playbook?.name === job.playbook);
   if (!hit?.playbook) throw Object.assign(new Error(`playbook '${job.playbook}' is not under ops/ anymore`), { code: "NOT_FOUND" });
-  return hit.playbook;
+  return jobPlaybook(job, hit.playbook);
 }
 
 export async function opsCmd(args: string[], home?: string): Promise<number> {
@@ -153,6 +154,14 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         const job = await api<Job>("POST", `/api/ops/resume/${id}${ws}`, {}, home);
         if (json) return console.log(JSON.stringify(job, null, 2)), 0;
         console.log(`${job.id}: ${job.status} — continue with: te ops exec ${job.id}`);
+        return 0;
+      }
+      case "rollback": {
+        const id = args[1];
+        if (!id || id.startsWith("--")) return console.log("usage: te ops rollback <job>"), 4;
+        const job = await api<Job>("POST", `/api/ops/rollback/${id}${ws}`, {}, home);
+        if (json) return console.log(JSON.stringify(job, null, 2)), 0;
+        console.log(`rollback job ${job.id} started for ${id} — run it with: te ops exec ${job.id}`);
         return 0;
       }
       default:

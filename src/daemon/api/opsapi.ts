@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import YAML from "yaml";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { JobStore, type Job, type StepResult } from "../../core/ops/job.js";
+import { JobStore, jobPlaybook, type Job, type StepResult } from "../../core/ops/job.js";
 import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
@@ -86,7 +86,7 @@ function playbookByName(wsr: WorkspaceRuntime, name: string): Playbook {
 function playbookOf(wsr: WorkspaceRuntime, job: Job): Playbook {
   const file = join(wsr.ws.root, "ops", `${job.playbook}.playbook.yaml`);
   if (!existsSync(file)) throw new ParseError(`playbook file gone: ops/${job.playbook}.playbook.yaml`, file);
-  return Playbook.parse(YAML.parse(readFileSync(file, "utf8")));
+  return jobPlaybook(job, Playbook.parse(YAML.parse(readFileSync(file, "utf8"))));
 }
 
 /**
@@ -242,6 +242,29 @@ export async function opsAbort(
   );
 }
 
+/**
+ * Start a rollback job for a failed or finished job — same start policy
+ * and target lock as the source playbook; the two jobs name each other.
+ */
+export async function opsRollback(
+  wsr: WorkspaceRuntime,
+  ctx: DaemonCtx,
+  id: string,
+  session?: Session,
+): Promise<Job> {
+  return mutate(
+    wsr,
+    ctx,
+    (s) => {
+      const source = mustJob(s, id);
+      const pb = playbookOf(wsr, source);
+      startPolicy(pb, session);
+      return s.startRollback(source, pb, { by: session?.id ?? "human", session: session?.id });
+    },
+    (j) => `ops: rollback job ${j.id} started for ${id}`,
+  );
+}
+
 export async function opsResume(
   wsr: WorkspaceRuntime,
   ctx: DaemonCtx,
@@ -345,6 +368,14 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
     try {
       const { id } = req.params as { id: string };
       return await opsAbort(opsWsr(ctx, wsOf(req.query)), ctx, id);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.post("/api/ops/rollback/:id", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      return await opsRollback(opsWsr(ctx, wsOf(req.query)), ctx, id);
     } catch (e) {
       return sendOpsErr(reply, e);
     }

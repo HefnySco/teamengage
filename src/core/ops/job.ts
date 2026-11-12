@@ -6,7 +6,7 @@ import { z } from "zod";
 import { TeError, ValidationError } from "../model/errors.js";
 import { EventLog } from "../events/log.js";
 import { readLockFile, removeLockFile, writeLockFile } from "./lock.js";
-import type { Playbook } from "./playbook.js";
+import { PlaybookStep, type Playbook } from "./playbook.js";
 
 /**
  * Jobs (DESIGN §14.3, §14.4): one execution of a playbook against a
@@ -71,6 +71,11 @@ export const Job = z.object({
   cursor: z.number().int().default(0),
   /** on success: last non-empty output line of the version_from step */
   version: z.string().optional(),
+  /** rollback jobs: the job they roll back; source jobs: the rollback job id */
+  rollback_of: z.string().optional(),
+  rollback_job: z.string().optional(),
+  /** rollback jobs: the frozen spec list (reversed rollback commands) — replaces playbook.steps */
+  step_specs: z.array(PlaybookStep).optional(),
   steps: z.array(JobStepRecord),
 });
 export type Job = z.infer<typeof Job>;
@@ -104,6 +109,17 @@ function outputTail(output: string): string {
 }
 
 /** last non-empty line of a step's stored tail — the deployed version */
+/**
+ * The spec list a job actually runs: rollback jobs carry their own frozen
+ * `step_specs` (reversed rollback commands); normal jobs run the playbook.
+ * `version_from` only makes sense against the source playbook — it is
+ * dropped for rollback jobs so a rollback never sets a deployed version.
+ */
+export function jobPlaybook(job: Job, playbook: Playbook): Playbook {
+  if (!job.step_specs) return playbook;
+  return { ...playbook, steps: job.step_specs, version_from: undefined };
+}
+
 export function versionFromTail(tail: string | undefined): string | undefined {
   if (!tail) return undefined;
   for (const line of tail.split("\n").reverse()) {
@@ -268,6 +284,15 @@ export class JobStore {
 
   /** After the cursor moves: a waiting step kind parks the job, past the end completes it. */
   private settle(job: Job, playbook: Playbook): void {
+    // pre-skipped steps (a rollback's steps without rollback commands) sit in
+    // the record for the audit trail but never take the cursor
+    while (
+      job.cursor < job.steps.length &&
+      job.steps[job.cursor].status !== "pending" &&
+      job.steps[job.cursor].status !== "running"
+    ) {
+      job.cursor += 1;
+    }
     if (job.cursor >= job.steps.length) {
       job.status = "succeeded";
       if (playbook.version_from) {
@@ -276,7 +301,7 @@ export class JobStore {
       }
       return;
     }
-    const kind = playbook.steps[job.cursor]?.kind;
+    const kind = jobPlaybook(job, playbook).steps[job.cursor]?.kind;
     job.status = kind === "agent" || kind === "gate" ? "waiting" : "running";
   }
 
@@ -357,7 +382,7 @@ export class JobStore {
     }
     step.status = "running";
     step.started = new Date().toISOString();
-    const kind = playbook.steps[index]?.kind;
+    const kind = jobPlaybook(job, playbook).steps[index]?.kind;
     job.status = kind === "agent" || kind === "gate" ? "waiting" : "running";
     this.save(job);
     await this.emit("ops.step.start", by, job, { step: step_id });
@@ -382,7 +407,7 @@ export class JobStore {
     if (result.evidence !== undefined) step.evidence = result.evidence;
     if (result.session !== undefined) step.session = result.session;
 
-    const spec = playbook.steps[index];
+    const spec = jobPlaybook(job, playbook).steps[index];
     const ok = result.ok ?? (spec.kind === "cmd" || spec.kind === "check"
       ? result.exit_code !== undefined && result.exit_code === spec.expect_exit
       : true);
@@ -404,7 +429,7 @@ export class JobStore {
   /** Skip the cursor step — only an optional step, and only with a recorded reason. */
   async skipStep(job: Job, playbook: Playbook, step_id: string, reason: string | undefined, by: string): Promise<Job> {
     const { step, index } = this.guard(job, step_id);
-    const spec = playbook.steps[index];
+    const spec = jobPlaybook(job, playbook).steps[index];
     if (!spec.optional) {
       throw new OpsError("OPS_NOT_OPTIONAL", `step '${step_id}' of playbook ${playbook.name} is not optional — it cannot be skipped`);
     }
@@ -478,6 +503,101 @@ export class JobStore {
       to: "running",
       data: { job: job.id, playbook: job.playbook },
     });
+    return job;
+  }
+
+  /**
+   * Start a rollback job for a failed or finished job. The rollback job
+   * kind is "rollback", links back to the source (rollback_of), and its
+   * steps are the source's passed steps in reverse: each step with a
+   * `rollback` command becomes a pending cmd step (spec frozen in
+   * step_specs), each without is recorded as skipped. The same target
+   * lock applies — a lock the source still holds moves to the rollback.
+   */
+  async startRollback(
+    sourceJob: Job,
+    sourcePlaybook: Playbook,
+    args: { by: string; session?: string; unsynced?: boolean },
+  ): Promise<Job> {
+    this.checkOwn(sourceJob);
+    if (
+      sourceJob.status !== "failed" &&
+      sourceJob.status !== "stopped" &&
+      sourceJob.status !== "succeeded" &&
+      sourceJob.status !== "aborted"
+    ) {
+      throw new OpsError(
+        "OPS_STATE",
+        `job ${sourceJob.id} is ${sourceJob.status} — only a failed, stopped, succeeded or aborted job rolls back`,
+      );
+    }
+    if (sourceJob.rollback_job) {
+      throw new OpsError("OPS_STATE", `job ${sourceJob.id} already has rollback job ${sourceJob.rollback_job}`);
+    }
+    const specById = new Map(sourcePlaybook.steps.map((s) => [s.id, s]));
+    const passed = sourceJob.steps.filter((s) => s.status === "passed").reverse();
+    const step_specs = passed.map((s) => {
+      const spec = specById.get(s.id);
+      return PlaybookStep.parse({
+        id: s.id,
+        title: `rollback ${s.id}`,
+        kind: "cmd",
+        run: spec?.rollback ?? "true",
+        timeout: spec?.timeout,
+      });
+    });
+    const job: Job = Job.parse({
+      id: this.nextId(),
+      machine: this.machine,
+      playbook: sourceJob.playbook,
+      playbook_sha256: this.playbookSha(sourceJob.playbook),
+      target: sourceJob.target,
+      kind: "rollback",
+      status: "running",
+      params: sourceJob.params,
+      started: { ts: new Date().toISOString(), by: args.by },
+      cursor: 0,
+      rollback_of: sourceJob.id,
+      step_specs,
+      steps: passed.map((s) => {
+        const spec = specById.get(s.id);
+        return spec?.rollback
+          ? { id: s.id, status: "pending" }
+          : { id: s.id, status: "skipped", reason: "no rollback command" };
+      }),
+    });
+    this.settle(job, sourcePlaybook);
+    // the target lock: a live lock the source still holds moves to the
+    // rollback job; a live lock of any other job refuses the start
+    if (job.target) {
+      const existing = readLockFile(this.locksDir(), job.target);
+      if (existing && existing.job !== sourceJob.id) {
+        const st = this.jobStatus(existing.machine, existing.job);
+        if (st === "running" || st === "waiting" || st === "failed") {
+          throw new OpsError(
+            "OPS_TARGET_BUSY",
+            `target busy: job ${existing.job} on ${existing.machine}`,
+            { job: existing.job, machine: existing.machine },
+          );
+        }
+      }
+    }
+    this.save(job);
+    if (job.target) {
+      const p = writeLockFile(this.locksDir(), {
+        target: job.target,
+        job: job.id,
+        machine: this.machine,
+        session: args.session,
+        ts: new Date().toISOString(),
+        unsynced: args.unsynced || undefined,
+      });
+      this.onFileWrite?.(p, YAML.stringify(readLockFile(this.locksDir(), job.target)));
+    }
+    // the source names its rollback
+    sourceJob.rollback_job = job.id;
+    this.save(sourceJob);
+    await this.emit("ops.job.rollback", args.by, job, { of: sourceJob.id, target: job.target });
     return job;
   }
 }

@@ -23,6 +23,7 @@ import { opsCmd } from "./ops.js";
  */
 
 let home: string;
+let root: string;
 let daemon: DaemonHandle;
 let watcher: PlansWatcher;
 
@@ -63,7 +64,7 @@ async function startJob(playbook: string): Promise<string> {
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "te-cli-ops-"));
-  const root = join(home, "ws");
+  root = join(home, "ws");
   const plans = join(root, ".teamengage");
   mkdirSync(join(plans, "items", "WS"), { recursive: true });
   writeFileSync(join(plans, "workspace.yaml"), "name: ws\nprefix: WS\n");
@@ -88,6 +89,14 @@ beforeAll(async () => {
     pb("flaky", {}, [
       { id: "a", kind: "cmd", run: "test -f flaky-marker || { touch flaky-marker; echo boom; exit 1; }" },
       { id: "b", kind: "cmd", run: "echo done" },
+    ]),
+  );
+  writeFileSync(
+    join(root, "ops", "deploy.playbook.yaml"),
+    pb("deploy", {}, [
+      { id: "s1", kind: "cmd", run: "echo s1 >> order.txt; echo ok", rollback: "echo r1 >> order.txt" },
+      { id: "s2", kind: "cmd", run: "echo s2 >> order.txt; echo ok" },
+      { id: "s3", kind: "cmd", run: "echo s3 >> order.txt; echo ok", rollback: "echo r3 >> order.txt" },
     ]),
   );
   writeFileSync(
@@ -219,5 +228,41 @@ describe("te ops", () => {
     const ab = await capture(() => opsCmd(["abort", id], home));
     expect(ab.code).toBe(0);
     expect((await job(id)).status).toBe("aborted");
+  });
+
+  it("rollback runs the passed steps in reverse; steps without rollback show skipped", async () => {
+    const id = await startJob("deploy");
+    const ex = await capture(() => opsCmd(["exec", id], home));
+    expect(ex.code).toBe(0);
+    expect((await job(id)).status).toBe("succeeded");
+
+    // rolling back a live job is refused
+    const live = await startJob("deploy");
+    const refuse = await capture(() => opsCmd(["rollback", live], home));
+    expect(refuse.code).toBe(3);
+    expect(refuse.text).toContain("OPS_STATE");
+    await capture(() => opsCmd(["abort", live], home));
+
+    const rb = await capture(() => opsCmd(["rollback", id], home));
+    expect(rb.code).toBe(0);
+    const rbId = /rollback job (\S+)/.exec(rb.text)![1];
+    expect(rbId).not.toBe(id);
+
+    const rbJob = await job(rbId);
+    expect(rbJob.kind).toBe("rollback");
+    expect(rbJob.rollback_of).toBe(id);
+    // reversed order: s3, s2 (skipped — no rollback), s1
+    expect(rbJob.steps.map((s) => s.id)).toEqual(["s3", "s2", "s1"]);
+    expect(rbJob.steps[1].status).toBe("skipped");
+    expect(rbJob.steps[1].reason).toBe("no rollback command");
+    // the source job names the rollback job
+    expect((await job(id)).rollback_job).toBe(rbId);
+
+    const exRb = await capture(() => opsCmd(["exec", rbId], home));
+    expect(exRb.code).toBe(0);
+    expect((await job(rbId)).status).toBe("succeeded");
+    // the rollback commands ran in reverse order — s2 had none
+    const order = readFileSync(join(root, "order.txt"), "utf8").trim().split("\n");
+    expect(order).toEqual(["s1", "s2", "s3", "r3", "r1"]);
   });
 });
