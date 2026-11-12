@@ -200,11 +200,74 @@ error field.
 The pattern: code 1 fails the step and rolls back; code 2 warns and
 waits for a human gate; code 3 retries later or fails as a misconfig.
 
+## Machines and envs
+
+Machines and envs record where ops work lands — one file each, synced
+with the plans repo. They are documents: no status, no claim.
+
+A machine file is `machines/<id>.machine.md` — frontmatter plus free
+markdown notes:
+
+```markdown
+---
+id: cloud                    # lowercase kebab — 'Cloud-ArduPilot' becomes 'cloud-ardupilot'
+title: cloud.ardupilot.org VPS
+host: cloud.ardupilot.org
+tier: prod
+ssh: { user: root, key: ~/.ssh/ardupilot_cloud_key }   # references only — never secrets
+roles: [auth-server]
+apps:
+  - { name: de_auth_2026, port: 19408, env: prod, path: /home/ap_cloud/de_server/droneengage_authenticator }
+  - { name: de_auth_shadow, port: 19409, env: shadow, path: /home/ap_cloud/de_server_shadow/droneengage_authenticator }
+folders:
+  - { path: /home/ap_cloud/de_server, purpose: production app root }
+rules:
+  - never overwrite server.config in de_server
+handled_by:
+  skills: [de-cloud-deploy]
+edges:
+  - { kind: shadow_of, to: rpi5, note: rpi5 is the shadow/demo machine }
+---
+
+The auth VPS. The webclient shadow sits on :8002 next to the auth
+shadow. See the de-cloud-deploy skill for the full path map.
+```
+
+`<id>.machine.local` next to the file is git-ignored (`*.local`) — put
+per-runner paths and key paths there; its values replace the shared
+file's.
+
+An env file is `envs/<id>.env.md` — one diagram: the expected network,
+the machines with their positions, and the reach edges true there:
+
+```markdown
+---
+id: home
+network: [MHEFNY4G]
+machines:
+  - { id: laptop, row: 0, col: 0 }
+  - { id: mhefnydt, row: 0, col: 2 }
+  - { id: cloud, row: 1, col: 1 }
+reach:
+  - { from: laptop, to: mhefnydt, via: ssh }
+  - { from: laptop, to: cloud, via: ssh }
+---
+
+The home network: laptop reaches the desktop and the VPS.
+```
+
+One machine can be in many envs — reach differs per network
+(mhefnyDT is only reachable on MHEFNY4G). `te validate` reports an
+unknown machine id in an env or an edge, duplicate ids, a secret in an
+ssh field and a kind/via outside the lists.
+
 ## Where the records live
 
 | What | Path |
 |---|---|
 | Playbooks | `<task folder>/ops/*.playbook.yaml` |
+| Machines | `<task folder>/machines/*.machine.md` (+ git-ignored `*.machine.local`) |
+| Envs | `<task folder>/envs/*.env.md` |
 | Job records | `.teamengage/ops/jobs/<machine>/<job-id>.yaml` |
 | Target locks | `.teamengage/ops/locks/<target>.yaml` |
 | Full step logs (local only) | `~/.teamengage/ops-logs/<job>/<step>.log` |

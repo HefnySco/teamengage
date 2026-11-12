@@ -58,7 +58,7 @@ describe("local lock", () => {
   it("a succeeded job releases the lock", async () => {
     // the live lock from the test above blocks a new start — finish that job first
     const j = store.list().find((x) => x.status === "running")!;
-    let done = await store.stepResult(j, playbook(), "one", { exit_code: 0 }, "tester");
+    const done = await store.stepResult(j, playbook(), "one", { exit_code: 0 }, "tester");
     expect(done.status).toBe("succeeded");
     expect(existsSync(lockFilePath(locksDir(), "cloud"))).toBe(false);
   });

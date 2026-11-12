@@ -28,7 +28,7 @@ const valid = (over: Record<string, unknown> = {}) => ({
 
 /** valid() minus the version_from key (a `null` in YAML is a parse error, not the fault under test) */
 const noVersion = (o: Record<string, unknown>) => {
-  const { version_from, ...rest } = o;
+  const { version_from: _omit, ...rest } = o;
   return rest;
 };
 

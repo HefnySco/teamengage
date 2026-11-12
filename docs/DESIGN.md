@@ -778,3 +778,26 @@ start policy (`start: human|agent` + `min_tier`) decides who may start
 each playbook; `gate` steps are human-only. This ordering and these
 gates prevent skipped steps and mistakes by an honest agent — they are
 not a defence against a hostile local user.
+
+### 14.6 Machines and envs
+
+Machines and envs describe where ops work lands. They are files, not
+workflow items: no status, no claim.
+
+- **Machine** — `<task folder>/machines/<id>.machine.md`. YAML
+  frontmatter: `id` (lowercase kebab — converted, never refused),
+  `title`, `host`, `ip`, `tier` (dev|test|prod), `ssh` (references
+  only: `user`, `key` path, `port` — a password or key text is a
+  validate finding), `roles`, `apps` (name, port, prod|shadow env,
+  path), `folders`, `databases`, `handled_by` (agents, skills),
+  `rules` (free text — what is inside and what not to do), and `edges`
+  (deploy|sync|shadow_of|talks_to → machine or machine/app). The
+  markdown body is free notes. `<id>.machine.local` next to it is
+  git-ignored (`*.local`) and overrides paths per runner machine.
+- **Env** — `<task folder>/envs/<id>.env.md`. One diagram: `network`
+  (wifi names where this topology is expected), `machines` (id, row,
+  col), `reach` (from, to, via ssh|https|git). One machine can be in
+  many envs — home, work, all — because reach differs per network.
+
+`te validate` reports unknown machine ids (in envs and edges),
+duplicate ids, secrets in ssh fields and bad edge/via kinds.

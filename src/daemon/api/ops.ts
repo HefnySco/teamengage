@@ -20,6 +20,8 @@ import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundErro
 import { parseDuration } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
+import { loadMachines, machineFindings } from "../../core/ops/machine.js";
+import { envFindings, loadEnvs } from "../../core/ops/env.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -343,7 +345,13 @@ export class WorkspaceOps {
         item: c.item,
         message: `claim by ${c.holder} — its session ended; another agent can take it over (claim), or release it`,
       }));
-    const ops = playbookFindings(loadPlaybooks(this.wsr.ws.root), this.wsr.ws.config.targets);
+    const machines = loadMachines(this.wsr.ws.root);
+    const machineIds = new Set(machines.flatMap((m) => (m.machine ? [m.machine.id] : [])));
+    const ops = [
+      ...playbookFindings(loadPlaybooks(this.wsr.ws.root), this.wsr.ws.config.targets),
+      ...machineFindings(machines),
+      ...envFindings(loadEnvs(this.wsr.ws.root), machineIds),
+    ];
     return [
       ...validate(this.index, {
         staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
