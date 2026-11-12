@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
-import { deployGuard, jobRepoDirs } from "./runner.js";
+import { deployGuard, jobRepoDirs, runnerMachine } from "./runner.js";
 import { loadMachines, machineFindings } from "./machine.js";
 
 /**
@@ -97,6 +97,27 @@ describe("deploy guard — repo", () => {
     const cwd = repo("solo");
     expect(jobRepoDirs(cwd, {})).toEqual([cwd]);
     expect(jobRepoDirs(root, {})).toEqual([]);
+  });
+});
+
+describe("deploy guard — runner host match", () => {
+  it("hostname 'mhefnyDT' matches host 'mhefnyDT.local' — the seeded cloud deploy is allowed", () => {
+    machine("cloud-ardupilot", { host: "cloud.ardupilot.org", apps: [{ name: "de_web_shadow" }] });
+    machine("mhefny-dt", {
+      host: "mhefnyDT.local",
+      edges: [{ kind: "deploy", to: "cloud-ardupilot/de_web_shadow" }],
+    });
+    // no runner:true anywhere — the .machine.local override is not synced
+    expect(
+      deployGuard(root, { machine: "cloud-ardupilot", app: "de_web_shadow" }, "mhefnyDT", "cloud-web-shadow"),
+    ).toBeUndefined();
+  });
+
+  it("a machine with hostnames: [box1, box1.lan] matches os hostname box1", () => {
+    machine("box", { hostnames: ["box1", "box1.lan"] });
+    expect(runnerMachine(root, "box1")?.id).toBe("box");
+    expect(runnerMachine(root, "box1.lan")?.id).toBe("box");
+    expect(runnerMachine(root, "box2")).toBeUndefined();
   });
 });
 

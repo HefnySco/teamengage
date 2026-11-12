@@ -65,6 +65,8 @@ export const Machine = z.object({
   id: z.string().min(1).transform(kebab),
   title: z.string().optional(),
   host: z.string().optional(),
+  /** other DNS names this machine answers to — the runner match checks them like host */
+  hostnames: z.array(z.string()).default([]),
   ip: z.string().optional(),
   tier: z.enum(["dev", "test", "prod"]).optional(),
   /** set true in a .machine.local file — this record IS the runner machine */

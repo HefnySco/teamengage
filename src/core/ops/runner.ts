@@ -178,16 +178,27 @@ export async function execJob(opts: ExecJobOptions): Promise<ExecOutcome> {
 }
 
 /**
+ * The DNS short name, kebab-cased — `mhefnyDT.local` and `mhefnyDT` are
+ * the same machine. Only the first label counts: the domain suffix
+ * (.local, .lan, …) differs between the machine file and the hostname.
+ */
+const hostKey = (name: string) => kebab(name.trim().split(".")[0] ?? "");
+
+/**
  * Deploy guard (GL-0287): a target that names a `machine:` may only be
  * worked on from machines that hold a `deploy` edge to it. The runner
  * resolves the machine record of the current computer — the record with
- * `runner: true` in its .machine.local file, else a `host` equal to the
- * hostname. Returns the refusal message, or undefined when the run may
- * proceed (no target machine, no deploy edges, or this runner is allowed).
+ * `runner: true` in its .machine.local file, else a `host` or `hostnames`
+ * entry equal to the hostname. Returns the refusal message, or undefined
+ * when the run may proceed (no target machine, no deploy edges, or this
+ * runner is allowed).
  */
 export function runnerMachine(root: string, hostname: string): Machine | undefined {
   const machines = loadMachines(root).flatMap((l) => (l.machine ? [l.machine] : []));
-  return machines.find((m) => m.runner) ?? machines.find((m) => m.host && kebab(m.host) === kebab(hostname));
+  const want = hostKey(hostname);
+  const named = (m: Machine) =>
+    (m.host !== undefined && hostKey(m.host) === want) || m.hostnames.some((n) => hostKey(n) === want);
+  return machines.find((m) => m.runner) ?? machines.find(named);
 }
 
 /** Expand a leading `~` and resolve symlinks when the path exists — two spellings of one folder compare equal. */
