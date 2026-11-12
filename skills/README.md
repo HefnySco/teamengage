@@ -11,6 +11,7 @@ plain HTTP.
 | `te-plan/` | Break a goal into new tasks with a single `propose` call. |
 | `te-tag/` | Tag untagged tasks with domains: propose a plan, get the human's OK, apply. |
 | `te-analysis/` | Read-only analysis of the task bank: stale drafts, blockers, dependency order. |
+| `te-ops/` | Run an ops playbook as an agent: start a job, `te ops exec`, post evidence, stop at gates. |
 
 Install by symlinking these folders into the agent's skills directory
 (`~/.claude/skills/`, `~/.config/devin/skills/`).

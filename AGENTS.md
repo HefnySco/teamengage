@@ -283,6 +283,7 @@ Skills ship in `skills/`, same `SKILL.md` format for Claude Code and Devin:
 | `te-plan` | break a goal into tasks with one `propose` call |
 | `te-tag` | tag untagged tasks with domains (plan → human's OK → apply) |
 | `te-analysis` | read-only analysis of the task bank (stale drafts, blockers, order) |
+| `te-ops` | run an ops playbook as an agent (start → `te ops exec` → evidence → stop at gates) |
 
 ```bash
 te skills --install      # links skills/te-* into every detected agent skills dir
