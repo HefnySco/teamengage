@@ -90,7 +90,7 @@ beforeAll(async () => {
     `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server rsync >/dev/null 2>&1 && mkdir /run/sshd && useradd -m te && mkdir -p /home/te/.ssh ${REMOTE_DIR} && echo '${pub}' > /home/te/.ssh/authorized_keys && chown -R te:te /home/te && chmod 700 /home/te/.ssh && chmod 600 /home/te/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e`,
   ]);
   // wait for sshd (apt install can take a while)
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + 270_000;
   for (;;) {
     try {
       ssh("true");
@@ -122,7 +122,7 @@ beforeAll(async () => {
   const sessions = new SessionRegistry("test");
   ops = new WorkspaceOps({ ws, store }, sessions, undefined, home);
   wsPath = ws;
-}, 200_000);
+}, 300_000);
 
 afterAll(async () => {
   if (!dockerOk) return;
