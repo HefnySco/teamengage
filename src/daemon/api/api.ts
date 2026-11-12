@@ -173,6 +173,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         domain: q.domain || undefined,
         q: q.q || undefined,
       };
+      // max=<n>|all — node cap for the render (default 80, ceiling 20000)
+      const maxNodes =
+        q.max === "all"
+          ? Number.POSITIVE_INFINITY
+          : q.max
+            ? Math.min(Math.max(Number(q.max) || 80, 10), 20000)
+            : 80;
       // under=<id>: the plan's own subtree — a root-search would also pull in
       // the epic's ancestors and dependents, which is not the plan's graph
       if (q.under) {
@@ -185,7 +192,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         }
         return {
           count: ops.query(filter).filter((i) => scope.has(i.meta.id)).length,
-          mermaid: ops.graph({ roots: [...scope], depth: 0, filter, maxNodes: 80 }),
+          mermaid: ops.graph({ roots: [...scope], depth: 0, filter, maxNodes }),
         };
       }
       // linked=1: the matches plus everything one step away (deps, dependents,
@@ -194,7 +201,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         const hits = ops.query(filter).map((i) => i.meta.id);
         return {
           count: hits.length,
-          mermaid: hits.length ? ops.graph({ roots: hits, depth: 1, maxNodes: 80 }) : "flowchart LR\n  none[\"no matches\"]",
+          mermaid: hits.length ? ops.graph({ roots: hits, depth: 1, maxNodes }) : "flowchart LR\n  none[\"no matches\"]",
         };
       }
       const count = ops.query(filter).length;
@@ -204,7 +211,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           roots: q.root ? [q.root] : undefined,
           depth: q.depth ? Number(q.depth) : undefined,
           filter,
-          maxNodes: 80,
+          maxNodes,
         }),
       };
     } catch (e) {

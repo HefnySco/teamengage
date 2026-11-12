@@ -1541,7 +1541,7 @@ const MiniMap = ({ view, svg, zoom }) => {
 };
 const Graph = ({ onOpen, id }) => {
   const domains = useDomains();
-  const blank = { q: "", status: "", domain: "", linked: false };
+  const blank = { q: "", status: "", domain: "", linked: false, max: 80 };
   // q / status / domain / linked, remembered per tab like the board search;
   // a plan-scoped graph (id) starts blank — a stored filter would hide the subtree
   const [f, setF] = useState(() => {
@@ -1607,6 +1607,8 @@ const Graph = ({ onOpen, id }) => {
       if (applied.domain) p.set("domain", applied.domain);
       if (applied.linked) p.set("linked", "1");
     }
+    // node cap applies to every mode — 0 means "all" (the API takes max=all)
+    if (applied.max !== 80) p.set("max", applied.max ? String(applied.max) : "all");
     const qs = p.toString();
     let live = true;
     api(`/api/graph${qs ? "?" + qs : ""}`).then(async (r) => {
@@ -1734,11 +1736,18 @@ const Graph = ({ onOpen, id }) => {
         <option value="">all domains</option>
         ${(domains ?? []).map((d) => html`<option value=${d.name}>#${d.name}</option>`)}
       </select>
+      <select class="form-select form-select-sm w-auto" value=${f.max} title="most nodes the graph draws — the rest fold into a '+N more' node"
+        onChange=${(e) => update({ max: Number(e.target.value) })}>
+        <option value=${80}>80 nodes</option>
+        <option value=${200}>200 nodes</option>
+        <option value=${500}>500 nodes</option>
+        <option value=${0}>all nodes</option>
+      </select>
       <label class="form-check-label small d-flex align-items-center gap-1" title="also show tasks one step away: dependencies, dependents, parent and children">
         <input type="checkbox" class="form-check-input mt-0" checked=${f.linked} disabled=${!filtering}
           onChange=${(e) => update({ linked: e.target.checked })} /> + linked
       </label>
-      ${count !== null && !focus && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > 80 ? " — showing 80, narrow the search" : ""}</span>`}
+      ${count !== null && !focus && html`<span class="text-secondary small">${count} match${count === 1 ? "" : "es"}${count > (applied.max || Infinity) ? ` — showing ${applied.max || count}, narrow the search or raise the node limit` : ""}</span>`}
     </div>
     <div class="graph-wrap">
       <div class="graph-tools btn-group btn-group-sm">
