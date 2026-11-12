@@ -247,4 +247,59 @@ describe("ops UI API (GL-0276)", () => {
     expect(env.probes[0].reason).toBe("needs network MHEFNY4G");
     expect((await fetch(`${daemon2.url}/api/ops/envs/ghost/probe`, { method: "POST", headers: cookie() })).status).toBe(404);
   });
+
+  // GL-0297: a human note keeps the words in the file and opens one ready
+  // task that touches only that file; a playbook note never changes the
+  // playbook YAML (its sha256 stays) and is a key task (no auto-accept)
+  const note = (path: string, text: string, headers: Record<string, string> = {}) =>
+    fetch(`${daemon2.url}${path}`, {
+      method: "POST",
+      headers: { ...cookie(), "content-type": "application/json", ...headers },
+      body: JSON.stringify({ text }),
+    });
+  const item = async (id: string) =>
+    ((await (await fetch(`${daemon2.url}/api/items`, { headers: cookie() })).json()) as Array<Record<string, unknown>>).find((i) => i.id === id);
+
+  it("POST /api/ops/machines/:id/notes appends a pending note and opens one ready task on that file", async () => {
+    const r = await note("/api/ops/machines/box/notes", "box holds the IMX500 camera on /dev/video0\nnever unplug it while de_camera runs");
+    expect(r.status).toBe(200);
+    const out = await r.json();
+    expect(out.file).toBe("machines/box.machine.md");
+    const text = readFileSync(join(home2, "ws", "machines", "box.machine.md"), "utf8");
+    expect(text).toContain("## Human notes");
+    expect(text).toContain(`### note ${out.ts} · pending · ${out.item}`);
+    expect(text).toContain("never unplug it while de_camera runs");
+    const it = await item(out.item);
+    expect(it?.status).toBe("ready");
+    expect(it?.title).toBe("Apply note to machine box"); // the task text itself: noteTaskDraft in notes.test.ts
+    const box = await (await fetch(`${daemon2.url}/api/ops/machines/box`, { headers: cookie() })).json();
+    expect(box.human_notes).toHaveLength(1);
+    expect(box.human_notes[0]).toMatchObject({ ts: out.ts, state: "pending", item: out.item });
+    expect(box.notes).not.toContain("Human notes");
+    const listed = await (await fetch(`${daemon2.url}/api/ops/machines/box/notes`, { headers: cookie() })).json();
+    expect(listed[0].text).toContain("IMX500");
+  });
+
+  it("POST /api/ops/playbooks/:id/notes writes ops/<name>.notes.md and leaves the playbook sha256 as it was", async () => {
+    const before = await (await fetch(`${daemon2.url}/api/ops/playbooks`, { headers: cookie() })).json();
+    const sha = before.find((l: { playbook?: { name: string } }) => l.playbook?.name === "demo").sha256;
+    const r = await note("/api/ops/playbooks/demo/notes", "add a check step that the remote disk has 1 GB free");
+    expect(r.status).toBe(200);
+    const out = await r.json();
+    expect(out.file).toBe("ops/demo.notes.md");
+    expect(readFileSync(join(home2, "ws", "ops", "demo.notes.md"), "utf8")).toContain(`### note ${out.ts} · pending · ${out.item}`);
+    const after = await (await fetch(`${daemon2.url}/api/ops/playbooks`, { headers: cookie() })).json();
+    expect(after.find((l: { playbook?: { name: string } }) => l.playbook?.name === "demo").sha256).toBe(sha);
+    const it = await item(out.item);
+    expect(it?.status).toBe("ready");
+    expect(it?.unblocks_on).toBe("done");
+  });
+
+  it("note endpoints are human-only, need text, and 404 on an unknown machine or playbook", async () => {
+    expect((await note("/api/ops/machines/box/notes", "x", { "x-te-session": "agent-session-1" })).status).toBe(403);
+    expect((await note("/api/ops/playbooks/demo/notes", "x", { "x-te-session": "agent-session-1" })).status).toBe(403);
+    expect((await note("/api/ops/machines/box/notes", "   ")).status).toBe(400);
+    expect((await note("/api/ops/machines/ghost/notes", "x")).status).toBe(404);
+    expect((await note("/api/ops/playbooks/ghost/notes", "x")).status).toBe(404);
+  });
 });

@@ -9,6 +9,9 @@ import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
 import { loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ProbeResult, type ReachProbeResult } from "../../core/ops/probe.js";
 import { loadMachines } from "../../core/ops/machine.js";
+import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseNotes, readNotes } from "../../core/ops/notes.js";
+import { WorkspaceOps } from "./ops.js";
+import { basename } from "node:path";
 import { currentEnv, loadEnvs, wifiName } from "../../core/ops/env.js";
 import { runnerMachine } from "../../core/ops/runner.js";
 import { hostname } from "node:os";
@@ -119,7 +122,46 @@ export function opsMachines(wsr: WorkspaceRuntime) {
 export function opsMachine(wsr: WorkspaceRuntime, id: string) {
   const l = loadMachines(wsr.ws.root).find((x) => x.machine?.id === id);
   if (!l?.machine) throw new NotFoundError(`machine '${id}' not under machines/`);
-  return { ...l.machine, file: l.file, notes: l.body ?? "" };
+  return { ...l.machine, file: l.file, notes: bodyWithoutNotes(l.body ?? ""), human_notes: parseNotes(l.body ?? "") };
+}
+
+/**
+ * Human notes (GL-0297): keep the human's words in the file, then open a
+ * ready task for an agent to turn the note into a YAML change. Human
+ * only — an agent session is refused. A playbook note task is a key task
+ * (unblocks_on: done), so solo auto-accept never takes it: the human
+ * accepts every playbook change.
+ */
+export async function opsAddNote(
+  wsr: WorkspaceRuntime,
+  ctx: DaemonCtx,
+  kind: "machine" | "playbook",
+  id: string,
+  text: string,
+  session?: Session,
+): Promise<{ file: string; ts: string; item: string }> {
+  if (session) throw new ForbiddenError("notes are the human's — an agent session cannot add one");
+  if (!text?.trim()) throw new ValidationError("a note needs {text}");
+  const root = wsr.ws.root;
+  if (kind === "machine") {
+    if (!loadMachines(root).some((x) => x.machine?.id === id)) throw new NotFoundError(`machine '${id}' not under machines/`);
+  } else if (!loadPlaybooks(root).some((x) => x.playbook?.name === id)) {
+    throw new NotFoundError(`playbook '${id}' not under ops/`);
+  }
+  const file = noteFile(kind, id);
+  let ts: string;
+  try {
+    ts = appendNote(root, kind, id, text);
+  } catch (e) {
+    throw new ValidationError((e as Error).message);
+  }
+  const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+  const r = await ops.propose([noteTaskDraft(kind, id, ts, text, basename(root))], "human");
+  const item = r.ids[0];
+  linkNote(root, kind, id, ts, item);
+  await ops.approve(item);
+  if (kind === "playbook") await ops.setUnblocksOn(item, "done");
+  return { file, ts, item };
 }
 
 export function opsEnvs(wsr: WorkspaceRuntime) {
@@ -136,7 +178,11 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
   const loaded = loadEnvs(wsr.ws.root);
   const l = loaded.find((x) => x.env?.id === id);
   if (!l?.env) throw new NotFoundError(`env '${id}' not under envs/`);
-  const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, { ...x.machine, notes: x.body ?? "" }] as const] : [])));
+  const machines = new Map(
+    loadMachines(wsr.ws.root).flatMap((x) =>
+      x.machine ? [[x.machine.id, { ...x.machine, notes: bodyWithoutNotes(x.body ?? ""), human_notes: parseNotes(x.body ?? "") }] as const] : [],
+    ),
+  );
   const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id === l.env.id;
   return {
     ...l.env,
@@ -469,6 +515,26 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       return sendOpsErr(reply, e);
     }
   });
+  for (const kind of ["machine", "playbook"] as const) {
+    const base = kind === "machine" ? "/api/ops/machines/:id/notes" : "/api/ops/playbooks/:id/notes";
+    app.get(base, async (req, reply) => {
+      try {
+        return readNotes(opsWsr(ctx, wsOf(req.query)).ws.root, kind, (req.params as { id: string }).id);
+      } catch (e) {
+        return sendOpsErr(reply, e);
+      }
+    });
+    app.post(base, async (req, reply) => {
+      try {
+        // an agent session identity on the human API refuses — notes are the human's
+        const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
+        const text = String(((req.body ?? {}) as { text?: unknown }).text ?? "");
+        return await opsAddNote(opsWsr(ctx, wsOf(req.query)), ctx, kind, (req.params as { id: string }).id, text, session);
+      } catch (e) {
+        return sendOpsErr(reply, e);
+      }
+    });
+  }
   app.post("/api/ops/envs/:id/probe", async (req, reply) => {
     try {
       // an agent session identity on the human API refuses — probes are human-only

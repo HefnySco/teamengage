@@ -2829,6 +2829,39 @@ const OPS_EDGE_CLASS = {
   talks_to: "ops-edge-talks", reach_ok: "ops-edge-reach-ok", reach_bad: "ops-edge-reach-bad", reach_none: "ops-edge-reach-none",
 };
 
+// GL-0297: the human's notes on a machine or a playbook — each note keeps
+// the words in the file and opens a ready task that an agent applies.
+const OpsNotes = ({ kind, id, notes, reload }) => {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const path = `/api/ops/${kind === "machine" ? "machines" : "playbooks"}/${encodeURIComponent(id)}/notes`;
+  const add = async () => {
+    if (!text.trim()) return toast("write a note first");
+    setBusy(true);
+    try {
+      const r = await post(path, { text });
+      toast(`note added — ${r.item} asks an agent to apply it`, "success");
+      setText("");
+      reload?.();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  const list = [...(notes ?? [])].reverse();
+  return html`<div class="ops-notes mt-2">
+    <div class="small fw-bold text-secondary">notes</div>
+    ${list.length ? html`<ul class="small mb-2 ps-3">${list.map((n) => html`<li key=${n.ts}>
+      <span class=${`badge ${n.state === "applied" ? "text-bg-success" : "text-bg-warning"}`}>${n.state}</span>
+      ${n.item ? html` <a href=${`#/${encodeURIComponent(n.item)}`}>${n.item}</a>` : ""}
+      <span class="text-secondary"> ${ago(n.ts)} ago</span>
+      <div style="white-space:pre-wrap">${n.text}</div>
+    </li>`)}</ul>` : ""}
+    <textarea class="form-control form-control-sm" rows="3" value=${text} disabled=${busy}
+      placeholder=${kind === "machine" ? "a fact or rule about this machine — an agent turns it into YAML" : "a change to this playbook — an agent writes it, you accept it"}
+      onInput=${(e) => setText(e.target.value)}></textarea>
+    <button class="btn btn-sm btn-outline-primary mt-1" disabled=${busy || !text.trim()} onClick=${add}>${busy ? "adding…" : "add note"}</button>
+  </div>`;
+};
+
 const OpsMachines = ({ envId }) => {
   const { data: envsData } = useApi("/api/ops/envs");
   const envs = envsData?.envs ?? [];
@@ -2937,6 +2970,7 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
         ${machineTargets.length ? html`<div><div class="small fw-bold text-secondary">targets</div>
           <ul class="small mb-2 ps-3">${machineTargets.map(([t]) => html`<li>${t} — ${lastOk[t] ? html`<a href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`}>${lastOk[t].version}</a>` : "—"}</li>`)}</ul></div>` : ""}
         ${m.notes ? html`<div class="small text-secondary mt-1" style="white-space:pre-wrap">${m.notes}</div>` : ""}
+        <${OpsNotes} kind="machine" id=${m.id} notes=${m.human_notes} reload=${reload} key=${m.id} />
       </div>` : ""}
     </div>
   `;
@@ -3101,6 +3135,7 @@ const OpsPlaybook = ({ name }) => {
   const { data: pbs } = useApi("/api/ops/playbooks");
   const { data: targets } = useApi("/api/ops/targets");
   const { data: jobs } = useApi(`/api/ops/jobs?playbook=${encodeURIComponent(name)}`, [name]);
+  const { data: pbNotes, reload: reloadNotes } = useApi(`/api/ops/playbooks/${encodeURIComponent(name)}/notes`, [name]);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   if (!pbs) return html`<p class="text-secondary">loading…</p>`;
@@ -3139,6 +3174,7 @@ const OpsPlaybook = ({ name }) => {
       ${last ? html` · last job <a href=${`#/ops/${encodeURIComponent(last.id)}`}><span class=${`badge ${OPS_JOB_BADGE[last.status] ?? "text-bg-secondary"}`}>${last.status}</span></a> ${ago(last.started.ts)} ago${last.playbook_sha256 !== l.sha256 ? html` <span class="badge text-bg-warning" title="the playbook file changed since this job pinned it">file changed since</span>` : ""}` : ""}
     </div>
     <details class="small mb-2"><summary class="text-secondary">sha256</summary><code>${l.sha256}</code></details>
+    <div class="mb-3" style=${{ maxWidth: "40em" }}><${OpsNotes} kind="playbook" id=${pb.name} notes=${pbNotes} reload=${reloadNotes} /></div>
     ${form && html`
       <div class="card card-body mb-3">
         <div class="d-flex align-items-center gap-2 flex-wrap">

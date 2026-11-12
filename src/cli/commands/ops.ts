@@ -36,6 +36,7 @@ const USAGE =
   "  start <playbook> [--target t] [--param k=v]…    start a job\n" +
   "  exec <job> [--step id] [--ws w] [--json]        run the cursor steps\n" +
   "  status <job> [--ws w] [--json]                  job + step states\n" +
+  '  note <playbook> "text" [--ws w]                 add a human note; a ready task asks an agent to apply it\n' +
   "  approve <job> [--ws w]                          approve the gate step\n" +
   "  abort <job> [--ws w]                            abort a live job\n" +
   "  resume <job> [--ws w]                           retry a failed job\n" +
@@ -177,6 +178,22 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
           onlyStep: opt(args, "--step"),
         });
         return reportExec(outcome, json);
+      }
+      case "note": {
+        // GL-0297: the words go into ops/<playbook>.notes.md — the playbook
+        // YAML (and the sha256 jobs pin) does not change
+        const name = args[1];
+        const words: string[] = [];
+        for (let i = 2; i < args.length; i++) {
+          if (args[i] === "--ws") i++; // skip the flag and its value
+          else if (args[i] !== "--json") words.push(args[i]);
+        }
+        const text = words.join(" ").trim();
+        if (!name || name.startsWith("--") || !text) return console.log('usage: te ops note <playbook> "text"'), 4;
+        const r = await api<{ file: string; item: string }>("POST", `/api/ops/playbooks/${encodeURIComponent(name)}/notes${ws}`, { text }, home);
+        if (json) return console.log(JSON.stringify(r, null, 2)), 0;
+        console.log(`note added to ${r.file} — ${r.item} asks an agent to apply it (you accept the change)`);
+        return 0;
       }
       case "status": {
         const id = args[1];

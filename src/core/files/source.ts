@@ -511,10 +511,12 @@ export async function scanTaskTree(root: string, ignore: string[] = []): Promise
       const p = join(d, e.name);
       if (e.isDirectory()) await walk(p);
       else if (e.name.toLowerCase().endsWith(".md")) {
-        // machines/*.machine.md and envs/*.env.md are ops documents (DESIGN
-        // §14.6), not task files — never tagged, never "untracked"
+        // machines/*.machine.md, envs/*.env.md and the playbook note files
+        // ops/*.notes.md (GL-0297) are ops documents (DESIGN §14.6), not
+        // task files — never tagged, never "untracked"
         if (/\.(machine|env)\.md$/i.test(e.name)) continue;
         const rel = toSourcePath(root, p);
+        if (/^ops\/[^/]+\.notes\.md$/i.test(rel)) continue;
         const tag = readTeTag(await readFile(p, "utf8"));
         if (tag) tagged.set(tag, [...(tagged.get(tag) ?? []), rel]);
         else if (!ig.some((r) => r.test(rel))) untracked.push(rel);

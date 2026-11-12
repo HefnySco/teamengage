@@ -11,6 +11,7 @@ import { currentEnv, loadEnvs, setEnvPin, wifiName, type Env } from "../../core/
  *   te machines                    list id, tier, host, roles
  *   te machines show <id>          rules first, then fields, then the notes body
  *   te machines graph [--env <id>] machines in dev/test/prod rows, one line per edge
+ *   te machines note <id> "text"   add a human note; a ready task asks an agent to apply it (GL-0297)
  *   te env                         the active env and how it was picked
  *   te env use <id>                pin an env in the runner's .machine.local
  *
@@ -88,6 +89,16 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     for (const r of results) console.log(`${r.from} --${r.via}--> ${r.to}  ${r.status}${r.reason ? ` (${r.reason})` : ""}`);
     return 0;
   }
+  if (sub === "note") {
+    // te machines note <id> "text" (GL-0297) — the human's words go into the
+    // machine file; a ready task asks an agent to turn them into YAML
+    const id = args[1];
+    const text = args.slice(2).join(" ").trim();
+    if (!id || !text) return console.log('usage: te machines note <id> "text"'), 4;
+    const r = (await daemonApi("POST", `/api/ops/machines/${encodeURIComponent(kebab(id))}/notes`, { text }, home)) as { file: string; item: string };
+    console.log(`note added to ${r.file} — ${r.item} asks an agent to apply it`);
+    return 0;
+  }
   if (sub === "graph") {
     const envId = (() => {
       const i = args.indexOf("--env");
@@ -98,7 +109,7 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     graph(loadMachines(root_), env);
     return 0;
   }
-  console.log("usage: te machines [show <id> | graph [--env <id>] | probe [--env <id>]]");
+  console.log('usage: te machines [show <id> | graph [--env <id>] | probe [--env <id>] | note <id> "text"]');
   return 4;
 }
 

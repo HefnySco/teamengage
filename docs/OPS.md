@@ -330,6 +330,43 @@ The deploy guard (`deployGuard` in `src/core/ops/runner.ts`) runs at
 `te validate` reports an edge whose app part is not in the target
 machine's `apps:` list.
 
+### Notes: write it in your words, an agent writes the YAML
+
+You do not need to edit YAML by hand. Add a note in your own words:
+
+- the **notes** box in the machine side panel (`#/ops/machines`) or on
+  the playbook view (`#/ops/playbook/<name>`);
+- or `te machines note <id> "text"` and `te ops note <playbook> "text"`.
+
+What happens (`opsAddNote` in `src/daemon/api/opsapi.ts`):
+
+1. TeamEngage keeps your words in the file, with a date and the mark
+   `pending`:
+   - a machine note goes under `## Human notes` in the machine file body;
+   - a playbook note goes in `ops/<name>.notes.md`. The playbook YAML
+     does not change, so its sha256 and the jobs that pin it do not
+     change.
+2. TeamEngage opens a **ready** task "Apply note to machine <id>" (or
+   playbook <name>). Its Touches name only that file.
+3. An agent claims the task, changes the YAML (te-ops skill, section
+   "Apply a machine or playbook note"), runs `te validate`, changes
+   the mark to `applied`, and submits with the diff.
+4. You review the diff and accept it. A playbook note task is a key
+   task (`unblocks_on: done`), so auto-accept never takes it — you
+   accept every playbook change.
+
+Only you can add a note: an agent session is refused (403). The
+daemon never runs an LLM; the conversion is normal agent work.
+
+A note block in the file:
+
+```markdown
+## Human notes
+
+### note 2026-11-12T13:30:00.000Z · pending · DE-0150
+rpi5 holds the IMX500 camera on /dev/video0 — never unplug it while de_camera runs
+```
+
 ### Machine and env commands
 
 | Command | What it prints |
@@ -340,6 +377,8 @@ machine's `apps:` list.
 | `te machines probe [--env <id>]` | runs the reach probes of the env (the active env when `--env` is not given); one line per edge with status and reason |
 | `te env` | the active env and how it was selected (`manual` or wifi) |
 | `te env use <id>` | stores a manual env choice in the runner's `.machine.local` |
+| `te machines note <id> "text"` | adds a human note to the machine and opens a ready task to apply it |
+| `te ops note <playbook> "text"` | adds a human note to `ops/<playbook>.notes.md` and opens a ready task to apply it |
 
 Env selection order: the manual choice wins; else the env whose
 `network:` list holds the current wifi name; else none. `te env use`
