@@ -161,12 +161,14 @@ export interface ReachProbeCmd {
 }
 
 export function reachCommand(m: { host?: string; ssh: Record<string, string> }, via: string): ReachProbeCmd | undefined {
-  if (!m.host) return undefined;
+  // a host that starts with '-' would be read as an ssh option — refuse it (DE-0151)
+  if (!m.host || m.host.startsWith("-")) return undefined;
   if (via === "ssh" || via === "git") {
     const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
     if (m.ssh.key) args.push("-i", m.ssh.key);
     if (m.ssh.port) args.push("-p", m.ssh.port);
-    args.push(`${m.ssh.user ? `${m.ssh.user}@` : ""}${m.host}`, "true");
+    // '--' ends option parsing — the host can never become an option
+    args.push("--", `${m.ssh.user ? `${m.ssh.user}@` : ""}${m.host}`, "true");
     return { file: "ssh", args };
   }
   // curl prints the http_code on stdout; '000' means the request never got an answer.
@@ -211,7 +213,12 @@ export async function runReachProbe(
   const m = machines.get(edge.to);
   const cmd = m ? reachCommand(m, edge.via) : undefined;
   if (!cmd) {
-    return { ts: new Date().toISOString(), status: "fail", reason: m ? `no '${edge.via}' probe for ${edge.to}` : `no machine '${edge.to}'`, output: "" };
+    const reason = m?.host?.startsWith("-")
+      ? `host '${m.host}' starts with '-' — refused`
+      : m
+        ? `no '${edge.via}' probe for ${edge.to}`
+        : `no machine '${edge.to}'`;
+    return { ts: new Date().toISOString(), status: "fail", reason, output: "" };
   }
   const r = await runProbeArgv(cmd.file, cmd.args, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? REACH_PROBE_TIMEOUT_MS });
   // an https probe is ok only when curl printed a real http_code — '000' means no answer

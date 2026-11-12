@@ -83,7 +83,7 @@ describe("reach probe (GL-0289)", () => {
     const m = { host: "h.local", ssh: { user: "root", key: "~/.ssh/k", port: "2222" } };
     expect(reachCommand(m, "ssh")).toEqual({
       file: "ssh",
-      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-i", "~/.ssh/k", "-p", "2222", "root@h.local", "true"],
+      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-i", "~/.ssh/k", "-p", "2222", "--", "root@h.local", "true"],
     });
     expect(reachCommand(m, "git")?.file).toBe("ssh");
     expect(reachCommand(m, "https")).toEqual({
@@ -91,6 +91,8 @@ describe("reach probe (GL-0289)", () => {
       args: ["-s", "-S", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", "https://h.local/"],
     });
     expect(reachCommand({ host: "", ssh: {} }, "ssh")).toBeUndefined();
+    // DE-0151: a host that starts with '-' is an ssh option, not a host — refused
+    expect(reachCommand({ host: "-oProxyCommand=x", ssh: {} }, "ssh")).toBeUndefined();
     expect(probeReason("ssh: Permission denied (publickey).", false, 255)).toBe("auth refused");
     expect(probeReason("Could not resolve hostname x", false, 255)).toBe("DNS");
   });
@@ -108,6 +110,14 @@ describe("reach probe (GL-0289)", () => {
     const r = await runReachProbe({ id: "e", network: [] }, { from: "a", to: "box", via: "https" }, evil, { timeoutMs: 8000 });
     expect(r.status).toBe("fail");
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it("DE-0151: a dash host fails with a clear reason and runs nothing", async () => {
+    const m = new Map([["box", { host: "-oProxyCommand=x", ssh: {} }]]);
+    const r = await runReachProbe({ id: "e", network: [] }, { from: "a", to: "box", via: "ssh" }, m, { runner: "a" });
+    expect(r.status).toBe("fail");
+    expect(r.reason).toContain("starts with '-'");
+    expect(r.output).toBe("");
   });
 
   it("GL-0301: an edge whose from is not the runner answers not_probed and runs nothing", async () => {
