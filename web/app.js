@@ -2742,6 +2742,7 @@ const Ops = () => {
   const seg = route().split("/");
   const sub = seg[1] ? decodeURIComponent(seg[1]) : "";
   if (sub === "jobs") return html`<${OpsList} />`;
+  if (sub === "machines") return html`<${OpsMachines} envId=${seg[2] ? decodeURIComponent(seg[2]) : ""} />`;
   if (sub === "playbooks") return html`<${OpsPlaybooks} />`;
   if (sub === "playbook") return html`<${OpsPlaybook} name=${decodeURIComponent(seg[2] ?? "")} />`;
   return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsMatrix} />`;
@@ -2754,6 +2755,7 @@ const OpsTabs = ({ view }) => html`
       <a href="#/ops" class=${view === "matrix" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>matrix</a>
       <a href="#/ops/jobs" class=${view === "jobs" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>jobs</a>
       <a href="#/ops/playbooks" class=${view === "playbooks" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>playbooks</a>
+      <a href="#/ops/machines" class=${view === "machines" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>machines</a>
     </span>
   </div>`;
 
@@ -2816,6 +2818,127 @@ const OpsMatrix = () => {
           </tr>`)}
       </tbody>
     </table>
+  `;
+};
+
+// ---- Ops machines (GL-0290): env diagrams over the GL-0286 machine/env
+// files — nodes at the env's row/col positions, edges styled by kind,
+// reach edges coloured by their last probe. Click a node for its panel.
+const OPS_EDGE_CLASS = {
+  deploy: "ops-edge-deploy", sync: "ops-edge-sync", shadow_of: "ops-edge-shadow",
+  talks_to: "ops-edge-talks", reach_ok: "ops-edge-reach-ok", reach_bad: "ops-edge-reach-bad", reach_none: "ops-edge-reach-none",
+};
+
+const OpsMachines = ({ envId }) => {
+  const { data: envsData } = useApi("/api/ops/envs");
+  const envs = envsData?.envs ?? [];
+  const sel = envId || envsData?.active || envs[0]?.id;
+  const [picked, setPicked] = useState(null);
+  if (!envsData) return html`<p class="text-secondary">loading…</p>`;
+  if (!envs.length) return html`<${OpsTabs} view="machines" /><p class="text-secondary">no envs yet — write envs/&lt;id&gt;.env.md files (GL-0286)</p>`;
+  const ordered = [...envs].sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+  return html`
+    <${OpsTabs} view="machines" />
+    <div class="d-flex gap-2 flex-wrap mb-2 small">
+      ${ordered.map((e) => html`<a key=${e.id} href=${`#/ops/machines/${encodeURIComponent(e.id)}`} class=${e.id === sel ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>${e.id}${e.active ? " (active)" : ""}</a>`)}
+    </div>
+    ${sel ? html`<${OpsEnvDiagram} envId=${sel} picked=${picked} setPicked=${setPicked} key=${sel} />` : ""}
+  `;
+};
+
+const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
+  const { data: env, err, reload } = useApi(`/api/ops/envs/${encodeURIComponent(envId)}`, [envId]);
+  const { data: targets } = useApi("/api/ops/targets");
+  const { data: jobs } = useApi("/api/ops/jobs");
+  const [busy, setBusy] = useState(false);
+  if (err) return html`<p class="text-danger">${String(err)}</p>`;
+  if (!env) return html`<p class="text-secondary">loading…</p>`;
+  const NW = 150, NH = 60, GX = 185, GY = 115, PAD = 30;
+  const pos = new Map(env.machines.map((p) => [p.id, { x: PAD + p.col * GX, y: PAD + p.row * GY, p }]));
+  const cols = Math.max(0, ...env.machines.map((p) => p.col)) + 1;
+  const rows = Math.max(0, ...env.machines.map((p) => p.row)) + 1;
+  const W = PAD * 2 + (cols - 1) * GX + NW;
+  const H = PAD * 2 + (rows - 1) * GY + NH;
+  const probes = new Map((env.probes ?? []).map((r) => [`${r.from}>${r.to}>${r.via}`, r]));
+  const reachState = (r) => {
+    const p = probes.get(`${r.from}>${r.to}>${r.via}`);
+    if (!p) return "reach_none";
+    return p.status === "ok" ? "reach_ok" : "reach_bad"; // fail + not_expected both draw red
+  };
+  const edges = [
+    ...(env.machines ?? []).flatMap((p) => (p.machine?.edges ?? []).filter((e) => pos.has(e.to.split("/")[0])).map((e) => ({ from: p.id, to: e.to.split("/")[0], kind: e.kind, cls: OPS_EDGE_CLASS[e.kind] ?? "ops-edge-talks", label: e.kind }))),
+    ...(env.reach ?? []).filter((r) => pos.has(r.from) && pos.has(r.to)).map((r) => ({ from: r.from, to: r.to, kind: r.via, cls: OPS_EDGE_CLASS[reachState(r)], label: r.via, probe: probes.get(`${r.from}>${r.to}>${r.via}`), note: r.note })),
+  ];
+  const probeAll = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const rs = await post(`/api/ops/envs/${encodeURIComponent(envId)}/probe`, {});
+      const bad = rs.filter((r) => r.status !== "ok").length;
+      toast(`${rs.length} reach probe${rs.length === 1 ? "" : "s"} — ${bad ? `${bad} not ok` : "all ok"}`, bad ? "danger" : "success");
+      reload();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  const m = picked ? env.machines.find((p) => p.id === picked)?.machine : null;
+  const machineTargets = m ? Object.entries(targets ?? {}).filter(([, t]) => t.machine === m.id) : [];
+  const lastOk = {};
+  for (const j of (jobs ?? []).filter((x) => x.status === "succeeded" && x.version)) if (!lastOk[j.target]) lastOk[j.target] = j;
+  return html`
+    <div class="ops-machines">
+      <div class="ops-diagram">
+        ${(env.reach ?? []).length ? html`<button class="btn btn-sm btn-outline-secondary mb-2" disabled=${busy} onClick=${probeAll}>${busy ? "probing…" : "probe reach"}</button>` : ""}
+        <svg viewBox=${`0 0 ${W} ${H}`} class="ops-svg" role="img">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" class="ops-arrow" /></marker>
+          </defs>
+          ${edges.map((e, i) => {
+            const a = pos.get(e.from), b = pos.get(e.to);
+            return html`<line key=${i} x1=${a.x + NW / 2} y1=${a.y + NH / 2} x2=${b.x + NW / 2} y2=${b.y + NH / 2} class=${`ops-edge ${e.cls}`} marker-end="url(#arr)">
+              <title>${e.from} → ${e.to} (${e.label})${e.probe?.reason ? ` — ${e.probe.reason}` : ""}${e.note ? ` — ${e.note}` : ""}</title>
+            </line>`;
+          })}
+          ${env.machines.map((p) => {
+            const a = pos.get(p.id);
+            const sel2 = picked === p.id;
+            return html`<g key=${p.id} class=${`ops-node${sel2 ? " ops-node-sel" : ""}`} onClick=${() => setPicked(sel2 ? null : p.id)} role="button">
+              <rect x=${a.x} y=${a.y} width=${NW} height=${NH} rx="8" class=${`ops-node-rect ops-tier-${p.machine?.tier ?? "dev"}`} />
+              <text x=${a.x + NW / 2} y=${a.y + 22} class="ops-node-title" text-anchor="middle">${p.id}</text>
+              <text x=${a.x + NW / 2} y=${a.y + 40} class="ops-node-sub" text-anchor="middle">${p.machine?.host ?? "—"} · ${p.machine?.tier ?? "?"}</text>
+            </g>`;
+          })}
+        </svg>
+        <div class="small text-secondary d-flex gap-3 flex-wrap mt-1">
+          <span><span class="ops-key ops-edge-deploy"></span>deploy</span>
+          <span><span class="ops-key ops-edge-sync"></span>sync</span>
+          <span><span class="ops-key ops-edge-shadow"></span>shadow_of</span>
+          <span><span class="ops-key ops-edge-talks"></span>talks_to</span>
+          <span><span class="ops-key ops-edge-reach-ok"></span>reach ok</span>
+          <span><span class="ops-key ops-edge-reach-bad"></span>reach failed / not expected</span>
+          <span><span class="ops-key ops-edge-reach-none"></span>reach unprobed</span>
+        </div>
+      </div>
+      ${m ? html`<div class="ops-panel">
+        <div class="d-flex align-items-center gap-2">
+          <b>${m.id}</b>
+          <span class="badge text-bg-secondary">${m.tier ?? "?"}</span>
+          <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onClick=${() => setPicked(null)}>×</button>
+        </div>
+        ${m.rules?.length ? html`<div class="mt-2"><div class="small fw-bold text-secondary">rules</div>
+          <ul class="small mb-2 ps-3">${m.rules.map((r) => html`<li class=${/never|hands off|no deploys/i.test(r) ? "text-danger" : ""}>${r}</li>`)}</ul></div>` : ""}
+        ${m.apps?.length ? html`<div><div class="small fw-bold text-secondary">apps</div>
+          <ul class="small mb-2 ps-3">${m.apps.map((a) => html`<li>${a.name}${a.port ? ` :${a.port}` : ""}${a.env ? html` <span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span>` : ""}</li>`)}</ul></div>` : ""}
+        ${m.folders?.length ? html`<div><div class="small fw-bold text-secondary">folders</div>
+          <ul class="small mb-2 ps-3">${m.folders.map((f) => html`<li><code>${f.path}</code>${f.purpose ? ` — ${f.purpose}` : ""}</li>`)}</ul></div>` : ""}
+        ${m.databases?.length ? html`<div><div class="small fw-bold text-secondary">databases</div>
+          <ul class="small mb-2 ps-3">${m.databases.map((d) => html`<li><code>${d.path}</code>${d.purpose ? ` — ${d.purpose}` : ""}</li>`)}</ul></div>` : ""}
+        ${(m.handled_by?.agents?.length || m.handled_by?.skills?.length) ? html`<div><div class="small fw-bold text-secondary">handled by</div>
+          <div class="small mb-2">${[...(m.handled_by.agents ?? []), ...(m.handled_by.skills ?? [])].join(", ")}</div></div>` : ""}
+        ${machineTargets.length ? html`<div><div class="small fw-bold text-secondary">targets</div>
+          <ul class="small mb-2 ps-3">${machineTargets.map(([t]) => html`<li>${t} — ${lastOk[t] ? html`<a href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`}>${lastOk[t].version}</a>` : "—"}</li>`)}</ul></div>` : ""}
+        ${m.notes ? html`<div class="small text-secondary mt-1" style="white-space:pre-wrap">${m.notes}</div>` : ""}
+      </div>` : ""}
+    </div>
   `;
 };
 

@@ -1000,3 +1000,32 @@ details.sec > .sec-bd {
 .ops-step.running .ops-dot { border-color: var(--bs-warning); color: var(--bs-warning); }
 .ops-step.skipped .ops-dot { color: var(--bs-secondary-color); }
 .ops-step.cursor .ops-dot { box-shadow: 0 0 0 .2rem color-mix(in srgb, var(--bs-warning) 35%, transparent); }
+
+/* ops machines diagram (GL-0290) — bootstrap vars keep it right in both themes */
+.ops-machines { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+.ops-diagram { flex: 1 1 480px; min-width: 0; overflow-x: auto; }
+.ops-svg { width: 100%; max-width: 900px; height: auto; display: block; }
+.ops-edge { stroke-width: 1.6; fill: none; }
+.ops-arrow { fill: var(--bs-secondary-color); }
+.ops-edge-deploy { stroke: var(--bs-primary); }
+.ops-edge-sync { stroke: var(--bs-secondary-color); stroke-dasharray: 6 4; }
+.ops-edge-shadow { stroke: var(--bs-success); stroke-dasharray: 6 4; }
+.ops-edge-talks { stroke: var(--bs-secondary-color); stroke-width: 1; opacity: .7; }
+.ops-edge-reach-ok { stroke: var(--bs-secondary-color); }
+.ops-edge-reach-bad { stroke: var(--bs-danger); stroke-width: 2; }
+.ops-edge-reach-none { stroke: var(--bs-secondary-color); stroke-dasharray: 2 4; opacity: .6; }
+.ops-key { display: inline-block; width: 1.6rem; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: .3rem; }
+.ops-node { cursor: pointer; }
+.ops-node-rect { fill: var(--bs-tertiary-bg); stroke: var(--bs-border-color); stroke-width: 1.4; }
+.ops-tier-prod { stroke: var(--bs-danger); }
+.ops-tier-test { stroke: var(--bs-warning); }
+.ops-tier-dev { stroke: var(--bs-success); }
+.ops-node:hover .ops-node-rect { filter: brightness(1.07); }
+.ops-node-sel .ops-node-rect { stroke-width: 2.6; stroke: var(--bs-primary); }
+.ops-node-title { fill: var(--bs-body-color); font-size: .8rem; font-weight: 600; }
+.ops-node-sub { fill: var(--bs-secondary-color); font-size: .62rem; }
+.ops-panel { flex: 0 1 340px; min-width: 260px; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); }
+@media (max-width: 575.98px) {
+  .ops-panel { flex: 1 1 100%; }
+  .ops-diagram { flex-basis: 100%; }
+}

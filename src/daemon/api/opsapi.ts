@@ -136,7 +136,7 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
   const loaded = loadEnvs(wsr.ws.root);
   const l = loaded.find((x) => x.env?.id === id);
   if (!l?.env) throw new NotFoundError(`env '${id}' not under envs/`);
-  const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, x.machine] as const] : [])));
+  const machines = new Map(loadMachines(wsr.ws.root).flatMap((x) => (x.machine ? [[x.machine.id, { ...x.machine, notes: x.body ?? "" }] as const] : [])));
   const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id === l.env.id;
   return {
     ...l.env,
