@@ -3110,10 +3110,12 @@ const OpsList = () => {
   const { data: jobs } = useApi(`/api/ops/jobs${qs ? "?" + qs : ""}`, [qs]);
   const { data: pbs } = useApi("/api/ops/playbooks");
   const { data: targets } = useApi("/api/ops/targets");
+  // the machine dropdown comes from the full job list — a set filter must not shrink it (DE-0153)
+  const { data: allJobs } = useApi("/api/ops/jobs");
   if (!jobs) return html`<p class="text-secondary">loading…</p>`;
   const playbooks = (pbs ?? []).map((l) => l.playbook?.name).filter(Boolean).sort();
   const targetIds = Object.keys(targets ?? {}).sort();
-  const machines = [...new Set(jobs.map((j) => j.machine))].sort();
+  const machines = [...new Set((allJobs ?? []).map((j) => j.machine))].sort();
   const sel = (key, label, values) => html`
     <select class="form-select form-select-sm w-auto" value=${f[key]} onChange=${(e) => setF({ ...f, [key]: e.target.value })}>
       <option value="">${label}</option>
