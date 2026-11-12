@@ -13,6 +13,7 @@ import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import { opsCmd } from "./commands/ops.js";
+import { machinesCmd, envCmd } from "./commands/machines.js";
 import {
   approveCmd,
   acceptCmd,
@@ -245,6 +246,10 @@ async function main(argv: string[]): Promise<number> {
       return syncCmd(rest, home);
     case "ops":
       return opsCmd(rest, home);
+    case "machines":
+      return machinesCmd(rest, home);
+    case "env":
+      return envCmd(rest, home);
     case "approve":
       return approveCmd(rest, home);
     case "answer":

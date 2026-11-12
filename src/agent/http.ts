@@ -174,6 +174,7 @@ OPS — playbooks and jobs (repeatable deploys; the daemon never runs the comman
   One live job per target across machines — a second start is OPS_TARGET_BUSY.
   te ops exec runs each step in bash and posts the result with ops_step.
   ops_approve is human-only: an agent session gets FORBIDDEN.
+  Read 'te machines show <id>' before you act on a machine — its rules come first.
 
 EXAMPLES
   T=$(curl -s -X POST ${base}/agent/hello -d '{"agent":"gemini-cli"}' | sed -n 's/^token //p')
