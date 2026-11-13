@@ -125,6 +125,9 @@ notify: # unset = off: alert the human on decision events (§5)
   - { on: question, command: "./scripts/ping.sh" } # runs with the event JSON on stdin
   - { on: needs_human, url: "https://example/hook" } # or POSTs the JSON
   # on: question | needs_human | max_attempts | ops_gate | digest
+agent_kinds: # scorecard grouping (§8 metrics): kind → globs on the agent
+  devin: ["devin*"] # name, lowercase, first match wins; no match → the
+  forge: ["forge*", "devin-forge-*"] # name's text before its first - or _
 projects:
   mission_planner: { prefix: MP }
   global: { prefix: GL }

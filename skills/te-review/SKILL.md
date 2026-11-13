@@ -29,7 +29,7 @@ daemon is not running, tell the user and stop.
 
 ```bash
 B=http://127.0.0.1:4747/agent
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>-review","model":"<your-model-id>","label":"review"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
 

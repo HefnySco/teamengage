@@ -95,9 +95,16 @@ export class WorkspaceOps {
     tier?: Session["tier"],
     role?: Session["role"],
     model?: string,
+    label?: string,
   ): Promise<{ session: Session; resume: Claim[] }> {
     // GL-0360: the model id is stored lowercased — convert, never refuse
-    const session = this.sessions.hello(agent, pid, tier, role, model?.toLowerCase());
+    const session = this.sessions.hello(agent, {
+      pid,
+      tier,
+      role,
+      model: model?.toLowerCase(),
+      label,
+    });
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
     // (Dead = transport closed, client process gone, or minted before a
@@ -1015,7 +1022,7 @@ export class WorkspaceOps {
    */
   async metrics(plan?: string) {
     const { readAllEvents } = await import("../../core/events/log.js");
-    const { deriveMetrics, rollUp } = await import("../../core/metrics/metrics.js");
+    const { deriveMetrics, rollUp, agentKind } = await import("../../core/metrics/metrics.js");
     const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
     const stats = deriveMetrics(r.events);
 
@@ -1062,7 +1069,36 @@ export class WorkspaceOps {
 
     return {
       totals: rollUp([...stats.values()]),
-      agents: by((id) => stats.get(id)?.worker).filter((g) => g.key !== "untagged"),
+      // GL-0364: scorecard rows are agent KINDS — devin-sl0005 rolls into
+      // devin — each row names its member session names with their counts
+      agents: (() => {
+        const kinds = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+        for (const m of stats.values()) {
+          if (!m.worker) continue;
+          const kind = agentKind(m.worker, this.wsr.ws.config.agent_kinds);
+          const list = kinds.get(kind) ?? [];
+          list.push(m);
+          kinds.set(kind, list);
+        }
+        return [...kinds.entries()]
+          .map(([key, list]) => {
+            const byName = new Map<string, { items: number; done: number }>();
+            for (const m of list) {
+              const e = byName.get(m.worker!) ?? { items: 0, done: 0 };
+              e.items++;
+              e.done += m.done;
+              byName.set(m.worker!, e);
+            }
+            return {
+              key,
+              ...rollUp(list),
+              members: [...byName.entries()]
+                .map(([name, c]) => ({ name, ...c }))
+                .sort((a, b) => b.items - a.items || a.name.localeCompare(b.name)),
+            };
+          })
+          .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
+      })(),
       tiers: by((id) => this.index.items.get(id)?.meta.tier ?? "unset"),
       domains: by((id) => {
         const d = this.index.items.get(id)?.meta.domains;

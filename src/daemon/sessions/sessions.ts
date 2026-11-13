@@ -26,10 +26,7 @@ export class SessionRegistry {
    */
   hello(
     agent: string,
-    pid?: number,
-    tier?: Session["tier"],
-    role?: Session["role"],
-    model?: string,
+    opts: { pid?: number; tier?: Session["tier"]; role?: Session["role"]; model?: string; label?: string } = {},
   ): Session {
     const now = new Date().toISOString();
     const session: Session = {
@@ -38,10 +35,11 @@ export class SessionRegistry {
       machine: this.machine,
       connected_at: now,
       last_seen: now,
-      ...(pid ? { pid } : {}),
-      ...(tier ? { tier } : {}),
-      ...(role ? { role } : {}),
-      ...(model ? { model } : {}),
+      ...(opts.pid ? { pid: opts.pid } : {}),
+      ...(opts.tier ? { tier: opts.tier } : {}),
+      ...(opts.role ? { role: opts.role } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.label ? { label: opts.label } : {}),
     };
     this.sessions.set(session.id, session);
     this.onChange?.("start", session);

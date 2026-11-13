@@ -28,9 +28,14 @@ curl -s $B            # full protocol + examples, if you need it
 ## 1. Start a session
 
 ```bash
-T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>"}' | tee /dev/stderr | sed -n 's/^token //p')
+T=$(curl -s -X POST $B/hello -d '{"agent":"<your-name>","model":"<your-model-id>","label":"<task-id>"}' | tee /dev/stderr | sed -n 's/^token //p')
 H="X-TE-Session: $T"
 ```
+
+Keep `agent` your **stable name** (`devin`, `claude` — never the task id);
+put the task you work on in `label` so the metrics scorecard can group your
+runs under one row. `model` is your model id (e.g. `swe-2-high`) — recorded
+on your submits.
 
 **Started by `te run`?** It already opened your session: use
 `H="X-TE-Session: $TE_SESSION"` and do **not** call `hello`. It also checked

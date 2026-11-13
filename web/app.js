@@ -483,7 +483,7 @@ const TeamPanel = ({ sessions, onOpen }) => {
       <div class="d-flex flex-column gap-1 mt-1">
         ${ss.map((s) => html`
           <div class="triage-li" key=${s.id}>
-            <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}</span>
+            <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}${s.label ? ` · ${s.label}` : ""}</span>
             <span class="t">
               ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}${s.model ? html`<span class="triage-tag">${s.model}</span> ` : ""}
               ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
@@ -1616,17 +1616,26 @@ const Metrics = ({ onOpen }) => {
     saveSearch("te.board.found", found ? "1" : "");
     nav("board");
   };
+  const [openRow, setOpenRow] = useState(null);
   const groupTable = (label, gs) => {
     const cost = gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
+    const cols = cost ? 8 : 6;
     return html`<div class="table-responsive"><table class="table table-sm align-middle">
       <thead><tr><th>${label}</th><th class="text-end">items</th><th class="text-end">done</th><th class="text-end">bounce%</th><th class="text-end">handoffs</th><th class="text-end">med claim→accept</th>${cost && html`<th class="text-end">tok in/out</th><th class="text-end">usd</th>`}</tr></thead>
       <tbody>
-        ${gs.map((g) => html`<tr key=${g.key}>
-          <td>${g.key}</td><td class="text-end">${g.items}</td><td class="text-end">${g.done}</td>
-          <td class="text-end">${pct(g.bounce_rate)}</td><td class="text-end">${g.handoffs}</td>
-          <td class="text-end">${fmtMed(g.median_claim_to_accept_ms)}</td>
-          ${cost && html`<td class="text-end">${tok(g.tokens_in)}/${tok(g.tokens_out)}</td><td class="text-end">${usd(g.usd)}</td>`}
-        </tr>`)}
+        ${gs.map((g) => html`
+          <tr key=${g.key}>
+            <td>${(g.members ?? []).length > 1
+              ? html`<a title="the session names inside this kind — click to fold" onClick=${() => setOpenRow(openRow === g.key ? null : g.key)}>${openRow === g.key ? "▾ " : "▸ "}${g.key}</a>`
+              : g.key}</td>
+            <td class="text-end">${g.items}</td><td class="text-end">${g.done}</td>
+            <td class="text-end">${pct(g.bounce_rate)}</td><td class="text-end">${g.handoffs}</td>
+            <td class="text-end">${fmtMed(g.median_claim_to_accept_ms)}</td>
+            ${cost && html`<td class="text-end">${tok(g.tokens_in)}/${tok(g.tokens_out)}</td><td class="text-end">${usd(g.usd)}</td>`}
+          </tr>
+          ${openRow === g.key && html`<tr key=${`${g.key}-members`}><td colspan=${cols} class="small text-secondary">
+            ${(g.members ?? []).map((mm) => html`<div>${mm.name} — ${mm.items} item(s), ${mm.done} done</div>`)}
+          </td></tr>`}`)}
       </tbody></table></div>`;
   };
   return html`

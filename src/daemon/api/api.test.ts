@@ -1157,7 +1157,7 @@ describe("drop flags: agent asks, human decides", () => {
     const flags = async () =>
       ((await (await api("/api/inbox")).json()) as { drop_flags: Array<{ id: string; by: string; reason?: string; status: string }> }).drop_flags;
 
-    const agent = ctx.sessions.hello("flagger", undefined, "light"); // any tier may flag
+    const agent = ctx.sessions.hello("flagger", { tier: "light" }); // any tier may flag
     await ops.flagDrop(keep, agent, "no longer needed");
     expect(store.idx.get(keep)!.meta.status).toBe("draft"); // advisory — status untouched
     expect(store.idx.get(keep)!.meta.drop_request?.by).toBe(agent.id);
@@ -1249,8 +1249,8 @@ describe("editDraft: agent rewrites a draft", () => {
       human,
     );
     const [id, dep, epic] = ids;
-    const light = ctx.sessions.hello("lite", undefined, "light");
-    const planner = ctx.sessions.hello("plnr", undefined, "standard");
+    const light = ctx.sessions.hello("lite", { tier: "light" });
+    const planner = ctx.sessions.hello("plnr", { tier: "standard" });
 
     await expect(ops.editDraft(id, light, { reason: "x", title: "y" })).rejects.toThrow(/standard- or heavy/);
     await expect(ops.editDraft(id, planner, { title: "y" } as never)).rejects.toThrow(/reason/);
@@ -1575,8 +1575,8 @@ describe("idea fields in the item API (DE-0133)", () => {
 });
 describe("session role at hello (GL-0323)", () => {
   it("/api/sessions lists live sessions with their role", async () => {
-    ctx.sessions.hello("planner-1", undefined, undefined, "planner");
-    ctx.sessions.hello("reviewer-1", undefined, "heavy", "reviewer");
+    ctx.sessions.hello("planner-1", { role: "planner" });
+    ctx.sessions.hello("reviewer-1", { tier: "heavy", role: "reviewer" });
     ctx.sessions.hello("plain-1");
     const res = await api("/api/sessions");
     expect(res.status).toBe(200);
@@ -1595,8 +1595,8 @@ describe("session role at hello (GL-0323)", () => {
     const { ids } = await wsr.store.createItems([{ type: "task", title: "role-check" }], human);
     const [id] = ids;
     await ops.approve(id);
-    const submitter = ctx.sessions.hello("doer", undefined, undefined, "reviewer");
-    const reviewer = ctx.sessions.hello("watcher", undefined, undefined, "reviewer");
+    const submitter = ctx.sessions.hello("doer", { role: "reviewer" });
+    const reviewer = ctx.sessions.hello("watcher", { role: "reviewer" });
     await ops.claim(id, submitter);
     await ops.submit(id, submitter, { walkthrough: "did it" });
 
@@ -1606,7 +1606,7 @@ describe("session role at hello (GL-0323)", () => {
     // the submitting session itself never sees its own submission
     expect(ops.next(50, undefined, submitter).map((i) => i.meta.id)).not.toContain(id);
     // a different session of the same agent did not submit it — it sees it
-    const selfReviewer = ctx.sessions.hello("doer", undefined, undefined, "reviewer");
+    const selfReviewer = ctx.sessions.hello("doer", { role: "reviewer" });
     expect(ops.next(50, undefined, selfReviewer).map((i) => i.meta.id)).toContain(id);
 
     // no role → the ready pool, unchanged

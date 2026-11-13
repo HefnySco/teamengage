@@ -16,6 +16,8 @@ export const Session = z
     role: z.enum(["planner", "coder", "reviewer", "ops"]).optional(),
     /** declared model id, lowercased (e.g. claude-sonnet-5-5) — GL-0360 */
     model: z.string().optional(),
+    /** free-text label — the task id this session works on (GL-0364) */
+    label: z.string().optional(),
   })
   .passthrough();
 export type Session = z.infer<typeof Session>;

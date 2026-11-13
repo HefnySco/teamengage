@@ -201,6 +201,14 @@ export const WorkspaceConfig = z
      * {on, command | url} rules; see NotifyRule. Unset: nothing runs.
      */
     notify: z.array(NotifyRule).default([]),
+    /**
+     * Agent kinds (GL-0364): kind name → glob patterns matched against the
+     * session's agent name, lowercased, first match wins — e.g.
+     * `{ devin: ["devin*"], forge: ["forge*", "devin-forge-*"] }`. A name
+     * with no match uses the text before its first `-`/`_` as its kind.
+     * Metrics groups the scorecard by kind.
+     */
+    agent_kinds: z.record(z.string(), z.array(z.string())).optional(),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */

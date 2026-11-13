@@ -15,6 +15,29 @@ export function agentName(actor: string): string | undefined {
   return name || undefined;
 }
 
+/** tiny glob: `*` → any run, `?` → one char; anchored, case already folded. */
+function globRe(pattern: string): RegExp {
+  return new RegExp(
+    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
+  );
+}
+
+/**
+ * Agent kind for a session name (GL-0364). `agent_kinds` in workspace.yaml
+ * maps kind → glob patterns; the first matching pattern (config order)
+ * wins, compared in lowercase — `Forge` and `forge` are one kind. With no
+ * match the kind is the text before the first `-`/`_`, so `devin-sl0005`
+ * and `devin-fix-de0040` both roll up to `devin`.
+ */
+export function agentKind(name: string, kinds?: Record<string, string[]>): string {
+  const lower = name.toLowerCase();
+  for (const [kind, patterns] of Object.entries(kinds ?? {})) {
+    if (patterns.some((p) => globRe(p.toLowerCase()).test(lower))) return kind;
+  }
+  const cut = lower.search(/[-_]/);
+  return cut > 0 ? lower.slice(0, cut) : lower;
+}
+
 export interface ItemMetrics {
   id: string;
   claims: number;

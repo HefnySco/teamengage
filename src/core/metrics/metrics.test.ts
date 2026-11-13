@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveMetrics, rollUp, median, agentName } from "./metrics.js";
+import { deriveMetrics, rollUp, median, agentName, agentKind } from "./metrics.js";
 import type { Event } from "../model/event.js";
 
 const ev = (
@@ -105,5 +105,33 @@ describe("rollUp / median / agentName", () => {
     expect(agentName("claude")).toBe("claude");
     expect(agentName("human")).toBeUndefined();
     expect(agentName("daemon")).toBeUndefined();
+  });
+});
+
+describe("agentKind (GL-0364)", () => {
+  it("per-task names roll up to the kind prefix", () => {
+    expect(agentKind("devin-sl0005")).toBe("devin");
+    expect(agentKind("devin-fix-de0040")).toBe("devin");
+    expect(agentKind("devin_sub-sl0015")).toBe("devin");
+  });
+
+  it("compares in lowercase — Forge and forge are one", () => {
+    expect(agentKind("Forge")).toBe("forge");
+    expect(agentKind("forge")).toBe("forge");
+  });
+
+  it("agent_kinds patterns win over the prefix fallback, first match wins", () => {
+    const kinds = { devin: ["devin*"], forge: ["forge*", "devin-forge-*"] };
+    // first match wins: devin* matches before forge's devin-forge-*
+    expect(agentKind("devin-forge-mv0018", kinds)).toBe("devin");
+    expect(agentKind("Forge-mv0018", kinds)).toBe("forge");
+    // forge first → devin-forge-* counts as forge, not devin
+    const forgeFirst = { forge: ["forge*", "devin-forge-*"], devin: ["devin*"] };
+    expect(agentKind("devin-forge-mv0018", forgeFirst)).toBe("forge");
+    expect(agentKind("devin-sl0005", forgeFirst)).toBe("devin");
+  });
+
+  it("a name with no separator keeps itself", () => {
+    expect(agentKind("devin")).toBe("devin");
   });
 });
