@@ -33,6 +33,10 @@ export interface ItemMetrics {
   claim_to_accept_ms: number[];
   /** agent name of the most recent submit — the item's work is credited to it */
   worker?: string;
+  /** reported run cost summed over submits (GL-0318) */
+  tokens_in: number;
+  tokens_out: number;
+  usd: number;
 }
 
 export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
@@ -54,6 +58,9 @@ export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
         claim_to_submit_ms: [],
         submit_to_accept_ms: [],
         claim_to_accept_ms: [],
+        tokens_in: 0,
+        tokens_out: 0,
+        usd: 0,
       };
       per.set(id, m);
     }
@@ -74,6 +81,12 @@ export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
         lastSubmitTs.set(e.item, ms(e.ts));
         const w = agentName(e.actor);
         if (w) m.worker = w;
+        const cost = e.data?.cost as { tokens_in?: number; tokens_out?: number; usd?: number } | undefined;
+        if (cost) {
+          if (typeof cost.tokens_in === "number") m.tokens_in += cost.tokens_in;
+          if (typeof cost.tokens_out === "number") m.tokens_out += cost.tokens_out;
+          if (typeof cost.usd === "number") m.usd += cost.usd;
+        }
         break;
       }
       case "accept":
@@ -119,6 +132,10 @@ export interface Rollup {
   median_claim_to_submit_ms?: number;
   median_submit_to_accept_ms?: number;
   median_claim_to_accept_ms?: number;
+  /** reported run cost summed over the items' submits (GL-0318) */
+  tokens_in: number;
+  tokens_out: number;
+  usd: number;
 }
 
 /** Aggregate a set of per-item stats into one row. */
@@ -134,8 +151,22 @@ export function rollUp(stats: ItemMetrics[]): Rollup {
       bounces: a.bounces + m.bounces,
       handoffs: a.handoffs + m.handoffs,
       rejects: a.rejects + m.rejects,
+      tokens_in: a.tokens_in + m.tokens_in,
+      tokens_out: a.tokens_out + m.tokens_out,
+      usd: a.usd + m.usd,
     }),
-    { items: 0, done: 0, claims: 0, review_rounds: 0, bounces: 0, handoffs: 0, rejects: 0 },
+    {
+      items: 0,
+      done: 0,
+      claims: 0,
+      review_rounds: 0,
+      bounces: 0,
+      handoffs: 0,
+      rejects: 0,
+      tokens_in: 0,
+      tokens_out: 0,
+      usd: 0,
+    },
   );
   return {
     ...sums,

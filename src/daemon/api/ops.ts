@@ -15,7 +15,7 @@ import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
-import { StarColor, tierRank, type Status } from "../../core/model/item.js";
+import { StarColor, tierRank, type Status, type SubmitCost } from "../../core/model/item.js";
 import {
   ClaimRefusedError,
   ForbiddenError,
@@ -639,7 +639,13 @@ export class WorkspaceOps {
   async submit(
     id: string,
     session: Session,
-    evidence?: { commits?: string[]; tests?: string; notes?: string; walkthrough?: string },
+    evidence?: {
+      commits?: string[];
+      tests?: string;
+      notes?: string;
+      walkthrough?: string;
+      cost?: SubmitCost;
+    },
   ) {
     const it = this.item(id);
     this.assertLiveClaim(it);

@@ -412,6 +412,31 @@ describe("review / bounce (AI peer review of a submission)", () => {
     expect(r.meta.ai_review).toBeUndefined();
   });
 
+  it("submit with cost writes a cost line in Evidence and carries it on the event", () => {
+    const cost = { model: "swe-2-high", tokens_in: 12000, tokens_out: 800, usd: 0.042 };
+    const r = transition(
+      item("in_progress"),
+      { type: "submit", evidence: { commits: ["abc123"], cost } },
+      agent,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.sectionWrites).toEqual([
+      { heading: "Evidence", text: `- commit abc123\n- cost: swe-2-high in=12000 out=800 usd=0.042\n` },
+    ]);
+    expect(r.events[0]).toMatchObject({ action: "submit", data: { cost } });
+  });
+
+  it("submit without cost works as before — no cost line, no event data", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "submit", evidence: { tests: "42 passed" } },
+      agent,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.sectionWrites[0].text).toBe(`- tests: 42 passed\n`);
+    expect(r.events[0].data).toBeUndefined();
+  });
+
   it("bounce keeps the claim with the holder, flags issues, logs the reason", () => {
     const r = transition(
       item("in_review"),

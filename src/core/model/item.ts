@@ -57,6 +57,20 @@ export const AiReview = z.object({
 export type AiReview = z.infer<typeof AiReview>;
 
 /**
+ * Optional cost a session reports with its submission (GL-0318). Every
+ * field is optional — agents send what their runner gives them. Written as
+ * one `cost:` line in ## Evidence and carried on the submit event's `data`
+ * so `te metrics` can sum it without parsing text.
+ */
+export const SubmitCost = z.object({
+  model: z.string().optional(),
+  tokens_in: z.number().nonnegative().optional(),
+  tokens_out: z.number().nonnegative().optional(),
+  usd: z.number().nonnegative().optional(),
+});
+export type SubmitCost = z.infer<typeof SubmitCost>;
+
+/**
  * Model tier — how capable an agent must be to work an item (light ≈ Haiku,
  * standard ≈ Sonnet, heavy ≈ Opus). Sessions declare theirs at hello; an
  * item's tier is the minimum that may claim it (unset = anyone).

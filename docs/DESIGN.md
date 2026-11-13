@@ -62,7 +62,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Edge**                | `depends_on`, `parent`, `relates`. `blocks` is derived. Edges may cross projects and workspaces (§4.1).                                                                                                                           |
 | **Turn**                | Whose move it is on an item: `human` or `agent`. Drives both inboxes.                                                                                                                                                             |
 | **Claim**               | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human.                               |
-| **Evidence**            | Commits, test output, logs, snapshot diffs, notes attached on submit.                                                                                                                                                             |
+| **Evidence**            | Commits, test output, logs, snapshot diffs, notes, reported run cost (`cost:` line) attached on submit.                                                                                                                           |
 | **Walkthrough**         | The submitter's explanation of the change — in STE (ASD-STE100 Simplified Technical English), required on submit, appended per submission.                                                                                        |
 | **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items.                                                                                                                                              |
 | **Session**             | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`.                                                                                                                                                |
@@ -502,7 +502,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `withdraw(id)`                  | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept.                                                                                  |
 | `log(id, note)`                 | Progress note (also updates `last_seen`).                                                                                                                       |
 | `ask(id, question, options?)`   | Raise question → item `waiting`, turn → human.                                                                                                                  |
-| `submit(id, evidence)`          | Commits/tests/notes → `in_review`.                                                                                                                              |
+| `submit(id, evidence)`          | Commits/tests/notes + required walkthrough → `in_review`. Optional `cost` `{model, tokens_in, tokens_out, usd}` → one `cost:` line in Evidence, summed by metrics. |
 | `review(id, verdict, note?)`    | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched.                                                    |
 | `bounce(id, reason)`            | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human.                                         |
 | `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
@@ -531,10 +531,12 @@ submissions; accept stays with the human."
 
 **Metrics** — derived from the merged event log, never stored: per item the
 daemon replays events to get claim→submit and submit→accept times, review
-rounds (one per submit), bounces and handoffs. `GET /api/metrics` rolls the
+rounds (one per submit), bounces and handoffs. A submit event may carry a
+reported run `cost` (`{model, tokens_in, tokens_out, usd}`) in its `data` —
+the roll-up sums the token and dollar figures. `GET /api/metrics` rolls the
 per-item stats up per agent name, per tier and per domain;
 `GET /api/metrics?plan=<ID>` rolls up a plan and its parts. `te metrics`
-prints the same scorecards.
+prints the same scorecards, with token/usd columns once any row reports cost.
 
 **CLI** `te`: `te ls`, `te show GL-0013`, `te approve`, `te answer`, `te accept`,
 `te claim` / `te release` (human hands-off or freeing a stale claim),

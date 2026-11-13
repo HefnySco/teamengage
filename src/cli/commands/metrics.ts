@@ -37,6 +37,9 @@ interface Rollup {
   median_claim_to_submit_ms?: number;
   median_submit_to_accept_ms?: number;
   median_claim_to_accept_ms?: number;
+  tokens_in: number;
+  tokens_out: number;
+  usd: number;
 }
 interface Group extends Rollup {
   key: string;
@@ -55,6 +58,9 @@ interface Part {
     worker?: string;
     claim_to_submit_ms: number[];
     submit_to_accept_ms: number[];
+    tokens_in: number;
+    tokens_out: number;
+    usd: number;
   } | null;
 }
 interface MetricsResponse {
@@ -77,14 +83,35 @@ function table(head: string[], rows: string[][]) {
   for (const r of rows) process.stdout.write(fmt(r) + "\n");
 }
 
-const groupRows = (gs: Group[]) =>
-  gs.map((g) => [
-    g.key,
-    String(g.items),
-    String(g.done),
-    fmtMs(g.median_claim_to_accept_ms),
-    pct(g.bounce_rate),
-  ]);
+const tok = (n?: number) => {
+  if (!n) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+};
+const usd = (n?: number) => (!n ? "-" : `$${n < 1 ? n.toFixed(4).replace(/0+$/, "") : n.toFixed(2)}`);
+
+const hasCost = (gs: { tokens_in?: number; tokens_out?: number; usd?: number }[]) =>
+  gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
+
+// cost columns appear only when some row actually reported cost (GL-0318)
+const groupTable = (label: string, gs: Group[]) => {
+  const cost = hasCost(gs);
+  const head = [label, "items", "done", "claim→accept", "bounce%"];
+  if (cost) head.push("tok in/out", "usd");
+  const rows = gs.map((g) => {
+    const r = [
+      g.key,
+      String(g.items),
+      String(g.done),
+      fmtMs(g.median_claim_to_accept_ms),
+      pct(g.bounce_rate),
+    ];
+    if (cost) r.push(`${tok(g.tokens_in)}/${tok(g.tokens_out)}`, usd(g.usd));
+    return r;
+  });
+  table(head, rows);
+};
 
 export async function metricsCmd(args: string[], home?: string): Promise<number> {
   const plan = opt(args, "--plan");
@@ -109,15 +136,25 @@ export async function metricsCmd(args: string[], home?: string): Promise<number>
         `${t.bounces} bounces, ${t.handoffs} handoffs — med claim→submit ${fmtMs(t.median_claim_to_submit_ms)}, ` +
         `submit→accept ${fmtMs(t.median_submit_to_accept_ms)}\n\n`,
     );
-    const rows = (data.parts ?? []).map((p) => [
-      p.id,
-      p.status,
-      p.title,
-      String(p.metrics?.review_rounds ?? 0),
-      String(p.metrics?.bounces ?? 0),
-      p.metrics?.worker ?? "-",
-    ]);
-    table(["part", "status", "title", "rounds", "bounces", "worker"], rows);
+    const parts = data.parts ?? [];
+    const cost = parts.some(
+      (p) => (p.metrics?.tokens_in ?? 0) + (p.metrics?.tokens_out ?? 0) > 0,
+    );
+    const head = ["part", "status", "title", "rounds", "bounces", "worker"];
+    if (cost) head.push("tok in/out");
+    const rows = parts.map((p) => {
+      const r = [
+        p.id,
+        p.status,
+        p.title,
+        String(p.metrics?.review_rounds ?? 0),
+        String(p.metrics?.bounces ?? 0),
+        p.metrics?.worker ?? "-",
+      ];
+      if (cost) r.push(`${tok(p.metrics?.tokens_in)}/${tok(p.metrics?.tokens_out)}`);
+      return r;
+    });
+    table(head, rows);
     return 0;
   }
 
@@ -129,19 +166,19 @@ export async function metricsCmd(args: string[], home?: string): Promise<number>
   const agents = data.agents ?? [];
   if (agents.length) {
     process.stdout.write("agents\n");
-    table(["agent", "items", "done", "claim→accept", "bounce%"], groupRows(agents));
+    groupTable("agent", agents);
     process.stdout.write("\n");
   }
   const tiers = data.tiers ?? [];
   if (tiers.length) {
     process.stdout.write("tiers\n");
-    table(["tier", "items", "done", "claim→accept", "bounce%"], groupRows(tiers));
+    groupTable("tier", tiers);
     process.stdout.write("\n");
   }
   const domains = (data.domains ?? []).filter((g) => g.items > 0);
   if (domains.length) {
     process.stdout.write("domains\n");
-    table(["domain", "items", "done", "claim→accept", "bounce%"], groupRows(domains));
+    groupTable("domain", domains);
   }
   return 0;
 }

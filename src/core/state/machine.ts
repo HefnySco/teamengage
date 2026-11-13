@@ -1,5 +1,13 @@
 import type { Claim } from "../model/claim.js";
-import type { AiReview, ItemMeta, Question, StarColor, Status, Tier } from "../model/item.js";
+import type {
+  AiReview,
+  ItemMeta,
+  Question,
+  StarColor,
+  Status,
+  SubmitCost,
+  Tier,
+} from "../model/item.js";
 import { nextTier, tierRank } from "../model/item.js";
 import type { Event } from "../model/event.js";
 import {
@@ -43,6 +51,8 @@ export type Action =
         notes?: string;
         /** "walk me through this code" — plain-English explanation of the change for the human */
         walkthrough?: string;
+        /** reported run cost (GL-0318) — one `cost:` line in ## Evidence + event data */
+        cost?: SubmitCost;
       };
     }
   /**
@@ -471,6 +481,22 @@ export function transition(
         for (const c of action.evidence.commits ?? []) lines.push(`- commit ${c}`);
         if (action.evidence.tests) lines.push(`- tests: ${action.evidence.tests}`);
         if (action.evidence.notes) lines.push(`- ${action.evidence.notes}`);
+        if (action.evidence.cost) {
+          const parts: string[] = [];
+          if (action.evidence.cost.model) parts.push(action.evidence.cost.model);
+          if (action.evidence.cost.tokens_in !== undefined)
+            parts.push(`in=${action.evidence.cost.tokens_in}`);
+          if (action.evidence.cost.tokens_out !== undefined)
+            parts.push(`out=${action.evidence.cost.tokens_out}`);
+          if (action.evidence.cost.usd !== undefined)
+            parts.push(`usd=${action.evidence.cost.usd}`);
+          if (parts.length) {
+            lines.push(`- cost: ${parts.join(" ")}`);
+            // the submit event carries the cost too — metrics sums it
+            // without parsing the Evidence line (GL-0318)
+            out.events[out.events.length - 1].data = { cost: action.evidence.cost };
+          }
+        }
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
         // the submitter's own walkthrough, kept per submission like Handoff
         if (action.evidence.walkthrough?.trim()) {

@@ -5,6 +5,7 @@ import type { AgentBinding } from "../server/mcp.js";
 import type { WorkspaceOps } from "../../daemon/api/ops.js";
 import { okText, errFrom, type ToolResult } from "../format.js";
 import { opsFor, needSession, isToolResult } from "./read.js";
+import { SubmitCost } from "../../core/model/item.js";
 
 /**
  * Write tools (DESIGN §7): claim, release, log, ask, submit, review, bounce,
@@ -243,22 +244,25 @@ export function registerWriteTools(
         "Hand work to the human with evidence (commits/tests/notes). " +
         "walkthrough is required — the human's 'explain what you did': a few short paragraphs in STE " +
         "(Simplified Technical English) walking them through the change (what you changed, how it works, what to look at first), " +
-        "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough.",
+        "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough. " +
+        "cost is optional — report {model, tokens_in, tokens_out, usd} when your runner gives them; " +
+        "it lands as a cost: line in ## Evidence and feeds te metrics.",
       inputSchema: {
         id: z.string(),
         commits: z.array(z.string()).optional(),
         tests: z.string().optional(),
         notes: z.string().optional(),
         walkthrough: z.string(),
+        cost: SubmitCost.optional(),
       },
     },
-    async ({ id, commits, tests, notes, walkthrough }) => {
+    async ({ id, commits, tests, notes, walkthrough, cost }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, walkthrough });
+        await o.submit(id, s, { commits, tests, notes, walkthrough, cost });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);

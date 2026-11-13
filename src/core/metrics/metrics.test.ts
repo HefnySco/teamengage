@@ -74,6 +74,26 @@ describe("rollUp / median / agentName", () => {
     expect(r.done).toBe(1);
   });
 
+  it("sums reported cost over an item's submits", () => {
+    const per = deriveMetrics([
+      ev("2026-11-01T00:00:00Z", "submit", "A", "devin@dt#aa", {
+        data: { cost: { model: "x", tokens_in: 100, tokens_out: 10, usd: 0.01 } },
+      }),
+      ev("2026-11-01T01:00:00Z", "submit", "A", "devin@dt#aa", {
+        data: { cost: { tokens_in: 50, usd: 0.005 } },
+      }),
+      ev("2026-11-01T02:00:00Z", "submit", "B"), // no cost — contributes zeros
+    ]);
+    const a = per.get("A")!;
+    expect(a.tokens_in).toBe(150);
+    expect(a.tokens_out).toBe(10);
+    expect(a.usd).toBeCloseTo(0.015);
+    const r = rollUp([...per.values()]);
+    expect(r.tokens_in).toBe(150);
+    expect(r.tokens_out).toBe(10);
+    expect(r.usd).toBeCloseTo(0.015);
+  });
+
   it("median of even and odd lists", () => {
     expect(median([1, 3, 5])).toBe(3);
     expect(median([1, 2, 3, 4])).toBe(2.5);

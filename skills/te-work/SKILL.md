@@ -195,6 +195,11 @@ curl -s -X POST $B/submit/GL-0019 -H "$H" -d '{
 }'
 ```
 
+Send `cost` when your runner reports it — `"cost": {"model": "swe-2-high",
+"tokens_in": 12345, "tokens_out": 678, "usd": 0.12}` (every field is optional;
+send what you have). It lands as one `cost:` line in `## Evidence` and feeds
+`te metrics`.
+
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
 
