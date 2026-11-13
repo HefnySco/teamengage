@@ -202,6 +202,9 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         for (const t of b.targets) {
           lines.push(`target ${t.ref} → ${t.kind}${t.host ? ` ${t.host}` : ""}${t.path ? ` ${t.path}` : ""}`);
         }
+        for (const o of b.overlap) {
+          lines.push(`warn: ${o.id} touches ${o.paths.join(", ")}`);
+        }
         return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);

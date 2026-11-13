@@ -427,6 +427,10 @@ Plan safety is not enough — two agents in the same checkout corrupt each other
 - `claim` **refuses** if another claim (agent or human, any machine known after
   the last sync) has an overlapping target, and returns who holds it and where.
   `next` already skips such items. This logical lock works for every resource kind.
+- `**Touches:**` paths are softer: two open (`ready`/`in_progress`) leaf items
+  that name the same `repo: path` (or a covering glob) get an `overlap`
+  warning — a `warn:` line in the claim reply and brief, a chip on the board.
+  It never refuses; done and dropped items do not count.
 - Isolation and delivery depend on the resource kind:
 
 | Kind                                   | On claim                                                                                           | On accept (auto)                                                                                          |

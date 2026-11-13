@@ -19,8 +19,8 @@ let ctx: DaemonCtx;
 let daemon: DaemonHandle;
 let api: (path: string, init?: RequestInit) => Promise<Response>;
 
-function item(id: string, status = "draft", extra = "") {
-  return `---\nid: ${id}\ntype: task\ntitle: ${id}\nstatus: ${status}\nversion: 1\n${extra}---\n\n## Summary\n${id}\n`;
+function item(id: string, status = "draft", extra = "", body = "") {
+  return `---\nid: ${id}\ntype: task\ntitle: ${id}\nstatus: ${status}\nversion: 1\n${extra}---\n\n${body}## Summary\n${id}\n`;
 }
 
 beforeAll(async () => {
@@ -35,8 +35,8 @@ beforeAll(async () => {
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
   execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
-  writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001", "ready", "targets: [\"@self:src/a.ts\"]\n"));
-  writeFileSync(join(plans, "items", "WS", "WS-0002.md"), item("WS-0002", "ready", "targets: [\"@self:src/a.ts\"]\n"));
+  writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001", "ready", "targets: [\"@self:src/a.ts\"]\n", "**Touches:** self: src/a.ts\n"));
+  writeFileSync(join(plans, "items", "WS", "WS-0002.md"), item("WS-0002", "ready", "targets: [\"@self:src/a.ts\"]\n", "**Touches:** self: src/a.ts\n"));
   writeFileSync(join(plans, "items", "WS", "WS-0003.md"), item("WS-0003"));
   writeFileSync(
     join(plans, "items", "WS", "WS-0009.md"),
@@ -82,6 +82,17 @@ describe("REST API (DM-0005)", () => {
     expect(res.status).toBe(200);
     const items = (await res.json()) as Array<{ id: string; ready: boolean }>;
     expect(items.map((i) => i.id).sort()).toEqual(["WS-0001", "WS-0002"]);
+  });
+
+  it("items carry the Touches-overlap warning field (GL-0326)", async () => {
+    const items = (await (await api("/api/items?status=ready")).json()) as Array<{
+      id: string;
+      overlap?: { id: string; paths: string[] }[];
+    }>;
+    const w1 = items.find((i) => i.id === "WS-0001")!;
+    expect(w1.overlap).toEqual([{ id: "WS-0002", paths: ["self: src/a.ts"] }]);
+    const w2 = items.find((i) => i.id === "WS-0002")!;
+    expect(w2.overlap).toEqual([{ id: "WS-0001", paths: ["self: src/a.ts"] }]);
   });
 
   it("rejects unauthenticated requests", async () => {

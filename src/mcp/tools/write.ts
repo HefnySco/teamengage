@@ -43,8 +43,11 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const { claim, version } = await o.claim(id, s);
-        return okText(`claimed ${id} v${version} holder=${claim.holder}`);
+        const { claim, version, overlap } = await o.claim(id, s);
+        const warn = overlap.length
+          ? `\nwarn: ${overlap.map((o) => `${o.id} touches ${o.paths.join(", ")}`).join("; ")}`
+          : "";
+        return okText(`claimed ${id} v${version} holder=${claim.holder}${warn}`);
       } catch (e) {
         return errFrom(e);
       }

@@ -110,6 +110,21 @@ beforeAll(async () => {
     join(plans, "items", "WS", "WS-0009.md"),
     `---\nid: WS-0009\ntype: task\ntitle: dependent task\nstatus: draft\nversion: 1\ndepends_on: [WS-0008]\n---\n\n## Summary\nx\n`,
   );
+  // GL-0326: Touches-path overlap — WS-0010/WS-0011 share a path, WS-0012 is
+  // done and WS-0014 dropped (not counted), WS-0013 names another repo
+  for (const [n, status, touches] of [
+    ["0010", "ready", "self: src/shared.ts"],
+    ["0011", "ready", "self: src/shared.ts"],
+    ["0012", "done", "self: src/shared.ts"],
+    ["0013", "ready", "other: src/shared.ts"],
+    ["0014", "dropped", "self: src/shared.ts"],
+  ] as const) {
+    const id = `WS-${n}`;
+    writeFileSync(
+      join(plans, "items", "WS", `${id}.md`),
+      `---\nid: ${id}\ntype: task\ntitle: overlap ${n}\nstatus: ${status}\nversion: 1\n${n === "0010" ? 'targets: ["@self:src/t10.ts"]\n' : ""}---\n\n**Touches:** ${touches}\n\n## Summary\nx\n`,
+    );
+  }
   for (const a of [
     ["init", "-b", "main"],
     ["config", "user.email", "t@t"],
@@ -441,6 +456,21 @@ describe("plain-HTTP agent API", () => {
     expect((await call("GET", "/agent/next?limit=20", { token: pt })).text).toContain(
       "nothing ready",
     );
+  });
+
+  it("touches overlap: claim succeeds but warns, brief warns; done/dropped/other repos don't count", async () => {
+    const t = await hello("overlapper");
+    // two ready items share self: src/shared.ts — claiming one warns about the other
+    const claim = await call("POST", "/agent/claim/WS-0010", { token: t });
+    expect(claim.status).toBe(200);
+    expect(claim.text).toMatch(/^claimed WS-0010/);
+    expect(claim.text).toContain("warn: WS-0011 touches self: src/shared.ts");
+    expect(claim.text).not.toContain("WS-0012"); // done — not counted
+    expect(claim.text).not.toContain("WS-0014"); // dropped — not counted
+    expect(claim.text).not.toContain("WS-0013"); // same path, different repo
+    // brief shows the same warning (WS-0010 is now in_progress, still counted)
+    const brief = await call("GET", "/agent/brief/WS-0011", { token: t });
+    expect(brief.text).toContain("warn: WS-0010 touches self: src/shared.ts");
   });
 });
 

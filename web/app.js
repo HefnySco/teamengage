@@ -1252,6 +1252,9 @@ const Board = ({ onOpen }) => {
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
+                        ${(i.overlap ?? []).length > 0 && html`<span class="badge text-bg-warning"
+                          title=${`Touches overlap — warning only:\n${i.overlap.map((o) => `${o.id}: ${o.paths.join(", ")}`).join("\n")}`}
+                          onClick=${(e) => { e.stopPropagation(); onOpen(i.overlap[0].id); }}>overlap</span>`}
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
                           title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.needs_human ? "\nflagged for your call — never auto-accepted" : ""}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
                           AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}${i.ai_review.needs_human ? " ⚑" : ""}</span>`}

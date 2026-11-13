@@ -12,6 +12,7 @@ import {
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
+import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
@@ -447,7 +448,67 @@ export class WorkspaceOps {
       autonomy: this.wsr.ws.config.autonomy,
       autoAcceptAt: this.autoAcceptAt(it),
       autoAcceptRule: this.autoAcceptRuleLabel(it),
+      overlap: await this.touchOverlaps(id),
     };
+  }
+
+  /**
+   * The item's `**Touches:**` entries — the overlay task file for overlay
+   * items, the item file itself otherwise (GL-0326).
+   */
+  private async touchesOf(it: IndexedItem): Promise<Touch[]> {
+    let text = "";
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      text =
+        (await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source))?.text ?? "";
+    } else {
+      text = await readFile(join(this.wsr.ws.plansDir, it.path), "utf8").catch(() => "");
+    }
+    return parseTouches(text);
+  }
+
+  /**
+   * Open items whose Touches paths overlap `id`'s — a warning, never a
+   * refusal (GL-0326). Only items an agent could pick up or is working on
+   * count: ready or in_progress leaf items, not archived, not done/dropped.
+   */
+  async touchOverlaps(id: string): Promise<{ id: string; paths: string[] }[]> {
+    const mine = await this.touchesOf(this.item(id));
+    if (!mine.length) return [];
+    const out: { id: string; paths: string[] }[] = [];
+    for (const other of this.index.items.values()) {
+      if (other.meta.id === id || other.meta.archived) continue;
+      if (other.meta.type === "epic" || other.meta.type === "idea") continue;
+      if (other.meta.status !== "ready" && other.meta.status !== "in_progress") continue;
+      const paths = touchesOverlap(mine, await this.touchesOf(other));
+      if (paths.length) out.push({ id: other.meta.id, paths });
+    }
+    return out;
+  }
+
+  /** All pairwise Touches overlaps among open leaf items — for the board chip. */
+  async overlapMap(): Promise<Map<string, { id: string; paths: string[] }[]>> {
+    const open = [...this.index.items.values()].filter(
+      (i) =>
+        !i.meta.archived &&
+        i.meta.type !== "epic" &&
+        i.meta.type !== "idea" &&
+        (i.meta.status === "ready" || i.meta.status === "in_progress"),
+    );
+    const touches = new Map<string, Touch[]>();
+    for (const i of open) touches.set(i.meta.id, await this.touchesOf(i));
+    const map = new Map<string, { id: string; paths: string[] }[]>();
+    const push = (k: string, v: { id: string; paths: string[] }) =>
+      map.set(k, [...(map.get(k) ?? []), v]);
+    for (const a of open)
+      for (const b of open) {
+        if (b.meta.id <= a.meta.id) continue;
+        const paths = touchesOverlap(touches.get(a.meta.id)!, touches.get(b.meta.id)!);
+        if (!paths.length) continue;
+        push(a.meta.id, { id: b.meta.id, paths });
+        push(b.meta.id, { id: a.meta.id, paths });
+      }
+    return map;
   }
 
   /**
@@ -535,6 +596,7 @@ export class WorkspaceOps {
     claim: Claim;
     version: number;
     resumed: Array<{ resource: string; branch: string }>;
+    overlap: { id: string; paths: string[] }[];
   }> {
     const it = this.item(id);
     if (it.meta.type === "epic") {
@@ -609,7 +671,10 @@ export class WorkspaceOps {
         lines: [`- resumed prior work on branch ${res.branch} (@${res.resource})`],
       });
     }
-    return { claim, version: r.meta.version, resumed };
+    // GL-0326: warn when the claimed item's Touches paths overlap another
+    // open item's — advisory only, the claim already stands
+    const overlap = await this.touchOverlaps(id);
+    return { claim, version: r.meta.version, resumed, overlap };
   }
 
   /** Overlap check that runs inside the store's serialized write queue. */

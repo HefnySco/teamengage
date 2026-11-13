@@ -68,6 +68,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         domain: q.domain || undefined,
         q: q.q || undefined,
       });
+      const overlap = await ops.overlapMap();
       return items.map((i) => ({
         ...i.meta,
         claim: i.claim ? { ...i.claim, dead: ops.claimDead(i.claim) } : i.claim,
@@ -89,6 +90,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           ? { idea_state: i.idea_state, idea_progress: i.idea_progress }
           : {}),
         found_here: i.found_here,
+        ...(overlap.has(i.meta.id) ? { overlap: overlap.get(i.meta.id) } : {}),
       }));
     } catch (e) {
       return sendErr(reply, e);
