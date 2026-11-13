@@ -92,6 +92,12 @@ export interface IndexedItem {
   found_here: { id: string; status: Status }[];
   /** epics only: problem items found in this plan or its parts, open vs done */
   plan_problems?: { open: number; done: number };
+  /** features only: ids of the plans (epics) that name this feature */
+  feature_plans?: string[];
+  /** features only: non-epic part ids across those plans (deduped) */
+  feature_parts?: string[];
+  /** features only: done/total summed over the plans' parts (plan_progress semantics) */
+  feature_progress?: { done: number; total: number };
   /** set when the file can't be parsed — index keeps it, validator reports it */
   invalid?: string;
 }
@@ -364,6 +370,31 @@ export class Index {
       }
     }
     for (const it of this.items.values()) it.plan_problems = this.planProblems(it.meta.id);
+    // feature roll-up (GL-0331): plans naming the feature, their parts, progress
+    for (const it of this.items.values()) {
+      if (it.meta.type !== "feature") {
+        it.feature_plans = undefined;
+        it.feature_parts = undefined;
+        it.feature_progress = undefined;
+        continue;
+      }
+      const plans = [...this.items.values()].filter((p) => {
+        if (!p.meta.feature || p.meta.archived || p.meta.status === "dropped") return false;
+        try {
+          return parseItemRef(p.meta.feature).id === it.meta.id;
+        } catch {
+          return false;
+        }
+      });
+      it.feature_plans = plans.map((p) => p.meta.id);
+      const parts = new Set<string>();
+      for (const p of plans) for (const d of this.nonEpicDescendants(p.meta.id)) parts.add(d);
+      it.feature_parts = [...parts];
+      it.feature_progress = {
+        done: plans.reduce((n, p) => n + (p.plan_progress?.done ?? 0), 0),
+        total: plans.reduce((n, p) => n + (p.plan_progress?.total ?? 0), 0),
+      };
+    }
     // idea state: reverse of relates, ideas only
     const named = new Map<string, Status[]>();
     for (const it of this.items.values()) {
@@ -423,6 +454,20 @@ export class Index {
     if (!it || it.meta.type !== "epic") return undefined;
     let done = 0;
     let total = 0;
+    for (const cid of this.nonEpicDescendants(id)) {
+      const c = this.items.get(cid);
+      if (!c) continue;
+      total += 1;
+      if (c.meta.status === "done" || c.meta.status === "dropped") done += 1;
+    }
+    return { done, total };
+  }
+
+  /** All non-epic descendants of an item — the parts a plan (or feature) counts. */
+  private nonEpicDescendants(id: string): string[] {
+    const it = this.items.get(id);
+    if (!it) return [];
+    const out: string[] = [];
     const visited = new Set([id]);
     const stack = [...it.children];
     for (let cid = stack.pop(); cid !== undefined; cid = stack.pop()) {
@@ -430,14 +475,10 @@ export class Index {
       visited.add(cid);
       const c = this.items.get(cid);
       if (!c) continue;
-      if (c.meta.type === "epic") {
-        stack.push(...c.children);
-      } else {
-        total += 1;
-        if (c.meta.status === "done" || c.meta.status === "dropped") done += 1;
-      }
+      if (c.meta.type === "epic") stack.push(...c.children);
+      else out.push(cid);
     }
-    return { done, total };
+    return out;
   }
 
   /**

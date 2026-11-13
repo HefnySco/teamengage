@@ -384,6 +384,9 @@ export function transition(
       if (meta.type === "idea") {
         throw new ClaimRefusedError("ideas are sources — plan from them");
       }
+      if (meta.type === "feature") {
+        throw new ClaimRefusedError("features are deliveries — claim their plans' tasks");
+      }
       if (meta.archived) throw new InvalidTransitionError("cannot claim: item is archived — unarchive first", from, "claim");
       if (actor.kind === "daemon") throw new ForbiddenError("daemon cannot claim");
       if (ctx.planHold) {

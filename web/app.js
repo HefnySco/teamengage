@@ -883,6 +883,7 @@ const FLAG_FILTERS = {
   "ai-flagged": ["AI review flagged issues", (i) => Boolean(i.ai_review) && i.ai_review.verdict !== "ok"],
   plan: ["epic — a plan with parts", (i) => i.type === "epic"],
   idea: ["idea — a source document, never claimed", (i) => i.type === "idea"],
+  feature: ["feature — a delivery grouping, never claimed", (i) => i.type === "feature"],
   stuck: ["at max attempts, on hold, or a stale claim", (i, ctx) => isStuck(i, ctx)],
 };
 // every word must appear in id, title, project or source path. @word filters the
@@ -1291,6 +1292,7 @@ const Board = ({ onOpen }) => {
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
                       ${i.type === "idea" && html`<${IdeaChip} st=${ideaSt.get(i.id)} />`}
+                      ${i.type === "feature" && html`<span class="plan-chip ps-active" title=${`feature ${i.feature_status ?? "planned"} — ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0} parts done across ${(i.feature_plans ?? []).length} plan(s)`}>feat ${i.feature_status ?? ""} ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0}</span>`}
                       <span class="ms-auto d-flex align-items-center gap-1">
                         ${i.type === "idea" && html`<span class="te-idea" title="idea — a source document; agents plan from it, it is never claimed"><${BulbIcon} /></span>`}
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
@@ -2578,6 +2580,37 @@ const ItemView = ({ id }) => {
         <button class="btn btn-sm btn-outline-secondary py-0" title="dismiss the flag — the item stays" onClick=${() => act("unflag")}>keep</button>
       </span>
     </div>`}
+    ${it.meta.type === "feature" && b.feature && html`
+      <div class="card mb-2 p-2">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <b>feature</b>
+          <span class="plan-chip ps-active">${b.feature.status}</span>
+          <span class="text-secondary small">${b.feature.progress.done}/${b.feature.progress.total} parts done</span>
+        </div>
+        ${b.feature.plans.length === 0 && html`<div class="text-secondary small">no plan names this feature yet — set <code>feature: ${id}</code> on an epic</div>`}
+        ${b.feature.plans.map((p) => html`
+          <div key=${p.id} class="d-flex align-items-center gap-2 small py-1">
+            <a class="item id" onClick=${() => nav(`item/${p.id}`)}>${p.id}</a>
+            <span class="text-truncate" title=${p.title}>${p.title}</span>
+            ${p.plan_state && html`<span class="plan-chip ${PLAN_CHIP[p.plan_state] ?? "ps-draft"}">${p.plan_state}</span>`}
+            <span class="ms-auto d-flex align-items-center gap-2 flex-shrink-0">
+              <${PlanBar} p=${{ done: p.done, total: p.total }} />
+              <span class="text-secondary">${p.done}/${p.total}</span>
+            </span>
+          </div>`)}
+        ${b.feature.problems.length > 0 && html`
+          <div class="mt-1 small"><b>open problems</b>
+            ${b.feature.problems.map((p) => html`<div key=${p.id} class="d-flex align-items-center gap-2 py-0">
+              <a class="item id" onClick=${() => nav(`item/${p.id}`)}>${p.id}</a>
+              <span class="text-truncate" title=${p.title}>${p.title}</span>
+              <${Badge} s=${p.status} />
+            </div>`)}
+          </div>`}
+        ${b.feature.ideas.length > 0 && html`
+          <div class="mt-1 small text-secondary">from ideas:
+            ${b.feature.ideas.map((i2) => html`<a key=${i2.id} class="item id ms-1" onClick=${() => nav(`item/${i2.id}`)}>${i2.id}</a>`)}
+          </div>`}
+      </div>`}
     <div class="chain st-${st}">
       <span class="text-secondary">waits on</span>
       ${b.deps.length === 0 ? html`<span class="text-secondary">nothing</span>` : b.deps.slice(0, 4).map(depLink)}

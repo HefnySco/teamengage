@@ -317,6 +317,8 @@ export class PlansStore {
       targets?: string[];
       depends_on?: string[];
       parent?: string;
+      /** epics only: the feature this plan delivers */
+      feature?: string;
       relates?: string[];
       found_by?: string[];
       summary?: string;
@@ -332,7 +334,7 @@ export class PlansStore {
       await this.assertReady();
       await this.plansRepoHealthy();
       const { ItemMeta } = await import("../../core/model/item.js");
-      const { allocateId, idPrefix } = await import("../../core/address/refs.js");
+      const { allocateId, idPrefix, parseItemRef } = await import("../../core/address/refs.js");
       const overlay = this.ws.config.mode === "overlay";
       const ids: string[] = [];
       const files: string[] = [];
@@ -354,9 +356,27 @@ export class PlansStore {
           ...raw,
           depends_on: raw.depends_on?.map((r) => local(r, at)),
           parent: raw.parent === undefined ? undefined : local(raw.parent, at),
+          feature: raw.feature === undefined ? undefined : local(raw.feature, at),
           relates: raw.relates?.map((r) => local(r, at)),
           found_by: raw.found_by?.map((r) => local(r, at)),
         };
+        // GL-0331: the feature field is a plan→feature edge — only an epic
+        // names one, and the named item must be a feature; a feature is a
+        // flat delivery grouping, so it may not sit inside a plan.
+        if (d.feature && d.type !== "epic") {
+          throw new ValidationError(`item ${at} '${d.title}': only a plan (epic) names a feature`);
+        }
+        if (d.feature) {
+          const fid = parseItemRef(d.feature).id;
+          const inBatch = ids.indexOf(fid);
+          const ft = inBatch >= 0 ? (drafts[inBatch].type ?? "task") : this.index.items.get(fid)?.meta.type;
+          if (ft !== "feature") {
+            throw new ValidationError(`item ${at} '${d.title}': feature '${d.feature}' does not name a feature item`);
+          }
+        }
+        if (d.type === "feature" && d.parent) {
+          throw new ValidationError(`item ${at} '${d.title}': a feature may not have a parent`);
+        }
         const project = d.project;
         const prefix = project
           ? this.ws.config.projects[project]?.prefix
@@ -406,6 +426,7 @@ export class PlansStore {
           targets: d.targets ?? [],
           depends_on: d.depends_on ?? [],
           parent: d.parent,
+          feature: d.feature,
           relates: d.relates ?? [],
           ...(d.found_by?.length ? { found_by: d.found_by } : {}),
           domains: normalizeDomains(d.domains ?? []),

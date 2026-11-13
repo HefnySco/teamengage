@@ -69,6 +69,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         q: q.q || undefined,
       });
       const overlap = await ops.overlapMap();
+      // derived feature statuses — one release-dir scan for the whole list
+      const featStatus = items.some((i) => i.meta.type === "feature")
+        ? await ops.featureStatusMap()
+        : new Map<string, string>();
       return items.map((i) => ({
         ...i.meta,
         claim: i.claim ? { ...i.claim, dead: ops.claimDead(i.claim) } : i.claim,
@@ -88,6 +92,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           : {}),
         ...(i.meta.type === "idea"
           ? { idea_state: i.idea_state, idea_progress: i.idea_progress }
+          : {}),
+        ...(i.meta.type === "feature"
+          ? {
+              feature_status: featStatus.get(i.meta.id),
+              feature_progress: i.feature_progress,
+              feature_plans: i.feature_plans,
+            }
           : {}),
         found_here: i.found_here,
         ...(overlap.has(i.meta.id) ? { overlap: overlap.get(i.meta.id) } : {}),
@@ -606,6 +617,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           targets: list("targets"),
           depends_on: list("depends_on"),
           parent: d.parent === undefined ? undefined : String(d.parent),
+          feature: d.feature === undefined ? undefined : String(d.feature),
           relates: list("relates"),
           found_by: list("found_by"),
           summary: d.summary === undefined ? undefined : String(d.summary),

@@ -11,7 +11,7 @@ import {
 } from "../../core/domains/domains.js";
 import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
-import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
+import { depSatisfied, isProblemItem, type IndexedItem } from "../../core/index/index.js";
 import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
@@ -33,6 +33,7 @@ import {
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
+import { releaseItemSets } from "../../core/files/releases.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
@@ -466,7 +467,85 @@ export class WorkspaceOps {
       autoAcceptAt: this.autoAcceptAt(it),
       autoAcceptRule: this.autoAcceptRuleLabel(it),
       overlap: await this.touchOverlaps(id),
+      ...(it.meta.type === "feature" ? { feature: await this.featureView(it) } : {}),
     };
+  }
+
+  /**
+   * A feature's derived lifecycle (GL-0331, DESIGN §15.1): `planned` while no
+   * part is done, `in_progress` once work lands, `shipped` when one release
+   * contains every accepted part of its plans.
+   */
+  async featureStatus(it: IndexedItem): Promise<"planned" | "in_progress" | "shipped"> {
+    const accepted = (it.feature_parts ?? []).filter(
+      (p) => this.index.items.get(p)?.meta.status === "done",
+    );
+    if (!accepted.length) return "planned";
+    const sets = await releaseItemSets(this.wsr.ws.plansDir);
+    if (sets.some((s) => accepted.every((id) => s.has(id)))) return "shipped";
+    return "in_progress";
+  }
+
+  /**
+   * The feature page's payload: derived status, progress, the plans that name
+   * it with their own progress, open found problems under those plans, and the
+   * ideas it came from.
+   */
+  async featureView(it: IndexedItem) {
+    const plans = (it.feature_plans ?? []).map((pid) => {
+      const p = this.index.items.get(pid);
+      return {
+        id: pid,
+        title: p?.meta.title ?? pid,
+        status: p?.meta.status ?? "unknown",
+        plan_state: p?.plan_state,
+        done: p?.plan_progress?.done ?? 0,
+        total: p?.plan_progress?.total ?? 0,
+      };
+    });
+    // problems under the plans: found_here items plus problem parts — the
+    // same set planProblems counts, kept as a list for the page
+    const problems = new Map<string, { id: string; title: string; status: string }>();
+    for (const pid of it.feature_plans ?? []) {
+      for (const nid of [pid, ...this.index.descendants(pid)]) {
+        const n = this.index.items.get(nid);
+        if (!n) continue;
+        for (const f of n.found_here) {
+          const fi = this.index.items.get(f.id);
+          if (fi && fi.meta.status !== "dropped") {
+            problems.set(f.id, { id: f.id, title: fi.meta.title, status: fi.meta.status });
+          }
+        }
+        if (nid !== pid && isProblemItem(n.meta) && n.meta.status !== "dropped") {
+          problems.set(nid, { id: nid, title: n.meta.title, status: n.meta.status });
+        }
+      }
+    }
+    const ideas = it.meta.relates
+      .map((ref) => {
+        try {
+          return this.index.items.get(parseItemRef(ref).id);
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((d): d is IndexedItem => d?.meta.type === "idea")
+      .map((d) => ({ id: d.meta.id, title: d.meta.title, idea_state: d.idea_state }));
+    return {
+      status: await this.featureStatus(it),
+      progress: it.feature_progress ?? { done: 0, total: 0 },
+      plans,
+      problems: [...problems.values()],
+      ideas,
+    };
+  }
+
+  /** Feature id → derived status, for the items list (release files read once). */
+  async featureStatusMap(): Promise<Map<string, string>> {
+    const feats = [...this.index.items.values()].filter((i) => i.meta.type === "feature");
+    const out = new Map<string, string>();
+    for (const f of feats) out.set(f.meta.id, await this.featureStatus(f));
+    return out;
   }
 
   /**
@@ -1163,6 +1242,7 @@ export class WorkspaceOps {
       targets?: string[];
       depends_on?: string[];
       parent?: string;
+      feature?: string;
       relates?: string[];
       found_by?: string[];
       summary?: string;

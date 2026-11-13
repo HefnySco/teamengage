@@ -639,6 +639,8 @@ export function registerWriteTools(
             targets: z.array(z.string()).optional(),
             depends_on: z.array(z.string()).optional(),
             parent: z.string().optional(),
+            /** epics only: the feature this plan delivers — a feature id (never claimed, status derived) */
+            feature: z.string().optional(),
             relates: z.array(z.string()).optional(),
             found_by: z.array(z.string()).optional(),
             summary: z.string().optional(),

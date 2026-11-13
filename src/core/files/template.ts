@@ -83,8 +83,8 @@ export function slugify(title: string): string {
 }
 
 /** `TASK` for work items, `PHASE` for epics, `IDEA` for source documents. */
-export function filePrefix(type: string): "TASK" | "PHASE" | "IDEA" {
-  return type === "epic" ? "PHASE" : type === "idea" ? "IDEA" : "TASK";
+export function filePrefix(type: string): "TASK" | "PHASE" | "IDEA" | "FE" {
+  return type === "epic" ? "PHASE" : type === "idea" ? "IDEA" : type === "feature" ? "FE" : "TASK";
 }
 
 /**

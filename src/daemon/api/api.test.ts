@@ -1705,3 +1705,84 @@ describe("shared lessons per domain (GL-0322)", () => {
     expect(ls.length).toBe(3);
   });
 });
+
+describe("feature item and feature page (GL-0331)", () => {
+  it("propose makes a feature, a plan names it, claim refuses it, the view rolls up", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+
+    // a feature plus a plan naming it plus two parts, one batch (#-refs)
+    const { ids } = await store.createItems(
+      [
+        { type: "feature", title: "Mesh failover", domains: ["teamengage"] },
+        { type: "epic", title: "Failover plan", feature: "#0", domains: ["teamengage"] },
+        { type: "task", title: "part one", parent: "#1", domains: ["teamengage"] },
+        { type: "task", title: "part two", parent: "#1", domains: ["teamengage"] },
+      ],
+      human,
+    );
+    const [feat, plan, p1] = ids;
+    const f = store.idx.get(feat)!;
+    expect(f.meta.type).toBe("feature");
+    expect(f.feature_plans).toEqual([plan]);
+    expect(f.feature_progress).toEqual({ done: 0, total: 2 });
+    expect(await ops.featureStatus(f)).toBe("planned");
+
+    // never claimed — approve it first so the type check (not the draft
+    // gate) is what refuses, same as an approved idea
+    await ops.approve(feat);
+    const s = ctx.sessions.hello("coder-x");
+    await expect(ops.claim(feat, s)).rejects.toThrow(/features are deliveries/);
+
+    // finish one part → in_progress; the plan's progress lands on the view
+    await ops.approve(p1);
+    await ops.claim(p1, s);
+    await ops.submit(p1, s, { walkthrough: "did it" });
+    await ops.accept(p1, human);
+    const view = await ops.featureView(store.idx.get(feat)!);
+    expect(view.status).toBe("in_progress");
+    expect(view.progress).toEqual({ done: 1, total: 2 });
+    expect(view.plans[0]).toMatchObject({ id: plan, done: 1, total: 2 });
+
+    // a release containing every accepted part → shipped
+    mkdirSync(join(plans, "releases"), { recursive: true });
+    writeFileSync(
+      join(plans, "releases", "r1.release.yaml"),
+      `id: r1\nitems:\n  - { item: ${p1}, title: part one }\n`,
+    );
+    expect(await ops.featureStatus(store.idx.get(feat)!)).toBe("shipped");
+
+    // the board's feature filter sees it through /api/items
+    const res = await api("/api/items?type=feature&ws=ws");
+    const rows = (await res.json()) as Array<{ id: string; feature_status: string }>;
+    expect(rows.find((r) => r.id === feat)?.feature_status).toBe("shipped");
+  });
+
+  it("refuses a feature on a non-plan and a parent on a feature", async () => {
+    const wsr = ctx.workspaces.get("ws")!;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "feature", title: "F2", domains: ["teamengage"] },
+        { type: "task", title: "p", domains: ["teamengage"] },
+      ],
+      human,
+    );
+    const [feat, task] = ids;
+    // a task may not name a feature — only a plan does
+    await expect(
+      wsr.store.createItems([{ type: "task", title: "x", feature: feat, domains: ["teamengage"] }], human),
+    ).rejects.toThrow(/only a plan/);
+    // a task may not be named as a feature either
+    await expect(
+      wsr.store.createItems([{ type: "epic", title: "e", feature: task, domains: ["teamengage"] }], human),
+    ).rejects.toThrow(/does not name a feature/);
+    // a feature is flat — never inside a plan
+    await expect(
+      wsr.store.createItems([{ type: "feature", title: "x", parent: task, domains: ["teamengage"] }], human),
+    ).rejects.toThrow(/may not have a parent/);
+  });
+});

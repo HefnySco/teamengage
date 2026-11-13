@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ItemId, ItemRef, TargetRef, Name, DateStr } from "./refs.js";
 
-export const ItemType = z.enum(["epic", "task", "bug", "wish", "spike", "review", "idea"]);
+export const ItemType = z.enum(["epic", "task", "bug", "wish", "spike", "review", "idea", "feature"]);
 export type ItemType = z.infer<typeof ItemType>;
 
 /** Stored statuses. `blocked` and `turn` are derived, never stored (DESIGN §5). */
@@ -139,6 +139,8 @@ export const ItemMeta = z
     targets: z.array(TargetRef).default([]),
     depends_on: z.array(ItemRef).default([]),
     parent: ItemRef.optional(),
+    /** epics only: the feature this plan delivers — tasks reach it through their parent (GL-0331) */
+    feature: ItemRef.optional(),
     relates: z.array(ItemRef).default([]),
     /** items where the problem this item fixes was found — reference only, no ordering, no gate; omitted when empty */
     found_by: z.array(ItemRef).optional(),
