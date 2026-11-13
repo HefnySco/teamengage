@@ -114,6 +114,10 @@ auto_accept_rules: # solo: ordered rules; first match sets the item's delay
   - { domains: [meta], after: never } #   never = the accept stays the human's
 auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
 auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
+notify: # unset = off: alert the human on decision events (§5)
+  - { on: question, command: "./scripts/ping.sh" } # runs with the event JSON on stdin
+  - { on: needs_human, url: "https://example/hook" } # or POSTs the JSON
+  # on: question | needs_human | max_attempts | ops_gate | digest
 projects:
   mission_planner: { prefix: MP }
   global: { prefix: GL }
@@ -386,6 +390,13 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   to `ready` — the worktree and the branch stay for the next claimant.
   `in_review` items and claims held on other machines are never released;
   each release lands in the event log and the item log with actor `daemon`.
+- `notify` (workspace.yaml, unset = off) alerts the human on events that
+  need a decision — a question asked, a `flag_drop` or `needs_human`
+  review, an item held at `max_attempts`, an ops job parked at a gate, or
+  the daily digest (posted once per UTC day). Each rule is
+  `{on, command | url}`: the daemon runs the command with the event JSON on
+  stdin or POSTs the JSON to the url. One alert per event per rule; a
+  failed alert is logged and never stops the daemon.
 
 ## 6. Concurrency — the core
 

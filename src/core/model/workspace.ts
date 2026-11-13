@@ -84,6 +84,29 @@ export const AutoAcceptRule = z.object({
 });
 export type AutoAcceptRule = z.infer<typeof AutoAcceptRule>;
 
+/**
+ * One entry of `notify` (GL-0327): fire an alert when an event of kind `on`
+ * needs the human's decision. The daemon runs `command` with the event JSON
+ * on stdin, or POSTs the JSON to `url`. One alert per event per rule; a
+ * failed alert is logged, never fatal.
+ */
+export const NOTIFY_ON = [
+  "question",
+  "needs_human",
+  "max_attempts",
+  "ops_gate",
+  "digest",
+] as const;
+export type NotifyOn = (typeof NOTIFY_ON)[number];
+export const NotifyRule = z
+  .object({
+    on: z.enum(NOTIFY_ON),
+    command: z.string().optional(),
+    url: z.string().optional(),
+  })
+  .refine((r) => r.command || r.url, { message: "notify needs command or url" });
+export type NotifyRule = z.infer<typeof NotifyRule>;
+
 /** `<plans>/workspace.yaml` (DESIGN §4). */
 export const WorkspaceConfig = z
   .object({
@@ -142,6 +165,11 @@ export const WorkspaceConfig = z
     escalate_after: z.number().int().min(1).default(2),
     /** After this many failed attempts the item is put on hold for the human. */
     max_attempts: z.number().int().min(1).default(5),
+    /**
+     * Alert the human on events that need a decision (GL-0327) — a list of
+     * {on, command | url} rules; see NotifyRule. Unset: nothing runs.
+     */
+    notify: z.array(NotifyRule).default([]),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */

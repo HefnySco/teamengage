@@ -90,8 +90,8 @@ export class PlansStore {
   private index!: Index;
   private events!: EventLog;
   private ready = false;
-  /** Called for each committed event (SSE fan-out). */
-  onEvent?: (ev: Event) => void;
+  /** Called for each committed event (SSE fan-out; meta is the item's new meta). */
+  onEvent?: (ev: Event, meta?: ItemMeta) => void;
   /**
    * Called after every file the store writes or deletes (absolute path;
    * content=null for deletes) — the watcher subscribes so daemon writes
@@ -270,7 +270,7 @@ export class PlansStore {
         // else it lingers untracked and never syncs
         eventFiles.add(join("events", this.machine, eventFileName(full.ts)));
         events.push(full);
-        this.onEvent?.(full);
+        this.onEvent?.(full, newMeta);
       }
 
       await this.commitPaths(

@@ -20,6 +20,7 @@ import { renameMachine } from "../../core/ops/rename.js";
 import { resolveWorkspace } from "../../core/config/config.js";
 import { hostname } from "node:os";
 import { checkRemoteTargetLock, commitPlans } from "../sync/sync.js";
+import { fireNotify, gateWait } from "../effects/notify.js";
 import { ForbiddenError, NotFoundError, ParseError, ValidationError } from "../../core/model/errors.js";
 import { tierRank } from "../../core/model/item.js";
 import type { DaemonCtx } from "../server/context.js";
@@ -282,6 +283,21 @@ async function mutate<T>(
   const store = jobStore(wsr, ctx);
   const out = await wsr.store.enqueue(() => fn(store));
   await commitPlans(wsr, message(out));
+  // GL-0327: a job that just parked on a gate step is a decision for the human
+  if (out && typeof out === "object" && "status" in out) {
+    const job = out as unknown as Job;
+    if (job.status === "waiting") {
+      try {
+        const gate = gateWait(job, playbookOf(wsr, job));
+        if (gate)
+          void fireNotify(wsr.ws, "ops_gate", { job: job.id, ...gate }).catch((e: Error) =>
+            ctx.bus.notify("notify", { workspace: wsr.ws.config.name, message: `notify failed: ${e.message}` }),
+          );
+      } catch {
+        /* a missing playbook never blocks the mutation — findings report it */
+      }
+    }
+  }
   return out;
 }
 

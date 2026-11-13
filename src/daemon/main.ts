@@ -26,6 +26,7 @@ import { registerWriteTools } from "../mcp/tools/write.js";
 import { parseDuration } from "../core/model/workspace.js";
 import { reconcile } from "./sync/sync.js";
 import { WorkspaceOps } from "./api/ops.js";
+import { fireNotify, notifyKind } from "./effects/notify.js";
 
 
 /** Default agent-facing port — a stable URL for `GET /agent`. */
@@ -138,7 +139,15 @@ async function main(): Promise<number | undefined> {
       const ws = resolveWorkspace(entry.root, { home });
       const store = new PlansStore(ws, machine);
       await store.init();
-      store.onEvent = (ev) => ctx.bus.publish(ev);
+      store.onEvent = (ev, meta) => {
+        ctx.bus.publish(ev);
+        // GL-0327: decision events alert the human through notify: rules
+        const kind = notifyKind(ev, meta, ws.config.max_attempts);
+        if (kind)
+          fireNotify(ws, kind, { event: ev }).catch((err: Error) =>
+            ctx.bus.notify("notify", { workspace: name, message: `notify failed: ${err.message}` }),
+          );
+      };
       const links = await LinkedWorkspaces.load(ws, home);
       const watcher = new PlansWatcher(store, {
         staleAfterMs: parseDuration(ws.config.stale_after),
@@ -221,6 +230,7 @@ async function main(): Promise<number | undefined> {
   // autonomy: solo — accept submissions whose ok review has aged past
   // auto_accept_after; auto_archive_after — archive items finished past the
   // duration (strict workspaces / unset keys return nothing)
+  const digestSent = new Map<string, string>(); // workspace → last UTC day a digest alert went out
   const autoTimer = setInterval(() => {
     for (const [name, wsr] of ctx.workspaces) {
       const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
@@ -239,6 +249,14 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_release", { workspace: name, message: `auto-released ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_release", { workspace: name, message: `auto-release failed: ${err.message}` }));
+      // GL-0327: a `digest` rule posts the day's digest once per UTC day
+      const day = new Date().toISOString().slice(0, 10);
+      if (wsr.ws.config.notify.some((r) => r.on === "digest") && digestSent.get(name) !== day) {
+        digestSent.set(name, day);
+        ops.digest()
+          .then((d) => fireNotify(wsr.ws, "digest", { digest: d }))
+          .catch((err: Error) => ctx.bus.notify("notify", { workspace: name, message: `digest notify failed: ${err.message}` }));
+      }
     }
   }, 60_000);
   autoTimer.unref();
