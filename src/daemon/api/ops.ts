@@ -983,6 +983,68 @@ export class WorkspaceOps {
 
   // ---- human writes -------------------------------------------------------
 
+  /**
+   * One human batch action over the ids the UI has in view (GL-0316). The
+   * daemon re-checks every id, so a stale view can never act on the wrong
+   * item: accept needs an ok AI review without needs_human (a stopped
+   * auto-accept keeps its item too), approve needs draft, archive needs
+   * done/dropped. With `plan`, approve targets the plan's draft children and
+   * `ids` — when sent — only limits that set. What refused is returned
+   * skipped, never thrown.
+   */
+  async batch(
+    op: "accept" | "approve" | "archive",
+    body: { ids?: string[]; plan?: string },
+  ): Promise<{ done: string[]; skipped: { id: string; reason: string }[] }> {
+    let ids = (body.ids ?? []).map((s) => s.toUpperCase());
+    if (op === "approve" && body.plan) {
+      const pid = body.plan.toUpperCase();
+      const parts = (this.index.get(pid)?.children ?? []).filter(
+        (cid) => this.index.get(cid)?.meta.status === "draft",
+      );
+      ids = ids.length ? parts.filter((id) => ids.includes(id)) : parts;
+    }
+    const done: string[] = [];
+    const skipped: { id: string; reason: string }[] = [];
+    for (const id of ids) {
+      try {
+        const it = this.item(id);
+        const m = it.meta;
+        if (op === "accept") {
+          if (m.status !== "in_review") {
+            skipped.push({ id, reason: `not in_review (${m.status})` });
+            continue;
+          }
+          if (m.ai_review?.verdict !== "ok") {
+            skipped.push({ id, reason: "no ok AI review" });
+            continue;
+          }
+          if (m.ai_review.needs_human) {
+            skipped.push({ id, reason: "needs_human review" });
+            continue;
+          }
+          if (m.auto_accept_off) {
+            skipped.push({ id, reason: "auto-accept stopped" });
+            continue;
+          }
+          await this.accept(id);
+        } else if (op === "approve") {
+          await this.approve(id);
+        } else {
+          if (m.status !== "done" && m.status !== "dropped") {
+            skipped.push({ id, reason: `not finished (${m.status})` });
+            continue;
+          }
+          await this.archive(id);
+        }
+        done.push(id);
+      } catch (e) {
+        skipped.push({ id, reason: (e as Error).message });
+      }
+    }
+    return { done, skipped };
+  }
+
   async approve(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), {

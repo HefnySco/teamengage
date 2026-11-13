@@ -1044,6 +1044,86 @@ describe("auto_release_after", () => {
   });
 });
 
+describe("batch actions", () => {
+  it("accept all takes the ok-reviewed, approve takes a plan's drafts, archive takes finished — agents get FORBIDDEN", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "ok one" },
+        { type: "task", title: "ok two" },
+        { type: "task", title: "ok three" },
+        { type: "task", title: "bad review" },
+        { type: "task", title: "nh review" },
+        { type: "epic", title: "draft plan" },
+        { type: "task", title: "draft part a" },
+        { type: "task", title: "draft part b" },
+        { type: "task", title: "fin a" },
+        { type: "task", title: "fin b" },
+      ],
+      human,
+    );
+    const [ok1, ok2, ok3, bad, nh, epic, da, db, fa, fb] = ids;
+    const agent = ctx.sessions.hello("batch-agent");
+    const reviewer = ctx.sessions.hello("batch-reviewer");
+    for (const id of [ok1, ok2, ok3, bad, nh]) {
+      await ops.approve(id);
+      await ops.claim(id, agent);
+      await ops.submit(id, agent, {});
+    }
+    await ops.review(ok1, reviewer, "ok");
+    await ops.review(ok2, reviewer, "ok");
+    await ops.review(ok3, reviewer, "ok");
+    await ops.review(bad, reviewer, "issues", "broken");
+    await ops.review(nh, reviewer, "ok", "risky bit", "wants your eyes", true);
+    await ops.setParent(da, epic);
+    await ops.setParent(db, epic);
+    await ops.complete(fa);
+    await ops.complete(fb);
+
+    const call = (body: unknown, headers: Record<string, string> = {}) =>
+      api("/api/batch", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      }).then((r) => r.json().then((j) => ({ status: r.status, j })));
+
+    // an agent session identity on the batch route is refused
+    expect((await call({ op: "accept", ids: [ok1] }, { "x-te-session": "agent-x" })).status).toBe(403);
+    // a bad op is a usage error
+    expect((await call({ op: "frotz", ids: [] })).status).toBe(400);
+
+    // accept all in view: 3 ok go done, issues + needs_human are skipped
+    const accept = await call({ op: "accept", ids: [ok1, ok2, ok3, bad, nh] });
+    expect(accept.j.done.sort()).toEqual([ok1, ok2, ok3].sort());
+    expect(accept.j.skipped.map((s: { id: string }) => s.id).sort()).toEqual([bad, nh].sort());
+    expect(store.idx.get(ok1)!.meta.status).toBe("done");
+    expect(store.idx.get(nh)!.meta.status).toBe("in_review");
+    // each accepted item wrote its own accept event
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const evs = (await readAllEvents(join(wsr.ws.plansDir, "events"))).events;
+    for (const id of [ok1, ok2, ok3]) {
+      expect(evs.some((e) => e.item === id && e.action === "accept")).toBe(true);
+    }
+
+    // approve all parts of the plan — server computes the draft children
+    const approve = await call({ op: "approve", plan: epic });
+    expect(approve.j.done.sort()).toEqual([da, db].sort());
+    expect(store.idx.get(da)!.meta.status).toBe("ready");
+    expect(store.idx.get(db)!.meta.status).toBe("ready");
+
+    // archive finished — an unfinished id is skipped, not archived
+    const archive = await call({ op: "archive", ids: [fa, fb, da] });
+    expect(archive.j.done.sort()).toEqual([fa, fb].sort());
+    expect(archive.j.skipped.map((s: { id: string }) => s.id)).toEqual([da]);
+    expect(store.idx.get(fa)!.meta.archived).toBe(true);
+    expect(store.idx.get(da)!.meta.archived).toBeUndefined();
+  });
+});
+
 describe("drop flags: agent asks, human decides", () => {
   it("flag → inbox → unflag keeps it; flag → drop drops it and clears the flag", async () => {
     const { WorkspaceOps } = await import("./ops.js");

@@ -663,10 +663,25 @@ const Inbox = ({ onOpen }) => {
   // when the picked group runs empty (or never had anything) fall back to all
   const effKind = (kind === "updated" && updatedItems.length > 0) || groups.some((g) => g.key === kind && g.n > 0) ? kind : "all";
   const shownGroups = groups.filter((g) => g.n > 0 && (effKind === "all" || g.key === effKind));
+  // accept-all: the ok-reviewed submissions in view — issues, needs_human,
+  // unreviewed and stopped auto-accepts are never in the batch
+  const acceptables = view.reviews.filter((id) => {
+    const i = byId[id];
+    const r = i?.ai_review;
+    return i && !i.archived && r?.verdict === "ok" && !r.needs_human && !i.auto_accept_off;
+  });
+  const acceptAll = async () => {
+    if (!(await confirmDialog(`accept ${acceptables.length} reviewed item(s)?`, acceptables.map((id) => `${id} — ${title(id)}`).join("\n"), { ok: `accept ${acceptables.length}` }))) return;
+    const r = await post("/api/batch", { op: "accept", ids: acceptables }).catch((e) => (toast(e.message), null));
+    if (!r) return;
+    toast(r.skipped?.length ? `skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}` : `accepted ${r.done.length}`, r.skipped?.length ? "danger" : "success");
+    await Promise.all([reload(), reloadAll()]);
+  };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload(), reloadAll(), refreshDomains()])} />
+      ${acceptables.length > 0 && html`<button class="btn btn-sm btn-success" title="accept every ok-reviewed submission in view — issues, needs_human and unreviewed stay" onClick=${acceptAll}>accept all ${acceptables.length}</button>`}
       <span class="position-relative">
         <${SearchBox}
           style=${{ maxWidth: "24rem" }}
@@ -1211,6 +1226,16 @@ const PlanNode = ({ i, depth, tree }) => {
   const isPlan = i.type === "epic";
   const isOpen = isPlan && tree.isOpenOf(i, depth);
   const children = tree.kids.get(i.id) ?? [];
+  // approve-all-parts: the plan's draft children, one confirm for the lot
+  const draftParts = children.filter((c) => c.status === "draft");
+  const approveParts = async (e) => {
+    e.stopPropagation();
+    if (!(await confirmDialog(`approve ${draftParts.length} draft part(s) of ${i.id}?`, draftParts.map((c) => `${c.id} — ${c.title}`).join("\n"), { ok: `approve ${draftParts.length}` }))) return;
+    const r = await post("/api/batch", { op: "approve", plan: i.id }).catch((e2) => (toast(e2.message), null));
+    if (!r) return;
+    if (r.skipped?.length) toast(`skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}`);
+    tree.reload();
+  };
   const shown = tree.words.length ? children.filter(tree.subtreeMatches) : children;
   return html`
     <div>
@@ -1231,7 +1256,10 @@ const PlanNode = ({ i, depth, tree }) => {
         ${i.paused && html`<span class="small text-warning-emphasis" title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} /><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
-        ${isPlan && html`<span class="acts"><${ActBtn} title="open this plan's dependency graph"
+        ${isPlan && html`<span class="acts">
+          ${draftParts.length > 0 && html`<${ActBtn} variant="primary" title=${`approve the ${draftParts.length} draft part(s) of this plan — they become ready for agents`}
+            onClick=${approveParts}><${CheckIcon} /></${ActBtn}>`}
+          <${ActBtn} title="open this plan's dependency graph"
           onClick=${(e) => {
             e.stopPropagation(); // the row itself opens the item
             nav(`graph/${i.id}`);
@@ -1312,11 +1340,28 @@ const Plans = ({ onOpen }) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
   };
+  // archive-finished: the done/dropped items the page renders right now
+  const inView = new Set();
+  const collect = (i) => {
+    inView.add(i.id);
+    const children = kids.get(i.id) ?? [];
+    (words.length ? children.filter(subtreeMatches) : children).forEach(collect);
+  };
+  visible.forEach(collect);
+  const finished = data.filter((i) => inView.has(i.id) && doneish(i.status) && !i.archived).map((i) => i.id);
+  const archiveFinished = async () => {
+    if (!(await confirmDialog(`archive ${finished.length} finished item(s) in view?`, finished.map((id) => `${id} — ${items.get(id)?.title ?? ""}`).join("\n"), { ok: `archive ${finished.length}` }))) return;
+    const r = await post("/api/batch", { op: "archive", ids: finished }).catch((e) => (toast(e.message), null));
+    if (!r) return;
+    toast(r.skipped?.length ? `skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}` : `archived ${r.done.length}`, r.skipped?.length ? "danger" : "success");
+    reload();
+  };
   const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload(), refreshDomains()])} />
+      ${finished.length > 0 && html`<button class="btn btn-sm btn-outline-secondary" title="archive every done or dropped item in view" onClick=${archiveFinished}>archive finished ${finished.length}</button>`}
       <${SearchBox}
         style=${{ maxWidth: "24rem" }}
         placeholder="search plans and their tasks…"

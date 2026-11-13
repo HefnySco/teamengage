@@ -570,6 +570,28 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   });
 
   // ---- human actions -------------------------------------------------------
+
+  // batch actions (GL-0316): accept all ok reviews / approve all parts of a
+  // plan / archive finished — one call, one event per item, human-only
+  app.post("/api/batch", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("batch actions are human-only");
+      }
+      const b = (req.body ?? {}) as { op?: string; ids?: unknown; plan?: unknown };
+      if (b.op !== "accept" && b.op !== "approve" && b.op !== "archive") {
+        throw new TeError("USAGE", `batch op must be accept|approve|archive, got '${b.op}'`);
+      }
+      const ops = opsFor(ctx, wsOf(req.query));
+      return await ops.batch(b.op, {
+        ids: Array.isArray(b.ids) ? b.ids.map(String) : [],
+        plan: typeof b.plan === "string" ? b.plan : undefined,
+      });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   const act = (
     path: string,
     fn: (ops: WorkspaceOps, id: string, body: Record<string, unknown>) => Promise<unknown>,
