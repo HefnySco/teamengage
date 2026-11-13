@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Prefix } from "./refs.js";
+import { Tier } from "./item.js";
 
 /**
  * Resource kinds (DESIGN §4, §6.3). A `git` resource is either a local checkout
@@ -70,6 +71,19 @@ export const ProjectConfig = z
   .passthrough();
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 
+/**
+ * One entry of `auto_accept_rules`: every listed condition must match
+ * (`domains` = the item carries each listed domain). `after` is a duration
+ * string or `never` — never keeps the item for the human.
+ */
+export const AutoAcceptRule = z.object({
+  tier: Tier.optional(),
+  project: z.string().optional(),
+  domains: z.array(z.string()).optional(),
+  after: z.string(),
+});
+export type AutoAcceptRule = z.infer<typeof AutoAcceptRule>;
+
 /** `<plans>/workspace.yaml` (DESIGN §4). */
 export const WorkspaceConfig = z
   .object({
@@ -99,6 +113,15 @@ export const WorkspaceConfig = z
     autonomy: z.enum(["strict", "solo"]).default("strict"),
     /** solo: delay between an `ok` peer review and the daemon's auto-accept. */
     auto_accept_after: z.string().default("30m"),
+    /**
+     * solo: ordered accept rules — the first that matches an item sets its
+     * delay instead of auto_accept_after. A rule lists the conditions it
+     * needs (all must match): `tier` (item tier, unset items match only a
+     * tier-less rule), `project`, `domains` (the item must carry every listed
+     * domain). `after` is a duration or `never` — never keeps the item for
+     * the human. Items no rule matches use auto_accept_after.
+     */
+    auto_accept_rules: z.array(AutoAcceptRule).default([]),
     /**
      * Routine sweep, unset = off: the daemon archives an item that has been
      * done or dropped for longer than this duration. A starred item is never

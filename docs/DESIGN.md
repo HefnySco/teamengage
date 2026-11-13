@@ -108,6 +108,9 @@ sync: manual                     # manual | auto  (§6.5)
 stale_after: 24h                 # inactive agent claim → flagged stale
 autonomy: strict                 # strict | solo  (§5 — solo: fewer human gates)
 auto_accept_after: 30m           # solo: ok peer review → daemon accepts after this
+auto_accept_rules:               # solo: ordered rules; first match sets the item's delay
+  - { tier: light, after: 5m }   #   conditions (all must match): tier, project, domains
+  - { domains: [meta], after: never }   #   never = the accept stays the human's
 auto_archive_after: 7d           # unset = off: daemon archives items done/dropped longer than this (§5)
 auto_release_after: 24h          # unset = off: daemon releases dead-session claims stale longer than this (§5)
 projects:
@@ -345,7 +348,12 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
     auto-accepted); a resubmit, bounce or `issues` verdict resets the clock. A
     reviewer's own `needs_human` flag ("ok, but the human should decide")
     exempts the submission the same way — no countdown is armed. Archived items
-    and human claims are skipped.
+    and human claims are skipped. `auto_accept_rules` refines the delay per
+    item: an ordered list of `{tier?, project?, domains?, after}` — the first
+    rule whose conditions all match wins (the item must carry every listed
+    domain), `after: never` keeps the accept the human's, and unmatched
+    items fall back to `auto_accept_after`. The item page names the rule
+    behind its countdown.
   Everything else stays human-only in both modes: pushing, drop/undrop,
   delete, archive, star, hold, close_plan, change_answer, and releasing
   another machine's claim. `hello` adds an `autonomy: solo` rules line.

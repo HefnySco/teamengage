@@ -17,7 +17,7 @@ import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import { StarColor, tierRank, type Status } from "../../core/model/item.js";
 import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
-import { parseDuration } from "../../core/model/workspace.js";
+import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
@@ -289,7 +289,7 @@ export class WorkspaceOps {
           }),
       )
       .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
-    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, found_here: it.found_here, plan_problems: it.plan_problems, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it) };
+    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, found_here: it.found_here, plan_problems: it.plan_problems, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it), autoAcceptRule: this.autoAcceptRuleLabel(it) };
   }
 
   /**
@@ -803,6 +803,53 @@ export class WorkspaceOps {
       .map((it) => it.meta.id);
   }
 
+  /**
+   * The auto_accept_rules entry this item matches, or undefined when no rule
+   * matches (auto_accept_after is the delay then). First match wins; every
+   * condition a rule lists must match — `domains` means the item carries
+   * every listed domain.
+   */
+  autoAcceptRule(it: IndexedItem): { rule: AutoAcceptRule; index: number } | undefined {
+    const rules = this.wsr.ws.config.auto_accept_rules ?? [];
+    const m = it.meta;
+    for (let index = 0; index < rules.length; index++) {
+      const rule = rules[index];
+      if (rule.tier !== undefined && rule.tier !== m.tier) continue;
+      if (rule.project !== undefined && rule.project !== m.project) continue;
+      if (rule.domains?.length && !rule.domains.every((d) => m.domains.includes(d))) continue;
+      return { rule, index };
+    }
+    return undefined;
+  }
+
+  /** One-line label for the UI — which rule (or the default) drives the delay. */
+  autoAcceptRuleLabel(it: IndexedItem): string | undefined {
+    const m = it.meta;
+    const rv = m.ai_review;
+    if (
+      this.wsr.ws.config.autonomy !== "solo" ||
+      m.status !== "in_review" ||
+      rv?.verdict !== "ok" ||
+      rv.needs_human ||
+      m.unblocks_on === "done" ||
+      m.archived ||
+      m.auto_accept_off ||
+      (m.tier === "heavy" && rv.reviewer_tier === "light") ||
+      it.claim?.actor === "human"
+    ) {
+      return undefined;
+    }
+    const hit = this.autoAcceptRule(it);
+    if (!hit) return `auto_accept_after (${this.wsr.ws.config.auto_accept_after})`;
+    if (hit.rule.after === "never") return `rule #${hit.index + 1} — never (stays yours)`;
+    const conds = [
+      hit.rule.tier ? `tier: ${hit.rule.tier}` : undefined,
+      hit.rule.project ? `project: ${hit.rule.project}` : undefined,
+      hit.rule.domains?.length ? `domains: ${hit.rule.domains.join(", ")}` : undefined,
+    ].filter(Boolean);
+    return `rule #${hit.index + 1}${conds.length ? ` {${conds.join(", ")}}` : ""} → ${hit.rule.after}`;
+  }
+
   /** When the daemon will auto-accept this item (ISO), or undefined if it won't. */
   autoAcceptAt(it: IndexedItem): string | undefined {
     const cfg = this.wsr.ws.config;
@@ -821,7 +868,15 @@ export class WorkspaceOps {
     ) {
       return undefined;
     }
-    return new Date(Date.parse(rv.reviewed_at) + parseDuration(cfg.auto_accept_after)).toISOString();
+    const hit = this.autoAcceptRule(it);
+    if (hit?.rule.after === "never") return undefined;
+    const delay = hit?.rule.after ?? cfg.auto_accept_after;
+    try {
+      return new Date(Date.parse(rv.reviewed_at) + parseDuration(delay)).toISOString();
+    } catch {
+      // a malformed `after` must never auto-accept — the human decides
+      return undefined;
+    }
   }
 
   /** Human: stop auto-accept for the current submission (a resubmit re-arms it). */

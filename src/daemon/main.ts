@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { hostname } from "node:os";
+import { hostname, homedir } from "node:os";
 import { join } from "node:path";
 import {
   teHome,
@@ -127,7 +127,7 @@ async function main(): Promise<number | undefined> {
   }
 
   const ctx: DaemonCtx = {
-    home: home ?? "",
+    home: home ?? homedir(),
     machine,
     workspaces: new Map(),
     sessions: new SessionRegistry(machine),

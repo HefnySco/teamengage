@@ -2285,10 +2285,10 @@ const ItemView = ({ id }) => {
     ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
       ${it.meta.ai_review.needs_human && html` <span class="badge text-bg-warning" title="the reviewer leans ${it.meta.ai_review.verdict} but wants your judgement — never auto-accepted">needs your call</span>`}
-      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : it.meta.ai_review.needs_human ? "flagged for your call — never auto-accepted" : "advisory, the accept is still yours"}</span>
+      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : it.meta.ai_review.needs_human ? "flagged for your call — never auto-accepted" : (b.autoAcceptRule ?? "advisory, the accept is still yours")}</span>
       ${b.autoAcceptAt && html`<div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
         <span class="badge text-bg-warning">⏱ auto-accept ${untilText(b.autoAcceptAt)}</span>
-        <span class="text-secondary">autonomy: solo — the daemon accepts (local merge, no push) unless you accept, reject or stop it</span>
+        <span class="text-secondary">${b.autoAcceptRule ? `${b.autoAcceptRule} · ` : ""}autonomy: solo — the daemon accepts (local merge, no push) unless you accept, reject or stop it</span>
         <button class="btn btn-sm btn-outline-secondary py-0" title="keep this submission for your own accept/reject (a resubmit re-arms it)" onClick=${() => act("stop-auto-accept")}>stop auto-accept</button>
       </div>`}
       ${it.meta.ai_review.summary && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.summary) }} />`}

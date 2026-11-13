@@ -814,6 +814,69 @@ describe("autonomy: solo", () => {
       wsr.ws.config.autonomy = "strict";
     }
   });
+
+  it("auto_accept_rules pick the delay per item — never and needs_human stay with the human", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "light item", tier: "light" },
+        { type: "task", title: "meta item", domains: ["meta"] },
+        { type: "task", title: "plain item" },
+        { type: "task", title: "nh item" },
+      ],
+      human,
+    );
+    const [light, meta, plain, nh] = ids;
+    const agent = ctx.sessions.hello("rules-agent");
+    const reviewer = ctx.sessions.hello("rules-reviewer");
+    for (const id of ids) {
+      await ops.approve(id);
+      await ops.claim(id, agent);
+      await ops.submit(id, agent, {});
+    }
+    await ops.review(nh, reviewer, "ok", "borderline", "looks right, wants your eyes", true);
+    for (const id of [light, meta, plain]) await ops.review(id, reviewer, "ok");
+
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.auto_accept_after = "30m";
+    wsr.ws.config.auto_accept_rules = [
+      { tier: "light", after: "5m" },
+      { domains: ["meta"], after: "never" },
+    ];
+    try {
+      // light → its own 5m delay; the item page names the rule and the time
+      const at = ops.autoAcceptAt(store.idx.get(light)!)!;
+      expect(at).toBeTruthy();
+      const b = await ops.brief(light);
+      expect(b.autoAcceptRule).toContain("rule #1");
+      expect(b.autoAcceptRule).toContain("tier: light");
+      const listed = (await (await api(`/api/items?status=in_review`)).json()) as Array<{ id: string; auto_accept_rule?: string }>;
+      expect(listed.find((i) => i.id === light)?.auto_accept_rule).toContain("rule #1");
+      // a never rule keeps the item in_review under every clock
+      expect(ops.autoAcceptAt(store.idx.get(meta)!)).toBeUndefined();
+      expect(ops.autoAcceptDue(Date.now() + 30 * 86_400_000)).not.toContain(meta);
+      expect((await ops.brief(meta)).autoAcceptRule).toContain("never");
+      // needs_human stays under every rule
+      expect(ops.autoAcceptAt(store.idx.get(nh)!)).toBeUndefined();
+      expect(ops.autoAcceptDue(Date.now() + 30 * 86_400_000)).not.toContain(nh);
+      // no matching rule → the default auto_accept_after
+      const plainAt = Date.parse(ops.autoAcceptAt(store.idx.get(plain)!)!);
+      const plainRv = Date.parse(store.idx.get(plain)!.meta.ai_review!.reviewed_at);
+      expect(plainAt - plainRv).toBe(30 * 60_000);
+      // the light item accepts 5 minutes after its ok review, not 30
+      const lightRv = Date.parse(store.idx.get(light)!.meta.ai_review!.reviewed_at);
+      expect(ops.autoAcceptDue(lightRv + 4 * 60_000)).not.toContain(light);
+      expect(await ops.autoAccept(lightRv + 6 * 60_000)).toContain(light);
+      expect(store.idx.get(light)!.meta.status).toBe("done");
+    } finally {
+      wsr.ws.config.autonomy = "strict";
+      wsr.ws.config.auto_accept_rules = [];
+    }
+  });
 });
 
 describe("auto_archive_after", () => {

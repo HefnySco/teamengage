@@ -70,6 +70,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ready: i.ready,
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),
+        auto_accept_rule: ops.autoAcceptRuleLabel(i),
         ...(i.meta.type === "epic"
           ? { plan_state: i.plan_state, plan_progress: i.plan_progress, plan_problems: i.plan_problems }
           : {}),
