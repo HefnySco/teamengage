@@ -195,6 +195,14 @@
 #nav {
   --bs-nav-link-color: var(--bs-secondary-color);
   --bs-nav-link-hover-color: var(--bs-body-color);
+  /* more tabs than a phone fits: scroll inside the bar, never widen the page */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  min-width: 0;
+}
+#nav::-webkit-scrollbar {
+  display: none;
 }
 /* inbox count (faint number) and sync badge (warning) sit after the label */
 #nav a[data-count]:not([data-count=""])::after {

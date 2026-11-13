@@ -79,6 +79,22 @@ const route = () => location.hash.replace(/^#\/?/, "") || "inbox";
 // ---- shared bits ------------------------------------------------------------
 const STALE_MS = 24 * 3600 * 1000;
 const staleClaim = (c) => !c.conflicted && Date.now() - Date.parse(c.last_seen ?? c.claimed_at) > STALE_MS;
+const staleClaimMs = (c, ms) => !c.conflicted && Date.now() - Date.parse(c.last_seen ?? c.claimed_at) > ms;
+// duration strings like the workspace config's ("24h", "30m", "7d") — same units as parseDuration
+const parseDurMs = (s) => {
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec((s ?? "").trim());
+  return m ? Number(m[1]) * { ms: 1, s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2]] : undefined;
+};
+// "stuck" (GL-0319): open work that needs a look — failed past max_attempts,
+// on hold, or a claim whose holder went quiet past stale_after
+const isStuck = (i, ctx = {}) =>
+  Boolean(
+    !doneish(i.status) &&
+      !i.archived &&
+      ((ctx.maxAttempts !== undefined && (i.attempts ?? 0) >= ctx.maxAttempts) ||
+        i.status === "hold" ||
+        (i.claim && staleClaimMs(i.claim, ctx.staleMs ?? STALE_MS))),
+  );
 // domain colours, fetched once and refreshed on change (chips everywhere use them)
 let domainColors = {};
 const domainListeners = new Set();
@@ -487,7 +503,7 @@ const Inbox = ({ onOpen }) => {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (id, ...extra) =>
     !words.length ||
-    matches(byId[id] ?? { id }, words) ||
+    matches(byId[id] ?? { id }, words, { byId }) ||
     words.every((w) => extra.filter(Boolean).join(" ").toLowerCase().includes(w));
   // rows of different shapes share the board's comparators: each maps to its
   // item (a finding with none gets a pseudo-item so it still orders by name);
@@ -782,14 +798,17 @@ const FLAG_FILTERS = {
   "ai-flagged": ["AI review flagged issues", (i) => Boolean(i.ai_review) && i.ai_review.verdict !== "ok"],
   plan: ["epic — a plan with parts", (i) => i.type === "epic"],
   idea: ["idea — a source document, never claimed", (i) => i.type === "idea"],
+  stuck: ["at max attempts, on hold, or a stale claim", (i, ctx) => isStuck(i, ctx)],
 };
 // every word must appear in id, title, project or source path. @word filters the
-// claim holder's name, is:flag a boolean trait; a lone @ or # is not a filter
-const matches = (i, words) => {
+// claim holder's name, is:flag a boolean trait, in:<id> the plan subtree; a
+// lone @ or # is not a filter. ctx: {byId (Map|object), maxAttempts, staleMs}.
+const matches = (i, words, ctx) => {
   const hay = [i.id, i.title, i.project, i.legacy_id, i.source, ...(i.domains ?? []).map((d) => `#${d} ${d}`)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+  const parentOf = (p) => (ctx?.byId?.get ? ctx.byId.get(p) : ctx?.byId?.[p]);
   return words.every((w) => {
     if (w === "@" || w === "#") return true;
     if (w[0] === "@") {
@@ -799,7 +818,20 @@ const matches = (i, words) => {
       const h = (i.claim?.holder ?? "").toLowerCase();
       return x.includes("@") ? h.startsWith(x) : h.startsWith(x + "@");
     }
-    if (w.startsWith("is:")) return FLAG_FILTERS[w.slice(3)]?.[1](i) ?? true;
+    if (w.startsWith("is:")) return FLAG_FILTERS[w.slice(3)]?.[1](i, ctx) ?? true;
+    if (w.startsWith("in:")) {
+      // inside a plan's subtree — the plan itself and anything under it
+      const want = w.slice(3).toUpperCase();
+      if (i.id === want) return true;
+      const seen = new Set([i.id]);
+      let p = i.parent;
+      while (p && !seen.has(p)) {
+        if (p.toUpperCase() === want) return true;
+        seen.add(p);
+        p = parentOf(p)?.parent;
+      }
+      return false;
+    }
     return hay.includes(w);
   });
 };
@@ -1034,7 +1066,8 @@ const Board = ({ onOpen }) => {
   const isPlanProblem = (i) => (i.type === "bug" || (i.domains ?? []).includes("bug")) && hasEpicAbove(i);
   const foundMatch = (i) => hasFound(i) || isPlanProblem(i);
   const inFound = foundOnly ? inIdea.filter(foundMatch) : inIdea;
-  const hits = words.length ? inFound.filter((i) => matches(i, words)) : inFound;
+  const mctx = { byId: byIdMap, maxAttempts: ws?.max_attempts, staleMs: parseDurMs(ws?.stale_after) ?? STALE_MS };
+  const hits = words.length ? inFound.filter((i) => matches(i, words, mctx)) : inFound;
   const foundCount = data.filter(foundMatch).length;
   const ideaCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
   for (const v of ideaSt.values()) ideaCounts[v.state] += 1;
@@ -1326,7 +1359,7 @@ const Plans = ({ onOpen }) => {
   const roots = data.filter((i) => i.type === "epic" && !(i.parent && items.has(i.parent))).sort(SORTS[effSort]);
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   // a plan matches when it or any descendant matches the search
-  const subtreeMatches = (i) => matches(i, words) || (kids.get(i.id) ?? []).some(subtreeMatches);
+  const subtreeMatches = (i) => matches(i, words, { byId: items }) || (kids.get(i.id) ?? []).some(subtreeMatches);
   const visible = roots.filter((r) => (showDone || !fullyCompleted(kids, r)) && (!words.length || subtreeMatches(r)));
   const setSearch = (v) => {
     setQ(v);
@@ -1387,6 +1420,122 @@ const Plans = ({ onOpen }) => {
   `;
 };
 
+// ---- Metrics (GL-0319) ---------------------------------------------------------
+// agent/tier scorecard from /api/metrics + plan health derived from the items
+const Metrics = ({ onOpen }) => {
+  const { data: m, reload } = useApi("/api/metrics");
+  const { data: items } = useApi("/api/items");
+  const { data: ws } = useApi("/api/workspace");
+  if (!m || !items) return html`<p class="text-secondary">loading…</p>`;
+  const mctx = { byId: new Map(items.map((i) => [i.id, i])), maxAttempts: ws?.max_attempts, staleMs: parseDurMs(ws?.stale_after) ?? STALE_MS };
+  const tok = (n) => (!n ? "0" : n < 1000 ? String(n) : n < 1e6 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`);
+  const usd = (n) => (!n ? "-" : `$${n < 1 ? n.toFixed(4).replace(/0+$/, "") : n.toFixed(2)}`);
+  const pct = (x) => (x === undefined ? "-" : `${Math.round(x * 100)}%`);
+  const fmtMed = (ms) => {
+    if (ms === undefined) return "-";
+    const h = ms / 3600000;
+    return h < 1 ? `${Math.round(ms / 60000)}m` : h < 24 ? `${h < 10 ? h.toFixed(1) : Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
+  };
+  // plan health: one row per open plan — parts done, parts stuck, oldest
+  // draft age, open found problems
+  const kids = new Map();
+  for (const i of items) {
+    if (!i.parent) continue;
+    if (!kids.has(i.parent)) kids.set(i.parent, []);
+    kids.get(i.parent).push(i);
+  }
+  const subtree = (root) => {
+    const out = [];
+    const walk = (id) => {
+      for (const c of kids.get(id) ?? []) {
+        out.push(c);
+        walk(c.id);
+      }
+    };
+    walk(root);
+    return out;
+  };
+  const byIdMap = mctx.byId;
+  const hasEpicAbove = (i) => {
+    const seen = new Set([i.id]);
+    let p = i.parent;
+    while (p && !seen.has(p)) {
+      seen.add(p);
+      const a = byIdMap.get(p);
+      if (!a) return false;
+      if (a.type === "epic") return true;
+      p = a.parent;
+    }
+    return false;
+  };
+  const isProblem = (i) =>
+    !doneish(i.status) && !i.archived &&
+    ((i.found_by ?? []).length > 0 || (i.found_here ?? []).length > 0 ||
+      ((i.type === "bug" || (i.domains ?? []).includes("bug")) && hasEpicAbove(i)));
+  const plans = items
+    .filter((i) => i.type === "epic" && !i.archived && !doneish(i.status) && i.plan_state !== "done")
+    .map((p) => {
+      const parts = subtree(p.id).filter((x) => !x.archived);
+      const open = parts.filter((x) => !doneish(x.status));
+      const stuck = open.filter((x) => isStuck(x, mctx));
+      const drafts = parts.filter((x) => x.status === "draft");
+      const oldestDraft = drafts.map((d) => d.created ?? d.updated ?? "").sort()[0];
+      return {
+        plan: p,
+        total: parts.length,
+        done: parts.filter((x) => doneish(x.status)).length,
+        stuck: stuck.length,
+        drafts: drafts.length,
+        oldestDraft,
+        problems: parts.filter(isProblem).length,
+      };
+    })
+    .sort((a, b) => b.stuck - a.stuck || b.problems - a.problems || a.plan.id.localeCompare(b.plan.id));
+  const boardSearch = (q, found) => {
+    saveSearch("te.board.q", q);
+    saveSearch("te.board.found", found ? "1" : "");
+    nav("board");
+  };
+  const groupTable = (label, gs) => {
+    const cost = gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
+    return html`<div class="table-responsive"><table class="table table-sm align-middle">
+      <thead><tr><th>${label}</th><th class="text-end">items</th><th class="text-end">done</th><th class="text-end">bounce%</th><th class="text-end">handoffs</th><th class="text-end">med claim→accept</th>${cost && html`<th class="text-end">tok in/out</th><th class="text-end">usd</th>`}</tr></thead>
+      <tbody>
+        ${gs.map((g) => html`<tr key=${g.key}>
+          <td>${g.key}</td><td class="text-end">${g.items}</td><td class="text-end">${g.done}</td>
+          <td class="text-end">${pct(g.bounce_rate)}</td><td class="text-end">${g.handoffs}</td>
+          <td class="text-end">${fmtMed(g.median_claim_to_accept_ms)}</td>
+          ${cost && html`<td class="text-end">${tok(g.tokens_in)}/${tok(g.tokens_out)}</td><td class="text-end">${usd(g.usd)}</td>`}
+        </tr>`)}
+      </tbody></table></div>`;
+  };
+  return html`
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Metrics</h2>
+      <${RefreshBtn} refresh=${() => Promise.all([reload()])} />
+      <span class="text-secondary small">${m.totals.items} items with events — ${m.totals.done} done, ${m.totals.review_rounds} review rounds, ${m.totals.bounces} bounces</span>
+    </div>
+    <h3 class="h6 text-secondary">scorecard — per agent</h3>
+    ${(m.agents ?? []).length ? groupTable("agent", m.agents) : html`<p class="text-secondary small">no submissions yet</p>`}
+    <h3 class="h6 text-secondary mt-3">scorecard — per tier</h3>
+    ${groupTable("tier", m.tiers ?? [])}
+    <h3 class="h6 text-secondary mt-3">plan health</h3>
+    ${!plans.length && html`<p class="text-secondary small">no open plans</p>`}
+    ${plans.length > 0 && html`<div class="table-responsive"><table class="table table-sm align-middle">
+      <thead><tr><th>plan</th><th class="text-end">done</th><th class="text-end">stuck</th><th class="text-end">drafts</th><th class="text-end">oldest draft</th><th class="text-end">problems</th></tr></thead>
+      <tbody>
+        ${plans.map((r) => html`<tr key=${r.plan.id}>
+          <td><a href=${`#/${r.plan.id}`} onClick=${(e) => (e.preventDefault(), onOpen(r.plan.id))} title=${r.plan.title}>${r.plan.id}</a> <span class="small text-secondary d-inline-block text-truncate align-middle" style=${{ maxWidth: "10rem" }}>${r.plan.title}</span></td>
+          <td class="text-end">${r.done}/${r.total}</td>
+          <td class="text-end">${r.stuck > 0 ? html`<a href="#/board" title="open the board filtered to these items" onClick=${() => boardSearch(`in:${r.plan.id} is:stuck`)}>${r.stuck}</a>` : "0"}</td>
+          <td class="text-end">${r.drafts}</td>
+          <td class="text-end">${r.oldestDraft ? ago(r.oldestDraft) : "-"}</td>
+          <td class="text-end">${r.problems > 0 ? html`<a href="#/board" title="open the board filtered to found problems in this plan" onClick=${() => boardSearch(`in:${r.plan.id}`, true)}>${r.problems}</a>` : "0"}</td>
+        </tr>`)}
+      </tbody></table></div>`}
+  `;
+};
+
 // ---- Archive -------------------------------------------------------------------
 // archived items keep their status; they only leave the board, inbox, graph and next
 const Archive = ({ onOpen }) => {
@@ -1394,7 +1543,8 @@ const Archive = ({ onOpen }) => {
   const [q, setQ] = useState("");
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hits = (words.length ? data.filter((i) => matches(i, words)) : data).sort((a, b) =>
+  const arcById = new Map(data.map((i) => [i.id, i]));
+  const hits = (words.length ? data.filter((i) => matches(i, words, { byId: arcById })) : data).sort((a, b) =>
     (b.archived_at ?? "").localeCompare(a.archived_at ?? ""),
   );
   const unarchive = async (id) => {
@@ -3669,7 +3819,7 @@ const Artifacts = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
+const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

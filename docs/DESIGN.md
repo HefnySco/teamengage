@@ -526,6 +526,12 @@ submissions; accept stays with the human."
 - **Graph** — Mermaid render, status-coloured, filter by project/resource/epic.
 - **Board** — columns by status; who holds what claim on which machine, claim age.
 - **Item** — Simple/technical tabs, log, evidence, decisions, push state per resource.
+- **Metrics** — the `/api/metrics` scorecard as tables (per agent, per tier,
+  with token/usd columns once cost is reported) plus plan health per open
+  plan: parts done, parts stuck (max_attempts / hold / stale claim), oldest
+  draft age, open found problems. A stuck or problems count links to the
+  board filtered to those items (`in:<plan>` + `is:stuck` / found-problems
+  search).
 - **Sync** — plans repo ahead/behind; merged-but-not-pushed work per resource.
 - **Activity** — live event stream across all agents and machines.
 
