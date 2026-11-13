@@ -923,3 +923,182 @@ workflow items: no status, no claim.
 
 `te validate` reports unknown machine ids (in envs and edges),
 duplicate ids, secrets in ssh fields and bad edge/via kinds.
+
+## 15. Features and releases (GL-0330)
+
+The work chain today is idea → plan → task → found problem. Two more
+objects close the loop for the human: a **feature** sits above the
+plans and says what the customer gets; a **release** sits below the
+tasks and says what shipped where.
+
+```text
+idea ──relates──> feature ──named by──> plan (epic) ──parent──> task
+                                                     │
+                                                     └──> found problem (found_by)
+
+accepted tasks ──cut──> release ──named by──> ops jobs ──deployed on──> machines
+```
+
+### 15.1 The feature
+
+A feature is an item: `type: feature`, proposed like any other item,
+living at `items/<PREFIX>/FE-0007.md` (or the project's prefix). It
+carries the customer-facing description, never a work order.
+
+```markdown
+---
+id: FE-0007
+type: feature
+title: Mesh failover between comm servers
+status: derived # never stored — see below
+project: global
+relates: [IDEA-0012] # the ideas it came from
+---
+
+## Summary
+
+...what the customer gets, technical...
+
+## Simple
+
+...what the customer gets, STE — feeds CAPABILITIES.md...
+```
+
+Rules:
+
+- **A feature is never claimed.** `claim` refuses `type: feature` the
+  same way it refuses `idea` — there is no turn and no work to hold.
+- **No stored status.** The daemon derives it: `planned` (no done
+  parts), `in_progress` (some parts done), `shipped` (a release
+  contains all its plans' accepted parts). The stored `status` field
+  is absent; the index computes it.
+- **Progress is derived:** the plans that name it, their parts, and
+  done/total per plan — same roll-up the Metrics page already does.
+- **Found problems roll up** through the plans: a `found_by` item under
+  a plan that names the feature counts as the feature's open problem.
+- **A feature may not have a `parent`** — features are a flat delivery
+  grouping, not a hierarchy. (If a need for grouping appears later,
+  a `feature_group` can come then.)
+
+### 15.2 How a plan names a feature
+
+```yaml
+# frontmatter of a plan (epic) item
+feature: FE-0007   # optional; one feature per plan
+```
+
+A plan names at most one feature; a feature collects many plans. Tasks
+never name a feature directly — they reach it through their parent
+plan, so the mapping stays single-hop.
+
+### 15.3 The release
+
+A release is a **file kind**, not an item — like `machines/` and
+`envs/` records: no status, no claim, no turn. The human cuts it with
+`te release cut <name>` (or the UI); agents get FORBIDDEN.
+
+```
+.teamengage/releases/2026-11-field.release.yaml
+```
+
+```yaml
+id: 2026-11-field            # human-chosen name; unique
+cut: { ts: "2026-11-14T09:00Z", by: "human@mhefnyDT" }
+since: 2026-10-first         # previous release the window opened after
+items:                       # frozen at cut — never recomputed later
+  - item: GL-0318
+    title: Record cost on submit
+    feature: FE-0003         # via the item's plan, or null
+    commits: [{ resource: teamengage, sha: 66adb66 }]
+deploys: []                  # filled by ops jobs naming this release (15.4)
+```
+
+`deploys` lists job ids (`laptop-0007`) — a small stored back-reference
+so the release page need not scan every job file; the job itself also
+records the release in `params.release` (§15.4).
+
+### 15.4 How a release links to its deploys
+
+An ops job started for the release records it:
+
+```yaml
+# .teamengage/ops/jobs/laptop/laptop-0007.yaml
+params: { ref: master, release: 2026-11-field }
+```
+
+`te ops exec <playbook> --release <id>` sets it; the UI offers a
+release picker on deploy playbooks. The release page then shows, per
+succeeded job naming it: playbook, target, machine, deployed version —
+"which machine has it" is a join over job records, never stored in the
+release beyond the `deploys` id list.
+
+### 15.5 CAPABILITIES.md
+
+`te capabilities` regenerates `CAPABILITIES.md` at the workspace root
+from features + releases: one section per feature (its `## Simple`
+text, derived state, the releases that shipped it), generated — the
+file is never hand-edited. Features and releases are the single source
+of truth; the file is a derived export for customers.
+
+### 15.6 What is stored and what is derived
+
+| Stored                                                              | Derived                                                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| feature item (id, title, summary, simple, `relates` to ideas)       | feature status (`planned`/`in_progress`/`shipped`), progress (done/total parts per plan)           |
+| `feature:` field on a plan                                          | a feature's open found problems (`found_by` under its plans)                                       |
+| release file (name, cut time, window, items + commits + feature)    | "which machine has it" — join over succeeded ops jobs naming the release                           |
+| `release:` in a job's `params` + job id in the release's `deploys`  | `CAPABILITIES.md`, `te release notes`, board features filter                                       |
+
+### 15.7 Open questions — the human decides
+
+**Q1 — Feature: new item type or new file kind?**
+
+- **A: `type: feature` item** — reuses id, frontmatter, index, graph
+  edges, `propose`, the event log and the UI plumbing. "Never claimed"
+  is one rule in the claim path (the `idea` precedent already exists).
+- **B: `features/<id>.feature.md` file kind** — like machines/envs:
+  cleanly expresses "no workflow", but needs a second store the
+  feature page must join to the item index for plans/parts/problems,
+  and a new `propose` path (GL-0331 requires `propose` to create one).
+- **Recommendation: A.** Everything the feature page shows already
+  lives in the item graph; a file kind would duplicate addressing and
+  indexing for no gain — the claim refusal is a rule, not a reason to
+  leave the item model.
+
+**Q2 — How does a plan name its feature?**
+
+- **A: `feature:` frontmatter field** — a distinct edge meaning
+  "delivers". `parent` stays "part of"; an epic keeps its own parent
+  (GL-0312 under GL-0307) while also naming a feature.
+- **B: reuse `parent`** — zero schema change, but an epic could name
+  either a bigger epic or a feature, never both; and `parent` would
+  silently mean two things, breaking "parts of a plan" roll-ups.
+- **Recommendation: A.** One field, one meaning; the derived roll-ups
+  stay unambiguous.
+
+**Q3 — How does a release find its commits?**
+
+- **A: frozen at cut time** — `te release cut` enumerates items
+  accepted since the previous release (accept events after its `cut`
+  timestamp), reads each item's `## Evidence` commit lines per
+  resource, and writes the list into the release file. Immutable:
+  release notes read the file, never recompute.
+- **B: derived at read time** — the release stores only the window and
+  each read replays events. Cheaper files, but later edits, archives
+  or rebased evidence change history silently; release notes must not
+  drift.
+- **Recommendation: A.** A release is a record; freezing the list is
+  what makes it auditable. The window is automatic (`since` = previous
+  release) with `--since <id>`/`--items` overrides for a partial cut.
+
+**Q4 — How does CAPABILITIES.md read the result?**
+
+- **A: generated export** — `te capabilities` rewrites the file from
+  features + releases; CI or the human runs it and commits. One source
+  of truth; the doc can never disagree with the task bank.
+- **B: hand-maintained doc** — features link to CAPABILITIES.md
+  sections. Reads naturally but two sources drift; every rename or
+  re-scope needs a manual edit.
+- **Recommendation: A.** The feature's `## Simple` field already
+  exists for exactly this audience; generation is a read, not a new
+  model.
