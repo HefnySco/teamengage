@@ -94,8 +94,10 @@ export class WorkspaceOps {
     pid?: number,
     tier?: Session["tier"],
     role?: Session["role"],
+    model?: string,
   ): Promise<{ session: Session; resume: Claim[] }> {
-    const session = this.sessions.hello(agent, pid, tier, role);
+    // GL-0360: the model id is stored lowercased — convert, never refuse
+    const session = this.sessions.hello(agent, pid, tier, role, model?.toLowerCase());
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
     // (Dead = transport closed, client process gone, or minted before a
@@ -117,6 +119,7 @@ export class WorkspaceOps {
       session: session.id,
       machine: session.machine,
       ...(session.tier ? { tier: session.tier } : {}),
+      ...(session.model ? { model: session.model } : {}),
     };
   }
 

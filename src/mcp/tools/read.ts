@@ -56,27 +56,29 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
       description:
         "Register a session; returns session id, machine, workspace summary, claims to resume. " +
         "tier: your model class — light (Haiku-class), standard (Sonnet-class), heavy (Opus-class). " +
-        "role: what you're here to do — planner, coder, reviewer or ops; next picks its pool for it.",
+        "role: what you're here to do — planner, coder, reviewer or ops; next picks its pool for it. " +
+        "model: your model id (e.g. claude-sonnet-5-5) — recorded on your submits and reviews.",
       inputSchema: {
         agent: z.string(),
         workspace: z.string().optional(),
         tier: z.enum(["light", "standard", "heavy"]).optional(),
         role: z.enum(["planner", "coder", "reviewer", "ops"]).optional(),
+        model: z.string().optional(),
       },
     },
-    async ({ agent, workspace, tier, role }) => {
+    async ({ agent, workspace, tier, role, model }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
         // a repeat hello on this connection replaces the old session —
         // retire it so its claims rebind instead of looking "live"
         if (binding.session) ctx.sessions.disconnect(binding.session.id);
-        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role);
+        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role, model);
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };
         const lines = [
-          `session ${session.id} on ${session.machine}${session.tier ? ` tier ${session.tier}` : ""}${session.role ? ` role ${session.role}` : ""}`,
+          `session ${session.id} on ${session.machine}${session.tier ? ` tier ${session.tier}` : ""}${session.role ? ` role ${session.role}` : ""}${session.model ? ` model ${session.model}` : ""}`,
           `workspace ${ws.name} items:${counts.items} ready:${counts.ready}`,
         ];
         if (resume.length) {

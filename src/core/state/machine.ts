@@ -31,6 +31,8 @@ export interface Actor {
   machine: string;
   /** declared model tier of an agent session (unset = not tier-limited) */
   tier?: Tier;
+  /** declared model id of an agent session (GL-0360) */
+  model?: string;
 }
 
 export type Action =
@@ -583,6 +585,13 @@ export function transition(
       set("in_review", action.note);
       delete out.meta.ai_review; // a fresh submission starts unreviewed
       delete out.meta.auto_accept_off; // …and is eligible for auto-accept again
+      // GL-0360: remember which model produced this submission — on the
+      // item and on the submit event's data (metrics reads it later)
+      if (actor.model) {
+        out.meta.submitted_model = actor.model;
+        const last = out.events[out.events.length - 1];
+        last.data = { ...(last.data ?? {}), model: actor.model };
+      } else delete out.meta.submitted_model;
       out.log.push(`- ${stamp} ${who} submitted for review${action.note ? `: ${action.note}` : ""}`);
       if (action.evidence) {
         const lines: string[] = [];
@@ -603,7 +612,8 @@ export function transition(
             lines.push(`- cost: ${parts.join(" ")}`);
             // the submit event carries the cost too — metrics sums it
             // without parsing the Evidence line (GL-0318)
-            out.events[out.events.length - 1].data = { cost: action.evidence.cost };
+            const last = out.events[out.events.length - 1];
+            last.data = { ...(last.data ?? {}), cost: action.evidence.cost };
           }
         }
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
@@ -625,6 +635,7 @@ export function transition(
         verdict: action.verdict,
         reviewed_by: actor.session,
         ...(actor.tier ? { reviewer_tier: actor.tier } : {}),
+        ...(actor.model ? { reviewer_model: actor.model } : {}),
         reviewed_at: ctx.now,
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
@@ -704,6 +715,7 @@ export function transition(
       out.meta.ai_review = {
         verdict: "issues",
         ...(actor.tier ? { reviewer_tier: actor.tier } : {}),
+        ...(actor.model ? { reviewer_model: actor.model } : {}),
         reviewed_by: actor.session,
         reviewed_at: ctx.now,
         note: action.reason,

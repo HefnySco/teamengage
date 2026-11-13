@@ -14,6 +14,8 @@ export const Session = z
     tier: z.enum(["light", "standard", "heavy"]).optional(),
     /** what this session is here to do; unset = general worker (GL-0323) */
     role: z.enum(["planner", "coder", "reviewer", "ops"]).optional(),
+    /** declared model id, lowercased (e.g. claude-sonnet-5-5) — GL-0360 */
+    model: z.string().optional(),
   })
   .passthrough();
 export type Session = z.infer<typeof Session>;

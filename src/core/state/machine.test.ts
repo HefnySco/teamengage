@@ -1123,3 +1123,59 @@ describe("peer questions (GL-0324)", () => {
     expect(r.meta.peer_answer).toBeUndefined();
   });
 });
+
+describe("declared model on submit and review (GL-0360)", () => {
+  const modeled: Actor = { ...agent, model: "swe-2-high" };
+  const modeledReviewer: Actor = { ...agent2, model: "claude-sonnet-5-5" };
+
+  it("submit stores submitted_model on the item and the event", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "submit" },
+      modeled,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.submitted_model).toBe("swe-2-high");
+    const submitEv = r.events.find((e) => e.action === "submit");
+    expect(submitEv?.data?.model).toBe("swe-2-high");
+  });
+
+  it("submit without a declared model stores nothing", () => {
+    const r = transition(item("in_progress"), { type: "submit" }, agent, ctx({ claim: claimOf() }));
+    expect(r.meta.submitted_model).toBeUndefined();
+  });
+
+  it("model and cost coexist on the submit event's data", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "submit", evidence: { cost: { usd: 1 } } },
+      modeled,
+      ctx({ claim: claimOf() }),
+    );
+    const submitEv = r.events.find((e) => e.action === "submit");
+    expect(submitEv?.data?.model).toBe("swe-2-high");
+    expect(submitEv?.data?.cost).toEqual({ usd: 1 });
+  });
+
+  it("review stores reviewer_model on ai_review", () => {
+    const inReview = transition(item("in_progress"), { type: "submit" }, agent, ctx({ claim: claimOf() }));
+    const r = transition(
+      inReview.meta,
+      { type: "review", verdict: "ok" },
+      modeledReviewer,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.reviewer_model).toBe("claude-sonnet-5-5");
+  });
+
+  it("bounce stores reviewer_model too", () => {
+    const inReview = transition(item("in_progress"), { type: "submit" }, agent, ctx({ claim: claimOf() }));
+    const r = transition(
+      inReview.meta,
+      { type: "bounce", reason: "red" },
+      modeledReviewer,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.reviewer_model).toBe("claude-sonnet-5-5");
+  });
+});

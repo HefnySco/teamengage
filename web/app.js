@@ -485,7 +485,7 @@ const TeamPanel = ({ sessions, onOpen }) => {
           <div class="triage-li" key=${s.id}>
             <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}</span>
             <span class="t">
-              ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}
+              ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}${s.model ? html`<span class="triage-tag">${s.model}</span> ` : ""}
               ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
               <span class="text-secondary">${(s.holding ?? []).length ? "" : "idle — "}seen ${ago(s.last_seen)} ago</span>
             </span>
@@ -2624,7 +2624,7 @@ const ItemView = ({ id }) => {
       <div class="disc-panel">
         <${DomainEditor} id=${id} ds=${it.meta.domains} onChanged=${reload} />
         <div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">meta</span><span class="text-secondary">v${it.meta.version} · ${it.meta.type}${it.meta.project ? " · " + it.meta.project : ""}${it.meta.archived ? " · archived" : ""}</span></div>
-        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.dead && html` <span class="badge text-bg-warning" title="the holder's session ended — another agent can claim-take it over, or release it">session ended</span>`}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the button above</span>`}</span></div>`}
+        ${it.claim && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">claim</span><span>${it.claim.holder}@${it.claim.machine}${it.claim.dead && html` <span class="badge text-bg-warning" title="the holder's session ended — another agent can claim-take it over, or release it">session ended</span>`}${it.claim.claimed_at && html` <span class="text-secondary">· ${ago(it.claim.claimed_at)} ago — release via the button above</span>`}${it.meta.submitted_model && html` <span class="text-secondary">· developed by </span><span class="triage-tag">${it.meta.submitted_model}</span>`}</span></div>`}
         ${b.source && html`<div class="d-flex align-items-center gap-2 mb-1 small"><span class="text-secondary item-lbl">source</span><span class="text-secondary">${b.source.path}${b.source.missing ? " (MISSING)" : b.source.moved ? " (moved)" : ""}</span></div>`}
         ${st === "draft" && html`<div class="d-flex align-items-center gap-2 small"><span class="text-secondary item-lbl">unblocks</span>${polLine}</div>`}
       </div>
@@ -2638,7 +2638,7 @@ const ItemView = ({ id }) => {
     ${it.meta.ai_review && html`<div class="alert ${it.meta.ai_review.verdict === "ok" ? "alert-success" : "alert-danger"} py-2 px-2 small mb-2">
       <b>AI review: ${it.meta.ai_review.verdict === "ok" ? "ok ✓" : "issues ✗"}</b>
       ${it.meta.ai_review.needs_human && html` <span class="badge text-bg-warning" title="the reviewer leans ${it.meta.ai_review.verdict} but wants your judgement — never auto-accepted">needs your call</span>`}
-      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b> · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : it.meta.ai_review.needs_human ? "flagged for your call — never auto-accepted" : (b.autoAcceptRule ?? "advisory, the accept is still yours")}</span>
+      <span class="text-secondary">— peer-reviewed by <b class=${whoCls(it.meta.ai_review.reviewed_by)}>${it.meta.ai_review.reviewed_by}</b>${it.meta.ai_review.reviewer_model ? html` <span class="triage-tag">${it.meta.ai_review.reviewer_model}</span>` : ""} · ${ago(it.meta.ai_review.reviewed_at)} ago · ${b.autoAcceptAt ? "" : it.meta.ai_review.needs_human ? "flagged for your call — never auto-accepted" : (b.autoAcceptRule ?? "advisory, the accept is still yours")}</span>
       ${b.autoAcceptAt && html`<div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
         <span class="badge text-bg-warning">⏱ auto-accept ${untilText(b.autoAcceptAt)}</span>
         <span class="text-secondary">${b.autoAcceptRule ? `${b.autoAcceptRule} · ` : ""}autonomy: solo — the daemon accepts (local merge, no push) unless you accept, reject or stop it</span>

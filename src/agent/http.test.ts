@@ -223,6 +223,17 @@ describe("plain-HTTP agent API", () => {
     expect(r.text).toContain("POST /agent/hello");
   });
 
+  it("hello with model lowercases and echoes it (GL-0360); no model still works", async () => {
+    const h = await call("POST", "/agent/hello", {
+      body: { agent: "claude", model: "Claude-Sonnet-5-5" },
+    });
+    expect(h.status).toBe(200);
+    expect(h.text).toContain("model claude-sonnet-5-5");
+    // model flows into submits/reviews — covered at the machine level
+    const plain = await hello("gemini-cli");
+    expect(plain).toBeTruthy();
+  });
+
   it("full loop: hello → next → brief → claim → log → ask; errors map to HTTP codes", async () => {
     const t = await hello("gemini-cli");
     const next = await call("GET", "/agent/next?limit=2", { token: t });

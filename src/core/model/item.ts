@@ -32,6 +32,8 @@ export const AiReview = z.object({
   reviewed_at: z.string(),
   /** reviewer session's declared model tier */
   reviewer_tier: z.enum(["light", "standard", "heavy"]).optional(),
+  /** reviewer session's declared model id (GL-0360) */
+  reviewer_model: z.string().optional(),
   /** technical detail for whoever fixes it (file:line, what broke) */
   note: z.string().optional(),
   /** one plain-English sentence for the human — what the verdict means */
@@ -180,6 +182,8 @@ export const ItemMeta = z
     tier: Tier.optional(),
     /** failed attempts so far — AI bounces + handoffs (drives escalation) */
     attempts: z.number().int().min(0).optional(),
+    /** model id of the session that submitted the current submission (GL-0360) */
+    submitted_model: z.string().optional(),
     /** tier of the agent session that proposed it (light-authored drafts need vetting) */
     authored_tier: Tier.optional(),
     /** a stronger session checked a light-authored draft (`vet ok`) */

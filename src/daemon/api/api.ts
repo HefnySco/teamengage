@@ -272,6 +272,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         machine: s.machine,
         tier: s.tier,
         role: s.role,
+        model: s.model,
         connected_at: s.connected_at,
         last_seen: s.last_seen,
         holding: holding.get(s.id) ?? [],
