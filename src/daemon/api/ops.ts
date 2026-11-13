@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts } from "../../core/files/markdown.js";
@@ -31,6 +31,7 @@ import {
   ValidationError,
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
+import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
@@ -218,6 +219,74 @@ export class WorkspaceOps {
 
   deleteDomain(name: string) {
     return this.store.deleteDomain(name, this.actorFor("human"));
+  }
+
+  // ---- shared lessons per domain (GL-0322) ----------------------------------
+
+  /** Domains a lesson may name: the vocabulary plus every name items use. */
+  private async knownDomains(): Promise<Set<string>> {
+    const defs = await this.store.currentDomains();
+    const names = new Set(Object.keys(defs));
+    for (const it of this.index.items.values()) for (const d of it.meta.domains) names.add(d);
+    return names;
+  }
+
+  /**
+   * An agent shares a hard-won lesson: one `- date session — text` line
+   * appended to lessons/<domain>.md in the plans folder. Unknown domains
+   * are refused — a lesson under a typo teaches nobody.
+   */
+  async lesson(session: Session, domain: string, text: string) {
+    const d = normalizeDomain(domain);
+    if (!d || !text.trim()) throw new TeError("USAGE", "lesson needs a domain and a text");
+    if (!(await this.knownDomains()).has(d)) {
+      throw new InvalidTransitionError(
+        `lesson: unknown domain '${d}' — define it first (domains page or a domains: tag on an item)`,
+      );
+    }
+    await appendLesson(this.wsr.ws.plansDir, d, session.id, text, new Date().toISOString());
+    return { domain: d };
+  }
+
+  /**
+   * Lessons for these item domains — newest first (the date each line
+   * starts with), at most `limit`. For `brief`.
+   */
+  async lessonsFor(domains: string[], limit = 10): Promise<string[]> {
+    const all: { date: string; line: string }[] = [];
+    for (const d of domains) {
+      for (const l of await readLessons(this.wsr.ws.plansDir, d)) {
+        const date = /^(\d{4}-\d{2}-\d{2})\s/.exec(l)?.[1] ?? "";
+        all.push({ date, line: `[#${d}] ${l}` });
+      }
+    }
+    return all
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, limit)
+      .map((x) => x.line);
+  }
+
+  /** Every lessons file, for the domains page: domain → its lines. */
+  async allLessons(): Promise<Record<string, string[]>> {
+    const out: Record<string, string[]> = {};
+    let files: string[] = [];
+    try {
+      files = await readdir(join(this.wsr.ws.plansDir, "lessons"));
+    } catch {
+      return out;
+    }
+    for (const f of files.filter((x) => x.endsWith(".md"))) {
+      const lines = await readLessons(this.wsr.ws.plansDir, f.slice(0, -3));
+      if (lines.length) out[f.slice(0, -3)] = lines;
+    }
+    return out;
+  }
+
+  /** Human deletes lesson number `n` (1-based) of a domain. */
+  async deleteLesson(domain: string, n: number) {
+    const removed = await removeLesson(this.wsr.ws.plansDir, domain, n);
+    if (removed === null) throw new NotFoundError(`no lesson ${n} for #${domain}`);
+    return { removed };
   }
 
   /**

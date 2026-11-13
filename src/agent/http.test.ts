@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, execFile } from "node:child_process";
@@ -97,6 +97,10 @@ beforeAll(async () => {
   writeFileSync(
     join(plans, "items", "WS", "WS-0004.md"),
     `---\nid: WS-0004\ntype: epic\ntitle: epic 4\nstatus: ready\nversion: 1\n---\n\n## Summary\nplan\n`,
+  );
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0007.md"),
+    `---\nid: WS-0007\ntype: task\ntitle: lesson task\nstatus: draft\nversion: 1\ndomains: [test-domain]\n---\n\n## Summary\nx\n`,
   );
   for (const a of [
     ["init", "-b", "main"],
@@ -429,6 +433,34 @@ describe("plain-HTTP agent API", () => {
     expect((await call("GET", "/agent/next?limit=20", { token: pt })).text).toContain(
       "nothing ready",
     );
+  });
+});
+
+describe("shared lessons per domain (GL-0322)", () => {
+  it("an agent adds a lesson, brief shows it; unknown domains and agent deletes refused", async () => {
+    const t = await hello("prof");
+
+    // lesson writes one "- date session — text" line under lessons/<domain>.md
+    const ok = await call("POST", "/agent/lesson", {
+      token: t,
+      body: { domain: "test-domain", text: "run npm build before npm test — dist must be fresh" },
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.text).toContain("lesson added for #test-domain");
+    const file = readFileSync(join(plans, "lessons", "test-domain.md"), "utf8");
+    expect(file).toMatch(/- \d{4}-\d{2}-\d{2} prof@test#\w+ — run npm build before npm test/);
+
+    // an unknown domain is refused with INVALID
+    const bad = await call("POST", "/agent/lesson", {
+      token: t,
+      body: { domain: "no-such-domain", text: "x" },
+    });
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect(bad.text).toContain("INVALID");
+
+    // brief of an item with that domain lists the lesson
+    const brief = await call("GET", "/agent/brief/WS-0007", { token: t });
+    expect(brief.text).toContain("run npm build before npm test");
   });
 });
 

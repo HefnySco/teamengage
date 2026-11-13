@@ -271,6 +271,22 @@ goes up a step so a stronger model takes it, and at `max_attempts`
 (default 5) it goes on hold for the human. After a handoff **end this
 task** — don't claim it again in the same session.
 
+## 8c. Leave a lesson when a trap cost you time
+
+Lost real time on a repo trap, a build command nobody wrote down or a
+test rule you had to discover? Leave a lesson for the domain so the next
+agent doesn't lose the same time — `brief` shows it the newest lessons of
+its item's domains:
+
+```bash
+curl -s -X POST $B/lesson -H "$H" -d '{"domain":"mavlink","text":"de_mavlink tests need SITL running first — sim/bin/sitl.sh, then ctest"}'
+```
+
+One line, in STE, only what is not obvious from the code. The domain must
+already exist (an unknown one is refused). Wrong or stale lessons are the
+human's to delete on the domains page — if one misleads you, say so in a
+`note` on your task instead of editing the file.
+
 ## 9. Giving it back
 
 Can't finish (blocked, out of time, wrong approach)? Release it with what

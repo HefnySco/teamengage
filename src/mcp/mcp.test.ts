@@ -103,6 +103,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "graph",
         "handoff",
         "hello",
+        "lesson",
         "log",
         "next",
         "note",

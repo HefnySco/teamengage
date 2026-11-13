@@ -92,6 +92,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
     decisions/D-0007.md
     events/desktop/2026-10.jsonl   # append-only, one stream per machine
     events/laptop/2026-10.jsonl    #   → never a git merge conflict
+    lessons/simulation.md          # shared lessons per domain (GL-0322)
     .gitignore                     # worktrees/, local state
     worktrees/                     # agent worktrees, machine-local
   droneengage_mavlink/             # repos, untouched by TeamEngage except via worktrees
@@ -517,8 +518,16 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
 | `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |
 | `flag_drop(id, reason)`         | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status.                                                                          |
+| `lesson(domain, text)`          | Share a lesson for a domain — one `- date session — text` line in `lessons/<domain>.md`; unknown domains refused (INVALID_TRANSITION).                            |
 | `query(filter)`                 | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains).                                                          |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph.                                                                                                                              |
+
+**Shared lessons** — one markdown list per domain at
+`lessons/<domain>.md` in the plans folder. Any session may `lesson`
+a line (`domain`, `text`; the daemon adds date and session); an unknown
+domain is refused so typos teach nobody. `brief` shows the lessons of the
+item's domains, newest first, at most ten. The human deletes single lines
+on the domains page — agents cannot (FORBIDDEN).
 
 Plus a generated instruction snippet (`teamengage agents-md`) to drop into
 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`: "call `hello`, then `next`, always

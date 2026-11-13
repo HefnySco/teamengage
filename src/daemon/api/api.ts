@@ -835,6 +835,23 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   route("POST", "/api/domains/:name/delete", (ops, req) =>
     ops.deleteDomain(String((req.params as { name: string }).name)),
   );
+  // shared lessons per domain (GL-0322): agents add via the lesson tool;
+  // reading and deleting lines on the domains page is the human's.
+  route("GET", "/api/lessons", (ops) => ops.allLessons());
+  app.post("/api/lessons/delete", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("deleting a lesson is human-only — flag it in a note instead");
+      }
+      const b = (req.body ?? {}) as { domain?: string; line?: number };
+      if (!b.domain || !Number.isInteger(b.line) || (b.line as number) < 1) {
+        throw new TeError("USAGE", "lesson delete needs {domain, line} (1-based)");
+      }
+      return await opsFor(ctx, wsOf(req.query)).deleteLesson(b.domain, b.line as number);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
   route("GET", "/api/domains/suggest", (ops) => ops.suggestDomains());
   route("POST", "/api/domains/suggest/apply", (ops, req) => {
     const ids = ((req.body ?? {}) as { ids?: unknown }).ids;

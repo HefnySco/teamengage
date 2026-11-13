@@ -171,6 +171,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const handoff = sec("Handoff");
         if (handoff) lines.push(`handoff notes:\n${handoff}`);
         if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
+        const lessons = await ops.lessonsFor(it.meta.domains);
+        if (lessons.length) {
+          lines.push("lessons (shared by earlier agents — newest first):");
+          for (const l of lessons) lines.push(`  - ${l}`);
+        }
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
         else lines.push(`source: ${b.source.path}${b.source.moved ? " (moved)" : ""}`, b.source.text.trim());

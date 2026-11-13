@@ -1609,6 +1609,26 @@ const Domains = () => {
   const [name, setName] = useState("");
   const [sugg, setSugg] = useState(null);
   const [pick, setPick] = useState({});
+  const [lessons, setLessons] = useState(null);
+  const [openLessons, setOpenLessons] = useState(null);
+  const loadLessons = async () => {
+    try {
+      setLessons(await api("/api/lessons"));
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+  useEffect(() => {
+    loadLessons();
+  }, [rows]);
+  const delLesson = async (domain, n) => {
+    try {
+      await post("/api/lessons/delete", { domain, line: n });
+      loadLessons();
+    } catch (e) {
+      toast(e.message);
+    }
+  };
   const call = async (path, body) => {
     try {
       const r = await post(path, body);
@@ -1667,14 +1687,17 @@ const Domains = () => {
     </div>
     ${rows.length === 0 && html`<p class="text-secondary">no domains yet — add one, or type one on an item page</p>`}
     <div class="table-responsive"><table class="table table-sm align-middle">
-      <thead><tr><th>domain</th><th>description</th><th>keywords (for suggestions)</th><th class="text-end">items</th><th class="text-end">open</th><th></th></tr></thead>
+      <thead><tr><th>domain</th><th>description</th><th>keywords (for suggestions)</th><th class="text-end">items</th><th class="text-end">open</th><th class="text-end">lessons</th><th></th></tr></thead>
       <tbody>
-        ${rows.map((r) => html`<tr key=${r.name}>
+        ${rows.map((r) => [html`<tr key=${r.name}>
           <td><a href=${`#/board`} onClick=${() => saveSearch("te.board.domain", r.name)}><${DomainChip} d=${r.name} /></a></td>
           <td class="small"><span class="editable" onClick=${() => edit(r, "description", "Description")}>${r.description || html`<span class="text-secondary">add…</span>`}</span></td>
           <td class="small"><span class="editable" onClick=${() => edit(r, "keywords", "Keywords (comma separated)")}>${(r.keywords ?? []).join(", ") || html`<span class="text-secondary">add…</span>`}</span></td>
           <td class="text-end">${r.count}${r.archived ? html`<span class="text-secondary small"> +${r.archived} archived</span>` : ""}</td>
           <td class="text-end">${r.open}</td>
+          <td class="text-end">${(lessons?.[r.name] ?? []).length > 0
+            ? html`<a onClick=${() => setOpenLessons(openLessons === r.name ? null : r.name)} title="lessons agents shared for this domain">${lessons[r.name].length}</a>`
+            : ""}</td>
           <td class="text-end text-nowrap">
             <input type="color" class="domain-color" value=${toHexColor(r.color ?? fallbackColor(r.name))}
               title="pick a colour for #${r.name}${r.color ? "" : " (automatic — inherited from the name)"}"
@@ -1683,7 +1706,16 @@ const Domains = () => {
             <button class="btn btn-sm btn-outline-secondary py-0" onClick=${() => rename(r)}>rename / merge</button>
             <button class="btn btn-sm btn-outline-danger py-0" onClick=${() => del(r)}>delete</button>
           </td>
-        </tr>`)}
+        </tr>`,
+        openLessons === r.name && html`<tr key=${r.name + "-lessons"}>
+          <td colspan="7" class="small">
+            <b class="text-secondary">lessons for #${r.name}</b> <span class="text-secondary">— shared by agents; brief shows the newest 10</span>
+            ${(lessons?.[r.name] ?? []).map((l, i) => html`<div key=${i} class="d-flex gap-2 align-items-baseline mt-1">
+              <span class="flex-grow-1">${l}</span>
+              <button class="btn btn-sm btn-link py-0 text-danger" title="delete this lesson" onClick=${() => delLesson(r.name, i + 1)}>×</button>
+            </div>`)}
+          </td>
+        </tr>`].filter(Boolean))}
       </tbody>
     </table></div>
     ${sugg && html`<div class="card mt-3">

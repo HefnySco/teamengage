@@ -1602,3 +1602,50 @@ describe("session role at hello (GL-0323)", () => {
   });
 });
 
+
+describe("shared lessons per domain (GL-0322)", () => {
+  it("GET /api/lessons lists lines per domain; delete removes one — agents get FORBIDDEN", async () => {
+    mkdirSync(join(plans, "lessons"), { recursive: true });
+    writeFileSync(
+      join(plans, "lessons", "simulation.md"),
+      "# lessons — #simulation\n\n- 2026-11-14 a@x#1 — first lesson\n- 2026-11-15 b@x#2 — second lesson\n",
+    );
+
+    const res = await api("/api/lessons");
+    expect(res.status).toBe(200);
+    const list = (await res.json()) as Record<string, string[]>;
+    expect(list["simulation"]).toHaveLength(2);
+
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+      api(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+
+    // an agent session may not delete a lesson
+    expect(
+      (await post("/api/lessons/delete", { domain: "simulation", line: 1 }, { "x-te-session": "t" }))
+        .status,
+    ).toBe(403);
+
+    // the human deletes one line; the rest stays
+    expect((await post("/api/lessons/delete", { domain: "simulation", line: 1 })).status).toBe(200);
+    const after = (await (await api("/api/lessons")).json()) as Record<string, string[]>;
+    expect(after["simulation"]).toEqual(["2026-11-15 b@x#2 — second lesson"]);
+    expect((await post("/api/lessons/delete", { domain: "simulation", line: 9 })).status).toBe(404);
+  });
+
+  it("ops.lessonsFor merges the item's domains newest-first, capped at 10", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    writeFileSync(
+      join(plans, "lessons", "mavlink.md"),
+      "# lessons — #mavlink\n\n- 2026-11-16 c@x#3 — newest of all\n- 2026-11-10 d@x#4 — older\n",
+    );
+    const ls = await ops.lessonsFor(["simulation", "mavlink"]);
+    expect(ls[0]).toContain("[#mavlink] 2026-11-16");
+    expect(ls.length).toBe(3);
+  });
+});

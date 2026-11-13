@@ -633,4 +633,29 @@ export function registerWriteTools(
       }
     },
   );
+
+  server.registerTool(
+    "lesson",
+    {
+      description:
+        "Share a hard-won lesson for a domain — {domain, text}: repo traps, build commands, " +
+        "test rules the next agent needs. One line appended to lessons/<domain>.md in the " +
+        "plans folder with your session and the date; brief shows the newest 10 to whoever " +
+        "works that domain next. The domain must already exist — an unknown one is refused. " +
+        "Lost time on a trap? Leave the lesson, don't make the next agent lose it too.",
+      inputSchema: { domain: z.string(), text: z.string() },
+    },
+    async ({ domain, text }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.lesson(s, domain, text);
+        return okText(`lesson added for #${r.domain}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
 }
