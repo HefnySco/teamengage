@@ -184,10 +184,11 @@ const IdeaChip = ({ st }) => {
 };
 
 // ---- found problems — open/done problem counts on a plan (from the index), shown as a chip
-const ProblemChip = ({ p }) => {
+const ProblemChip = ({ p, on, onToggle }) => {
   if (!p || p.open + p.done === 0) return null;
-  return html`<span class="plan-chip ${p.open > 0 ? "ps-problem" : "ps-done"}"
-    title="problems found in this plan: ${p.open} open, ${p.done} done">problems ${p.open} open / ${p.done} done</span>`;
+  return html`<span class="plan-chip ${p.open > 0 ? "ps-problem" : "ps-done"}${onToggle ? " clickable" : ""}${on ? " on" : ""}"
+    title="problems found in this plan: ${p.open} open, ${p.done} done${onToggle ? (on ? " — click to fold the list" : " — click to list them") : ""}"
+    onClick=${onToggle ? (e) => { e.stopPropagation(); onToggle(); } : null}>problems ${p.open} open / ${p.done} done</span>`;
 };
 const hasFound = (i) => (i.found_by ?? []).length > 0 || (i.found_here ?? []).length > 0;
 
@@ -1345,9 +1346,37 @@ const PlanBar = ({ p }) => {
   return html`<div class="progress flex-shrink-0" style=${{ width: "6rem", height: "0.45rem" }} title="${p?.done ?? 0}/${total} parts finished">
     <div class="progress-bar bg-success" style=${{ width: `${pct}%` }}></div></div>`;
 };
+// a plan's problem issues — mirrors core planProblems: descendants that are
+// problem items (type bug or the bug domain), plus the found_here entries of
+// the plan and its descendants — each once, dropped items left out
+const isProblemItem = (i) => i.type === "bug" || (i.domains ?? []).includes("bug");
+const planProblemRows = (tree, plan) => {
+  const ids = new Set();
+  const seen = new Set();
+  const walk = (id) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const n = tree.items.get(id);
+    if (!n) return;
+    for (const f of n.found_here ?? []) ids.add(f.id);
+    if (id !== plan.id && isProblemItem(n)) ids.add(id);
+    for (const c of tree.kids.get(id) ?? []) walk(c.id);
+  };
+  walk(plan.id);
+  return [...ids].map((id) => tree.items.get(id)).filter((n) => n && n.status !== "dropped");
+};
+const ProblemRow = ({ i, depth, onOpen }) => html`
+  <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+    onClick=${() => onOpen(i.id)}>
+    <span style=${{ width: "1rem", textAlign: "center" }} title="problem found in this plan">!</span>
+    <span class="id text-nowrap">${i.id}</span>
+    <${Badge} s=${i.status} />
+    <span class="text-truncate">${i.title}</span>
+  </div>`;
 const PlanNode = ({ i, depth, tree }) => {
   const isPlan = i.type === "epic";
   const isOpen = isPlan && tree.isOpenOf(i, depth);
+  const probMode = isPlan && tree.probOpen?.[i.id];
   const children = tree.kids.get(i.id) ?? [];
   // approve-all-parts: the plan's draft children, one confirm for the lot
   const draftParts = children.filter((c) => c.status === "draft");
@@ -1372,7 +1401,7 @@ const PlanNode = ({ i, depth, tree }) => {
           }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
         <span class="id text-nowrap">${i.id}</span>
         <${StarBtn} i=${i} reload=${tree.reload} />
-        ${isPlan ? html`<${PlanBadge} i=${i} /><${ProblemChip} p=${i.plan_problems} />` : html`<${Badge} s=${i.status} />`}
+        ${isPlan ? html`<${PlanBadge} i=${i} /><${ProblemChip} p=${i.plan_problems} on=${probMode} onToggle=${() => tree.toggleProb(i.id)} />` : html`<${Badge} s=${i.status} />`}
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
@@ -1396,7 +1425,8 @@ const PlanNode = ({ i, depth, tree }) => {
             }}><${CheckIcon} /></${ActBtn}></span>`}
         </span>`}
       </div>
-      ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
+      ${isOpen && probMode && planProblemRows(tree, i).map((r) => html`<${ProblemRow} key=${r.id} i=${r} depth=${depth + 1} onOpen=${tree.onOpen} />`)}
+      ${isOpen && !probMode && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
 };
 // a plan counts fully completed when its own status is done/dropped AND every
@@ -1421,6 +1451,7 @@ const Plans = ({ onOpen }) => {
       return {};
     }
   });
+  const [probOpen, setProbOpen] = useState({});
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const setOpen = (next) => {
     setOpenState(next);
@@ -1479,7 +1510,12 @@ const Plans = ({ onOpen }) => {
     toast(r.skipped?.length ? `skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}` : `archived ${r.done.length}`, r.skipped?.length ? "danger" : "success");
     reload();
   };
-  const tree = { kids, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload };
+  const toggleProb = (id) => {
+    const on = !probOpen[id];
+    setProbOpen({ ...probOpen, [id]: on });
+    if (on && !open[id]) setOpen({ ...open, [id]: true });
+  };
+  const tree = { kids, items, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload, probOpen, toggleProb };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
