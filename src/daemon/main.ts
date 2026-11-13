@@ -249,6 +249,12 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_release", { workspace: name, message: `auto-released ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_release", { workspace: name, message: `auto-release failed: ${err.message}` }));
+      // GL-0324: a peer question unanswered past peer_answer_after becomes the human's → waiting
+      ops.peerAnswerSweep()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("peer_timeout", { workspace: name, message: `peer questions timed out: ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("peer_timeout", { workspace: name, message: `peer-timeout sweep failed: ${err.message}` }));
       // GL-0327: a `digest` rule posts the day's digest once per UTC day
       const day = new Date().toISOString().slice(0, 10);
       if (wsr.ws.config.notify.some((r) => r.on === "digest") && digestSent.get(name) !== day) {

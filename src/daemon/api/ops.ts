@@ -768,7 +768,7 @@ export class WorkspaceOps {
     );
   }
 
-  async ask(id: string, session: Session, text: string, options?: string[]) {
+  async ask(id: string, session: Session, text: string, options?: string[], to?: "peer") {
     const it = this.item(id);
     this.assertLiveClaim(it);
     const question = {
@@ -780,6 +780,48 @@ export class WorkspaceOps {
     return this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "ask",
       question,
+      to,
+    });
+  }
+
+  /** A peer session answers a `to: "peer"` question — the item stays with its holder (GL-0324). */
+  async answerPeer(id: string, session: Session, answer: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "answer_peer",
+      answer,
+    });
+  }
+
+  /**
+   * Daemon sweep (GL-0324): a `to: "peer"` question unanswered for longer
+   * than peer_answer_after becomes a normal human question → waiting.
+   */
+  async peerAnswerSweep(now = new Date()): Promise<string[]> {
+    const after = parseDuration(this.wsr.ws.config.peer_answer_after);
+    const moved: string[] = [];
+    for (const it of this.index.items.values()) {
+      const q = it.meta.question;
+      if (!q || q.to !== "peer" || it.meta.status !== "in_progress") continue;
+      if (now.getTime() - new Date(q.asked_at).getTime() < after) continue;
+      await this.store.perform(
+        it.meta.id,
+        this.item(it.meta.id).meta.version,
+        { kind: "daemon", session: "daemon", machine: this.wsr.store.machine },
+        { type: "peer_timeout" },
+      );
+      moved.push(it.meta.id);
+    }
+    return moved;
+  }
+
+  /** Open peer questions a session may answer — other sessions, same or higher tier. */
+  peerQuestionsFor(session?: Session): IndexedItem[] {
+    return [...this.index.items.values()].filter((i) => {
+      const q = i.meta.question;
+      if (!q || q.to !== "peer" || i.meta.status !== "in_progress") return false;
+      if (session && q.asked_by === session.id) return false;
+      return tierRank(session?.tier ?? "standard") >= tierRank(q.peer_tier ?? "standard");
     });
   }
 

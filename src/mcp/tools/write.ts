@@ -226,21 +226,52 @@ export function registerWriteTools(
   server.registerTool(
     "ask",
     {
-      description: "Record a question → item waits for the human.",
+      description:
+        "Record a question → item waits for the human. " +
+        "to: \"peer\" asks another agent first — the item stays in_progress, " +
+        "an eligible session answers with answer_peer, and only a question " +
+        "left unanswered past peer_answer_after reaches the human.",
       inputSchema: {
         id: z.string(),
         question: z.string(),
         options: z.array(z.string()).optional(),
+        to: z.literal("peer").optional(),
       },
     },
-    async ({ id, question, options }) => {
+    async ({ id, question, options, to }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.ask(id, s, question, options);
-        return okText(`waiting ${id}: human's turn`);
+        await o.ask(id, s, question, options, to);
+        return okText(to === "peer" ? `peer question on ${id} — item stays yours` : `waiting ${id}: human's turn`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "answer_peer",
+    {
+      description:
+        "Answer another session's peer question (ask to: peer). " +
+        "You must not be the asker, and your tier must be the asker's or higher. " +
+        "The answer lands in the item's ## Notes and the holder sees it in brief.",
+      inputSchema: {
+        id: z.string(),
+        answer: z.string(),
+      },
+    },
+    async ({ id, answer }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.answerPeer(id, s, answer);
+        return okText(`answered peer question on ${id}`);
       } catch (e) {
         return errFrom(e);
       }

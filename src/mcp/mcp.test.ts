@@ -91,6 +91,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        "answer_peer",
         "ask",
         "attach",
         "bounce",

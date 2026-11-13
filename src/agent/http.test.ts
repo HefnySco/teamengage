@@ -14,6 +14,7 @@ import type { DaemonCtx } from "../daemon/server/context.js";
 import { SessionRegistry } from "../daemon/sessions/sessions.js";
 import { EventBus } from "../daemon/api/events.js";
 import { registerAgentRoutes, SESSION_HEADER } from "./http.js";
+import { WorkspaceOps } from "../daemon/api/ops.js";
 
 /**
  * Plain-HTTP agent API: the protocol an AI with only curl and a URL can use.
@@ -110,6 +111,14 @@ beforeAll(async () => {
     join(plans, "items", "WS", "WS-0009.md"),
     `---\nid: WS-0009\ntype: task\ntitle: dependent task\nstatus: draft\nversion: 1\ndepends_on: [WS-0008]\n---\n\n## Summary\nx\n`,
   );
+  // GL-0324: peer questions — WS-0015 and WS-0016 get claimed + peer-asked in the tests
+  for (const n of ["0015", "0016"]) {
+    const id = `WS-${n}`;
+    writeFileSync(
+      join(plans, "items", "WS", `${id}.md`),
+      `---\nid: ${id}\ntype: task\ntitle: peer task ${n}\nstatus: ready\nversion: 1\ntargets: ["@self:src/p${n}.ts"]\n---\n\n## Summary\nx\n`,
+    );
+  }
   // GL-0326: Touches-path overlap — WS-0010/WS-0011 share a path, WS-0012 is
   // done and WS-0014 dropped (not counted), WS-0013 names another repo
   for (const [n, status, touches] of [
@@ -526,6 +535,78 @@ describe("publish task outputs (GL-0325)", () => {
     expect(brief.text).toContain("dep WS-0008 in_review");
     expect(brief.text).toContain("provides: GET /api/lessons route");
     expect(brief.text).toContain("provides: lessons/<domain>.md files");
+  });
+});
+
+describe("peer questions (GL-0324)", () => {
+  it("a peer answers before the human: question stays with the holder, answer lands in brief", async () => {
+    const holder = await hello("q-holder");
+    expect((await call("POST", "/agent/claim/WS-0015", { token: holder })).text).toMatch(
+      /^claimed/,
+    );
+    const ask = await call("POST", "/agent/ask/WS-0015", {
+      token: holder,
+      body: { question: "which field?", to: "peer" },
+    });
+    expect(ask.status).toBe(200);
+    expect(ask.text).toContain("peer question on WS-0015");
+    // the item stays with its holder — still in_progress, still theirs
+    const hb = await call("GET", "/agent/brief/WS-0015", { token: holder });
+    expect(hb.text).toContain("WS-0015 in_progress");
+    expect(hb.text).toContain("open peer question");
+    // the holder cannot answer its own question
+    expect(
+      (await call("POST", "/agent/answer_peer/WS-0015", { token: holder, body: { answer: "me" } }))
+        .status,
+    ).toBe(403);
+    // a lower-tier session cannot answer a standard-tier question
+    const light = /^token (\S+)/.exec(
+      (await call("POST", "/agent/hello", { body: { agent: "lite", tier: "light" } })).text,
+    )![1];
+    expect(
+      (await call("POST", "/agent/answer_peer/WS-0015", { token: light, body: { answer: "x" } }))
+        .status,
+    ).toBe(403);
+    // an eligible peer sees the question in next and answers it
+    const peer = /^token (\S+)/.exec(
+      (await call("POST", "/agent/hello", { body: { agent: "peer", tier: "standard" } })).text,
+    )![1];
+    const next = (await call("GET", "/agent/next?limit=20", { token: peer })).text;
+    expect(next).toContain("peer questions");
+    expect(next).toContain("WS-0015");
+    const ans = await call("POST", "/agent/answer_peer/WS-0015", {
+      token: peer,
+      body: { answer: "use field X" },
+    });
+    expect(ans.status).toBe(200);
+    expect(ans.text).toContain("answered peer question");
+    // the holder sees the answer in brief; it also landed in ## Notes
+    const hb2 = await call("GET", "/agent/brief/WS-0015", { token: holder });
+    expect(hb2.text).toContain("peer answer by");
+    expect(hb2.text).toContain("use field X");
+    const file = readFileSync(join(plans, "items", "WS", "WS-0015.md"), "utf8");
+    expect(file).toContain("## Notes");
+    expect(file).toContain("use field X");
+  });
+
+  it("with no answer after peer_answer_after the item goes to waiting (fake clock)", async () => {
+    const holder = await hello("q-holder-2");
+    expect((await call("POST", "/agent/claim/WS-0016", { token: holder })).text).toMatch(
+      /^claimed/,
+    );
+    await call("POST", "/agent/ask/WS-0016", {
+      token: holder,
+      body: { question: "stale?", to: "peer" },
+    });
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+    // fresh question — nothing moves (default peer_answer_after is 30m)
+    expect(await ops.peerAnswerSweep(new Date())).toEqual([]);
+    // 31 minutes later — the question becomes the human's
+    expect(await ops.peerAnswerSweep(new Date(Date.now() + 31 * 60_000))).toEqual(["WS-0016"]);
+    const brief = (await call("GET", "/agent/brief/WS-0016", { token: holder })).text;
+    expect(brief).toContain("WS-0016 waiting");
+    expect(brief).toContain("open question for the human");
   });
 });
 

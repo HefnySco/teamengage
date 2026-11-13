@@ -111,8 +111,16 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
         const items = ops.next(limit ?? 3, domain, binding.session);
-        if (!items.length) return okText("nothing ready");
-        return okText(items.map(itemLine).join("\n"));
+        const peers = ops.peerQuestionsFor(binding.session);
+        const lines = items.map(itemLine);
+        if (peers.length) {
+          lines.push("peer questions (answer_peer):");
+          for (const p of peers) {
+            lines.push(`  ${p.meta.id} "${p.meta.title}" — ${p.meta.question!.text}`);
+          }
+        }
+        if (!lines.length) return okText("nothing ready");
+        return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);
       }
@@ -153,6 +161,18 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
               `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}${f.state ? ` → ${f.state}${f.reason ? ` — ${f.reason}` : ""}` : ""}`,
             );
           }
+        }
+        if (it.meta.question) {
+          const q = it.meta.question;
+          lines.push(
+            q.to === "peer"
+              ? `open peer question (asked ${q.asked_at}): ${q.text} — waiting for a peer; answer lands in ## Notes`
+              : `open question for the human: ${q.text}`,
+          );
+        }
+        if (it.meta.peer_answer) {
+          const a = it.meta.peer_answer;
+          lines.push(`peer answer by ${a.by} at ${a.at}: ${a.text}`);
         }
         if (it.meta.type === "epic" && it.plan_state) {
           lines.push(

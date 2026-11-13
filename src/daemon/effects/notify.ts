@@ -20,7 +20,7 @@ export function notifyKind(
   meta: ItemMeta | undefined,
   maxAttempts: number,
 ): NotifyOn | undefined {
-  if (ev.action === "ask") return "question";
+  if (ev.action === "ask" || ev.action === "peer_timeout") return "question";
   if (ev.action === "flag_drop") return "needs_human";
   if (ev.action === "review" && meta?.ai_review?.needs_human) return "needs_human";
   if (ev.to === "hold" && (meta?.attempts ?? 0) >= maxAttempts) return "max_attempts";

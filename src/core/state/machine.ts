@@ -39,8 +39,12 @@ export type Action =
   | { type: "claim"; claim: Claim }
   | { type: "release"; note?: string }
   | { type: "log"; note: string }
-  | { type: "ask"; question: Question }
+  | { type: "ask"; question: Question; to?: "peer" }
   | { type: "answer"; decisionId: string; decisionTitle: string }
+  /** A peer session answers a `to: "peer"` question — item stays with its holder (GL-0324). */
+  | { type: "answer_peer"; answer: string }
+  /** Daemon sweep: a peer question unanswered past peer_answer_after becomes the human's (GL-0324). */
+  | { type: "peer_timeout" }
   /** Human revises the answer already given (the item's latest decision). */
   | { type: "change_answer"; decisionId: string; decisionTitle: string; previous: string }
   | {
@@ -445,9 +449,63 @@ export function transition(
     case "ask": {
       requireHolder(actor, ctx, action.type);
       if (from !== "in_progress") fail(from, action.type);
+      if (meta.question) {
+        throw new InvalidTransitionError("a question is already open", from, action.type);
+      }
+      delete out.meta.peer_answer;
+      if (action.to === "peer") {
+        // GL-0324: peers answer first — the item stays with its holder
+        out.meta.question = {
+          ...action.question,
+          to: "peer",
+          ...(ctx.claim?.tier ? { peer_tier: ctx.claim.tier } : {}),
+        };
+        out.log.push(`- ${stamp} ${who} asked a peer: ${action.question.text}`);
+        out.events.push(ev(actor, stamp, meta.id, "ask_peer", from, from, action.question.text));
+        return out;
+      }
       out.meta.question = action.question;
       set("waiting");
       out.log.push(`- ${stamp} ${who} asked: ${action.question.text}`);
+      return out;
+    }
+
+    case "answer_peer": {
+      if (actor.kind !== "agent") requireHumanOrDaemon(actor, action.type);
+      const q = meta.question;
+      if (!q || q.to !== "peer") {
+        throw new InvalidTransitionError("no open peer question", from, action.type);
+      }
+      if (actor.session === q.asked_by) {
+        throw new ForbiddenError(`${action.type}: you asked it — a peer answers`);
+      }
+      if (actor.kind === "agent" && tierRank(actor.tier ?? "standard") < tierRank(q.peer_tier ?? "standard")) {
+        throw new ForbiddenError(
+          `${action.type}: needs a ${q.peer_tier}-tier-or-higher session (you are ${actor.tier ?? "standard"})`,
+        );
+      }
+      delete out.meta.question;
+      out.meta.peer_answer = { by: actor.session, text: action.answer, at: ctx.now };
+      out.log.push(`- ${stamp} ${who} answered the peer question: ${action.answer}`);
+      out.sectionWrites.push({
+        heading: "Notes",
+        text: `- ${stamp} peer ${actor.session} answered: ${action.answer}\n`,
+      });
+      out.events.push(ev(actor, stamp, meta.id, "answer_peer", from, from, action.answer));
+      return out;
+    }
+
+    case "peer_timeout": {
+      requireHumanOrDaemon(actor, action.type);
+      const q = meta.question;
+      if (!q || q.to !== "peer") {
+        throw new InvalidTransitionError("no open peer question", from, action.type);
+      }
+      // strip the peer marker — it is a normal human question now
+      const { to: _to, peer_tier: _pt, ...human } = q;
+      out.meta.question = human;
+      set("waiting", `peer question unanswered — escalated to the human`);
+      out.log.push(`- ${stamp} peer question timed out → waiting for the human`);
       return out;
     }
 

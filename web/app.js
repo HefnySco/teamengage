@@ -537,6 +537,7 @@ const Inbox = ({ onOpen }) => {
   const effSort = SORTS[sort] ? sort : "";
   const itemOf = {
     questions: (x) => byId[x.id] ?? { id: x.id },
+    peer_questions: (x) => byId[x.id] ?? { id: x.id },
     drafts: (id) => byId[id] ?? { id },
     reviews: (id) => byId[id] ?? { id },
     drop_flags: (x) => byId[x.id] ?? { id: x.id },
@@ -547,19 +548,21 @@ const Inbox = ({ onOpen }) => {
     effSort ? [...arr].sort((a, b) => SORTS[effSort](itemOf[key](a), itemOf[key](b))) : arr;
   const view = {
     questions: sortRows("questions", data.questions.filter((x) => hit(x.id, x.question?.text))),
+    peer_questions: sortRows("peer_questions", (data.peer_questions ?? []).filter((x) => hit(x.id, x.question?.text, x.question?.asked_by))),
     drafts: sortRows("drafts", data.drafts.filter((id) => hit(id))),
     reviews: sortRows("reviews", data.reviews.filter((id) => hit(id))),
     drop_flags: sortRows("drop_flags", (data.drop_flags ?? []).filter((x) => hit(x.id, x.by, x.reason))),
     claims: sortRows("claims", data.claims.filter((c) => hit(c.item, c.holder, c.machine))),
     findings: sortRows("findings", data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind))),
   };
-  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length;
+  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0);
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
   // every item the inbox lists, deduped — the pool the search filters and the
   // suggestion dropdown's @agent / #domain counts draw from
   const poolIds = [
     ...new Set([
       ...data.questions.map((x) => x.id),
+      ...(data.peer_questions ?? []).map((x) => x.id),
       ...data.drafts,
       ...data.reviews,
       ...(data.drop_flags ?? []).map((f) => f.id),
@@ -620,6 +623,18 @@ const Inbox = ({ onOpen }) => {
       rows: view.questions.map(
         (x) => html`<${QuestionRow} key=${x.id} q=${x} item=${byId[x.id]} onOpen=${onOpen}
           onAnswer=${(text) => act(x.id, "answer", { text })} />`,
+      ),
+    },
+    {
+      key: "peer_questions",
+      label: "Peer questions",
+      rows: view.peer_questions.map((x) =>
+        itemRow(
+          x.id,
+          html`<${InboxStatus} s="in_progress" />`,
+          html` <span class="text-secondary">· ${x.question.text} — asked by <b class=${whoCls(x.question.asked_by)}>${x.question.asked_by}</b> ${ago(x.question.asked_at)} ago — a peer answers, or it comes to you</span>`,
+          "",
+        ),
       ),
     },
     {

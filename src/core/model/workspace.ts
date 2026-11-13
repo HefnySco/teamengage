@@ -166,6 +166,11 @@ export const WorkspaceConfig = z
     /** After this many failed attempts the item is put on hold for the human. */
     max_attempts: z.number().int().min(1).default(5),
     /**
+     * A `to: "peer"` question unanswered this long becomes a normal human
+     * question — the daemon's sweep moves the item to waiting (GL-0324).
+     */
+    peer_answer_after: z.string().default("30m"),
+    /**
      * Alert the human on events that need a decision (GL-0327) — a list of
      * {on, command | url} rules; see NotifyRule. Unset: nothing runs.
      */

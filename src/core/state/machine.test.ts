@@ -1005,3 +1005,121 @@ describe("takeover counts as an attempt", () => {
     ).toThrow(/out of attempts/);
   });
 });
+
+describe("peer questions (GL-0324)", () => {
+  const holder: Actor = { ...agent, tier: "standard" };
+  const holderClaim = { ...claimOf(), tier: "standard" as const };
+  const peerQ = {
+    text: "which field?",
+    asked_by: holder.session,
+    asked_at: NOW,
+    to: "peer" as const,
+    peer_tier: "standard" as const,
+  };
+  const asking = () => ({ ...item("in_progress"), question: peerQ });
+  const peer: Actor = { ...agent2, tier: "standard" };
+  const heavyPeer: Actor = { ...agent2, tier: "heavy" };
+  const lightPeer: Actor = { ...agent2, tier: "light" };
+
+  it("ask with to: peer keeps the item in_progress", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "ask", question: { text: "?", asked_by: holder.session, asked_at: NOW }, to: "peer" },
+      holder,
+      ctx({ claim: holderClaim }),
+    );
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.meta.question?.to).toBe("peer");
+    expect(r.meta.question?.peer_tier).toBe("standard");
+    expect(r.events[0].action).toBe("ask_peer");
+  });
+
+  it("a second ask while a question is open is refused", () => {
+    expect(() =>
+      transition(
+        asking(),
+        { type: "ask", question: { text: "again?", asked_by: holder.session, asked_at: NOW }, to: "peer" },
+        holder,
+        ctx({ claim: holderClaim }),
+      ),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("answer_peer writes the answer to ## Notes and meta.peer_answer", () => {
+    const r = transition(
+      asking(),
+      { type: "answer_peer", answer: "use field X" },
+      peer,
+      ctx(),
+    );
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.meta.question).toBeUndefined();
+    expect(r.meta.peer_answer?.text).toBe("use field X");
+    expect(r.meta.peer_answer?.by).toBe(peer.session);
+    expect(r.sectionWrites[0].heading).toBe("Notes");
+    expect(r.sectionWrites[0].text).toContain("use field X");
+  });
+
+  it("the holder cannot answer its own question", () => {
+    expect(() =>
+      transition(asking(), { type: "answer_peer", answer: "me" }, holder, ctx()),
+    ).toThrow(ForbiddenError);
+  });
+
+  it("a lower-tier session cannot answer a higher-tier peer question", () => {
+    expect(() =>
+      transition(
+        { ...asking(), question: { ...peerQ, peer_tier: "heavy" } },
+        { type: "answer_peer", answer: "x" },
+        lightPeer,
+        ctx(),
+      ),
+    ).toThrow(ForbiddenError);
+  });
+
+  it("a higher-tier session can answer", () => {
+    const r = transition(asking(), { type: "answer_peer", answer: "x" }, heavyPeer, ctx());
+    expect(r.meta.peer_answer?.by).toBe(heavyPeer.session);
+  });
+
+  it("answer_peer with no open peer question is refused", () => {
+    expect(() =>
+      transition(item("in_progress"), { type: "answer_peer", answer: "x" }, peer, ctx()),
+    ).toThrow(InvalidTransitionError);
+  });
+
+  it("peer_timeout escalates to a normal human question → waiting", () => {
+    const r = transition(asking(), { type: "peer_timeout" }, daemon, ctx());
+    expect(r.meta.status).toBe("waiting");
+    expect(r.meta.question?.to).toBeUndefined();
+    expect(r.meta.question?.peer_tier).toBeUndefined();
+    expect(r.meta.question?.text).toBe("which field?");
+    expect(r.events[0].action).toBe("peer_timeout");
+  });
+
+  it("peer_timeout without a peer question is refused", () => {
+    expect(() => transition(item("in_progress"), { type: "peer_timeout" }, daemon, ctx())).toThrow(
+      InvalidTransitionError,
+    );
+    // a human question is not the daemon's to time out
+    const humanQ = { ...item("waiting"), question: { text: "?", asked_by: agent.session, asked_at: NOW } };
+    expect(() => transition(humanQ, { type: "peer_timeout" }, daemon, ctx())).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it("agents cannot fire peer_timeout", () => {
+    expect(() => transition(asking(), { type: "peer_timeout" }, peer, ctx())).toThrow(ForbiddenError);
+  });
+
+  it("the next ask clears the old peer answer", () => {
+    const meta = { ...item("in_progress"), peer_answer: { by: peer.session, text: "old", at: NOW } };
+    const r = transition(
+      meta,
+      { type: "ask", question: { text: "?", asked_by: holder.session, asked_at: NOW }, to: "peer" },
+      holder,
+      ctx({ claim: holderClaim }),
+    );
+    expect(r.meta.peer_answer).toBeUndefined();
+  });
+});

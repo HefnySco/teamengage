@@ -21,15 +21,6 @@ export type Status = z.infer<typeof Status>;
 /** Whose move it is — derived from status. */
 export type Turn = "human" | "agent";
 
-/** An open question attached to a `waiting` item (ask → waiting, answer → decision). */
-export const Question = z.object({
-  text: z.string().min(1),
-  options: z.array(z.string()).optional(),
-  asked_by: z.string(),
-  asked_at: z.string(),
-});
-export type Question = z.infer<typeof Question>;
-
 /**
  * Latest AI peer review of a submission (review/bounce by an agent session
  * that is not the holder). Advisory only: the human still accepts.
@@ -99,6 +90,28 @@ export const TIERS: Tier[] = ["light", "standard", "heavy"];
 export function tierRank(t: Tier | undefined): number {
   return t ? TIERS.indexOf(t) : -1;
 }
+
+/** An open question attached to an item. `to: "peer"`: peers answer first (GL-0324)
+ * and the item stays in_progress; unset: a human question on a `waiting` item. */
+export const Question = z.object({
+  text: z.string().min(1),
+  options: z.array(z.string()).optional(),
+  asked_by: z.string(),
+  asked_at: z.string(),
+  /** peers answer first — another session of the same or a higher tier */
+  to: z.literal("peer").optional(),
+  /** the asking session's tier — recorded so a dead session's tier still gates answers */
+  peer_tier: Tier.optional(),
+});
+export type Question = z.infer<typeof Question>;
+
+/** A peer's answer to a `to: "peer"` question — written to ## Notes and kept for brief. */
+export const PeerAnswer = z.object({
+  by: z.string(),
+  text: z.string(),
+  at: z.string(),
+});
+export type PeerAnswer = z.infer<typeof PeerAnswer>;
 /** One tier up (heavy stays heavy). */
 export function nextTier(t: Tier): Tier {
   return TIERS[Math.min(TIERS.indexOf(t) + 1, TIERS.length - 1)];
@@ -139,6 +152,8 @@ export const ItemMeta = z
     /** overlay mode: companion `.simple.md`, relative to the workspace root */
     simple_source: z.string().optional(),
     question: Question.optional(),
+    /** last peer answer (GL-0324) — cleared on the next ask */
+    peer_answer: PeerAnswer.optional(),
     /**
      * Latest AI review of the current submission; cleared on every `submit`
      * (a new submission starts unreviewed). Shown as a triage badge in review.

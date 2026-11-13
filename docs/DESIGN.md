@@ -114,6 +114,7 @@ auto_accept_rules: # solo: ordered rules; first match sets the item's delay
   - { domains: [meta], after: never } #   never = the accept stays the human's
 auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
 auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
+peer_answer_after: 30m # a peer question unanswered this long becomes the human's (§5)
 notify: # unset = off: alert the human on decision events (§5)
   - { on: question, command: "./scripts/ping.sh" } # runs with the event JSON on stdin
   - { on: needs_human, url: "https://example/hook" } # or POSTs the JSON
@@ -238,6 +239,16 @@ dropped  = human only; ──undrop──▶ draft (re-approval required)
 flag_drop= agent only, any non-terminal status: advisory `drop_request`
           (by / reason / at) — the human's `drop` approves, `unflag_drop`
           keeps it; status and claims are untouched meanwhile
+ask to:peer = holder only: the question is recorded on the item but the
+          item stays `in_progress` — peers answer first (below). A second
+          ask while a question is open is refused.
+answer_peer = another session's job: never the asker, and an agent must be
+          the asker's tier or higher. The answer lands in ## Notes and in
+          `meta.peer_answer` (the holder sees it in brief); the item stays
+          `in_progress`. The human may answer a peer question the same way.
+peer_timeout= daemon sweep: a peer question unanswered longer than
+          `peer_answer_after` becomes a normal human question ──▶ waiting
+          (the `notify` kind `question` covers it).
 change_answer = human only, any status but done/dropped: revise the item's latest answer
            (same decision id, version +1, old → new in the Log)
 close_plan = human only, epic: sets plan_closed — a flag, not a status
@@ -390,6 +401,11 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   to `ready` — the worktree and the branch stay for the next claimant.
   `in_review` items and claims held on other machines are never released;
   each release lands in the event log and the item log with actor `daemon`.
+- `peer_answer_after` (workspace.yaml, default `30m`) is how long a
+  `to: "peer"` question waits for a peer before the daemon turns it into a
+  normal human question: the item moves to `waiting` and shows in the
+  inbox's Questions. While it is open it sits in the inbox's separate
+  **Peer questions** list and in eligible agents' `next` output.
 - `notify` (workspace.yaml, unset = off) alerts the human on events that
   need a decision — a question asked, a `flag_drop` or `needs_human`
   review, an item held at `max_attempts`, an ops job parked at a gate, or

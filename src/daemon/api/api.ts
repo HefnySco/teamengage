@@ -293,6 +293,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         questions: items
           .filter((i) => i.meta.status === "waiting" && i.meta.question)
           .map((i) => ({ id: i.meta.id, question: i.meta.question })),
+        peer_questions: items
+          .filter((i) => i.meta.question?.to === "peer")
+          .map((i) => ({ id: i.meta.id, question: i.meta.question })),
         reviews: items.filter((i) => i.meta.status === "in_review").map((i) => i.meta.id),
         claims: [...ops.index.claims.values()].filter((c) => c.conflicted),
         drop_flags: items

@@ -176,6 +176,13 @@ The task goes to `waiting` and it is the human's turn. Stop working on it
 and tell the human there is a question. When it is answered the task comes
 back to you (`brief` shows the decision).
 
+**Ask a peer first when another agent could know.** With
+`"to":"peer"` in the ask body the task stays `in_progress` and another
+session at your tier or higher answers it (`answer_peer`). The answer
+lands in `## Notes` and in your `brief`. A peer question that nobody
+answers within `peer_answer_after` (default 30m) goes to the human on its
+own. `next` lists the peer questions you may answer.
+
 ## 7. Prove it, then submit
 
 Go through `## Acceptance` one item at a time and actually run each check.
