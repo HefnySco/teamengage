@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { teHome } from "../config/config.js";
@@ -160,16 +161,26 @@ export interface ReachProbeCmd {
   args: string[];
 }
 
-export function reachCommand(m: { host?: string; ssh: Record<string, string> }, via: string): ReachProbeCmd | undefined {
+// argv runs without a shell — a leading ~ in a machine file path would never expand
+const tilde = (p: string) => (p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p);
+
+export function reachCommand(m: { host?: string; mount?: string; ssh: Record<string, string> }, via: string): ReachProbeCmd | undefined {
+  // a usb edge "reaches" a locally mounted drive — no host needed
+  if (via === "usb") return m.mount ? { file: "test", args: ["-d", tilde(m.mount)] } : undefined;
   // a host that starts with '-' would be read as an ssh option — refuse it (DE-0151)
   if (!m.host || m.host.startsWith("-")) return undefined;
   if (via === "ssh" || via === "git") {
-    const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
-    if (m.ssh.key) args.push("-i", m.ssh.key);
+    const args: string[] = [];
+    // password_file → sshpass answers the prompt (BatchMode would suppress it);
+    // else BatchMode — key or agent auth only
+    if (m.ssh.password_file) args.push("-f", tilde(m.ssh.password_file), "ssh", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no");
+    else args.push("-o", "BatchMode=yes");
+    args.push("-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new");
+    if (m.ssh.key) args.push("-i", tilde(m.ssh.key));
     if (m.ssh.port) args.push("-p", m.ssh.port);
     // '--' ends option parsing — the host can never become an option
     args.push("--", `${m.ssh.user ? `${m.ssh.user}@` : ""}${m.host}`, "true");
-    return { file: "ssh", args };
+    return m.ssh.password_file ? { file: "sshpass", args } : { file: "ssh", args };
   }
   // curl prints the http_code on stdout; '000' means the request never got an answer.
   // -S keeps error text on stderr — plain -s silences it, which hid the DNS reason.
@@ -197,7 +208,7 @@ export function probeReason(output: string, timeout: boolean, code: number | und
 export async function runReachProbe(
   env: { id: string; network: string[] },
   edge: { from: string; to: string; via: string; expected?: boolean; note?: string },
-  machines: ReadonlyMap<string, { host?: string; ssh: Record<string, string> }>,
+  machines: ReadonlyMap<string, { host?: string; mount?: string; ssh: Record<string, string> }>,
   opts: { wifi?: string; cwd?: string; timeoutMs?: number; runner?: string } = {},
 ): Promise<Omit<ReachProbeResult, "env" | "from" | "to" | "via" | "by">> {
   if (edge.expected === false) {

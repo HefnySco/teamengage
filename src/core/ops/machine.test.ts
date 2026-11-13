@@ -32,6 +32,7 @@ describe("machine files", () => {
       host: "cloud.ardupilot.org",
       tier: "prod",
       ssh: { user: "root", key: "~/.ssh/ardupilot_cloud_key" },
+      sys: { os: "Ubuntu 24.04", mem: "3.8 GiB", storage: "78 GB", scanned: "2026-11-12" },
       roles: ["auth-server"],
       apps: [{ name: "de_auth_2026", port: 19408, env: "prod" }],
       rules: ["never touch /home/ap_cloud/de_server"],
@@ -42,6 +43,7 @@ describe("machine files", () => {
     expect(m.machine!.id).toBe("cloud");
     expect(m.machine!.ssh.user).toBe("root");
     expect(m.machine!.apps[0].name).toBe("de_auth_2026");
+    expect(m.machine!.sys?.mem).toBe("3.8 GiB");
     expect(m.body).toContain("de-cloud-deploy");
   });
 
@@ -100,6 +102,14 @@ describe("machine files", () => {
     const f = findings().filter((x) => x.path === "machines/edge.machine.md");
     expect(f.some((x) => x.message.includes("'teleport'"))).toBe(true);
     expect(f.some((x) => x.message.includes("unknown machine 'nowhere'"))).toBe(true);
+  });
+
+  it("reports a machine kind outside the list but keeps a listed one", () => {
+    write("kind.machine.md", { id: "k1", kind: "spaceship" });
+    write("kindok.machine.md", { id: "k2", kind: "sbc" });
+    const f = findings();
+    expect(f.some((x) => x.path === "machines/kind.machine.md" && x.message.includes("kind 'spaceship'"))).toBe(true);
+    expect(f.some((x) => x.path === "machines/kindok.machine.md")).toBe(false);
   });
 
   it("targetMachineFindings (GL-0287): reports a target whose machine or app is not in machines/", () => {

@@ -16,7 +16,7 @@ import { runnerMachine } from "./runner.js";
  * claim — they are documents, like task files.
  */
 
-export const REACH_VIA = ["ssh", "https", "git"] as const;
+export const REACH_VIA = ["ssh", "https", "git", "usb"] as const;
 export type ReachVia = (typeof REACH_VIA)[number];
 
 export const EnvMachine = z.object({

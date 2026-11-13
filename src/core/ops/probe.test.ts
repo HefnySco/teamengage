@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { runProbe, saveProbe, loadProbes, probePath, runReachProbe, reachCommand, probeReason, saveReachProbes, loadReachProbes, type ReachProbeResult } from "./probe.js";
 
@@ -83,9 +83,14 @@ describe("reach probe (GL-0289)", () => {
     const m = { host: "h.local", ssh: { user: "root", key: "~/.ssh/k", port: "2222" } };
     expect(reachCommand(m, "ssh")).toEqual({
       file: "ssh",
-      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-i", "~/.ssh/k", "-p", "2222", "--", "root@h.local", "true"],
+      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new", "-i", join(homedir(), ".ssh/k"), "-p", "2222", "--", "root@h.local", "true"],
     });
     expect(reachCommand(m, "git")?.file).toBe("ssh");
+    // password_file wraps the ssh argv in sshpass — BatchMode would suppress the prompt
+    expect(reachCommand({ host: "p.local", ssh: { user: "pi", password_file: "~/.config/pw" } }, "ssh")).toEqual({
+      file: "sshpass",
+      args: ["-f", join(homedir(), ".config/pw"), "ssh", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new", "--", "pi@p.local", "true"],
+    });
     expect(reachCommand(m, "https")).toEqual({
       file: "curl",
       args: ["-s", "-S", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", "https://h.local/"],

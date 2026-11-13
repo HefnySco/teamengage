@@ -6,7 +6,10 @@ import { z } from "zod";
 import { TeError, ValidationError } from "../model/errors.js";
 import { EventLog } from "../events/log.js";
 import { readLockFile, removeLockFile, writeLockFile } from "./lock.js";
+import { kebab } from "./machine.js";
 import { PlaybookStep, type Playbook } from "./playbook.js";
+import { appendTrans, transFile } from "./trans.js";
+import { loadWorkspaceConfig } from "../config/config.js";
 
 /**
  * Jobs (DESIGN §14.3, §14.4): one execution of a playbook against a
@@ -206,6 +209,32 @@ export class JobStore {
     }
   }
 
+  /**
+   * Machine activity log: a job that reaches a terminal state appends one
+   * line to the target machine's `machines/<id>.machine.trans.md` — the
+   * file is the readable ledger; the job record keeps the step detail.
+   * Best-effort: a logging failure never changes a job.
+   */
+  private logJobTrans(job: Job): void {
+    try {
+      if (!job.target) return;
+      const machine = loadWorkspaceConfig(this.teDir).targets[job.target]?.machine;
+      if (!machine) return;
+      appendTrans(this.root, kebab(machine), {
+        kind: "job",
+        actor: job.machine,
+        job: job.id,
+        text:
+          `${job.playbook}${job.kind === "rollback" ? " (rollback)" : ""} on ${job.target} — ${job.status}` +
+          (job.version ? ` · version ${job.version}` : ""),
+      });
+      const p = join(this.root, transFile(kebab(machine)));
+      this.onFileWrite?.(p, readFileSync(p, "utf8"));
+    } catch {
+      // logging must never break a job mutation
+    }
+  }
+
   /** terminal states release the target lock; failed keeps it (resume or abort later) */
   private releaseLock(job: Job): void {
     if (!job.target) return;
@@ -299,6 +328,7 @@ export class JobStore {
         const vs = job.steps.find((s) => s.id === playbook.version_from);
         job.version = versionFromTail(vs?.output_tail);
       }
+      this.logJobTrans(job);
       return;
     }
     const kind = jobPlaybook(job, playbook).steps[job.cursor]?.kind;
@@ -419,6 +449,7 @@ export class JobStore {
     } else {
       step.status = "failed";
       job.status = spec.on_fail === "stop" ? "stopped" : "failed";
+      this.logJobTrans(job);
     }
     if (job.status === "succeeded" || job.status === "stopped") this.releaseLock(job);
     this.save(job);
@@ -458,6 +489,7 @@ export class JobStore {
     }
     const from = job.status;
     job.status = "aborted";
+    this.logJobTrans(job);
     this.releaseLock(job);
     this.save(job);
     await this.events.append({

@@ -34,6 +34,10 @@ export const sameApp = (a: string, b: string) => a.trim().toLowerCase() === b.tr
 export const EDGE_KINDS = ["deploy", "sync", "shadow_of", "talks_to"] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
+/** The node icons the Ops machines view can draw — `kind:` in a .machine.md picks one. */
+export const MACHINE_KINDS = ["laptop", "desktop", "server", "vps", "sbc", "mcu", "git", "usb", "router", "generic"] as const;
+export type MachineKind = (typeof MACHINE_KINDS)[number];
+
 export const MachineApp = z.object({
   name: z.string().min(1),
   port: z.number().int().optional(),
@@ -56,24 +60,60 @@ export const PathPurpose = z.object({
   purpose: z.string().optional(),
 });
 
+/** a port something listens on that is not a tracked app — sshd, cockpit, dnsmasq, dashboards */
+export const MachineListener = z.object({
+  name: z.string().min(1),
+  port: z.number().int().optional(),
+  note: z.string().optional(),
+});
+
+/** a piece of hardware the ops view should know — NPU, AI camera, SSD */
+export const MachineHardware = z.object({
+  name: z.string().min(1),
+  detail: z.string().optional(),
+});
+
+/** Hardware/OS facts from a live scan (or a board doc — `scanned` says which). */
+export const MachineSys = z.object({
+  os: z.string().optional(),
+  kernel: z.string().optional(),
+  arch: z.string().optional(),
+  model: z.string().optional(),
+  cpu: z.string().optional(),
+  cores: z.number().int().optional(),
+  mem: z.string().optional(),
+  storage: z.string().optional(),
+  /** when the facts were verified — a date, or a note like "offline — from board doc" */
+  scanned: z.string().optional(),
+});
+
 /**
- * ssh is a record of references — the only allowed keys are user, key
- * and port; anything else (a password, key text) is a secret and is a
+ * ssh is a record of references — the only allowed keys are user, key,
+ * port and password_file (a path, probed through sshpass); anything else
+ * (a password, key text) is a secret and is a
  * validate finding, not a schema error, so the message names the field.
  */
 export const Machine = z.object({
   id: z.string().min(1).transform(kebab),
   title: z.string().optional(),
   host: z.string().optional(),
+  /** local mount point for reach via usb — "reachable" means the path exists */
+  mount: z.string().optional(),
   /** other DNS names this machine answers to — the runner match checks them like host */
   hostnames: z.array(z.string()).default([]),
   ip: z.string().optional(),
   tier: z.enum(["dev", "test", "prod"]).optional(),
+  /** icon for the ops diagram — checked against MACHINE_KINDS as a finding; the view falls back to a name heuristic */
+  kind: z.string().optional(),
+  /** OS/CPU/RAM/disk facts — fills the machine tab on the ops card */
+  sys: MachineSys.optional(),
   /** set true in a .machine.local file — this record IS the runner machine */
   runner: z.boolean().optional(),
   ssh: z.record(z.string()).default({}),
   roles: z.array(z.string()).default([]),
   apps: z.array(MachineApp).default([]),
+  listeners: z.array(MachineListener).default([]),
+  hardware: z.array(MachineHardware).default([]),
   folders: z.array(PathPurpose).default([]),
   databases: z.array(PathPurpose).default([]),
   handled_by: z
@@ -97,7 +137,7 @@ export interface LoadedMachine {
   error?: string;
 }
 
-const SSH_KEYS = new Set(["user", "key", "port"]);
+const SSH_KEYS = new Set(["user", "key", "port", "password_file"]);
 const SECRET_RE = /PRIVATE KEY|BEGIN [A-Z ]*KEY/i;
 
 /** Split `---\n<yaml>\n---\n<body>` — the shape every .machine.md/.env.md file has. */
@@ -161,11 +201,14 @@ export function machineFindings(loaded: LoadedMachine[]): Finding[] {
       continue;
     }
     const m = l.machine;
+    if (m.kind !== undefined && !(MACHINE_KINDS as readonly string[]).includes(m.kind)) {
+      f(l.file, `machine ${m.id}: kind '${m.kind}' is not in ${MACHINE_KINDS.join("|")}`);
+    }
     const dup = seen.get(m.id);
     if (dup) f(l.file, `machine id '${m.id}' is also declared in ${dup}`);
     seen.set(m.id, l.file);
     for (const [k, v] of Object.entries(m.ssh)) {
-      if (!SSH_KEYS.has(k)) f(l.file, `machine ${m.id}: ssh field '${k}' is not allowed — only user, key and port (references, never secrets)`);
+      if (!SSH_KEYS.has(k)) f(l.file, `machine ${m.id}: ssh field '${k}' is not allowed — only user, key, port and password_file (references, never secrets)`);
       else if (SECRET_RE.test(v)) f(l.file, `machine ${m.id}: ssh.${k} holds key text — keep a key path, never the key itself`);
     }
     for (const e of m.edges) {

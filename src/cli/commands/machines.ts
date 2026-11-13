@@ -8,6 +8,8 @@ import { JobStore } from "../../core/ops/job.js";
 import { loadProbes } from "../../core/ops/probe.js";
 import { deployedAppLine, deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
 import { runnerMachine } from "../../core/ops/runner.js";
+import { renameMachine } from "../../core/ops/rename.js";
+import { appendTrans, loadTrans, type TransEntry } from "../../core/ops/trans.js";
 
 /**
  * `te machines` / `te env` (GL-0288) — the human/agent window onto the
@@ -18,6 +20,8 @@ import { runnerMachine } from "../../core/ops/runner.js";
  *   te machines show <id>          rules first, then fields, then the notes body
  *   te machines graph [--env <id>] machines in dev/test/prod rows, one line per edge
  *   te machines note <id> "text"   add a human note; a ready task asks an agent to apply it (GL-0297)
+ *   te machines trans <id> "text"  append an ad-hoc entry to the machine's activity log
+ *   te machines rename <old> <new> atomic rename — file, id, every env/edge/target/probe reference
  *   te env                         the active env and how it was picked
  *   te env use <id>                pin an env in the runner's .machine.local
  *
@@ -33,7 +37,11 @@ async function root(home?: string): Promise<string> {
 
 export { currentEnv, wifiName };
 
-function showMachine(l: LoadedMachine, deployed?: DeployedApp[]): void {
+function transLine(e: TransEntry): string {
+  return `  ${e.ts}  ${e.kind === "job" ? `job ${e.job}` : "adhoc"}  ${e.actor}  ${e.text.split("\n")[0]}`;
+}
+
+function showMachine(l: LoadedMachine, root_: string, deployed?: DeployedApp[]): void {
   const m = l.machine!;
   if (m.rules.length) {
     console.log("rules:");
@@ -43,6 +51,11 @@ function showMachine(l: LoadedMachine, deployed?: DeployedApp[]): void {
   if (deployed?.length) {
     console.log("running now:");
     for (const a of deployed) console.log(`  ${deployedAppLine(a)}`);
+  }
+  const trans = loadTrans(root_, m.id);
+  if (trans.length) {
+    console.log("log:");
+    for (const e of trans.slice(-5)) console.log(transLine(e));
   }
   const { rules: _rules, runner: _runner, ...rest } = m;
   const fm = Object.fromEntries(Object.entries(rest).filter(([, v]) => !(Array.isArray(v) && !v.length) && !(typeof v === "object" && v !== null && !Array.isArray(v) && !Object.keys(v).length)));
@@ -91,7 +104,22 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     const ws = resolveWorkspace(root_, { home });
     const jobs = new JobStore(root_, ws.plansDir, runnerMachine(root_, hostname())?.id ?? hostname()).listAll();
     const deployed = deployedForMachine(l.machine, ws.config.targets, jobs, loadProbes(home));
-    showMachine(l, deployed);
+    showMachine(l, root_, deployed);
+    return 0;
+  }
+  if (sub === "trans") {
+    // te machines trans <id> "text" — an ad-hoc entry in the machine's
+    // activity log. Convention: log a manual change on a tier prod
+    // machine; local/dev machines do not need it.
+    const id = args[1];
+    const text = args.slice(2).join(" ").trim();
+    if (!id || !text) return console.log('usage: te machines trans <id> "text"'), 4;
+    if (!loadMachines(root_).some((x) => x.machine?.id === kebab(id))) {
+      return console.log(`no machine '${id}' under machines/`), 4;
+    }
+    const actor = runnerMachine(root_, hostname())?.id ?? hostname();
+    appendTrans(root_, kebab(id), { kind: "adhoc", actor, text });
+    console.log(`logged on ${kebab(id)} — see machines/${kebab(id)}.machine.trans.md`);
     return 0;
   }
   if (sub === "probe") {
@@ -114,6 +142,18 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     console.log(`note added to ${r.file} — ${r.item} asks an agent to apply it`);
     return 0;
   }
+  if (sub === "rename") {
+    const oldId = args[1];
+    const newId = args[2];
+    if (!oldId || !newId) return console.log("usage: te machines rename <old> <new>"), 4;
+    const ws = resolveWorkspace(root_, { home });
+    const rep = renameMachine(root_, ws.plansDir, home, oldId, newId);
+    console.log(`${rep.old} → ${rep.renamed_to}`);
+    for (const r of rep.renamed) console.log(`  renamed ${r.from} → ${r.to}`);
+    for (const e of rep.edited) console.log(`  edited  ${e.file} (${e.refs} ref${e.refs === 1 ? "" : "s"})`);
+    console.log("note: the daemon caches workspace.yaml — restart it so targets resolve under the new id");
+    return 0;
+  }
   if (sub === "graph") {
     const envId = (() => {
       const i = args.indexOf("--env");
@@ -124,7 +164,7 @@ export async function machinesCmd(args: string[], home?: string): Promise<number
     graph(loadMachines(root_), env);
     return 0;
   }
-  console.log('usage: te machines [show <id> | graph [--env <id>] | probe [--env <id>] | note <id> "text"]');
+  console.log('usage: te machines [show <id> | graph [--env <id>] | probe [--env <id>] | note <id> "text" | trans <id> "text" | rename <old> <new>]');
   return 4;
 }
 

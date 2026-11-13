@@ -1018,14 +1018,74 @@ details.sec > .sec-bd {
 .ops-key .ops-edge { stroke-width: 2; }
 .ops-node { cursor: pointer; }
 .ops-node-rect { fill: var(--bs-tertiary-bg); stroke: var(--bs-border-color); stroke-width: 1.4; }
-.ops-tier-prod { stroke: var(--bs-danger); }
-.ops-tier-test { stroke: var(--bs-warning); }
-.ops-tier-dev { stroke: var(--bs-success); }
+/* tier paints the border, the kind icon, the corner dot and the aux line */
+.ops-tier-prod .ops-node-rect, .ops-tier-prod .ops-node-kind { stroke: var(--bs-danger); }
+.ops-tier-test .ops-node-rect, .ops-tier-test .ops-node-kind { stroke: var(--bs-warning); }
+.ops-tier-dev .ops-node-rect, .ops-tier-dev .ops-node-kind { stroke: var(--bs-success); }
+.ops-tier-prod .ops-node-tierdot, .ops-tier-prod .ops-node-aux { fill: var(--bs-danger); }
+.ops-tier-test .ops-node-tierdot, .ops-tier-test .ops-node-aux { fill: var(--bs-warning); }
+.ops-tier-dev .ops-node-tierdot, .ops-tier-dev .ops-node-aux { fill: var(--bs-success); }
+.ops-node-sig { cursor: pointer; color: var(--bs-secondary-color); opacity: .55; }
+.ops-node-sig.ops-sig-ok, .ops-node-sig.ops-sig-runner { color: var(--bs-success); opacity: 1; }
+.ops-node-sig.ops-sig-auth { color: var(--bs-warning); opacity: 1; }
+.ops-node-sig.ops-sig-bad { color: var(--bs-danger); opacity: 1; }
+.ops-node-sig:hover { filter: brightness(1.35); opacity: 1; }
 .ops-node:hover .ops-node-rect { filter: brightness(1.07); }
 .ops-node-sel .ops-node-rect { stroke-width: 2.6; stroke: var(--bs-primary); }
-.ops-node-title { fill: var(--bs-body-color); font-size: .8rem; font-weight: 600; }
+.ops-node-title { fill: var(--bs-body-color); font-family: ui-monospace, monospace; font-size: .8rem; font-weight: 600; }
 .ops-node-sub { fill: var(--bs-secondary-color); font-size: .62rem; }
-.ops-panel { flex: 0 1 340px; min-width: 0; max-width: 100%; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); overflow-wrap: anywhere; }
+/* node focus: a picked node keeps itself, its edges and its neighbours lit */
+.ops-svg.ops-focus .ops-edge { opacity: .08; }
+.ops-svg.ops-focus .ops-edge.ops-edge-hl { opacity: 1; stroke-width: 2.6; }
+.ops-svg.ops-focus .ops-node { opacity: .3; }
+.ops-svg.ops-focus .ops-node.ops-node-linked, .ops-svg.ops-focus .ops-node.ops-node-sel { opacity: 1; }
+/* ops sub-nav: one segmented control — the active segment is filled */
+.ops-subnav { display: inline-flex; border: 1px solid var(--bs-border-color); border-radius: .375rem; overflow: hidden; }
+.ops-subnav a { display: inline-flex; align-items: center; gap: .4em; padding: .25em .8em; color: var(--bs-secondary-color); text-decoration: none; font-size: .85rem; }
+.ops-subnav a + a { border-left: 1px solid var(--bs-border-color); }
+.ops-subnav a.on { background: var(--bs-tertiary-bg); color: var(--bs-body-color); font-weight: 600; }
+.ops-subnav a:hover { color: var(--bs-body-color); }
+.ops-subnav-cnt { font-size: .68rem; background: var(--bs-warning); color: #000; border-radius: 1rem; padding: 0 .45em; font-weight: 700; }
+/* machine card (tabbed side panel) */
+.ops-panel { flex: 0 1 430px; min-width: 0; max-width: 100%; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); overflow-wrap: anywhere; }
+.ops-mc-hd { display: flex; align-items: flex-start; gap: .7rem; }
+.ops-mc-ic { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: .4rem; border: 1px solid var(--bs-border-color); background: var(--bs-secondary-bg); }
+.ops-mc-ic.tier-prod { color: var(--bs-danger-text-emphasis); border-color: color-mix(in srgb, var(--bs-danger) 45%, transparent); }
+.ops-mc-ic.tier-test { color: var(--bs-warning-text-emphasis); border-color: color-mix(in srgb, var(--bs-warning) 40%, transparent); }
+.ops-mc-ic.tier-dev { color: var(--bs-success-text-emphasis); border-color: color-mix(in srgb, var(--bs-success) 45%, transparent); }
+.ops-mc-facts { display: flex; flex-wrap: wrap; gap: .3rem .9rem; padding: .45rem 0; border-top: 1px solid var(--bs-border-color-translucent); font-size: .8rem; color: var(--bs-secondary-color); }
+.ops-mc-tabs { display: flex; border-top: 1px solid var(--bs-border-color-translucent); border-bottom: 1px solid var(--bs-border-color-translucent); }
+.ops-mc-tabs a { flex: 1; text-align: center; padding: .35rem 0; font-size: .78rem; color: var(--bs-secondary-color); border-bottom: 2px solid transparent; cursor: pointer; }
+.ops-mc-tabs a.on { color: var(--bs-body-color); border-bottom-color: var(--bs-primary); font-weight: 600; }
+.ops-mc-tabs a:hover { color: var(--bs-body-color); }
+.ops-mc-tabs .n { font-size: .68rem; color: var(--bs-secondary-color); }
+.ops-mc-bd { padding-top: .5rem; min-height: 8rem; }
+.ops-mc-log { max-height: 10rem; overflow-y: auto; font-size: .72rem; }
+.ops-mc-log-e { margin-bottom: .35rem; }
+.ops-mc-log-e .badge { font-size: .62rem; }
+.ops-mc-log-t { white-space: pre-wrap; }
+.ops-envgrp { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin: .45rem 0 .15rem; }
+.ops-envgrp.env-prod { color: var(--bs-danger-text-emphasis); }
+.ops-envgrp.env-shadow { color: var(--bs-info-text-emphasis); }
+.ops-envgrp.env-other { color: var(--bs-secondary-color); }
+.ops-app-row { display: flex; align-items: baseline; gap: .45rem; padding: .15rem 0; font-size: .8rem; min-width: 0; }
+.ops-app-name { font-family: ui-monospace, monospace; font-size: .76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ops-app-port { font-family: ui-monospace, monospace; font-size: .72rem; color: var(--bs-secondary-color); flex: none; }
+.ops-app-ver { font-size: .74rem; white-space: nowrap; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
+.ops-app-ago { font-size: .72rem; color: var(--bs-secondary-color); white-space: nowrap; }
+.ops-app-st { margin-left: auto; flex: 0 1 auto; min-width: 0; display: flex; gap: .3rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.ops-app-st .text-secondary { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.ops-kv { display: grid; grid-template-columns: auto 1fr; gap: .15rem .7rem; font-size: .78rem; }
+.ops-sys { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; font-size: .78rem; }
+.ops-sys .k { color: var(--bs-secondary-color); font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; padding-top: .1rem; }
+.ops-kv code { color: var(--bs-secondary-color); }
+.ops-kv .p { color: var(--bs-secondary-color); font-size: .74rem; }
+.ops-rules { margin: 0; padding-left: 1.05rem; font-size: .8rem; }
+.ops-rules li { padding: .1rem 0; }
+.ops-rules li.ops-warn { color: var(--bs-danger-text-emphasis); }
+.ops-rules li.ops-warn::marker { content: "⚠ "; }
+.ops-note { font-size: .8rem; padding: .25rem 0 .25rem .5rem; border-left: 2px solid var(--bs-border-color); margin: .25rem 0; }
+.ops-note-body { color: var(--bs-secondary-color); font-size: .78rem; margin-bottom: .3rem; }
 @media (max-width: 575.98px) {
   .ops-panel { flex: 1 1 100%; }
   .ops-diagram { flex-basis: 100%; min-width: 0; }

@@ -11,10 +11,13 @@ import { loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runR
 import { loadMachines, type Machine } from "../../core/ops/machine.js";
 import { deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
 import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseNotes, readNotes } from "../../core/ops/notes.js";
+import { loadTrans } from "../../core/ops/trans.js";
 import { WorkspaceOps } from "./ops.js";
 import { basename } from "node:path";
 import { currentEnv, loadEnvs, wifiName } from "../../core/ops/env.js";
 import { runnerMachine } from "../../core/ops/runner.js";
+import { renameMachine } from "../../core/ops/rename.js";
+import { resolveWorkspace } from "../../core/config/config.js";
 import { hostname } from "node:os";
 import { checkRemoteTargetLock, commitPlans } from "../sync/sync.js";
 import { ForbiddenError, NotFoundError, ParseError, ValidationError } from "../../core/model/errors.js";
@@ -146,6 +149,7 @@ export function opsMachine(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
     notes: bodyWithoutNotes(l.body ?? ""),
     human_notes: parseNotes(l.body ?? ""),
     deployed: deployedOf(l.machine, wsr, ctx),
+    trans: loadTrans(wsr.ws.root, id),
   };
 }
 
@@ -216,7 +220,7 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
     notes: l.body ?? "",
     machines: l.env.machines.map((p) => {
       const m = machines.get(p.id);
-      return { ...p, machine: m ? { ...m, deployed: deployedForMachine(m, targets, jobs, probes) } : undefined };
+      return { ...p, machine: m ? { ...m, deployed: deployedForMachine(m, targets, jobs, probes), trans: loadTrans(wsr.ws.root, m.id) } : undefined };
     }),
     probes: loadReachProbes(l.env.id, ctx.home),
   };
@@ -232,6 +236,8 @@ export async function opsReachProbes(
   ctx: DaemonCtx,
   envId: string,
   session?: Session,
+  /** probe only the reach edges into this machine — one node's signal */
+  to?: string,
 ): Promise<ReachProbeResult[]> {
   if (session) throw new ForbiddenError("probes are human-only — an agent session cannot start one");
   const l = loadEnvs(wsr.ws.root).find((x) => x.env?.id === envId);
@@ -241,7 +247,7 @@ export async function opsReachProbes(
   // only edges whose `from` is this machine run here — the rest answer 'not probed from here'
   const runner = runnerMachine(wsr.ws.root, hostname())?.id ?? "";
   const results: ReachProbeResult[] = [];
-  for (const r of l.env.reach) {
+  for (const r of l.env.reach.filter((r) => !to || r.to === to)) {
     const run = await runReachProbe(l.env, r, machines, { wifi, cwd: wsr.ws.root, runner });
     results.push({ env: l.env.id, from: r.from, to: r.to, via: r.via, by: "human", ...run });
   }
@@ -531,6 +537,21 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       return sendOpsErr(reply, e);
     }
   });
+  app.post("/api/ops/machines/:id/rename", async (req, reply) => {
+    try {
+      // human-only — an agent session cannot rename a machine record
+      const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
+      if (session) throw new ForbiddenError("machine rename is human-only");
+      const wsr = opsWsr(ctx, wsOf(req.query));
+      const to = String(((req.body ?? {}) as { to?: unknown }).to ?? "");
+      const rep = renameMachine(wsr.ws.root, wsr.ws.plansDir, ctx.home, (req.params as { id: string }).id, to);
+      // workspace.yaml just changed — reload so cached targets resolve under the new id
+      wsr.ws = resolveWorkspace(wsr.ws.root, { home: ctx.home });
+      return rep;
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
   app.get("/api/ops/envs", async (req, reply) => {
     try {
       return opsEnvs(opsWsr(ctx, wsOf(req.query)));
@@ -569,7 +590,8 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
     try {
       // an agent session identity on the human API refuses — probes are human-only
       const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
-      return await opsReachProbes(opsWsr(ctx, wsOf(req.query)), ctx, (req.params as { id: string }).id, session);
+      const to = ((req.body ?? {}) as { to?: unknown }).to;
+      return await opsReachProbes(opsWsr(ctx, wsOf(req.query)), ctx, (req.params as { id: string }).id, session, typeof to === "string" && to ? to : undefined);
     } catch (e) {
       return sendOpsErr(reply, e);
     }

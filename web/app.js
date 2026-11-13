@@ -2714,12 +2714,12 @@ function refreshInboxBadge(d) {
   const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
   a.dataset.count = n || "";
 }
-// nav count on "ops": live jobs (running, waiting, failed)
+// nav badge on "ops": live jobs (running, waiting, failed) — warning like sync
 function refreshOpsBadge(jobs) {
   const a = document.querySelector('#nav a[data-r="ops"]');
   if (!a || !Array.isArray(jobs)) return;
   const n = jobs.filter((j) => ["running", "waiting", "failed"].includes(j.status)).length;
-  a.dataset.count = n || "";
+  a.dataset.badge = n || "";
 }
 const pollNavBadges = () => {
   api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
@@ -2774,16 +2774,23 @@ const Ops = () => {
   return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsMatrix} />`;
 };
 
-const OpsTabs = ({ view }) => html`
-  <div class="d-flex align-items-center gap-3 mb-3">
-    <h2 class="h4 mb-0">Ops</h2>
-    <span class="d-flex gap-2 small">
-      <a href="#/ops" class=${view === "matrix" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>matrix</a>
-      <a href="#/ops/jobs" class=${view === "jobs" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>jobs</a>
-      <a href="#/ops/playbooks" class=${view === "playbooks" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>playbooks</a>
-      <a href="#/ops/machines" class=${view === "machines" ? "fw-bold text-decoration-none" : "text-secondary text-decoration-none"}>machines</a>
-    </span>
-  </div>`;
+const OpsTabs = ({ view }) => {
+  const { data: jobs } = useApi("/api/ops/jobs");
+  const live = (jobs ?? []).filter((j) => OPS_LIVE.includes(j.status)).length;
+  const tabs = [
+    ["matrix", "#/ops", "matrix"],
+    ["jobs", "#/ops/jobs", "jobs"],
+    ["playbooks", "#/ops/playbooks", "playbooks"],
+    ["machines", "#/ops/machines", "machines"],
+  ];
+  return html`
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <h2 class="h4 mb-0">Ops</h2>
+      <span class="ops-subnav">
+        ${tabs.map(([v, href, label]) => html`<a key=${v} href=${href} class=${view === v ? "on" : ""}>${OPS_NAV_ICON[v]()}${label}${v === "jobs" && live ? html`<span class="ops-subnav-cnt">${live}</span>` : ""}</a>`)}
+      </span>
+    </div>`;
+};
 
 // ---- Ops matrix (GL-0278): service rows × env columns; a cell holds the
 // last succeeded job (the ledger) and the stored probe — drift when they differ
@@ -2827,7 +2834,7 @@ const OpsMatrix = () => {
                   const drift = p?.version && j?.version && p.version !== j.version;
                   return html`<div class="ops-cell" key=${t}>
                     <div class="d-flex align-items-center gap-1">
-                      <b title=${targets[t].title ?? t}>${t}</b>
+                      <b class="id" title=${targets[t].title ?? t}>${t}</b>
                       ${j ? html`<a href=${`#/ops/${encodeURIComponent(j.id)}`} class="text-decoration-none">${j.version ?? "—"}</a>` : html`<span class="text-secondary">—</span>`}
                       ${drift ? html`<span class="badge text-bg-warning" title=${`probe says ${p.version}, ledger says ${j.version}`}>drift: ${p.version}</span>` : ""}
                       ${p?.timeout ? html`<span class="badge text-bg-danger" title="the probe was killed at the timeout">probe timeout</span>` : ""}
@@ -2855,9 +2862,99 @@ const OPS_EDGE_CLASS = {
   talks_to: "ops-edge-talks", reach_ok: "ops-edge-reach-ok", reach_bad: "ops-edge-reach-bad", reach_none: "ops-edge-reach-none",
 };
 
+// machine kinds: a `kind:` in the .machine.md picks the node icon (validated
+// against MACHINE_KINDS on the server); without one, id/title/host/roles guess it
+const MACHINE_KINDS = ["laptop", "desktop", "server", "vps", "sbc", "mcu", "git", "usb", "router", "generic"];
+const machineKind = (m) => {
+  if (m?.kind && MACHINE_KINDS.includes(m.kind)) return m.kind;
+  const s = `${m?.id ?? ""} ${m?.title ?? ""} ${m?.host ?? ""} ${(m?.roles ?? []).join(" ")}`.toLowerCase();
+  if (/\brpi|\bpi\b|raspberry|rock-|radxa|jetson|\bsbc\b/.test(s)) return "sbc";
+  if (/\besp|mcu|stm32|arduino/.test(s)) return "mcu";
+  if (/usb/.test(s)) return "usb";
+  if (/github|gitlab|git-mirror|origin/.test(s)) return "git";
+  if (/vps|cloud/.test(s)) return "vps";
+  if (/laptop|thinkpad|macbook|notebook/.test(s)) return "laptop";
+  if (/-dt\b|desktop|workstation|\bpc\b/.test(s)) return "desktop";
+  if (/router|gateway|hotspot/.test(s)) return "router";
+  if (/server/.test(s)) return "server";
+  return "generic";
+};
+// kind icons — stroke glyphs drawn in the tier colour; functions so each
+// node gets a fresh fragment (reused vnodes misbehave in preact)
+const MKIND_ICON = {
+  laptop: () => html`<rect x="3" y="3.5" width="10" height="6" rx="1"/><path d="M1.8 12.5h12.4l-.9-2.2H2.7z" fill="currentColor" stroke="none"/>`,
+  desktop: () => html`<rect x="1.8" y="3" width="8" height="5.6" rx="1"/><path d="M4.4 12h3M5.9 8.6V12"/><rect x="11.4" y="3" width="2.8" height="9.4" rx=".9"/><circle cx="12.8" cy="10.6" r=".55" fill="currentColor" stroke="none"/>`,
+  server: () => html`<rect x="3" y="2.5" width="10" height="4.4" rx="1"/><rect x="3" y="9.1" width="10" height="4.4" rx="1"/><circle cx="5.4" cy="4.7" r=".6" fill="currentColor" stroke="none"/><circle cx="5.4" cy="11.3" r=".6" fill="currentColor" stroke="none"/><path d="M8.8 4.7h2.4M8.8 11.3h2.4"/>`,
+  vps: () => html`<path d="M4.7 12.2a2.9 2.9 0 0 1-.5-5.75 4.4 4.4 0 0 1 8.6 1.3 2.7 2.7 0 0 1-.7 4.45z"/><path d="M8 9v2.6M6.7 10.3 8 9l1.3 1.3" stroke-width="1.1"/>`,
+  sbc: () => html`<rect x="2.6" y="4.2" width="10.8" height="7.6" rx="1"/><rect x="9.4" y="6" width="2.6" height="2.6"/><path d="M4.4 4.2V2.9M6.4 4.2V2.9M8.4 4.2V2.9M4.4 11.8v1.3M6.4 11.8v1.3M8.4 11.8v1.3"/><circle cx="4.6" cy="9.4" r=".55" fill="currentColor" stroke="none"/><path d="M4.4 6.2h2.6"/>`,
+  mcu: () => html`<rect x="5" y="5" width="6" height="6" rx="1"/><rect x="6.7" y="6.7" width="2.6" height="2.6"/><path d="M6.4 5V3M8 5V3M9.6 5V3M6.4 13v-2M8 13v-2M9.6 13v-2M5 6.4H3M5 8H3M5 9.6H3M13 6.4h-2M13 8h-2M13 9.6h-2"/>`,
+  git: () => html`<circle cx="4.8" cy="4" r="1.5"/><circle cx="4.8" cy="12" r="1.5"/><circle cx="11.2" cy="8" r="1.5"/><path d="M4.8 5.5v5M4.8 7.2c0 2.4 6.4 1.5 6.4-.7"/>`,
+  usb: () => html`<rect x="5.4" y="2.4" width="5.2" height="3.4" rx=".7"/><path d="M6.6 4.1h.9M8.9 4.1h.9"/><rect x="4.4" y="5.8" width="7.2" height="7.8" rx="1.6"/>`,
+  router: () => html`<path d="M2.4 6.4a8.4 8.4 0 0 1 11.2 0M4.6 9.2a5.2 5.2 0 0 1 6.8 0"/><circle cx="8" cy="11.9" r="1.15" fill="currentColor" stroke="none"/>`,
+  generic: () => html`<rect x="3" y="3" width="10" height="7.6" rx="1"/><path d="M6 13.4h4M8 10.6v2.8"/>`,
+};
+const MachineKindIcon = ({ kind, size = 16 }) => html`<svg width=${size} height=${size} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${(MKIND_ICON[kind] ?? MKIND_ICON.generic)()}</svg>`;
+// the mobile signal-bars glyph — a machine's reach state
+const SIG_PATHS = html`
+  <rect x="2.4" y="10.6" width="2.1" height="3.4" rx=".55"/>
+  <rect x="5.9" y="7.9" width="2.1" height="6.1" rx=".55"/>
+  <rect x="9.4" y="5.2" width="2.1" height="8.8" rx=".55"/>
+  <rect x="12.9" y="2.5" width="2.1" height="11.5" rx=".55"/>
+`;
+const SigIcon = ({ size = 14 }) => html`<svg width=${size} height=${size} viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true">${SIG_PATHS}</svg>`;
+// svg <text> does not wrap: measure words on a canvas and break after
+// , · / or whitespace (hyphenated names stay whole); over-long lines and
+// words end in an ellipsis
+const _svgMeasure = { ctx: null, ff: "sans-serif" };
+const svgTw = (s, weight, px, ff) => {
+  if (!_svgMeasure.ctx) {
+    _svgMeasure.ctx = document.createElement("canvas").getContext("2d");
+    _svgMeasure.ff = getComputedStyle(document.body).fontFamily;
+  }
+  _svgMeasure.ctx.font = `${weight} ${px}px ${ff ?? _svgMeasure.ff}`;
+  return _svgMeasure.ctx.measureText(s).width;
+};
+// ff: measure in the font the class renders in (a monospace title measured in
+// the body font passes the check, then overflows the box)
+const wrapSvg = (text, weight, px, maxW, maxLines, ff) => {
+  const ellipsize = (w) => {
+    while (w && svgTw(`${w}…`, weight, px, ff) > maxW) w = w.slice(0, -1);
+    return `${w}…`;
+  };
+  const lines = [""];
+  for (const w of String(text).split(/(?<=[,·/])|\s+/).filter(Boolean)) {
+    const i = lines.length - 1;
+    const cand = lines[i] ? `${lines[i]} ${w}` : w;
+    if (svgTw(cand, weight, px, ff) <= maxW) lines[i] = cand;
+    else if (!lines[i]) lines[i] = ellipsize(w); // a lone word wider than the line: clip in place, never leave the line blank
+    else if (lines.length < maxLines) lines.push(svgTw(w, weight, px, ff) > maxW ? ellipsize(w) : w);
+    else { lines[i] = ellipsize(lines[i]); break; }
+  }
+  return lines;
+};
+// machine ids are one word ([a-z0-9-]) and must sit on line 1 in every box:
+// squeeze the glyphs up to 25% with textLength, else end in an ellipsis.
+// Returns {t, tl?} — tl sets the <text> textLength attribute
+const fitSvgWord = (text, weight, px, maxW, ff) => {
+  const w = svgTw(text, weight, px, ff);
+  if (w <= maxW) return { t: text };
+  if (w <= maxW * 1.25) return { t: text, tl: maxW };
+  let e = text;
+  while (e && svgTw(`${e}…`, weight, px, ff) > maxW) e = e.slice(0, -1);
+  return { t: `${e}…` };
+};
+// small stroke icons for the ops sub-nav — same visual language as the kind icons
+const sicon = (inner) => html`<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-.15em">${inner}</svg>`;
+const OPS_NAV_ICON = {
+  matrix: () => sicon(html`<rect x="2.6" y="2.6" width="4.6" height="4.6"/><rect x="8.8" y="2.6" width="4.6" height="4.6"/><rect x="2.6" y="8.8" width="4.6" height="4.6"/><rect x="8.8" y="8.8" width="4.6" height="4.6"/>`),
+  jobs: () => sicon(html`<path d="M5.2 4h8.4M5.2 8h8.4M5.2 12h8.4M2.4 4h.4M2.4 8h.4M2.4 12h.4"/>`),
+  playbooks: () => sicon(html`<path d="M3 3.2c1.8-.8 3.4-.6 5 .5 1.6-1.1 3.2-1.3 5-.5v9.6c-1.8-.8-3.4-.6-5 .5-1.6-1.1-3.2-1.3-5-.5z"/><path d="M8 3.7v9.6"/>`),
+  machines: () => sicon(MKIND_ICON.server()),
+};
+
 // GL-0297: the human's notes on a machine or a playbook — each note keeps
 // the words in the file and opens a ready task that an agent applies.
-const OpsNotes = ({ kind, id, notes, reload }) => {
+const OpsNotes = ({ kind, id, notes, reload, bare }) => {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const path = `/api/ops/${kind === "machine" ? "machines" : "playbooks"}/${encodeURIComponent(id)}/notes`;
@@ -2874,7 +2971,7 @@ const OpsNotes = ({ kind, id, notes, reload }) => {
   };
   const list = [...(notes ?? [])].reverse();
   return html`<div class="ops-notes mt-2">
-    <div class="small fw-bold text-secondary">notes</div>
+    ${!bare ? html`<div class="small fw-bold text-secondary">notes</div>` : ""}
     ${list.length ? html`<ul class="small mb-2 ps-3">${list.map((n) => html`<li key=${n.ts}>
       <span class=${`badge ${n.state === "applied" ? "text-bg-success" : "text-bg-warning"}`}>${n.state}</span>
       ${n.item ? html` <a href=${`#/${encodeURIComponent(n.item)}`}>${n.item}</a>` : ""}
@@ -2885,6 +2982,112 @@ const OpsNotes = ({ kind, id, notes, reload }) => {
       placeholder=${kind === "machine" ? "a fact or rule about this machine — an agent turns it into YAML" : "a change to this playbook — an agent writes it, you accept it"}
       onInput=${(e) => setText(e.target.value)}></textarea>
     <button class="btn btn-sm btn-outline-primary mt-1" disabled=${busy || !text.trim()} onClick=${add}>${busy ? "adding…" : "add note"}</button>
+  </div>`;
+};
+
+// the deployed join's primary target per app — the newest job end or probe ts wins
+const primaryDep = (list) => {
+  let best, bestTs = "";
+  for (const t of list ?? []) {
+    const ts = t.job?.finished ?? t.probe?.ts ?? "";
+    if (ts > bestTs) { bestTs = ts; best = t; }
+  }
+  return best;
+};
+
+// the picked machine's side card (tabbed): identity header stays put, the
+// detail sections are tabs. `apps` merges the apps list and the deployed
+// join — one row per app carries port, version, age, state and job link.
+const OpsMachineCard = ({ m, targets, jobs, reload, onClose, onProbe, onRename }) => {
+  const tier = m.tier ?? "dev";
+  const kind = machineKind(m);
+  const machineTargets = Object.entries(targets ?? {}).filter(([, t]) => t.machine === m.id);
+  const lastOk = {};
+  for (const j of (jobs ?? []).filter((x) => x.status === "succeeded" && x.version)) if (!lastOk[j.target]) lastOk[j.target] = j;
+  const groups = { prod: [], shadow: [], other: [] };
+  for (const a of m.deployed ?? []) groups[a.env === "prod" ? "prod" : a.env === "shadow" ? "shadow" : "other"].push(a);
+  const counts = {
+    machine: (m.sys ? 1 : 0) + (m.hardware?.length ?? 0) + (m.listeners?.length ?? 0),
+    apps: m.deployed?.length ?? m.apps?.length ?? 0,
+    rules: m.rules?.length ?? 0,
+    storage: (m.folders?.length ?? 0) + (m.databases?.length ?? 0),
+    targets: machineTargets.length,
+    log: m.trans?.length ?? 0,
+    notes: m.human_notes?.length ?? 0,
+  };
+  const order = ["machine", "apps", "rules", "storage", "targets", "log"].filter((k) => counts[k]).concat("notes");
+  const [tab, setTab] = useState(order[0]);
+  const cur = order.includes(tab) ? tab : order[0];
+  const appRow = (a) => {
+    const t = primaryDep(a.targets);
+    const version = t?.job?.version ?? t?.probe?.version;
+    const ts = t?.job?.finished ?? t?.probe?.ts;
+    return html`<div class="ops-app-row" key=${a.name}>
+      <span class="ops-app-name" title=${a.name}>${a.name}</span>
+      ${a.port ? html`<span class="ops-app-port">:${a.port}</span>` : ""}
+      ${version ? html`<span class="ops-app-ver" title=${version}>${version}</span>` : ""}
+      ${ts ? html`<span class="ops-app-ago">${ago(ts)} ago</span>` : ""}
+      <span class="ops-app-st">
+        ${t?.job ? html`<a class="small" href=${`#/ops/${encodeURIComponent(t.job.id)}`} title=${`job ${t.job.id} on ${t.job.machine}`}>${t.job.id}</a>` : ""}
+        ${a.state === "drift"
+          ? html`<span class="badge text-bg-warning" title=${`probe ${t?.probe?.version ?? "?"} ≠ job ${t?.job?.version ?? "?"}`}>drift</span>`
+          : a.state === "unknown"
+            ? html`<span class="badge text-bg-secondary" title=${`${a.targets.map((x) => x.target).join(", ")} — no job and no probe`}>unknown</span>`
+            : a.state === "no_target"
+              ? html`<span class="text-secondary small">no target</span>`
+              : ""}
+      </span>
+    </div>`;
+  };
+  const kv = (rows) => html`<div class="ops-kv">${rows.map((r) => html`<code key=${r.path}>${r.path}</code><span class="p">${r.purpose ?? ""}</span>`)}</div>`;
+  const body = {
+    machine: html`<div class="ops-sys">${[["os", m.sys?.os], ["kernel", m.sys?.kernel], ["arch", m.sys?.arch], ["model", m.sys?.model], ["cpu", m.sys?.cpu], ["cores", m.sys?.cores], ["memory", m.sys?.mem], ["storage", m.sys?.storage]].filter(([, v]) => v != null && v !== "").map(([k, v]) => html`<span key=${k} class="k">${k}</span><span>${v}</span>`)}${m.sys?.scanned ? html`<span class="k">scanned</span><span class="text-secondary">${m.sys.scanned}</span>` : ""}</div>${m.hardware?.length ? html`<div class="ops-envgrp env-other">hardware</div>${m.hardware.map((h) => html`<div class="ops-app-row" key=${h.name}><span class="ops-app-name" title=${h.name}>${h.name}</span><span class="ops-app-st small text-secondary">${h.detail ?? ""}</span></div>`)}` : ""}${m.listeners?.length ? html`<div class="ops-envgrp env-other">listeners</div>${m.listeners.map((l) => html`<div class="ops-app-row" key=${l.name}><span class="ops-app-name" title=${l.name}>${l.name}</span>${l.port ? html`<span class="ops-app-port">:${l.port}</span>` : ""}<span class="ops-app-st small text-secondary">${l.note ?? ""}</span></div>`)}` : ""}`,
+    apps: m.deployed?.length
+      ? Object.entries(groups).filter(([, l]) => l.length).map(([env, l]) => html`<div key=${env}><div class=${`ops-envgrp env-${env}`}>${env}</div>${l.map(appRow)}</div>`)
+      : (m.apps ?? []).map((a) => html`<div class="ops-app-row" key=${a.name}><span class="ops-app-name">${a.name}</span>${a.port ? html`<span class="ops-app-port">:${a.port}</span>` : ""}${a.env ? html`<span class="ops-app-st"><span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span></span>` : ""}</div>`),
+    rules: html`<ul class="ops-rules">${(m.rules ?? []).map((r) => html`<li class=${/never|hands off|no deploys/i.test(r) ? "ops-warn" : ""}>${r}</li>`)}</ul>`,
+    storage: html`${m.folders?.length ? html`<div class="ops-envgrp env-other">folders</div>${kv(m.folders)}` : ""}${m.databases?.length ? html`<div class="ops-envgrp env-other">databases</div>${kv(m.databases)}` : ""}`,
+    targets: machineTargets.map(([t]) => html`<div class="ops-app-row" key=${t}><span class="ops-app-name">${t}</span><span class="ops-app-st">${lastOk[t] ? html`<a class="small" href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`} title=${`job ${lastOk[t].id}`}>${lastOk[t].version}</a>` : html`<span class="text-secondary">—</span>`}</span></div>`),
+    // the machine's activity log (machines/<id>.machine.trans.md) — newest first
+    log: html`<div class="ops-mc-log">${[...(m.trans ?? [])].reverse().map((e) => html`<div class="ops-mc-log-e" key=${e.ts + (e.job ?? "")}>
+      <span class="badge ${e.kind === "job" ? "text-bg-info" : "text-bg-secondary"}">${e.kind === "job" ? "job" : "ad-hoc"}</span>
+      ${e.job ? html` <a href=${`#/ops/${encodeURIComponent(e.job)}`} title=${`job ${e.job}`}>${e.job}</a>` : ""}
+      <span class="text-secondary"> ${e.actor} · ${ago(e.ts)} ago</span>
+      <div class="ops-mc-log-t">${e.text}</div>
+    </div>`)}</div>`,
+    notes: html`${m.notes ? html`<div class="md-view ops-note-body" dangerouslySetInnerHTML=${{ __html: markdownToHtml(m.notes) }} />` : ""}<${OpsNotes} bare kind="machine" id=${m.id} notes=${m.human_notes} reload=${reload} key=${m.id} />`,
+  };
+  return html`<div class="ops-panel">
+    <div class="ops-mc-hd">
+      <span class=${`ops-mc-ic tier-${tier}`}><${MachineKindIcon} kind=${kind} size=${19} /></span>
+      <div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <b class="id">${m.id}</b>
+          <span class="badge text-bg-secondary">${tier}</span>
+          ${m.runner ? html`<span class="badge text-bg-info">runner</span>` : ""}
+        </div>
+        ${m.title || m.file ? html`<div class="small text-secondary">${m.title ?? m.file}</div>` : ""}
+      </div>
+      <span class="ms-auto d-flex gap-1 flex-shrink-0">
+        ${onProbe ? html`<button class="btn btn-sm btn-outline-secondary py-0 px-1" title="probe reach to this machine" onClick=${onProbe}><${SigIcon} /></button>` : ""}
+        ${onRename ? html`<button class="btn btn-sm btn-outline-secondary py-0 px-1" title="rename this machine — rewrites every reference" onClick=${() => onRename(m.id)}>✎</button>` : ""}
+        <button class="btn btn-sm btn-outline-secondary py-0" title="close" onClick=${onClose}>×</button>
+      </span>
+    </div>
+    ${(m.host || m.ip || m.ssh?.user || m.hostnames?.length) ? html`<div class="ops-mc-facts">
+      ${m.host ? html`<span>host <b class="fw-normal">${m.host}</b></span>` : ""}
+      ${m.ip ? html`<span>ip ${m.ip}</span>` : ""}
+      ${m.ssh?.user ? html`<span>ssh ${m.ssh.user}${m.ssh.port ? ` -p ${m.ssh.port}` : ""}@${m.host ?? ""}</span>` : ""}
+      ${m.hostnames?.length ? html`<span title=${m.hostnames.join(", ")}>also ${m.hostnames.join(", ")}</span>` : ""}
+    </div>` : ""}
+    ${(m.roles?.length || m.handled_by?.agents?.length || m.handled_by?.skills?.length) ? html`<div class="d-flex gap-1 flex-wrap mb-1">
+      ${(m.roles ?? []).map((r) => html`<span key=${r} class="badge text-bg-secondary fw-normal">${r}</span>`)}
+      ${[...(m.handled_by?.agents ?? []), ...(m.handled_by?.skills ?? [])].map((r) => html`<span key=${r} class="badge text-bg-dark fw-normal" title="handled by">${r}</span>`)}
+    </div>` : ""}
+    <div class="ops-mc-tabs mt-1">
+      ${order.map((k) => html`<a key=${k} class=${cur === k ? "on" : ""} onClick=${() => setTab(k)}>${k} <span class="n">${k === "machine" ? "" : counts[k] || ""}</span></a>`)}
+    </div>
+    <div class="ops-mc-bd">${body[cur]}</div>
   </div>`;
 };
 
@@ -2912,7 +3115,26 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
   const [busy, setBusy] = useState(false);
   if (err) return html`<p class="text-danger">${String(err)}</p>`;
   if (!env) return html`<p class="text-secondary">loading…</p>`;
-  const NW = 150, NH = 60, GX = 185, GY = 115, PAD = 30;
+  const NW = 210, GX = 265, PAD = 30, ROWGAP = 53, TX = 40;
+  const TXTW = NW - TX - 10;
+  // the signal icon sits at x NW-23..NW-9 — line 1 of the title must end left
+  // of it with a small gap, whatever the id
+  const SIGW = 27;
+  // svg has no text wrap: measure with a canvas and break at separators.
+  // Every box takes the tallest node's height so the grid stays uniform.
+  const nodeRows = new Map();
+  let NH = 62;
+  for (const p of env.machines ?? []) {
+    const tier = p.machine?.tier ?? "dev";
+    const rows = [
+      { ...fitSvgWord(p.id, "600", 12.8, TXTW - SIGW, "ui-monospace, monospace"), cls: "ops-node-title", lh: 15 },
+      ...wrapSvg(p.machine?.host ?? "—", "400", 9.9, TXTW, 2).map((t) => ({ t, cls: "ops-node-sub", lh: 13 })),
+      ...wrapSvg(`${tier}${p.machine?.roles?.length ? ` · ${p.machine.roles.join(",")}` : ""}`, "400", 9.9, TXTW, 4).map((t) => ({ t, cls: "ops-node-sub ops-node-aux", lh: 13 })),
+    ];
+    nodeRows.set(p.id, rows);
+    NH = Math.max(NH, Math.ceil(20 + rows.slice(1).reduce((s, r) => s + r.lh, 0) + 11));
+  }
+  const GY = NH + ROWGAP;
   const pos = new Map(env.machines.map((p) => [p.id, { x: PAD + p.col * GX, y: PAD + p.row * GY, p }]));
   const cols = Math.max(0, ...env.machines.map((p) => p.col)) + 1;
   const rows = Math.max(0, ...env.machines.map((p) => p.row)) + 1;
@@ -2940,42 +3162,51 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
     } catch (e) { toast(e.message); }
     finally { setBusy(false); }
   };
-  const m = picked ? env.machines.find((p) => p.id === picked)?.machine : null;
-  const machineTargets = m ? Object.entries(targets ?? {}).filter(([, t]) => t.machine === m.id) : [];
-  const lastOk = {};
-  for (const j of (jobs ?? []).filter((x) => x.status === "succeeded" && x.version)) if (!lastOk[j.target]) lastOk[j.target] = j;
-
-  // GL-0305: the 'running now' section — the API joins apps, targets, the
-  // last succeeded job and the stored probe into m.deployed; one line per
-  // app. The view runs no probe: it shows the stored results only.
-  const primaryDep = (list) => {
-    let best, bestTs = "";
-    for (const t of list ?? []) {
-      const ts = t.job?.finished ?? t.probe?.ts ?? "";
-      if (ts > bestTs) { bestTs = ts; best = t; }
-    }
-    return best;
+  // one node's signal: probe only the reach edges into it
+  const probeMachine = async (id) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const rs = await post(`/api/ops/envs/${encodeURIComponent(envId)}/probe`, { to: id });
+      const bad = rs.filter((r) => r.status !== "ok").length;
+      toast(rs.length ? `${id}: ${bad ? `${bad}/${rs.length} reach not ok` : "reachable"}` : `${id}: no reach edges into it`, bad ? "danger" : "success");
+      reload();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
   };
-  const runningNow = m?.deployed?.length ? html`<div class="mt-2"><div class="small fw-bold text-secondary">running now</div>
-    <ul class="small mb-2 ps-3">${m.deployed.map((a) => {
-      const t = primaryDep(a.targets);
-      const version = t?.job?.version ?? t?.probe?.version;
-      const ts = t?.job?.finished ?? t?.probe?.ts;
-      return html`<li key=${a.name}>
-        ${a.name}${a.port ? ` :${a.port}` : ""}
-        ${a.env ? html` <span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span>` : ""}
-        ${version ? ` ${version}` : ""}
-        ${ts ? html` <span class="text-secondary">${ago(ts)} ago</span>` : ""}
-        ${t?.job ? html` <a href=${`#/ops/${encodeURIComponent(t.job.id)}`} title=${`job ${t.job.id} on ${t.job.machine}`}>${t.job.id}</a>` : ""}
-        ${a.state === "drift"
-          ? html` <span class="badge text-bg-warning" title=${`probe ${t?.probe?.version ?? "?"} ≠ job ${t?.job?.version ?? "?"}`}>drift</span>`
-          : a.state === "unknown"
-            ? html` <span class="badge text-bg-secondary" title=${`${a.targets.map((x) => x.target).join(", ")} — no job and no probe`}>unknown</span>`
-            : a.state === "no_target"
-              ? html` <span class="text-secondary">no target</span>`
-              : ""}
-      </li>`;
-    })}</ul></div>` : "";
+  // one atomic rename — the daemon rewrites the file, every reference and the stored probes
+  const renameMachine = async (id) => {
+    const to = await promptDialog(`rename ${id} to…`, { label: "new machine id (letters, digits, -)", value: id });
+    if (!to || to === id) return;
+    try {
+      const rep = await post(`/api/ops/machines/${encodeURIComponent(id)}/rename`, { to });
+      toast(`${rep.old} → ${rep.renamed_to} — ${rep.edited.length} file(s) edited, ${rep.renamed.length} moved`);
+      setPicked(null);
+      reload();
+    } catch (e) { toast(e.message); }
+  };
+  // node signal state: the runner is always green — it is this machine;
+  // else a stored inbound probe decides — ok wins; then "auth refused"
+  // (the host answers, the login does not), then a plain unreachable
+  // fail; nothing stored draws dim
+  const SIG_TIP = { ok: "reachable", auth: "reachable but login refused (password/key)", bad: "unreachable", none: "unprobed", runner: "this machine — the runner" };
+  const sigState = (p) => {
+    if (p.machine?.runner) return "runner";
+    const ps = (env.probes ?? []).filter((r) => r.to === p.id);
+    if (ps.some((r) => r.status === "ok")) return "ok";
+    if (ps.some((r) => r.status === "fail" && r.reason === "auth refused")) return "auth";
+    if (ps.some((r) => r.status === "fail")) return "bad";
+    return "none";
+  };
+  const m = picked ? env.machines.find((p) => p.id === picked)?.machine : null;
+  // node focus: the picked node's neighbours stay lit with it — edges are
+  // directional, so a node is linked when an edge touches it either way
+  const neighbours = new Map();
+  const link = (a, b) => {
+    if (!neighbours.has(a)) neighbours.set(a, new Set());
+    neighbours.get(a).add(b);
+  };
+  for (const e of edges) { link(e.from, e.to); link(e.to, e.from); }
   // ---- edge routing (GL-0302): boxes sit on a row/col grid; the bands between
   // rows and columns are box-free channels. An edge exits and enters box edges,
   // travels inside those channels, and never crosses a box that is not its end.
@@ -3050,7 +3281,14 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
     <div class="ops-machines">
       <div class="ops-diagram">
         ${(env.reach ?? []).length ? html`<button class="btn btn-sm btn-outline-secondary mb-2" disabled=${busy} onClick=${probeAll}>${busy ? "probing…" : "probe reach"}</button>` : ""}
-        <svg viewBox=${`0 0 ${W} ${H}`} class="ops-svg" role="img">
+        <svg viewBox=${`0 0 ${W} ${H}`} class=${`ops-svg${picked ? " ops-focus" : ""}`} role="img"
+          onClick=${(e) => {
+            // a signal icon probes its machine; a node isolates it; empty space shows all
+            const sig = e.target.closest?.(".ops-node-sig")?.dataset?.sig;
+            if (sig) { probeMachine(sig); return; }
+            const id = e.target.closest?.(".ops-node")?.dataset?.id ?? null;
+            setPicked(id === picked ? null : id);
+          }}>
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" class="ops-arrow" /></marker>
           </defs>
@@ -3058,17 +3296,27 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
             const pts = routeEdge(e.from, e.to);
             if (!pts) return null;
             const d = pts.map((p, j) => `${j ? "L" : "M"}${p[0]} ${p[1]}`).join(" ");
-            return html`<path key=${i} d=${d} class=${`ops-edge ${e.cls}`} marker-end="url(#arr)">
+            const hl = picked && (e.from === picked || e.to === picked);
+            return html`<path key=${i} d=${d} class=${`ops-edge ${e.cls}${hl ? " ops-edge-hl" : ""}`} marker-end="url(#arr)">
               <title>${e.from} → ${e.to} (${e.label})${e.probe?.reason ? ` — ${e.probe.reason}` : ""}${e.note ? ` — ${e.note}` : ""}</title>
             </path>`;
           })}
           ${env.machines.map((p) => {
             const a = pos.get(p.id);
+            const tier = p.machine?.tier ?? "dev";
             const sel2 = picked === p.id;
-            return html`<g key=${p.id} class=${`ops-node${sel2 ? " ops-node-sel" : ""}`} onClick=${() => setPicked(sel2 ? null : p.id)} role="button">
-              <rect x=${a.x} y=${a.y} width=${NW} height=${NH} rx="8" class=${`ops-node-rect ops-tier-${p.machine?.tier ?? "dev"}`} />
-              <text x=${a.x + NW / 2} y=${a.y + 22} class="ops-node-title" text-anchor="middle">${p.id}</text>
-              <text x=${a.x + NW / 2} y=${a.y + 40} class="ops-node-sub" text-anchor="middle">${p.machine?.host ?? "—"} · ${p.machine?.tier ?? "?"}</text>
+            const linked = picked && !sel2 && (neighbours.get(picked)?.has(p.id) ?? false);
+            let ty = a.y + 20;
+            return html`<g key=${p.id} data-id=${p.id} class=${`ops-node ops-tier-${tier}${sel2 ? " ops-node-sel" : ""}${linked ? " ops-node-linked" : ""}`} role="button">
+              <title>${p.id}${p.machine?.roles?.length ? ` — ${p.machine.roles.join(", ")}` : ""}</title>
+              <rect x=${a.x} y=${a.y} width=${NW} height=${NH} rx="8" class="ops-node-rect" />
+              <g transform=${`translate(${a.x + NW - 23},${a.y + 6})`} class=${`ops-node-sig ops-sig-${sigState(p)}`} data-sig=${p.id} fill="currentColor" stroke="none" role="button">
+                <title>${p.id}: ${SIG_TIP[sigState(p)]} — click to probe</title>
+                <rect x="0" y="0" width="14" height="16" fill="transparent" stroke="none" />
+                ${SIG_PATHS}
+              </g>
+              <g transform=${`translate(${a.x + 11},${a.y + NH / 2 - 10}) scale(1.25)`} class="ops-node-kind" fill="none" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${(MKIND_ICON[machineKind(p.machine)] ?? MKIND_ICON.generic)()}</g>
+              ${(nodeRows.get(p.id) ?? []).map((r) => { const y = ty; ty += r.lh; return html`<text key=${y} x=${a.x + TX} y=${y} class=${r.cls} textLength=${r.tl}>${r.t}</text>`; })}
             </g>`;
           })}
         </svg>
@@ -3077,29 +3325,7 @@ const OpsEnvDiagram = ({ envId, picked, setPicked }) => {
             <span key=${cls}><svg class="ops-key" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" class=${`ops-edge ${cls}`} /></svg>${label}</span>`)}
         </div>
       </div>
-      ${m ? html`<div class="ops-panel">
-        <div class="d-flex align-items-center gap-2">
-          <b>${m.id}</b>
-          <span class="badge text-bg-secondary">${m.tier ?? "?"}</span>
-          <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onClick=${() => setPicked(null)}>×</button>
-        </div>
-        ${m.rules?.length ? html`<div class="mt-2"><div class="small fw-bold text-secondary">rules</div>
-          <ul class="small mb-2 ps-3">${m.rules.map((r) => html`<li class=${/never|hands off|no deploys/i.test(r) ? "text-danger" : ""}>${r}</li>`)}</ul></div>` : ""}
-        ${m.tier === "prod" ? runningNow : ""}
-        ${m.apps?.length ? html`<div><div class="small fw-bold text-secondary">apps</div>
-          <ul class="small mb-2 ps-3">${m.apps.map((a) => html`<li>${a.name}${a.port ? ` :${a.port}` : ""}${a.env ? html` <span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span>` : ""}</li>`)}</ul></div>` : ""}
-        ${m.tier !== "prod" ? runningNow : ""}
-        ${m.folders?.length ? html`<div><div class="small fw-bold text-secondary">folders</div>
-          <ul class="small mb-2 ps-3">${m.folders.map((f) => html`<li><code>${f.path}</code>${f.purpose ? ` — ${f.purpose}` : ""}</li>`)}</ul></div>` : ""}
-        ${m.databases?.length ? html`<div><div class="small fw-bold text-secondary">databases</div>
-          <ul class="small mb-2 ps-3">${m.databases.map((d) => html`<li><code>${d.path}</code>${d.purpose ? ` — ${d.purpose}` : ""}</li>`)}</ul></div>` : ""}
-        ${(m.handled_by?.agents?.length || m.handled_by?.skills?.length) ? html`<div><div class="small fw-bold text-secondary">handled by</div>
-          <div class="small mb-2">${[...(m.handled_by.agents ?? []), ...(m.handled_by.skills ?? [])].join(", ")}</div></div>` : ""}
-        ${machineTargets.length ? html`<div><div class="small fw-bold text-secondary">targets</div>
-          <ul class="small mb-2 ps-3">${machineTargets.map(([t]) => html`<li>${t} — ${lastOk[t] ? html`<a href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`}>${lastOk[t].version}</a>` : "—"}</li>`)}</ul></div>` : ""}
-        ${m.notes ? html`<div class="small text-secondary mt-1" style="white-space:pre-wrap">${m.notes}</div>` : ""}
-        <${OpsNotes} kind="machine" id=${m.id} notes=${m.human_notes} reload=${reload} key=${m.id} />
-      </div>` : ""}
+      ${m ? html`<${OpsMachineCard} key=${m.id} m=${m} targets=${targets} jobs=${jobs} reload=${reload} onClose=${() => setPicked(null)} onProbe=${() => probeMachine(picked)} onRename=${renameMachine} />` : ""}
     </div>
   `;
 };
@@ -3173,7 +3399,6 @@ const OpsJob = ({ id }) => {
           title: `ops ${job.playbook}: step ${s.id} failed`,
           summary: `Ops job ${job.id} (${job.playbook}${job.target ? ` on ${job.target}` : ""}) failed at step '${s.id}' on ${job.machine}${s.exit_code !== undefined ? ` (exit ${s.exit_code})` : ""}.${s.output_tail ? `\n\noutput tail:\n${s.output_tail.split("\n").slice(-10).join("\n")}` : ""}`,
           project: ws?.projects?.[0]?.name,
-          found_by: [job.id],
         }],
       });
       toast(`bug task ${r.ids?.[0] ?? ""} drafted`, "success");
@@ -3183,7 +3408,7 @@ const OpsJob = ({ id }) => {
   return html`
     <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
       <a href="#/ops" class="text-decoration-none small">‹ ops</a>
-      <h2 class="h4 mb-0">${job.id}</h2>
+      <h2 class="h4 mb-0 id">${job.id}</h2>
       <span class=${`badge ${OPS_JOB_BADGE[job.status] ?? "text-bg-secondary"}`}>${job.status}</span>
       ${job.kind === "rollback" && html`<span class="badge text-bg-secondary">rollback of <a href=${`#/ops/${encodeURIComponent(job.rollback_of)}`}>${job.rollback_of}</a></span>`}
       ${job.rollback_job && html`<span class="badge text-bg-secondary">rollback: <a href=${`#/ops/${encodeURIComponent(job.rollback_job)}`}>${job.rollback_job}</a></span>`}
@@ -3207,7 +3432,7 @@ const OpsJob = ({ id }) => {
         return html`<li key=${s.id} class=${`ops-step ${s.status} ${i === job.cursor && live ? "cursor" : ""}`}>
           <span class="ops-dot">${OPS_STEP_MARK[s.status] ?? "?"}</span>
           <div class="d-flex align-items-center gap-2 flex-wrap">
-            <b>${s.id}</b>
+            <b class="id">${s.id}</b>
             ${sp?.kind ? html`<span class="text-secondary small">${sp.kind}</span>` : ""}
             <span class=${`badge ${OPS_JOB_BADGE[s.status === "passed" ? "succeeded" : s.status === "skipped" ? "stopped" : s.status] ?? "text-bg-secondary"}`}>${s.status}</span>
             ${i === job.cursor && live ? html`<span class="small text-secondary">◂ cursor</span>` : ""}
@@ -3247,7 +3472,7 @@ const OpsPlaybooks = () => {
           </div>`;
         const j = last[pb.name];
         return html`<a class="list-group-item list-group-item-action d-flex align-items-center gap-2" key=${l.file} href=${`#/ops/playbook/${encodeURIComponent(pb.name)}`}>
-          <b>${pb.name}</b>
+          <b class="id">${pb.name}</b>
           ${pb.title ? html`<span class="small text-secondary">${pb.title}</span>` : ""}
           ${pb.target ? html`<span class="badge text-bg-secondary">${pb.target}</span>` : ""}
           <span class="small text-secondary">start: ${pb.start}${pb.min_tier ? ` · ${pb.min_tier}+ tier` : ""}</span>
@@ -3293,7 +3518,7 @@ const OpsPlaybook = ({ name }) => {
   return html`
     <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
       <a href="#/ops/playbooks" class="text-decoration-none small">‹ playbooks</a>
-      <h2 class="h4 mb-0">${pb.name}</h2>
+      <h2 class="h4 mb-0 id">${pb.name}</h2>
       <span class="small text-secondary">start: ${pb.start}${pb.min_tier ? ` · ${pb.min_tier}+ tier` : ""}</span>
       <span class="ms-auto"><button class="btn btn-sm btn-primary" disabled=${busy} onClick=${openForm}>Start</button></span>
     </div>
@@ -3331,7 +3556,7 @@ const OpsPlaybook = ({ name }) => {
       ${pb.steps.map((s) => html`
         <div class="list-group-item" key=${s.id}>
           <div class="d-flex align-items-center gap-2 flex-wrap">
-            <b>${s.id}</b>
+            <b class="id">${s.id}</b>
             ${s.title ? html`<span class="small">${s.title}</span>` : ""}
             <span class="badge text-bg-secondary">${s.kind}</span>
             ${s.optional ? html`<span class="small text-secondary">optional</span>` : ""}

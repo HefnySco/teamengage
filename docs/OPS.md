@@ -214,6 +214,9 @@ id: cloud                    # lowercase kebab — 'Cloud-ArduPilot' becomes 'cl
 title: cloud.ardupilot.org VPS
 host: cloud.ardupilot.org
 tier: prod
+kind: vps                    # node icon: laptop|desktop|server|vps|sbc|mcu|git|usb|router|generic — optional, a name heuristic guesses it otherwise
+sys: { os: "Ubuntu 24.04", kernel: "6.8.0-142-generic", arch: x86_64, model: "VPS", cpu: "vCPU", cores: 2,
+       mem: "3.8 GiB", storage: "78 GB — 46 GB free", scanned: "2026-11-12" }   # machine tab — all fields optional; scanned says when/how verified
 ssh: { user: root, key: ~/.ssh/ardupilot_cloud_key }   # references only — never secrets
 roles: [auth-server]
 apps:
@@ -259,7 +262,7 @@ The home network: laptop reaches the desktop and the VPS.
 One machine can be in many envs — reach differs per network
 (mhefnyDT is only reachable on MHEFNY4G). `te validate` reports an
 unknown machine id in an env or an edge, duplicate ids, a secret in an
-ssh field and a kind/via outside the lists.
+ssh field and a machine/edge kind or a reach via outside the lists.
 
 ### Add a machine
 
@@ -394,6 +397,34 @@ The view runs nothing: it shows the stored job records and the stored
 probe results only. To refresh a probe, use the probe buttons — they
 stay human-only.
 
+### The machine activity log (trans)
+
+`machines/<id>.machine.trans.md` is an append-only ledger of what
+happened to a machine, newest at the bottom. Two producers write it:
+
+- **you or an agent** — `te machines trans <id> "text"` appends an
+  `adhoc` entry; the runner machine is the actor. Convention: log a
+  manual change on a `tier: prod` machine — a config edit, a restart,
+  a hotfix over ssh. Local and test machines do not need it.
+- **the job store** — a job that reaches a terminal state (succeeded,
+  stopped, failed, aborted) appends one `job` line to the machine of
+  its target, with the playbook, the status and the version.
+
+One entry is one block:
+
+```markdown
+### 2026-11-13T14:22:10.000Z · adhoc · mhefny-dt
+edited de_web_shadow build/config.local.json — DISABLE_DE_PILOT: true
+
+### 2026-11-13T15:02:44.000Z · job mhefny-dt-0042 · mhefny-dt
+webclient-shadow-deploy on cloud-web-shadow — succeeded · version 2bde9e57
+```
+
+The machine side panel shows it as the **log** tab, newest first; job
+entries link to the job record. `te machines show <id>` prints the
+last five entries. `te validate` warns on a `.trans.md` file whose
+machine does not exist.
+
 ### Machine and env commands
 
 | Command | What it prints |
@@ -405,6 +436,7 @@ stay human-only.
 | `te env` | the active env and how it was selected (`manual` or wifi) |
 | `te env use <id>` | stores a manual env choice in the runner's `.machine.local` |
 | `te machines note <id> "text"` | adds a human note to the machine and opens a ready task to apply it |
+| `te machines trans <id> "text"` | appends an ad-hoc entry to the machine's activity log |
 | `te machines rename <old> <new>` | renames a machine: file, id and every env/edge/target/probe reference |
 | `te ops note <playbook> "text"` | adds a human note to `ops/<playbook>.notes.md` and opens a ready task to apply it |
 
@@ -418,6 +450,7 @@ needs a runner machine — a `.machine.local` with `runner: true`.
 |---|---|
 | Playbooks | `<task folder>/ops/*.playbook.yaml` |
 | Machines | `<task folder>/machines/*.machine.md` (+ git-ignored `*.machine.local`) |
+| Machine activity logs | `<task folder>/machines/*.machine.trans.md` |
 | Envs | `<task folder>/envs/*.env.md` |
 | Job records | `.teamengage/ops/jobs/<machine>/<job-id>.yaml` |
 | Target locks | `.teamengage/ops/locks/<target>.yaml` |

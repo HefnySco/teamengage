@@ -174,6 +174,20 @@ For a playbook note, also:
 - the human accepts every playbook change. Auto-accept does not take
   this task.
 
+## 8. Record an on-the-fly change on a prod machine
+
+A change you make by hand on a machine — a config edit over ssh, a
+restart, a hotfix, anything outside a playbook job — leaves no job
+record. On a `tier: prod` machine, log it:
+
+```bash
+te machines trans <machine-id> "what you changed, in STE"
+```
+
+The entry lands in `machines/<id>.machine.trans.md` and shows on the
+machine's **log** tab in the Ops view. Routine work on local and test
+machines does not need it.
+
 ## Never
 
 - edit a playbook file while a job of it is live — later results are

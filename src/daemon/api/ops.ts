@@ -22,6 +22,7 @@ import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
 import { envFindings, loadEnvs } from "../../core/ops/env.js";
+import { transFindings } from "../../core/ops/trans.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -352,6 +353,7 @@ export class WorkspaceOps {
       ...machineFindings(machines),
       ...envFindings(loadEnvs(this.wsr.ws.root), machineIds),
       ...targetMachineFindings(this.wsr.ws.config.targets, machines),
+      ...transFindings(this.wsr.ws.root, machineIds),
     ];
     return [
       ...validate(this.index, {
