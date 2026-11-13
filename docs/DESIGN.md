@@ -698,6 +698,9 @@ Content is never copied: `brief` reads the task file live.
 | 9   | Plans repo sync              | `manual` by default; daemon only does a read-only `fetch` to detect remote claims before claiming. `auto` stays available per workspace (§6.5). |
 | 10  | Existing task folders        | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each.                       |
 | 11  | Human gates for a solo human | `autonomy: solo` (opt-in): agent follow-ups land ready, `ok`-reviewed submissions auto-accept after a delay; `strict` stays the default (§5).   |
+| 12  | Feature model                | `type: feature` item — never claimed, derived status; plans name it with `feature:` (§15, D-0046).                                                                        |
+| 13  | Release model                | File kind under `releases/`; the human cuts it and the item/commit list freezes at cut; jobs link via `params.release` (§15, D-0046).                                     |
+| 14  | CAPABILITIES.md              | Generated export (`te capabilities`) — never hand-edited (§15, D-0046).                                                                                                  |
 
 ## 13. Open questions
 
@@ -1049,7 +1052,7 @@ of truth; the file is a derived export for customers.
 | release file (name, cut time, window, items + commits + feature)    | "which machine has it" — join over succeeded ops jobs naming the release                           |
 | `release:` in a job's `params` + job id in the release's `deploys`  | `CAPABILITIES.md`, `te release notes`, board features filter                                       |
 
-### 15.7 Open questions — the human decides
+### 15.7 Questions — decided (D-0046: all four recommendations stand)
 
 **Q1 — Feature: new item type or new file kind?**
 
@@ -1060,7 +1063,7 @@ of truth; the file is a derived export for customers.
   cleanly expresses "no workflow", but needs a second store the
   feature page must join to the item index for plans/parts/problems,
   and a new `propose` path (GL-0331 requires `propose` to create one).
-- **Recommendation: A.** Everything the feature page shows already
+- **Decided: A.** Everything the feature page shows already
   lives in the item graph; a file kind would duplicate addressing and
   indexing for no gain — the claim refusal is a rule, not a reason to
   leave the item model.
@@ -1073,7 +1076,7 @@ of truth; the file is a derived export for customers.
 - **B: reuse `parent`** — zero schema change, but an epic could name
   either a bigger epic or a feature, never both; and `parent` would
   silently mean two things, breaking "parts of a plan" roll-ups.
-- **Recommendation: A.** One field, one meaning; the derived roll-ups
+- **Decided: A.** One field, one meaning; the derived roll-ups
   stay unambiguous.
 
 **Q3 — How does a release find its commits?**
@@ -1087,7 +1090,7 @@ of truth; the file is a derived export for customers.
   each read replays events. Cheaper files, but later edits, archives
   or rebased evidence change history silently; release notes must not
   drift.
-- **Recommendation: A.** A release is a record; freezing the list is
+- **Decided: A.** A release is a record; freezing the list is
   what makes it auditable. The window is automatic (`since` = previous
   release) with `--since <id>`/`--items` overrides for a partial cut.
 
@@ -1099,6 +1102,6 @@ of truth; the file is a derived export for customers.
 - **B: hand-maintained doc** — features link to CAPABILITIES.md
   sections. Reads naturally but two sources drift; every rename or
   re-scope needs a manual edit.
-- **Recommendation: A.** The feature's `## Simple` field already
+- **Decided: A.** The feature's `## Simple` field already
   exists for exactly this audience; generation is a read, not a new
   model.
