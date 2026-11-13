@@ -12,7 +12,7 @@ Status: **v0.4** (2026-10-16)
 ## 1. Problem
 
 Today plans live in folders of Markdown (e.g. `~/de_code/Tasks`, ~450 files).
-They are good *content* but poor *coordination*:
+They are good _content_ but poor _coordination_:
 
 - Status is implied by folder (`done/`, `partially-done/`), dependencies by prose
   (`**Depends on:** TASK-12`), IDs collide across folders.
@@ -24,7 +24,7 @@ They are good *content* but poor *coordination*:
 
 Prior art solves pieces: **Backlog.md** (md+frontmatter tracker with MCP),
 **Beads** (git-backed agent issue graph), **Task Master** (spec → task tree).
-None is built around *multiple heterogeneous agents + one human* working the
+None is built around _multiple heterogeneous agents + one human_ working the
 same plan concurrently. That is TeamEngage's reason to exist.
 
 ## 2. Principles
@@ -36,7 +36,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 3. **Claims before work.** No agent touches an item, or code, without a claim.
 4. **The human releases.** Claims don't silently expire; stale ones are flagged
    and the human decides.
-5. **Evidence before done.** Agents *submit*; the human *accepts*.
+5. **Evidence before done.** Agents _submit_; the human _accepts_.
 6. **Ask, don't guess.** Ambiguity becomes a recorded question; the agent moves on.
 7. **Never push for the human.** TeamEngage commits and merges locally; pushing
    is the human's call. Two exceptions: the human asking for a sync
@@ -51,25 +51,25 @@ same plan concurrently. That is TeamEngage's reason to exist.
 
 ## 3. Concepts
 
-| Concept | Meaning |
-|---|---|
-| **Workspace** | A root folder that is one plannable unit. `~/de_code` (many repos, one system) is one workspace; `~/code/foo` (a standalone project) is another. Registered per machine in `~/.teamengage/workspaces.yaml`. |
-| **Plans repo** | The git repo holding a workspace's plan files. Can be an existing repo (e.g. `~/de_code/Tasks`). It is what desktop and laptop sync through. |
-| **Machine** | A host running a daemon (`desktop`, `laptop`). Every claim, session and event records its machine. |
-| **Resource** | Anything work touches, declared in `workspace.yaml`, **inside or outside** the workspace root: a local git repo, a remote git URL, an SSH folder on another machine (e.g. a Raspberry Pi), a plain local folder, a URL. See §6.3. |
-| **Project** | Optional grouping inside a workspace (`mission_planner`, `andruav`) with its own ID prefix. |
-| **Item** | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`, `idea`. Lives at workspace level (cross-cutting) or project level (detail). |
-| **Edge** | `depends_on`, `parent`, `relates`. `blocks` is derived. Edges may cross projects and workspaces (§4.1). |
-| **Turn** | Whose move it is on an item: `human` or `agent`. Drives both inboxes. |
-| **Claim** | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human. |
-| **Evidence** | Commits, test output, logs, snapshot diffs, notes attached on submit. |
-| **Walkthrough** | The submitter's explanation of the change — in STE (ASD-STE100 Simplified Technical English), required on submit, appended per submission. |
-| **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items. |
-| **Session** | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`. |
-| **Event** | Append-only record of every change (who, where, what, when, why). |
-| **Playbook** | A permanent ordered step list for repeatable operations — deploys, syncs. Lives in the plans repo, versioned with it (§14). |
-| **Job** | One execution of a playbook against a target: state machine, step results, deployed version (§14). |
-| **Target** | A deploy slot declared in `workspace.yaml` — a host, a service, an environment (§14). |
+| Concept                 | Meaning                                                                                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace**           | A root folder that is one plannable unit. `~/de_code` (many repos, one system) is one workspace; `~/code/foo` (a standalone project) is another. Registered per machine in `~/.teamengage/workspaces.yaml`.                       |
+| **Plans repo**          | The git repo holding a workspace's plan files. Can be an existing repo (e.g. `~/de_code/Tasks`). It is what desktop and laptop sync through.                                                                                      |
+| **Machine**             | A host running a daemon (`desktop`, `laptop`). Every claim, session and event records its machine.                                                                                                                                |
+| **Resource**            | Anything work touches, declared in `workspace.yaml`, **inside or outside** the workspace root: a local git repo, a remote git URL, an SSH folder on another machine (e.g. a Raspberry Pi), a plain local folder, a URL. See §6.3. |
+| **Project**             | Optional grouping inside a workspace (`mission_planner`, `andruav`) with its own ID prefix.                                                                                                                                       |
+| **Item**                | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`, `idea`. Lives at workspace level (cross-cutting) or project level (detail).                                                                      |
+| **Edge**                | `depends_on`, `parent`, `relates`. `blocks` is derived. Edges may cross projects and workspaces (§4.1).                                                                                                                           |
+| **Turn**                | Whose move it is on an item: `human` or `agent`. Drives both inboxes.                                                                                                                                                             |
+| **Claim**               | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human.                               |
+| **Evidence**            | Commits, test output, logs, snapshot diffs, notes attached on submit.                                                                                                                                                             |
+| **Walkthrough**         | The submitter's explanation of the change — in STE (ASD-STE100 Simplified Technical English), required on submit, appended per submission.                                                                                        |
+| **Question / Decision** | Agent asks → human answers → answer becomes a decision inherited by dependent items.                                                                                                                                              |
+| **Session**             | A registered agent instance: `claude-code@laptop#a1f3`, `gemini-cli@desktop#77b0`.                                                                                                                                                |
+| **Event**               | Append-only record of every change (who, where, what, when, why).                                                                                                                                                                 |
+| **Playbook**            | A permanent ordered step list for repeatable operations — deploys, syncs. Lives in the plans repo, versioned with it (§14).                                                                                                       |
+| **Job**                 | One execution of a playbook against a target: state machine, step results, deployed version (§14).                                                                                                                                |
+| **Target**              | A deploy slot declared in `workspace.yaml` — a host, a service, an environment (§14).                                                                                                                                             |
 
 ## 4. On-disk layout
 
@@ -102,30 +102,30 @@ same plan concurrently. That is TeamEngage's reason to exist.
 
 ```yaml
 name: droneengage
-prefix: DE                       # workspace-level items: DE-0001…
-plans: Tasks                     # plans repo path (default: .teamengage)
-sync: manual                     # manual | auto  (§6.5)
-stale_after: 24h                 # inactive agent claim → flagged stale
-autonomy: strict                 # strict | solo  (§5 — solo: fewer human gates)
-auto_accept_after: 30m           # solo: ok peer review → daemon accepts after this
-auto_accept_rules:               # solo: ordered rules; first match sets the item's delay
-  - { tier: light, after: 5m }   #   conditions (all must match): tier, project, domains
-  - { domains: [meta], after: never }   #   never = the accept stays the human's
-auto_archive_after: 7d           # unset = off: daemon archives items done/dropped longer than this (§5)
-auto_release_after: 24h          # unset = off: daemon releases dead-session claims stale longer than this (§5)
+prefix: DE # workspace-level items: DE-0001…
+plans: Tasks # plans repo path (default: .teamengage)
+sync: manual # manual | auto  (§6.5)
+stale_after: 24h # inactive agent claim → flagged stale
+autonomy: strict # strict | solo  (§5 — solo: fewer human gates)
+auto_accept_after: 30m # solo: ok peer review → daemon accepts after this
+auto_accept_rules: # solo: ordered rules; first match sets the item's delay
+  - { tier: light, after: 5m } #   conditions (all must match): tier, project, domains
+  - { domains: [meta], after: never } #   never = the accept stays the human's
+auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
+auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
 projects:
   mission_planner: { prefix: MP }
-  global:          { prefix: GL }
-  andruav:         { prefix: AN }
+  global: { prefix: GL }
+  andruav: { prefix: AN }
 resources:
-  mavlink:   { kind: git,    path: droneengage_mavlink, base: master }
-  comm:      { kind: git,    path: droneengage_comm,    base: master }
-  andruav:   { kind: git,    path: ~/AndroidStudioProjects/andruav, base: main }   # outside root
-  sdk:       { kind: git,    url: git@github.com:HefnySco/de_sdk.git, base: main } # pull-only
-  rpi-field: { kind: ssh,    host: pi@rpi4.local, path: /home/pi/drone_engage, snapshot: true }
-  docs:      { kind: folder, path: ~/Documents/de_specs }
-  wiki:      { kind: url,    url: https://cloud.ardupilot.org/ }
-links:                           # other workspaces this one may reference
+  mavlink: { kind: git, path: droneengage_mavlink, base: master }
+  comm: { kind: git, path: droneengage_comm, base: master }
+  andruav: { kind: git, path: ~/AndroidStudioProjects/andruav, base: main } # outside root
+  sdk: { kind: git, url: git@github.com:HefnySco/de_sdk.git, base: main } # pull-only
+  rpi-field: { kind: ssh, host: pi@rpi4.local, path: /home/pi/drone_engage, snapshot: true }
+  docs: { kind: folder, path: ~/Documents/de_specs }
+  wiki: { kind: url, url: https://cloud.ardupilot.org/ }
+links: # other workspaces this one may reference
   mcp: ~/code/mcp
 ```
 
@@ -136,14 +136,14 @@ on the laptop may override any resource `path`.
 
 Every object has a stable address; references are flexible:
 
-| Reference | Resolves to |
-|---|---|
-| `MP-0042` | item in the current workspace (prefix is unique per workspace) |
-| `mcp:SL-0007` | item in linked workspace `mcp` |
-| `@mavlink` | resource |
-| `@mavlink:src/mission/**` | path(s) inside a resource |
-| `@rpi-field:/home/pi/drone_engage/config` | path on the Pi |
-| `D-0007` | decision |
+| Reference                                 | Resolves to                                                    |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `MP-0042`                                 | item in the current workspace (prefix is unique per workspace) |
+| `mcp:SL-0007`                             | item in linked workspace `mcp`                                 |
+| `@mavlink`                                | resource                                                       |
+| `@mavlink:src/mission/**`                 | path(s) inside a resource                                      |
+| `@rpi-field:/home/pi/drone_engage/config` | path on the Pi                                                 |
+| `D-0007`                                  | decision                                                       |
 
 So a workspace-level epic `DE-0003` ("Protocol v2") can parent
 project tasks `GL-0002`, `MP-0110`, `AN-0009`, and depend on an item in
@@ -156,29 +156,34 @@ another workspace — all one graph.
 id: GL-0013
 type: task
 title: Mission re-run resets sequence tracking
-status: in_progress      # see §5
+status: in_progress # see §5
 project: global
 targets: ["@mavlink:src/mission/**", "@comm:src/**", "@rpi-field:config/**"]
 depends_on: [GL-0012]
-parent: DE-0003          # workspace-level epic
+parent: DE-0003 # workspace-level epic
 priority: 2
-version: 7               # bumped by daemon on every write (CAS)
+version: 7 # bumped by daemon on every write (CAS)
 created: 2026-09-20
 updated: 2026-10-08
 ---
 
 ## Summary
+
 ...technical description for agents...
 
 ## Simple
+
 ...STE version for the human (replaces *.simple.md)...
 
 ## Acceptance
+
 - [ ] second AUTO run fires module commands
 - [ ] SITL rerun test passes
 
 ## Log
+
 <!-- daemon-appended, newest last -->
+
 - 2026-10-08T09:12Z claude-code@desktop#a1f3 claimed
 ```
 
@@ -258,13 +263,13 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   graph, `query` and `next`, and cannot be claimed. Claimed items must be
   released first.
 - `star_color` is the human's **bookmark** (`te star <ID>
-  [yellow|red|green|blue]` / `te unstar`, ★ on board cards and the item
+[yellow|red|green|blue]` / `te unstar`, ★ on board cards and the item
   page — clicking flips none → yellow → red → green → blue → none). A pure
   marker with no workflow effect: it works in any status — even while
   claimed — hides nothing, and never feeds `next` ordering (that stays
   `priority`-driven).
 - `ai_review` is the latest **AI peer review** of the current submission —
-  written by `review`/`bounce` from an agent session that is *not* the
+  written by `review`/`bounce` from an agent session that is _not_ the
   holder (a self-review would only manufacture a trust marker): verdict
   `ok|issues`, reviewer session, date, note. Pure triage hint for the
   human's review queue (badge on board cards, marker in the inbox, banner
@@ -331,7 +336,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   conflict as a log note.
 - The human can `claim` too: held by `human`, `next` skips it, targets locked
   against agents until released.
-- Agents may *create* items, but only as `draft` (plans and wishes need a human yes)
+- Agents may _create_ items, but only as `draft` (plans and wishes need a human yes)
   — unless the workspace runs `autonomy: solo`, below.
 - `autonomy` (workspace.yaml, default `strict`) sets how many human gates
   there are. `solo` is for one human or a small team:
@@ -354,9 +359,9 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
     domain), `after: never` keeps the accept the human's, and unmatched
     items fall back to `auto_accept_after`. The item page names the rule
     behind its countdown.
-  Everything else stays human-only in both modes: pushing, drop/undrop,
-  delete, archive, star, hold, close_plan, change_answer, and releasing
-  another machine's claim. `hello` adds an `autonomy: solo` rules line.
+    Everything else stays human-only in both modes: pushing, drop/undrop,
+    delete, archive, star, hold, close_plan, change_answer, and releasing
+    another machine's claim. `hello` adds an `autonomy: solo` rules line.
 - `auto_archive_after` (workspace.yaml, unset = off) removes the routine
   archive clicks: on its sweep the daemon archives any item whose status has
   been `done` or `dropped` for longer than the duration (`finished_at` in the
@@ -414,19 +419,19 @@ Plan safety is not enough — two agents in the same checkout corrupt each other
   `next` already skips such items. This logical lock works for every resource kind.
 - Isolation and delivery depend on the resource kind:
 
-| Kind | On claim | On accept (auto) |
-|---|---|---|
-| `git` (local path, in or outside root) | worktree on `te/<ID>-<session>` under `.teamengage/worktrees/`; paths returned to agent | merge into `base` (`--no-ff`), remove worktree, delete branch; mark **not pushed** |
-| `git` (remote `url`) | managed clone in `~/.teamengage/clones/` (pulled from its source), then worktree as above | merge in the clone; mark **not pushed** |
-| `ssh` (e.g. Raspberry Pi) | snapshot target paths to `~/.teamengage/snapshots/<ID>/<ts>/` + hashes; agent gets `host` + `path` | nothing to merge; evidence = diff vs snapshot + commands/output. `te rollback <ID>` restores the snapshot |
-| `folder` | snapshot (optional, `snapshot: true`) | nothing to merge |
-| `url` | reference only, never locked | — |
+| Kind                                   | On claim                                                                                           | On accept (auto)                                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `git` (local path, in or outside root) | worktree on `te/<ID>-<session>` under `.teamengage/worktrees/`; paths returned to agent            | merge into `base` (`--no-ff`), remove worktree, delete branch; mark **not pushed**                        |
+| `git` (remote `url`)                   | managed clone in `~/.teamengage/clones/` (pulled from its source), then worktree as above          | merge in the clone; mark **not pushed**                                                                   |
+| `ssh` (e.g. Raspberry Pi)              | snapshot target paths to `~/.teamengage/snapshots/<ID>/<ts>/` + hashes; agent gets `host` + `path` | nothing to merge; evidence = diff vs snapshot + commands/output. `te rollback <ID>` restores the snapshot |
+| `folder`                               | snapshot (optional, `snapshot: true`)                                                              | nothing to merge                                                                                          |
+| `url`                                  | reference only, never locked                                                                       | —                                                                                                         |
 
 - **Push tracking, not pushing.** After a merge the item shows per-resource
   `not pushed`. The human pushes wherever they want (`git push origin_local`, a
   different remote than the one pulled from, or not at all). The daemon detects
   it by checking `git branch -r --contains <merge>` on fetch and records
-  *which remote(s)* now contain the work.
+  _which remote(s)_ now contain the work.
 - `submit` records per-target evidence (branch + commits, snapshot diff, test output).
 - Merge conflicts on accept are never auto-resolved: item → `in_progress`,
   agent rebases in its worktree and re-submits.
@@ -443,7 +448,7 @@ Plan safety is not enough — two agents in the same checkout corrupt each other
 
 Agents run on the human's own machines and reach that machine's daemon on
 `127.0.0.1` (Claude Code, Gemini CLI, Cursor, Windsurf, Devin desktop, …).
-Remote *hosts* like a Raspberry Pi are **resources** (ssh), not agent hosts.
+Remote _hosts_ like a Raspberry Pi are **resources** (ssh), not agent hosts.
 
 ### 6.5 Multiple machines (desktop + laptop)
 
@@ -455,12 +460,12 @@ Machines share the **plans repo** through git; nothing else is shared.
 - **Sync modes** (`sync:` in `workspace.yaml`):
   - `manual` (**default**) — the human pulls/pushes the plans repo as today. The UI
     shows "N local plan commits not pushed / M behind" and claims made since the
-    last push are marked *unsynced* — another machine can't see them yet.
+    last push are marked _unsynced_ — another machine can't see them yet.
     To narrow the race without changing anything local, `claim` first runs a
     read-only `git fetch` of the plans repo (if it has a remote and is reachable)
     and checks the fetched `claims/` for overlaps; it refuses with "claimed on
     laptop by gemini-cli — pull first" instead of creating a double claim.
-    Offline, the claim proceeds and is marked *unsynced*.
+    Offline, the claim proceeds and is marked _unsynced_.
   - `auto` — before `claim` the daemon pulls the plans repo; after it, it pushes
     the plans repo **only** (never code repos). This shrinks the race window to
     seconds. Applies only to the plans repo, which is TeamEngage's own data.
@@ -487,24 +492,24 @@ Machines share the **plans repo** through git; nothing else is shared.
 
 All responses are compact text; IDs + one-line titles unless detail is asked for.
 
-| Tool | Purpose |
-|---|---|
-| `hello(agent, workspace?)` | Register session; returns session id, machine, workspace summary, any claims this agent should resume. |
-| `next(limit=3)` | Ready, unclaimed items whose targets are free, best first. |
-| `brief(id)` | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path). |
-| `claim(id)` | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only. |
-| `release(id, note)` | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |
-| `withdraw(id)` | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept. |
-| `log(id, note)` | Progress note (also updates `last_seen`). |
-| `ask(id, question, options?)` | Raise question → item `waiting`, turn → human. |
-| `submit(id, evidence)` | Commits/tests/notes → `in_review`. |
-| `review(id, verdict, note?)` | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched. |
-| `bounce(id, reason)` | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human. |
-| `propose(items[])` | Create `draft` items/edges (a plan for the human to approve). |
-| `edit(id, reason, …)` | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft. |
-| `flag_drop(id, reason)` | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status. |
-| `query(filter)` | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains). |
-| `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph. |
+| Tool                            | Purpose                                                                                                                                                         |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello(agent, workspace?)`      | Register session; returns session id, machine, workspace summary, any claims this agent should resume.                                                          |
+| `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first.                                                                                                      |
+| `brief(id)`                     | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path).                               |
+| `claim(id)`                     | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only.             |
+| `release(id, note)`             | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |
+| `withdraw(id)`                  | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept.                                                                                  |
+| `log(id, note)`                 | Progress note (also updates `last_seen`).                                                                                                                       |
+| `ask(id, question, options?)`   | Raise question → item `waiting`, turn → human.                                                                                                                  |
+| `submit(id, evidence)`          | Commits/tests/notes → `in_review`.                                                                                                                              |
+| `review(id, verdict, note?)`    | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched.                                                    |
+| `bounce(id, reason)`            | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human.                                         |
+| `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
+| `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |
+| `flag_drop(id, reason)`         | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status.                                                                          |
+| `query(filter)`                 | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains).                                                          |
+| `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph.                                                                                                                              |
 
 Plus a generated instruction snippet (`teamengage agents-md`) to drop into
 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`: "call `hello`, then `next`, always
@@ -515,6 +520,7 @@ submissions; accept stays with the human."
 ## 8. Human interface
 
 **Web UI** (served by the daemon):
+
 - **Inbox** — questions to answer, drafts to approve, submissions to review,
   stale/conflicted claims, unresolved plan merge conflicts.
 - **Graph** — Mermaid render, status-coloured, filter by project/resource/epic.
@@ -522,6 +528,13 @@ submissions; accept stays with the human."
 - **Item** — Simple/technical tabs, log, evidence, decisions, push state per resource.
 - **Sync** — plans repo ahead/behind; merged-but-not-pushed work per resource.
 - **Activity** — live event stream across all agents and machines.
+
+**Metrics** — derived from the merged event log, never stored: per item the
+daemon replays events to get claim→submit and submit→accept times, review
+rounds (one per submit), bounces and handoffs. `GET /api/metrics` rolls the
+per-item stats up per agent name, per tier and per domain;
+`GET /api/metrics?plan=<ID>` rolls up a plan and its parts. `te metrics`
+prints the same scorecards.
 
 **CLI** `te`: `te ls`, `te show GL-0013`, `te approve`, `te answer`, `te accept`,
 `te claim` / `te release` (human hands-off or freeing a stale claim),
@@ -531,6 +544,7 @@ flag), `te rollback`, `te sync`, `te import <folder>`, `te graph`.
 ## 9. Import of existing plans
 
 `te import ~/de_code/Tasks --dry-run`:
+
 - folder → status (`done/` → done, `partially-done/` → in_progress, …)
 - `Depends on:` / `Order: after` lines → `depends_on` (ambiguous ones flagged)
 - `X.simple.md` (or `X-simplified.md`) merged into `X`'s `## Simple` section
@@ -575,31 +589,31 @@ Content is never copied: `brief` reads the task file live.
 
 ## 11. Milestones
 
-| # | Deliverable | Proves |
-|---|---|---|
-| M1 | `core`: schema, parser, addressing, index, state machine, claims model, validate, mermaid; unit tests | model is right |
-| M2 | daemon + MCP tools + stdio shim; claim files, CAS, plans-repo commits | two IDEs on one machine can't collide on tasks |
-| M3 | `te import` on `~/de_code/Tasks/global` | real data fits |
-| M4 | web UI: inbox, graph, board | human loop works |
-| M5 | target locks + worktrees + local auto-merge + push tracking | agents can't collide on code |
-| M6 | multi-machine: sync modes, double-claim resolution, per-machine paths | desktop + laptop |
-| M7 | remote-git clones, ssh resources + snapshots/rollback, cross-workspace links | Pi, remote repos, `~/code/*` |
+| #   | Deliverable                                                                                           | Proves                                         |
+| --- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| M1  | `core`: schema, parser, addressing, index, state machine, claims model, validate, mermaid; unit tests | model is right                                 |
+| M2  | daemon + MCP tools + stdio shim; claim files, CAS, plans-repo commits                                 | two IDEs on one machine can't collide on tasks |
+| M3  | `te import` on `~/de_code/Tasks/global`                                                               | real data fits                                 |
+| M4  | web UI: inbox, graph, board                                                                           | human loop works                               |
+| M5  | target locks + worktrees + local auto-merge + push tracking                                           | agents can't collide on code                   |
+| M6  | multi-machine: sync modes, double-claim resolution, per-machine paths                                 | desktop + laptop                               |
+| M7  | remote-git clones, ssh resources + snapshots/rollback, cross-workspace links                          | Pi, remote repos, `~/code/*`                   |
 
 ## 12. Decisions
 
-| # | Question | Decision |
-|---|---|---|
-| 1 | Agent hosts | Local, on one or more of the human's machines (§6.4, §6.5). |
-| 2 | Accept → merge? | Auto-merge locally; conflicts bounce back to the agent (§5, §6.3). |
-| 3 | ID scheme | Both: workspace prefix for cross-cutting items, project prefixes for detail; cross-workspace via `ws:ID` (§4.1). |
-| 4 | Resources outside root | Yes: local paths, git URLs, ssh folders, plain folders, URLs (§4, §6.3). |
-| 5 | Human claims | Yes; human claims lock targets against agents. |
-| 6 | Pushing code | Never. Merged work is marked *not pushed*; the human pushes to any remote; the daemon detects and records which remote has it. |
-| 7 | Claim lifetime | No auto-expiry. Inactive claims become *stale* (default 24h) and only the human releases them. |
-| 8 | SSH snapshots | Yes: snapshot before claim, diff as evidence, `te rollback`. |
-| 9 | Plans repo sync | `manual` by default; daemon only does a read-only `fetch` to detect remote claims before claiming. `auto` stays available per workspace (§6.5). |
-| 10 | Existing task folders | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each. |
-| 11 | Human gates for a solo human | `autonomy: solo` (opt-in): agent follow-ups land ready, `ok`-reviewed submissions auto-accept after a delay; `strict` stays the default (§5). |
+| #   | Question                     | Decision                                                                                                                                        |
+| --- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Agent hosts                  | Local, on one or more of the human's machines (§6.4, §6.5).                                                                                     |
+| 2   | Accept → merge?              | Auto-merge locally; conflicts bounce back to the agent (§5, §6.3).                                                                              |
+| 3   | ID scheme                    | Both: workspace prefix for cross-cutting items, project prefixes for detail; cross-workspace via `ws:ID` (§4.1).                                |
+| 4   | Resources outside root       | Yes: local paths, git URLs, ssh folders, plain folders, URLs (§4, §6.3).                                                                        |
+| 5   | Human claims                 | Yes; human claims lock targets against agents.                                                                                                  |
+| 6   | Pushing code                 | Never. Merged work is marked _not pushed_; the human pushes to any remote; the daemon detects and records which remote has it.                  |
+| 7   | Claim lifetime               | No auto-expiry. Inactive claims become _stale_ (default 24h) and only the human releases them.                                                  |
+| 8   | SSH snapshots                | Yes: snapshot before claim, diff as evidence, `te rollback`.                                                                                    |
+| 9   | Plans repo sync              | `manual` by default; daemon only does a read-only `fetch` to detect remote claims before claiming. `auto` stays available per workspace (§6.5). |
+| 10  | Existing task folders        | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each.                       |
+| 11  | Human gates for a solo human | `autonomy: solo` (opt-in): agent follow-ups land ready, `ok`-reviewed submissions auto-accept after a delay; `strict` stays the default (§5).   |
 
 ## 13. Open questions
 
@@ -634,32 +648,32 @@ so plans-git convergence never conflicts on job records (principle 2).
 
 `<root>/ops/<name>.playbook.yaml`, parsed with zod:
 
-| Field | Meaning |
-|---|---|
-| `name` | playbook id — the file basename |
-| `title`, `description` | human text |
-| `target` | default target id from `workspace.yaml` |
-| `start` | `human` (default) or `agent` — who may start a job |
-| `min_tier` | least agent tier that may start it (when `start: agent`) |
-| `cwd` | step working directory — default the workspace root |
-| `params` | `[{name, default, required}]` — substituted into `run` |
-| `secret_env` | env names whose values are masked in posted output |
-| `version_from` | step id — its last non-empty output line becomes the deployed version |
-| `steps` | ordered steps, see below |
+| Field                  | Meaning                                                               |
+| ---------------------- | --------------------------------------------------------------------- |
+| `name`                 | playbook id — the file basename                                       |
+| `title`, `description` | human text                                                            |
+| `target`               | default target id from `workspace.yaml`                               |
+| `start`                | `human` (default) or `agent` — who may start a job                    |
+| `min_tier`             | least agent tier that may start it (when `start: agent`)              |
+| `cwd`                  | step working directory — default the workspace root                   |
+| `params`               | `[{name, default, required}]` — substituted into `run`                |
+| `secret_env`           | env names whose values are masked in posted output                    |
+| `version_from`         | step id — its last non-empty output line becomes the deployed version |
+| `steps`                | ordered steps, see below                                              |
 
 Step fields:
 
-| Field | Meaning |
-|---|---|
-| `id`, `title` | step id and human text |
-| `kind` | `cmd` (run, exit code decides), `check` (run, verifies), `agent` (agent works, writes evidence), `gate` (human-only approve) |
-| `run` | shell — required on `cmd`/`check`, forbidden on `agent`/`gate` |
-| `expect_exit` | expected exit code — default `0` |
-| `timeout` | default `10m` |
-| `on_fail` | `fail` (default — job fails) or `stop` (job ends `stopped`: checked, nothing to do) |
-| `optional` | may be skipped, with a reason |
-| `rollback` | shell run by `te ops rollback` in reverse order |
-| `instruction` | markdown for `agent`/`gate` steps |
+| Field         | Meaning                                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `id`, `title` | step id and human text                                                                                                       |
+| `kind`        | `cmd` (run, exit code decides), `check` (run, verifies), `agent` (agent works, writes evidence), `gate` (human-only approve) |
+| `run`         | shell — required on `cmd`/`check`, forbidden on `agent`/`gate`                                                               |
+| `expect_exit` | expected exit code — default `0`                                                                                             |
+| `timeout`     | default `10m`                                                                                                                |
+| `on_fail`     | `fail` (default — job fails) or `stop` (job ends `stopped`: checked, nothing to do)                                          |
+| `optional`    | may be skipped, with a reason                                                                                                |
+| `rollback`    | shell run by `te ops rollback` in reverse order                                                                              |
+| `instruction` | markdown for `agent`/`gate` steps                                                                                            |
 
 Example — the cloud auth shadow deploy:
 
@@ -732,21 +746,21 @@ on a `gate`/`agent` step, a `cmd`/`check` step without `run`, an unknown
 ```yaml
 id: laptop-0007
 playbook: auth-shadow-deploy
-playbook_sha256: "…"          # pinned at start — edited playbook mid-job is refused
+playbook_sha256: "…" # pinned at start — edited playbook mid-job is refused
 target: cloud_auth
-kind: run                     # or: rollback (names the source job)
-status: running               # running | waiting | failed | stopped | succeeded | aborted
+kind: run # or: rollback (names the source job)
+status: running # running | waiting | failed | stopped | succeeded | aborted
 params: { ref: master }
 started: { ts: "…", by: "laptop / human-or-session" }
-cursor: 2                     # only the step at the cursor may start or take a result
-version: "…"                  # on success: last non-empty line of the version_from step
+cursor: 2 # only the step at the cursor may start or take a result
+version: "…" # on success: last non-empty line of the version_from step
 steps:
   - id: build
-    status: passed            # pending | running | passed | failed | skipped
+    status: passed # pending | running | passed | failed | skipped
     exit_code: 0
-    output_tail: "…"          # last 100 lines, secrets masked
+    output_tail: "…" # last 100 lines, secrets masked
     output_sha256: "…"
-    evidence: "…"             # agent steps write their evidence here
+    evidence: "…" # agent steps write their evidence here
     session: "devin@laptop#a1f3"
     started: "…"
     ended: "…"

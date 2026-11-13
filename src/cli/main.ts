@@ -7,12 +7,21 @@ import { guardCmd, hooksCmd } from "./commands/guard.js";
 import { skillsCmd } from "./commands/skills.js";
 import { domainsCmd, domainCmd, tagCmd } from "./commands/domains.js";
 import { AUTHORING_RULES, TEMPLATE_EXAMPLE, WRITING_RULES } from "../core/files/template.js";
-import { lsCmd, ideasCmd, showCmd, graphCmd, validateCmd, statusCmd, syncCmd } from "./commands/read.js";
+import {
+  lsCmd,
+  ideasCmd,
+  showCmd,
+  graphCmd,
+  validateCmd,
+  statusCmd,
+  syncCmd,
+} from "./commands/read.js";
 import { originBackfillCmd } from "./commands/backfill.js";
 import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import { opsCmd } from "./commands/ops.js";
+import { metricsCmd } from "./commands/metrics.js";
 import { machinesCmd, envCmd } from "./commands/machines.js";
 import {
   approveCmd,
@@ -65,7 +74,8 @@ const printUsage = (doc: string) => {
   const out = doc.split("\n").map((line) => {
     // "usage: <cmd>" — the label white, the command like a usage row
     const mu = /^(usage:\s+)(.*)$/.exec(line);
-    if (mu) return `${white}${mu[1]}${reset}${green}${mu[2].replace(PARAM_RX, `${yellow}$&${green}`)}${reset}`;
+    if (mu)
+      return `${white}${mu[1]}${reset}${green}${mu[2].replace(PARAM_RX, `${yellow}$&${green}`)}${reset}`;
     // a usage row is "  <cmd><2+ spaces><description>"
     const m = /^( {2}\S.*?)(?:( {2,})(\S.*))?$/.exec(line);
     if (!m) return line.trim() ? `${white}${line}${reset}` : line;
@@ -121,6 +131,7 @@ const USAGE_ALL = `te — every command
   graph [--root <ID>] [--depth n]
   validate [--json]
   status [--json]
+  metrics [--plan <ID>] [--json]  scorecards derived from the event log
   approve | accept | claim | release <ID> [note]
   answer <ID> <text>
   reject | drop <ID> [reason]     (reject --release: claim freed → ready for another agent)
@@ -217,7 +228,10 @@ async function main(argv: string[]): Promise<number> {
     console.log(version());
     return 0;
   }
-  if (args.length === 0 || ((args.includes("--help") || args.includes("-h")) && args[0] !== "run")) {
+  if (
+    args.length === 0 ||
+    ((args.includes("--help") || args.includes("-h")) && args[0] !== "run")
+  ) {
     printUsage(USAGE);
     return 0;
   }
@@ -242,6 +256,8 @@ async function main(argv: string[]): Promise<number> {
       return validateCmd(rest, home);
     case "status":
       return statusCmd(rest, home);
+    case "metrics":
+      return metricsCmd(rest, home);
     case "sync":
       return syncCmd(rest, home);
     case "ops":

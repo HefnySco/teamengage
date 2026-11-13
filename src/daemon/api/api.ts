@@ -34,7 +34,14 @@ function opsFor(ctx: DaemonCtx, ws?: string): WorkspaceOps {
 
 function sendErr(reply: FastifyReply, e: unknown) {
   if (e instanceof TeError) {
-    const code = e.code === "NOT_FOUND" ? 404 : e.code === "FORBIDDEN" ? 403 : e.code === "CONFLICT" || e.code === "CLAIM_REFUSED" ? 409 : 400;
+    const code =
+      e.code === "NOT_FOUND"
+        ? 404
+        : e.code === "FORBIDDEN"
+          ? 403
+          : e.code === "CONFLICT" || e.code === "CLAIM_REFUSED"
+            ? 409
+            : 400;
     return reply.code(code).send({ error: e.code, message: e.message, details: e.details });
   }
   return reply.code(500).send({ error: "INTERNAL", message: (e as Error).message });
@@ -72,9 +79,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         auto_accept_at: ops.autoAcceptAt(i),
         auto_accept_rule: ops.autoAcceptRuleLabel(i),
         ...(i.meta.type === "epic"
-          ? { plan_state: i.plan_state, plan_progress: i.plan_progress, plan_problems: i.plan_problems }
+          ? {
+              plan_state: i.plan_state,
+              plan_progress: i.plan_progress,
+              plan_problems: i.plan_problems,
+            }
           : {}),
-        ...(i.meta.type === "idea" ? { idea_state: i.idea_state, idea_progress: i.idea_progress } : {}),
+        ...(i.meta.type === "idea"
+          ? { idea_state: i.idea_state, idea_progress: i.idea_progress }
+          : {}),
         found_here: i.found_here,
       }));
     } catch (e) {
@@ -116,7 +129,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const q = req.query as { domain?: string; project?: string };
       const ops = opsFor(ctx, wsOf(req.query));
-      return await ops.allArtifacts({ domain: q.domain || undefined, project: q.project || undefined });
+      return await ops.allArtifacts({
+        domain: q.domain || undefined,
+        project: q.project || undefined,
+      });
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -130,7 +146,12 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const q = req.query as { path?: string };
       const ops = opsFor(ctx, wsOf(req.query));
       const rel = String(q.path ?? "");
-      if (!rel || rel.split(/[\\/]/).includes("..") || rel.startsWith("/") || /^[A-Za-z]:/.test(rel)) {
+      if (
+        !rel ||
+        rel.split(/[\\/]/).includes("..") ||
+        rel.startsWith("/") ||
+        /^[A-Za-z]:/.test(rel)
+      ) {
         throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
       }
       const root = join(ops.wsr.ws.root, ".artifacts");
@@ -145,8 +166,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
       }
       const ext = extname(real).toLowerCase();
-      const r = reply.type(MIME[ext] ?? "application/octet-stream").header("cache-control", "no-cache");
-      if (ext === ".html" || ext === ".htm" || ext === ".svg") r.header("content-security-policy", "sandbox");
+      const r = reply
+        .type(MIME[ext] ?? "application/octet-stream")
+        .header("cache-control", "no-cache");
+      if (ext === ".html" || ext === ".htm" || ext === ".svg")
+        r.header("content-security-policy", "sandbox");
       return r.send(readFileSync(real));
     } catch (e) {
       return sendErr(reply, e);
@@ -202,7 +226,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         const hits = ops.query(filter).map((i) => i.meta.id);
         return {
           count: hits.length,
-          mermaid: hits.length ? ops.graph({ roots: hits, depth: 1, maxNodes }) : "flowchart LR\n  none[\"no matches\"]",
+          mermaid: hits.length
+            ? ops.graph({ roots: hits, depth: 1, maxNodes })
+            : 'flowchart LR\n  none["no matches"]',
         };
       }
       const count = ops.query(filter).length;
@@ -268,6 +294,16 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   });
 
   // ---- task folder git: human-pressed Pull / Commit & Push ----------------
+  app.get("/api/metrics", async (req, reply) => {
+    try {
+      const q = req.query as Record<string, string>;
+      const ops = opsFor(ctx, q.ws);
+      return await ops.metrics(q.plan ? q.plan.toUpperCase() : undefined);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   app.get("/api/plans-git", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
@@ -309,11 +345,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const ops = opsFor(ctx, wsOf(req.query));
       const { syncNow } = await import("../sync/sync.js");
       const { syncCode, commitWip } = await import("../sync/code.js");
-      const b = (req.body ?? {}) as { remote?: string; message?: string; leave?: boolean; dryRun?: boolean };
+      const b = (req.body ?? {}) as {
+        remote?: string;
+        message?: string;
+        leave?: boolean;
+        dryRun?: boolean;
+      };
       if (b.dryRun) {
         // report only: fetch the plans remote and every code remote, change nothing
         const { plansGitStatus, syncPlansMirrors } = await import("../sync/sync.js");
-        const st = await plansGitStatus(ops.wsr, { fetch: b.remote || true }).catch((e: Error) => ({ error: e.message }));
+        const st = await plansGitStatus(ops.wsr, { fetch: b.remote || true }).catch((e: Error) => ({
+          error: e.message,
+        }));
         const plans =
           "error" in st
             ? st
@@ -323,9 +366,20 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
                 behind: st.behind,
                 ahead: st.ahead,
                 changes: st.changes.length,
-                mirrors: await syncPlansMirrors(ops.wsr, st.branch ?? "", b.remote || st.defaultRemote, { home: ctx.home, dryRun: true }),
+                mirrors: await syncPlansMirrors(
+                  ops.wsr,
+                  st.branch ?? "",
+                  b.remote || st.defaultRemote,
+                  { home: ctx.home, dryRun: true },
+                ),
               };
-        return { released: [], saved: [], problems: [], plans, code: await syncCode(ops.wsr, { home: ctx.home, dryRun: true }) };
+        return {
+          released: [],
+          saved: [],
+          problems: [],
+          plans,
+          code: await syncCode(ops.wsr, { home: ctx.home, dryRun: true }),
+        };
       }
       const released: string[] = [];
       const saved: string[] = [];
@@ -337,7 +391,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           try {
             if (status === "in_progress") {
               // release WIP-commits the worktree and keeps the branch
-              await ops.release(c.item, "human", "te sync --leave: work continues on another machine");
+              await ops.release(
+                c.item,
+                "human",
+                "te sync --leave: work continues on another machine",
+              );
               released.push(c.item);
             } else {
               // waiting / in review: keep the claim, just commit what's on disk
@@ -364,7 +422,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     try {
       const ops = opsFor(ctx, wsOf(req.query));
       const { commitPlans } = await import("../sync/sync.js");
-      return await commitPlans(ops.wsr, String(((req.body ?? {}) as { message?: string }).message ?? ""));
+      return await commitPlans(
+        ops.wsr,
+        String(((req.body ?? {}) as { message?: string }).message ?? ""),
+      );
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -435,7 +496,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   app.post("/api/propose", async (req, reply) => {
     try {
       const b = (req.body ?? {}) as { items?: unknown };
-      if (!Array.isArray(b.items) || !b.items.length) throw new TeError("USAGE", "propose needs {items:[…]}");
+      if (!Array.isArray(b.items) || !b.items.length)
+        throw new TeError("USAGE", "propose needs {items:[…]}");
       const items = b.items.map((raw, i) => {
         const d = raw as Record<string, unknown>;
         if (!d || typeof d.title !== "string" || !d.title.trim()) {
@@ -443,9 +505,14 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         }
         if (d.type !== undefined) {
           const t = ItemType.safeParse(d.type);
-          if (!t.success) throw new TeError("USAGE", `propose item ${i}: type must be one of ${ItemType.options.join("|")}`);
+          if (!t.success)
+            throw new TeError(
+              "USAGE",
+              `propose item ${i}: type must be one of ${ItemType.options.join("|")}`,
+            );
         }
-        const list = (k: string) => (Array.isArray(d[k]) ? (d[k] as unknown[]).map(String) : undefined);
+        const list = (k: string) =>
+          Array.isArray(d[k]) ? (d[k] as unknown[]).map(String) : undefined;
         return {
           type: d.type === undefined ? undefined : String(d.type),
           title: d.title,
@@ -477,11 +544,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       let forceType: ItemType | undefined;
       if (b.type !== undefined) {
         const t = ItemType.safeParse(b.type);
-        if (!t.success) throw new TeError("USAGE", `import type must be one of ${ItemType.options.join("|")}`);
+        if (!t.success)
+          throw new TeError("USAGE", `import type must be one of ${ItemType.options.join("|")}`);
         forceType = t.data;
       }
       const ops = opsFor(ctx, wsOf(req.query));
-      const { scanFolder, importRoot, sourceKey, sourcesUnder } = await import("../../import/scan.js");
+      const { scanFolder, importRoot, sourceKey, sourcesUnder } =
+        await import("../../import/scan.js");
       const { planImport } = await import("../../import/import.js");
       const prefix = b.project
         ? ops.wsr.ws.config.projects[b.project]?.prefix
@@ -499,7 +568,10 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         // root or under it; a file already tagged `te:` is never re-imported
         const wsRoot = importRoot(ws.root);
         if (root !== wsRoot && !root.startsWith(wsRoot + sep)) {
-          throw new TeError("USAGE", `overlay import folder must be inside the workspace root ${wsRoot}`);
+          throw new TeError(
+            "USAGE",
+            `overlay import folder must be inside the workspace root ${wsRoot}`,
+          );
         }
         keyOf = (rel) => toSourcePath(wsRoot, join(root, rel));
         // `ignore:` globs (root-relative) name .md files that are not tasks
@@ -544,7 +616,12 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       });
       plan.ambiguities.push(...tagged);
       if (!b.apply) {
-        return { apply: false, preview: plan.preview, ambiguities: plan.ambiguities, count: plan.items.length };
+        return {
+          apply: false,
+          preview: plan.preview,
+          ambiguities: plan.ambiguities,
+          count: plan.items.length,
+        };
       }
       const r = await ops.store.importItems(
         plan.items.map((i) => ({
@@ -610,7 +687,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("answer", (ops, id, b) => ops.answer(id, String(b.text ?? b.title ?? "answered")));
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
   act("accept", (ops, id) => ops.accept(id));
-  act("reject", (ops, id, b) => ops.reject(id, b.reason ? String(b.reason) : undefined, b.release === true));
+  act("reject", (ops, id, b) =>
+    ops.reject(id, b.reason ? String(b.reason) : undefined, b.release === true),
+  );
   act("drop", (ops, id, b) => ops.drop(id, b.reason ? String(b.reason) : undefined));
   act("unflag", (ops, id) => ops.unflagDrop(id));
   act("deps", (ops, id, b) =>
@@ -640,7 +719,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }),
   );
   act("tier", (ops, id, b) => {
-    const t = b.tier === undefined || b.tier === null || b.tier === "any" ? undefined : String(b.tier);
+    const t =
+      b.tier === undefined || b.tier === null || b.tier === "any" ? undefined : String(b.tier);
     if (t !== undefined && !["light", "standard", "heavy"].includes(t)) {
       throw new TeError("USAGE", "tier must be light|standard|heavy|any");
     }
@@ -659,14 +739,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   });
   act("unblocks", (ops, id, b) => {
     const on = String(b.on ?? "default");
-    if (!["review", "done", "default"].includes(on)) throw new TeError("USAGE", "unblocks needs {on: review|done|default}");
+    if (!["review", "done", "default"].includes(on))
+      throw new TeError("USAGE", "unblocks needs {on: review|done|default}");
     return ops.setUnblocksOn(id, on as "review" | "done" | "default");
   });
   act("reparent", (ops, id, b) => {
     const p = b.parent;
     return ops.setParent(id, p === undefined || p === null || p === "" ? undefined : String(p));
   });
-  act("domains", (ops, id, b) => ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"));
+  act("domains", (ops, id, b) =>
+    ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"),
+  );
   act("close_plan", (ops, id) => ops.closePlan(id));
   act("reopen_plan", (ops, id) => ops.reopenPlan(id));
   act("attach", (ops, id, b) =>
@@ -680,7 +763,14 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("detach", (ops, id, b) => ops.detach(id, "human", String(b.path ?? "")));
 
   // ---- domains vocabulary --------------------------------------------------
-  const route = (method: "GET" | "POST", path: string, fn: (ops: WorkspaceOps, req: { params: unknown; body: unknown; query: unknown }) => Promise<unknown>) =>
+  const route = (
+    method: "GET" | "POST",
+    path: string,
+    fn: (
+      ops: WorkspaceOps,
+      req: { params: unknown; body: unknown; query: unknown },
+    ) => Promise<unknown>,
+  ) =>
     app.route({
       method,
       url: path,
@@ -694,9 +784,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     });
   route("GET", "/api/domains", (ops) => ops.domains());
   route("POST", "/api/domains", (ops, req) => {
-    const b = (req.body ?? {}) as { name?: string; description?: string; color?: string; keywords?: unknown };
+    const b = (req.body ?? {}) as {
+      name?: string;
+      description?: string;
+      color?: string;
+      keywords?: unknown;
+    };
     if (!b.name) throw new TeError("USAGE", "domain needs {name}");
-    const keywords = Array.isArray(b.keywords) ? b.keywords.map(String) : typeof b.keywords === "string" ? b.keywords.split(",") : undefined;
+    const keywords = Array.isArray(b.keywords)
+      ? b.keywords.map(String)
+      : typeof b.keywords === "string"
+        ? b.keywords.split(",")
+        : undefined;
     return ops.defineDomain(b.name, { description: b.description, color: b.color, keywords });
   });
   route("POST", "/api/domains/:name/rename", (ops, req) => {
@@ -704,7 +803,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     if (!to) throw new TeError("USAGE", "rename needs {to}");
     return ops.renameDomain(String((req.params as { name: string }).name), to);
   });
-  route("POST", "/api/domains/:name/delete", (ops, req) => ops.deleteDomain(String((req.params as { name: string }).name)));
+  route("POST", "/api/domains/:name/delete", (ops, req) =>
+    ops.deleteDomain(String((req.params as { name: string }).name)),
+  );
   route("GET", "/api/domains/suggest", (ops) => ops.suggestDomains());
   route("POST", "/api/domains/suggest/apply", (ops, req) => {
     const ids = ((req.body ?? {}) as { ids?: unknown }).ids;

@@ -16,7 +16,14 @@ import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import { StarColor, tierRank, type Status } from "../../core/model/item.js";
-import { ClaimRefusedError, ForbiddenError, InvalidTransitionError, NotFoundError, TeError, ValidationError } from "../../core/model/errors.js";
+import {
+  ClaimRefusedError,
+  ForbiddenError,
+  InvalidTransitionError,
+  NotFoundError,
+  TeError,
+  ValidationError,
+} from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
@@ -53,7 +60,8 @@ export interface Links {
 }
 
 /** Title/summary words that mark an item as a fix — it always carries `bug`. */
-const FIX_WORDS = /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
+const FIX_WORDS =
+  /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
 
 export class WorkspaceOps {
   constructor(
@@ -73,7 +81,11 @@ export class WorkspaceOps {
 
   // ---- sessions ---------------------------------------------------------
 
-  async hello(agent: string, pid?: number, tier?: Session["tier"]): Promise<{ session: Session; resume: Claim[] }> {
+  async hello(
+    agent: string,
+    pid?: number,
+    tier?: Session["tier"],
+  ): Promise<{ session: Session; resume: Claim[] }> {
     const session = this.sessions.hello(agent, pid, tier);
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
@@ -91,7 +103,12 @@ export class WorkspaceOps {
       return { kind: "human", session: "human", machine: this.wsr.store.machine };
     }
     this.sessions.touch(session.id);
-    return { kind: "agent", session: session.id, machine: session.machine, ...(session.tier ? { tier: session.tier } : {}) };
+    return {
+      kind: "agent",
+      session: session.id,
+      machine: session.machine,
+      ...(session.tier ? { tier: session.tier } : {}),
+    };
   }
 
   private depsDone(it: IndexedItem): boolean {
@@ -104,7 +121,10 @@ export class WorkspaceOps {
       }
       const local = parsed.workspace ? undefined : this.index.get(parsed.id);
       const status = local?.meta.status ?? this.links?.statusOf(ref);
-      return status !== undefined && depSatisfied(status, this.wsr.ws.config.review_unblocks, local?.meta.unblocks_on);
+      return (
+        status !== undefined &&
+        depSatisfied(status, this.wsr.ws.config.review_unblocks, local?.meta.unblocks_on)
+      );
     });
   }
 
@@ -124,7 +144,9 @@ export class WorkspaceOps {
       .readyItems()
       .filter((i) => i.meta.type !== "epic" && i.meta.type !== "idea") // plans and sources — agents claim tasks
       .filter((i) => !d || i.meta.domains.includes(d))
-      .filter((i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap)
+      .filter(
+        (i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap,
+      )
       .filter((i) => !tier || !i.meta.tier || tierRank(i.meta.tier) <= tierRank(tier))
       .map((i, n) => ({ i, n, k: tier && i.meta.tier === tier ? 0 : 1 }))
       .sort((a, b) => a.k - b.k || a.n - b.n)
@@ -147,7 +169,8 @@ export class WorkspaceOps {
         keywords: defs[name]?.keywords ?? [],
         color: domainColor(name, defs[name]),
         count: items.filter((i) => !i.meta.archived).length,
-        open: items.filter((i) => !i.meta.archived && !["done", "dropped"].includes(i.meta.status)).length,
+        open: items.filter((i) => !i.meta.archived && !["done", "dropped"].includes(i.meta.status))
+          .length,
         archived: items.filter((i) => i.meta.archived).length,
       };
     });
@@ -175,7 +198,9 @@ export class WorkspaceOps {
    * keywords occur in its title / task file / simple text and that it
    * doesn't have yet. Nothing is changed.
    */
-  async suggestDomains(): Promise<Array<{ id: string; title: string; current: string[]; add: string[] }>> {
+  async suggestDomains(): Promise<
+    Array<{ id: string; title: string; current: string[]; add: string[] }>
+  > {
     const defs = await this.store.currentDomains();
     const out: Array<{ id: string; title: string; current: string[]; add: string[] }> = [];
     for (const it of this.index.items.values()) {
@@ -189,12 +214,19 @@ export class WorkspaceOps {
       }
       const touches = text.match(/^\**touches:?\**:?.*$/im)?.[0] ?? "";
       const body = text.replace(/^#.*$/m, ""); // the title line counts as strong already
-      const lead = body.split(/\n\s*\n/).filter((p) => p.trim()).slice(0, 2).join("\n");
+      const lead = body
+        .split(/\n\s*\n/)
+        .filter((p) => p.trim())
+        .slice(0, 2)
+        .join("\n");
       // the file name, not its folder: the folder is the project, already shown
       const fileName = (it.meta.source ?? "").split("/").pop() ?? "";
       const strong = [it.meta.title, it.meta.legacy_id ?? "", fileName, touches].join("\n");
-      const add = rankDomains({ strong, lead, body }, defs).filter((d) => !it.meta.domains.includes(d));
-      if (add.length) out.push({ id: it.meta.id, title: it.meta.title, current: it.meta.domains, add });
+      const add = rankDomains({ strong, lead, body }, defs).filter(
+        (d) => !it.meta.domains.includes(d),
+      );
+      if (add.length)
+        out.push({ id: it.meta.id, title: it.meta.title, current: it.meta.domains, add });
     }
     return out.sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -220,7 +252,11 @@ export class WorkspaceOps {
       dep.sections.find((s) => s.heading.toLowerCase() === name.toLowerCase())?.body ?? "";
     // archiving/starring is bookkeeping, not an outcome — skip those lines
     const lastLine = (s: string) =>
-      s.trim().split("\n").filter((l) => l && !/ (un)?(archived|starred)( \w+)? \(status /.test(l)).at(-1) ?? "";
+      s
+        .trim()
+        .split("\n")
+        .filter((l) => l && !/ (un)?(archived|starred)( \w+)? \(status /.test(l))
+        .at(-1) ?? "";
     const deps = it.meta.depends_on.map((ref) => {
       const parsed = parseItemRef(ref);
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
@@ -233,7 +269,9 @@ export class WorkspaceOps {
           dep?.meta.status === "in_review" &&
           depSatisfied("in_review", this.wsr.ws.config.review_unblocks, dep.meta.unblocks_on),
         /** a key task: dependents wait for its acceptance */
-        key: (dep?.meta.unblocks_on ?? (this.wsr.ws.config.review_unblocks ? "review" : "done")) === "done",
+        key:
+          (dep?.meta.unblocks_on ?? (this.wsr.ws.config.review_unblocks ? "review" : "done")) ===
+          "done",
         outcome: dep ? lastLine(sectionBody(dep, "Log")) : "",
         evidence: dep ? lastLine(sectionBody(dep, "Evidence")) : "",
       };
@@ -289,7 +327,24 @@ export class WorkspaceOps {
           }),
       )
       .map((x) => ({ ref: x.meta.id, status: x.meta.status }));
-    return { item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it, deps, dependents, decisions, targets, relates, found_by, found_here: it.found_here, plan_problems: it.plan_problems, referenced_by, question: it.meta.question, source, reviewUnblocks: this.wsr.ws.config.review_unblocks, autonomy: this.wsr.ws.config.autonomy, autoAcceptAt: this.autoAcceptAt(it), autoAcceptRule: this.autoAcceptRuleLabel(it) };
+    return {
+      item: it.claim ? { ...it, claim: { ...it.claim, dead: this.claimDead(it.claim) } } : it,
+      deps,
+      dependents,
+      decisions,
+      targets,
+      relates,
+      found_by,
+      found_here: it.found_here,
+      plan_problems: it.plan_problems,
+      referenced_by,
+      question: it.meta.question,
+      source,
+      reviewUnblocks: this.wsr.ws.config.review_unblocks,
+      autonomy: this.wsr.ws.config.autonomy,
+      autoAcceptAt: this.autoAcceptAt(it),
+      autoAcceptRule: this.autoAcceptRuleLabel(it),
+    };
   }
 
   /**
@@ -297,7 +352,9 @@ export class WorkspaceOps {
    * recorded path or, after a rename/move, by its `te:` tag. `missing` when
    * the item records a source that no longer exists anywhere.
    */
-  private async source(it: IndexedItem): Promise<
+  private async source(
+    it: IndexedItem,
+  ): Promise<
     | { path: string; text: string; moved: boolean; simple?: { path: string; text: string } }
     | { path: string; missing: true }
     | undefined
@@ -371,7 +428,11 @@ export class WorkspaceOps {
   async claim(
     id: string,
     session: Session,
-  ): Promise<{ claim: Claim; version: number; resumed: Array<{ resource: string; branch: string }> }> {
+  ): Promise<{
+    claim: Claim;
+    version: number;
+    resumed: Array<{ resource: string; branch: string }>;
+  }> {
     const it = this.item(id);
     if (it.meta.type === "epic") {
       throw new ClaimRefusedError("epics are plans — claim their tasks");
@@ -390,7 +451,9 @@ export class WorkspaceOps {
         (it.meta.status === "in_review" &&
           it.meta.ai_review?.verdict === "issues" &&
           mine.machine === session.machine) ||
-        (it.meta.status === "in_progress" && this.holderAway(it) && mine.machine === session.machine);
+        (it.meta.status === "in_progress" &&
+          this.holderAway(it) &&
+          mine.machine === session.machine);
       if (!takeover) {
         throw new ClaimRefusedError(
           `already claimed by ${mine.holder} on ${mine.machine} — release on ${mine.machine} or by the human here`,
@@ -447,7 +510,11 @@ export class WorkspaceOps {
   }
 
   /** Overlap check that runs inside the store's serialized write queue. */
-  private overlapGuard(targets: string[], roots = resourceRoots(this.wsr.ws), except_item?: string) {
+  private overlapGuard(
+    targets: string[],
+    roots = resourceRoots(this.wsr.ws),
+    except_item?: string,
+  ) {
     return () => {
       for (const c of this.index.claims.values()) {
         if (c.conflicted) continue;
@@ -501,9 +568,7 @@ export class WorkspaceOps {
    */
   claimDead(c: Claim): boolean {
     return (
-      c.actor === "agent" &&
-      c.machine === this.wsr.store.machine &&
-      !this.sessions.isLive(c.holder)
+      c.actor === "agent" && c.machine === this.wsr.store.machine && !this.sessions.isLive(c.holder)
     );
   }
 
@@ -520,13 +585,19 @@ export class WorkspaceOps {
   async log(id: string, session: Session, note: string) {
     const it = this.item(id);
     this.assertLiveClaim(it);
-    return this.store.perform(id, it.meta.version, this.actorFor(session), {
-      type: "log",
-      note,
-    }, {
-      // persist last_seen inside the write queue + the same commit
-      touchClaim: this.sessions.shouldTouchClaim(id),
-    });
+    return this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor(session),
+      {
+        type: "log",
+        note,
+      },
+      {
+        // persist last_seen inside the write queue + the same commit
+        touchClaim: this.sessions.shouldTouchClaim(id),
+      },
+    );
   }
 
   async ask(id: string, session: Session, text: string, options?: string[]) {
@@ -610,21 +681,23 @@ export class WorkspaceOps {
   async bounce(id: string, session: Session, reason: string, summary?: string) {
     const it = this.item(id);
     const claim = it.claim;
-    return this.store.perform(
-      id,
-      it.meta.version,
-      this.actorFor(session),
-      { type: "bounce", reason, summary },
-      {
-        priorBounces: () => this.aiBouncesSinceHumanTouch(id),
-        holderAway: () => this.holderAway(this.item(id)),
-      },
-    ).then(async (r) => {
-      if (claim && r.meta.status !== "in_progress") {
-        await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
-      }
-      return r;
-    });
+    return this.store
+      .perform(
+        id,
+        it.meta.version,
+        this.actorFor(session),
+        { type: "bounce", reason, summary },
+        {
+          priorBounces: () => this.aiBouncesSinceHumanTouch(id),
+          holderAway: () => this.holderAway(this.item(id)),
+        },
+      )
+      .then(async (r) => {
+        if (claim && r.meta.status !== "in_progress") {
+          await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+        }
+        return r;
+      });
   }
 
   /**
@@ -632,10 +705,17 @@ export class WorkspaceOps {
    * ## Handoff, release the claim (branches kept) so a fresh session — or a
    * stronger tier after escalate_after attempts — picks it up from the note.
    */
-  async handoff(id: string, session: Session, h: { problem: string; tried: string; state?: string; next?: string }) {
+  async handoff(
+    id: string,
+    session: Session,
+    h: { problem: string; tried: string; state?: string; next?: string },
+  ) {
     const it = this.item(id);
     const claim = it.claim;
-    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), { type: "handoff", ...h });
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "handoff",
+      ...h,
+    });
     if (claim) await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
     return r;
   }
@@ -643,10 +723,17 @@ export class WorkspaceOps {
   /** A stronger session checks a light-authored draft; under solo an `ok` approves it. */
   async vet(id: string, session: Session, verdict: "ok" | "issues", note?: string) {
     const it = this.item(id);
-    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), { type: "vet", verdict, note });
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "vet",
+      verdict,
+      note,
+    });
     if (verdict === "ok" && this.wsr.ws.config.autonomy === "solo") {
       await this.store.perform(id, r.meta.version, this.daemonActor(), { type: "approve_plan" });
-      await this.store.annotate(id, { heading: "Log", lines: ["- auto-approved after vet ok (autonomy: solo)"] });
+      await this.store.annotate(id, {
+        heading: "Log",
+        lines: ["- auto-approved after vet ok (autonomy: solo)"],
+      });
       return { ...r, approved: true };
     }
     return { ...r, approved: false };
@@ -655,7 +742,11 @@ export class WorkspaceOps {
   /** Human: set or clear the tier an item needs; `reset` zeroes its attempts. */
   async setTier(id: string, tier?: Session["tier"], reset = false) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "set_tier", tier, reset });
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "set_tier",
+      tier,
+      reset,
+    });
   }
 
   /**
@@ -676,7 +767,12 @@ export class WorkspaceOps {
         continue;
       }
       // the holder's own line of work between bounces
-      if (e.action === "submit" || e.action === "log" || e.action === "review" || e.action === "ask") {
+      if (
+        e.action === "submit" ||
+        e.action === "log" ||
+        e.action === "review" ||
+        e.action === "ask"
+      ) {
         continue;
       }
       break;
@@ -684,16 +780,81 @@ export class WorkspaceOps {
     return bounces;
   }
 
+  /**
+   * Metrics derived from the merged event log — nothing is stored (GL-0317).
+   * No `plan` → per-agent scorecard plus tier and domain roll-ups over the
+   * whole workspace. `plan` → roll-up of that plan and its parts.
+   */
+  async metrics(plan?: string) {
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const { deriveMetrics, rollUp } = await import("../../core/metrics/metrics.js");
+    const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
+    const stats = deriveMetrics(r.events);
+
+    if (plan) {
+      const ids = new Set([plan, ...this.index.descendants(plan)]);
+      const parts = [...ids]
+        .filter((id) => this.index.items.has(id))
+        .sort()
+        .map((id) => {
+          const it = this.index.items.get(id)!;
+          return {
+            id,
+            title: it.meta.title,
+            status: it.meta.status,
+            tier: it.meta.tier ?? "unset",
+            domains: it.meta.domains,
+            metrics: stats.get(id) ?? null,
+          };
+        });
+      return {
+        plan,
+        totals: rollUp(
+          parts.map((p) => p.metrics).filter((m): m is NonNullable<typeof m> => m !== null),
+        ),
+        parts,
+        warnings: r.warnings,
+      };
+    }
+
+    const by = (keyOf: (id: string) => string | string[] | undefined) => {
+      const buckets = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+      for (const m of stats.values()) {
+        const keys = keyOf(m.id) ?? "untagged";
+        for (const k of Array.isArray(keys) ? keys : [keys]) {
+          const list = buckets.get(k) ?? [];
+          list.push(m);
+          buckets.set(k, list);
+        }
+      }
+      return [...buckets.entries()]
+        .map(([key, list]) => ({ key, ...rollUp(list) }))
+        .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
+    };
+
+    return {
+      totals: rollUp([...stats.values()]),
+      agents: by((id) => stats.get(id)?.worker).filter((g) => g.key !== "untagged"),
+      tiers: by((id) => this.index.items.get(id)?.meta.tier ?? "unset"),
+      domains: by((id) => {
+        const d = this.index.items.get(id)?.meta.domains;
+        return d && d.length ? d : "untagged";
+      }),
+      warnings: r.warnings,
+    };
+  }
+
   /** `te rollback` — restore claim snapshots back onto live targets (RS-0006/7). */
   async rollback(id: string, force = false) {
     const it = this.item(id);
     // a stale snapshot must not silently revert live state long after the fact
     if (it.meta.status === "done" && !force) {
-      throw new TeError("INVALID_TRANSITION", `${id} is done — rollback refused (use --force to override)`);
+      throw new TeError(
+        "INVALID_TRANSITION",
+        `${id} is done — rollback refused (use --force to override)`,
+      );
     }
-    const claimRes = new Set(
-      (it.claim?.targets ?? []).map((t) => parseTargetRef(t).resource),
-    );
+    const claimRes = new Set((it.claim?.targets ?? []).map((t) => parseTargetRef(t).resource));
     const snaps = await itemSnapshots(this.wsr.ws, id, this.home);
     const resources = [...new Set([...claimRes, ...snaps])];
     const restored = await rollbackWork(this.wsr.ws, id, resources, this.home);
@@ -752,7 +913,10 @@ export class WorkspaceOps {
     void this.actorFor(actor);
     // found_by refs: `#N` points into this batch (checked by the store); others must exist
     for (const d of drafts) {
-      this.assertFoundBy("", (d.found_by ?? []).filter((r) => !/^#\d+$/.test(r.trim())));
+      this.assertFoundBy(
+        "",
+        (d.found_by ?? []).filter((r) => !/^#\d+$/.test(r.trim())),
+      );
     }
     const r = await this.store.createItems(
       enriched.map((d) => ({ type: d.type ?? "task", ...d })),
@@ -764,7 +928,8 @@ export class WorkspaceOps {
     if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
       for (const id of r.ids) {
         const it = this.index.items.get(id);
-        if (!it || it.meta.type === "epic" || it.meta.type === "idea" || !it.meta.depends_on.length) continue;
+        if (!it || it.meta.type === "epic" || it.meta.type === "idea" || !it.meta.depends_on.length)
+          continue;
         if (it.meta.authored_tier === "light") continue; // a stronger session vets it first
         const known = it.meta.depends_on.every((ref) => {
           try {
@@ -776,7 +941,10 @@ export class WorkspaceOps {
         });
         if (!known) continue;
         await this.store.perform(id, it.meta.version, this.daemonActor(), { type: "approve_plan" });
-        await this.store.annotate(id, { heading: "Log", lines: ["- auto-approved: follow-up task (autonomy: solo)"] });
+        await this.store.annotate(id, {
+          heading: "Log",
+          lines: ["- auto-approved: follow-up task (autonomy: solo)"],
+        });
         ready.push(id);
       }
     }
@@ -895,7 +1063,10 @@ export class WorkspaceOps {
     for (const id of this.autoAcceptDue(now)) {
       const r = await this.accept(id, "daemon");
       if (!r.bounced?.length) {
-        await this.store.annotate(id, { heading: "Log", lines: ["- auto-accepted after ok review (autonomy: solo)"] });
+        await this.store.annotate(id, {
+          heading: "Log",
+          lines: ["- auto-accepted after ok review (autonomy: solo)"],
+        });
         done.push(id);
       }
     }
@@ -1076,7 +1247,11 @@ export class WorkspaceOps {
       .sort((a, b) => a.meta.id.localeCompare(b.meta.id, undefined, { numeric: true }));
     const last = own[own.length - 1];
     if (!last) {
-      throw new InvalidTransitionError(`cannot change_answer: ${id} has no answer yet`, it.meta.status, "change_answer");
+      throw new InvalidTransitionError(
+        `cannot change_answer: ${id} has no answer yet`,
+        it.meta.status,
+        "change_answer",
+      );
     }
     return this.store.perform(id, it.meta.version, this.actorFor("human"), {
       type: "change_answer",
@@ -1086,7 +1261,10 @@ export class WorkspaceOps {
     });
   }
 
-  async accept(id: string, by: "human" | "daemon" = "human"): Promise<{ meta: unknown; merged: unknown[]; bounced?: string[] }> {
+  async accept(
+    id: string,
+    by: "human" | "daemon" = "human",
+  ): Promise<{ meta: unknown; merged: unknown[]; bounced?: string[] }> {
     const it = this.item(id);
     // refuse early — never merge work for an item that isn't in_review
     if (it.meta.status !== "in_review") {
@@ -1119,9 +1297,14 @@ export class WorkspaceOps {
       }
       merged = m.merged;
     }
-    const r = await this.store.perform(id, it.meta.version, by === "daemon" ? this.daemonActor() : this.actorFor("human"), {
-      type: "accept",
-    });
+    const r = await this.store.perform(
+      id,
+      it.meta.version,
+      by === "daemon" ? this.daemonActor() : this.actorFor("human"),
+      {
+        type: "accept",
+      },
+    );
     for (const g of merged) {
       await this.store.annotate(id, {
         heading: "Evidence",
@@ -1188,7 +1371,10 @@ export class WorkspaceOps {
   /** Human: park a draft/ready item — agents can't see or claim it. */
   async hold(id: string, reason?: string) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "hold", reason });
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "hold",
+      reason,
+    });
   }
 
   /** Human: release a hold → ready. */
@@ -1200,13 +1386,19 @@ export class WorkspaceOps {
   /** Human: ready/hold/done → draft (needs approval again; reopens a done-by-mistake item). */
   async toDraft(id: string, reason?: string) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "to_draft", reason });
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "to_draft",
+      reason,
+    });
   }
 
   /** Human: hide an item (status kept); refused while claimed. */
   async archive(id: string, reason?: string) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "archive", reason });
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "archive",
+      reason,
+    });
   }
 
   async unarchive(id: string) {
@@ -1221,7 +1413,10 @@ export class WorkspaceOps {
     if (parsed && !parsed.success) {
       throw new TeError("USAGE", `star color must be one of ${StarColor.options.join("|")}`);
     }
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "star", color: parsed?.data });
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "star",
+      color: parsed?.data,
+    });
   }
 
   async unstar(id: string) {
@@ -1289,7 +1484,10 @@ export class WorkspaceOps {
     return {
       ...r,
       ...(a.sensitive
-        ? { warning: ".artifacts/ is part of the plans git repo — a !sensitive file stays visible there" }
+        ? {
+            warning:
+              ".artifacts/ is part of the plans git repo — a !sensitive file stays visible there",
+          }
         : {}),
     };
   }
@@ -1307,7 +1505,9 @@ export class WorkspaceOps {
    */
   private async artifactsOfItem(
     it: IndexedItem,
-  ): Promise<Array<{ item: string; path: string; caption: string; domains: string[]; sensitive: boolean }>> {
+  ): Promise<
+    Array<{ item: string; path: string; caption: string; domains: string[]; sensitive: boolean }>
+  > {
     if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
       const found = await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source);
       if (!found) return [];
@@ -1339,7 +1539,12 @@ export class WorkspaceOps {
       if (filter.project && it.meta.project !== filter.project) continue;
       for (const a of await this.artifactsOfItem(it)) {
         if (filter.domain && !a.domains.includes(filter.domain)) continue;
-        out.push({ ...a, status: it.meta.status, project: it.meta.project, updated: it.meta.updated });
+        out.push({
+          ...a,
+          status: it.meta.status,
+          project: it.meta.project,
+          updated: it.meta.updated,
+        });
       }
     }
     return out.sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
@@ -1449,7 +1654,9 @@ export class WorkspaceOps {
   ) {
     this.item(id);
     if (actor !== "human" && actor.tier === "light") {
-      throw new ForbiddenError("rescope needs a standard- or heavy-tier session (planner), not light");
+      throw new ForbiddenError(
+        "rescope needs a standard- or heavy-tier session (planner), not light",
+      );
     }
     if (!change.touches && !change.addAcceptance?.length) {
       throw new ValidationError("rescope: give touches and/or add_acceptance");
@@ -1530,7 +1737,8 @@ export class WorkspaceOps {
     for (const r of refs) {
       const parsed = parseItemRef(r); // throws ValidationError on bad refs
       const here = parsed.workspace === undefined || parsed.workspace === wsName;
-      if (here && parsed.id === id) throw new ValidationError(`found_by: ${id} may not reference itself`);
+      if (here && parsed.id === id)
+        throw new ValidationError(`found_by: ${id} may not reference itself`);
       if (here ? !this.index.get(parsed.id) : this.links?.statusOf(r) === undefined) {
         throw new ValidationError(`found_by: unknown item ${r}`);
       }
@@ -1672,7 +1880,9 @@ export class WorkspaceOps {
    */
   async closePlan(id: string, actor: Session | "human" = "human") {
     const it = this.item(id);
-    const r = await this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "close_plan" });
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(actor), {
+      type: "close_plan",
+    });
     if (this.wsr.ws.config.auto_archive_after && this.index.planState(id) === "done") {
       for (const cid of this.index.descendants(id)) {
         const c = this.index.get(cid);
