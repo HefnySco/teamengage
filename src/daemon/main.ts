@@ -13,7 +13,8 @@ import { PlansStore } from "./store/store.js";
 import { PlansWatcher } from "./watch/watch.js";
 import { OverlayTracker } from "./overlay/tracker.js";
 import { startDaemon, runningDaemon } from "./server/server.js";
-import type { DaemonCtx } from "./server/context.js";
+import type { DaemonCtx, WorkspaceRuntime } from "./server/context.js";
+import { Dispatcher } from "./dispatch/dispatch.js";
 import { SessionRegistry } from "./sessions/sessions.js";
 import { EventBus, registerEventRoutes } from "./api/events.js";
 import { registerApiRoutes } from "./api/api.js";
@@ -133,6 +134,7 @@ async function main(): Promise<number | undefined> {
     workspaces: new Map(),
     sessions: new SessionRegistry(machine),
     bus: new EventBus(),
+    dispatchers: new Map(),
   };
   for (const [name, entry] of Object.entries(registry.workspaces)) {
     try {
@@ -177,7 +179,14 @@ async function main(): Promise<number | undefined> {
         });
         await overlay.start();
       }
-      ctx.workspaces.set(name, { ws, store, watcher, overlay, links });
+      const wsr: WorkspaceRuntime = { ws, store, watcher, overlay, links };
+      ctx.workspaces.set(name, wsr);
+      ctx.dispatchers!.set(
+        name,
+        new Dispatcher(wsr, ctx.sessions, ctx.home, (kind, data) =>
+          ctx.bus.notify(kind, { workspace: name, message: kind === "dispatch_off" ? String(data.reason) : `${kind}: ${data.role ?? ""} ${data.command ?? data.error ?? ""}`.trim() }),
+        ),
+      );
     } catch (e) {
       process.stderr.write(`teamengaged: skipping workspace '${name}': ${(e as Error).message}\n`);
     }
@@ -255,6 +264,12 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("peer_timeout", { workspace: name, message: `peer questions timed out: ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("peer_timeout", { workspace: name, message: `peer-timeout sweep failed: ${err.message}` }));
+      // GL-0328: dispatch starts a role's command while work for it exists
+      try {
+        ctx.dispatchers?.get(name)?.tick();
+      } catch (err) {
+        ctx.bus.notify("dispatch", { workspace: name, message: `dispatch tick failed: ${(err as Error).message}` });
+      }
       // GL-0327: a `digest` rule posts the day's digest once per UTC day
       const day = new Date().toISOString().slice(0, 10);
       if (wsr.ws.config.notify.some((r) => r.on === "digest") && digestSent.get(name) !== day) {

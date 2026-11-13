@@ -314,6 +314,47 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // ---- dispatch (GL-0328): status is open; on/off is the human's ---------
+  const dispatcherFor = (ws?: string) => {
+    let wsr: WorkspaceRuntime | undefined;
+    let name: string | undefined;
+    if (ws) {
+      wsr = ctx.workspaces.get(ws);
+      name = ws;
+    } else if (ctx.workspaces.size === 1) {
+      name = ctx.workspaces.keys().next().value;
+      wsr = name ? ctx.workspaces.get(name) : undefined;
+    }
+    if (!wsr || !name) {
+      throw new NotFoundError(
+        ws ? `workspace '${ws}' not registered` : "no workspace registered on this machine",
+      );
+    }
+    const d = ctx.dispatchers?.get(name);
+    if (!d) throw new NotFoundError(`no dispatch for workspace '${name}'`);
+    return d;
+  };
+  app.get("/api/dispatch", async (req, reply) => {
+    try {
+      return dispatcherFor(wsOf(req.query)).status();
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+  app.post("/api/dispatch", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("dispatch on/off is human-only");
+      }
+      const body = (req.body ?? {}) as { enabled?: unknown };
+      const d = dispatcherFor(wsOf(req.query));
+      d.setEnabled(body.enabled === true);
+      return d.status();
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   // ---- task folder git: human-pressed Pull / Commit & Push ----------------
   app.get("/api/metrics", async (req, reply) => {
     try {

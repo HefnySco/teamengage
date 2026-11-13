@@ -108,6 +108,30 @@ export const NotifyRule = z
 export type NotifyRule = z.infer<typeof NotifyRule>;
 
 /** `<plans>/workspace.yaml` (DESIGN §4). */
+/**
+ * Daemon-side agent launcher (GL-0328). Unlike `run:` (a `te run` on the
+ * human's command), the daemon itself starts a role's command when work for
+ * that role exists — until `max_sessions` live sessions are reached.
+ */
+export const DispatchAgent = z.object({
+  /** which pool of work starts this command: planner | coder | reviewer | ops */
+  role: z.enum(["planner", "coder", "reviewer", "ops"]),
+  /** the command's model tier — caps what its `next` probe sees */
+  tier: z.enum(["light", "standard", "heavy"]).optional(),
+  /** e.g. `claude -p "$TE_PROMPT" --model sonnet` — runs in the workspace root */
+  command: z.string().min(1),
+});
+export type DispatchAgent = z.infer<typeof DispatchAgent>;
+
+export const DispatchConfig = z.object({
+  /** human turns it on with `te dispatch on` — off by default */
+  enabled: z.boolean().default(false),
+  /** total live agent sessions on this machine the dispatcher fills up to */
+  max_sessions: z.number().int().min(1).default(2),
+  agents: z.array(DispatchAgent).default([]),
+});
+export type DispatchConfig = z.infer<typeof DispatchConfig>;
+
 export const WorkspaceConfig = z
   .object({
     name: z.string().min(1),
@@ -170,6 +194,8 @@ export const WorkspaceConfig = z
      * question — the daemon's sweep moves the item to waiting (GL-0324).
      */
     peer_answer_after: z.string().default("30m"),
+    /** daemon-side agent launcher — unset = the daemon starts nothing (GL-0328) */
+    dispatch: DispatchConfig.optional(),
     /**
      * Alert the human on events that need a decision (GL-0327) — a list of
      * {on, command | url} rules; see NotifyRule. Unset: nothing runs.

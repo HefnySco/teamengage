@@ -55,6 +55,8 @@ beforeAll(async () => {
     sessions: new SessionRegistry("test"),
     bus: new EventBus(),
   };
+  const { Dispatcher } = await import("../dispatch/dispatch.js");
+  ctx.dispatchers = new Map([["ws", new Dispatcher(ctx.workspaces.get("ws")!, ctx.sessions, home)]]);
   store.onEvent = (ev) => ctx.bus.publish(ev);
 
   daemon = await startDaemon({
@@ -1645,6 +1647,25 @@ describe("shared lessons per domain (GL-0322)", () => {
     const after = (await (await api("/api/lessons")).json()) as Record<string, string[]>;
     expect(after["simulation"]).toEqual(["2026-11-15 b@x#2 — second lesson"]);
     expect((await post("/api/lessons/delete", { domain: "simulation", line: 9 })).status).toBe(404);
+  });
+
+  it("dispatch: status is open, on/off is human-only — an agent gets FORBIDDEN (GL-0328)", async () => {
+    const post = (body: unknown, headers: Record<string, string> = {}) =>
+      api("/api/dispatch", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ enabled: true }, { "x-te-session": "agent-x" })).status).toBe(403);
+    const on = (await (await post({ enabled: true })).json()) as { enabled: boolean };
+    expect(on.enabled).toBe(true);
+    const off = (await (await post({ enabled: false })).json()) as { enabled: boolean };
+    expect(off.enabled).toBe(false);
+    const status = (await (await api("/api/dispatch")).json()) as {
+      enabled: boolean;
+      agents: unknown[];
+    };
+    expect(status.enabled).toBe(false); // fixture workspace.yaml has no dispatch:
   });
 
   it("ops.lessonsFor merges the item's domains newest-first, capped at 10", async () => {

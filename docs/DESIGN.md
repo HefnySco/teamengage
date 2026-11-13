@@ -115,6 +115,12 @@ auto_accept_rules: # solo: ordered rules; first match sets the item's delay
 auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
 auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
 peer_answer_after: 30m # a peer question unanswered this long becomes the human's (§5)
+dispatch: # unset = off: the daemon starts agent commands when work exists (§5)
+  enabled: false            # the human turns it on: te dispatch on (agents get FORBIDDEN)
+  max_sessions: 2           # live agent sessions on this machine the daemon fills up to
+  agents:                   # one command per role; ran in the workspace root
+    - { role: coder, command: "devin -p --model swe-2-high --" }
+    - { role: reviewer, tier: standard, command: "claude -p \"$TE_PROMPT\"" }
 notify: # unset = off: alert the human on decision events (§5)
   - { on: question, command: "./scripts/ping.sh" } # runs with the event JSON on stdin
   - { on: needs_human, url: "https://example/hook" } # or POSTs the JSON
@@ -401,6 +407,16 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   to `ready` — the worktree and the branch stay for the next claimant.
   `in_review` items and claims held on other machines are never released;
   each release lands in the event log and the item log with actor `daemon`.
+- `dispatch` (workspace.yaml, unset = off) makes the daemon the foreman:
+  while `enabled`, each sweep starts an agent's command when `next` sees
+  work for its role (a reviewer probe sees `in_review`, a planner probe
+  sees unplanned ideas and unvetted light drafts, a coder or ops probe
+  sees ready items) and the live-session count is under `max_sessions` —
+  sessions it started count toward the cap. It stops no session; each
+  start writes a `dispatch_start` event, a role's command that fails three
+  times in a row switches dispatch off (`dispatch_off`). `te dispatch
+  on|off|status` controls it; on/off is human-only. Commands run in the
+  workspace root, log to `~/.teamengage/runs/<ws>/`, and get `TE_ROLE`.
 - `peer_answer_after` (workspace.yaml, default `30m`) is how long a
   `to: "peer"` question waits for a peer before the daemon turns it into a
   normal human question: the item moves to `waiting` and shows in the

@@ -23,4 +23,6 @@ export interface DaemonCtx {
   workspaces: Map<string, WorkspaceRuntime>;
   sessions: SessionRegistry;
   bus: EventBus;
+  /** per-workspace agent launcher (GL-0328) — absent in tests that build ctx by hand */
+  dispatchers?: Map<string, import("../dispatch/dispatch.js").Dispatcher>;
 }
