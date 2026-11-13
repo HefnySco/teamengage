@@ -121,6 +121,8 @@ export const ItemMeta = z
     /** hidden from board/inbox/graph/next; status kept underneath (archive page) */
     archived: z.boolean().optional(),
     archived_at: z.string().optional(),
+    /** when the status last entered done/dropped — drives auto_archive_after */
+    finished_at: z.string().optional(),
     /** minimum model tier that may claim it (unset = any); raised on escalation */
     tier: Tier.optional(),
     /** failed attempts so far — AI bounces + handoffs (drives escalation) */

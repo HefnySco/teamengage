@@ -219,15 +219,21 @@ async function main(): Promise<number | undefined> {
     },
   });
   // autonomy: solo — accept submissions whose ok review has aged past
-  // auto_accept_after (strict workspaces return nothing)
+  // auto_accept_after; auto_archive_after — archive items finished past the
+  // duration (strict workspaces / unset keys return nothing)
   const autoTimer = setInterval(() => {
     for (const [name, wsr] of ctx.workspaces) {
-      new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home)
-        .autoAccept()
+      const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+      ops.autoAccept()
         .then((ids) => {
           if (ids.length) ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accepted ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accept failed: ${err.message}` }));
+      ops.autoArchive()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archived ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archive failed: ${err.message}` }));
     }
   }, 60_000);
   autoTimer.unref();

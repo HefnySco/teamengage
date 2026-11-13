@@ -108,6 +108,7 @@ sync: manual                     # manual | auto  (§6.5)
 stale_after: 24h                 # inactive agent claim → flagged stale
 autonomy: strict                 # strict | solo  (§5 — solo: fewer human gates)
 auto_accept_after: 30m           # solo: ok peer review → daemon accepts after this
+auto_archive_after: 7d           # unset = off: daemon archives items done/dropped longer than this (§5)
 projects:
   mission_planner: { prefix: MP }
   global:          { prefix: GL }
@@ -347,6 +348,14 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   Everything else stays human-only in both modes: pushing, drop/undrop,
   delete, archive, star, hold, close_plan, change_answer, and releasing
   another machine's claim. `hello` adds an `autonomy: solo` rules line.
+- `auto_archive_after` (workspace.yaml, unset = off) removes the routine
+  archive clicks: on its sweep the daemon archives any item whose status has
+  been `done` or `dropped` for longer than the duration (`finished_at` in the
+  item file records when the terminal status was entered). A starred item is
+  never archived by rule, and a claimed one is skipped until its claim is
+  released. Each archive lands in the event log with actor `daemon`. With the
+  key set, closing a plan whose parts are all finished archives those parts
+  in the same step.
 
 ## 6. Concurrency — the core
 

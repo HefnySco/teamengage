@@ -298,6 +298,8 @@ export function transition(
 
   const set = (to: Status, note?: string) => {
     out.meta.status = to;
+    if (TERMINAL.includes(to)) out.meta.finished_at = ctx.now;
+    else delete out.meta.finished_at;
     out.events.push(ev(actor, stamp, meta.id, action.type, from, to, note));
   };
 
@@ -745,7 +747,7 @@ export function transition(
     }
 
     case "archive": {
-      requireHuman(actor, action.type);
+      requireHumanOrDaemon(actor, action.type);
       if (meta.archived) throw new InvalidTransitionError("already archived", from, action.type);
       if (ctx.claim) {
         throw new InvalidTransitionError(`cannot archive: claimed by ${ctx.claim.holder} — release first`, from, action.type);

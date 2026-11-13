@@ -816,6 +816,101 @@ describe("autonomy: solo", () => {
   });
 });
 
+describe("auto_archive_after", () => {
+  it("archives items done/dropped past the duration — starred and open items stay", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "old done" },
+        { type: "task", title: "old dropped" },
+        { type: "task", title: "starred done" },
+        { type: "task", title: "still ready" },
+      ],
+      human,
+    );
+    const [doneId, droppedId, starredId, readyId] = ids;
+    await ops.complete(doneId);
+    await ops.drop(droppedId);
+    await ops.complete(starredId);
+    await ops.star(starredId, "yellow");
+    await ops.approve(readyId);
+    // terminal transitions stamp finished_at; a reopen clears it
+    expect(store.idx.get(doneId)!.meta.finished_at).toBeTruthy();
+    await ops.toDraft(doneId, "reopen by mistake");
+    expect(store.idx.get(doneId)!.meta.finished_at).toBeUndefined();
+    await ops.complete(doneId);
+
+    // rule unset — nothing is ever due
+    expect(ops.autoArchiveDue(Date.now() + 30 * 86_400_000)).toEqual([]);
+
+    wsr.ws.config.auto_archive_after = "7d";
+    try {
+      const in8d = Date.now() + 8 * 86_400_000;
+      // the shared fixture has older finished items too — assert membership
+      const due = ops.autoArchiveDue(in8d);
+      expect(due).toEqual(expect.arrayContaining([doneId, droppedId]));
+      expect(due).not.toContain(starredId);
+      expect(due).not.toContain(readyId);
+      const got = await ops.autoArchive(in8d);
+      expect(got).toEqual(expect.arrayContaining([doneId, droppedId]));
+      expect(got).not.toContain(starredId);
+      expect(store.idx.get(doneId)!.meta.archived).toBe(true);
+      expect(store.idx.get(droppedId)!.meta.archived).toBe(true);
+      expect(store.idx.get(starredId)!.meta.archived).toBeUndefined();
+      expect(store.idx.get(readyId)!.meta.archived).toBeUndefined();
+      // each archive is an event with actor daemon
+      const { readAllEvents } = await import("../../core/events/log.js");
+      const r = await readAllEvents(join(wsr.ws.plansDir, "events"));
+      const ev = r.events.find((e) => e.item === doneId && e.action === "archive");
+      expect(ev?.actor).toBe("daemon");
+    } finally {
+      delete wsr.ws.config.auto_archive_after;
+    }
+  });
+
+  it("closing a finished plan archives its parts under the rule", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "epic", title: "finished plan" },
+        { type: "task", title: "part one" },
+        { type: "task", title: "part two" },
+        { type: "epic", title: "open plan" },
+        { type: "task", title: "open part" },
+      ],
+      human,
+    );
+    const [epic, p1, p2, epic2, p3] = ids;
+    await ops.setParent(p1, epic);
+    await ops.setParent(p2, epic);
+    await ops.setParent(p3, epic2);
+    await ops.complete(p1);
+    await ops.drop(p2);
+
+    wsr.ws.config.auto_archive_after = "7d";
+    try {
+      // all parts finished → close archives them; the epic stays visible
+      await ops.closePlan(epic);
+      expect(store.idx.get(p1)!.meta.archived).toBe(true);
+      expect(store.idx.get(p2)!.meta.archived).toBe(true);
+      expect(store.idx.get(epic)!.meta.archived).toBeUndefined();
+      // a plan with an open part archives nothing
+      await ops.closePlan(epic2);
+      expect(store.idx.get(p3)!.meta.archived).toBeUndefined();
+    } finally {
+      delete wsr.ws.config.auto_archive_after;
+    }
+  });
+});
+
 describe("drop flags: agent asks, human decides", () => {
   it("flag → inbox → unflag keeps it; flag → drop drops it and clears the flag", async () => {
     const { WorkspaceOps } = await import("./ops.js");

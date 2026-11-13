@@ -847,6 +847,45 @@ export class WorkspaceOps {
     return done;
   }
 
+  /**
+   * auto_archive_after (workspace.yaml, unset = off): items that have been
+   * done or dropped for longer than the duration are archived by the daemon
+   * on its sweep. A starred item is never archived by rule; an already
+   * archived or still claimed one is skipped. Items older than this feature
+   * have no finished_at — meta.updated is the (safe, later) fallback.
+   */
+  autoArchiveDue(now = Date.now()): string[] {
+    const cfg = this.wsr.ws.config;
+    if (!cfg.auto_archive_after) return [];
+    const ms = parseDuration(cfg.auto_archive_after);
+    return [...this.index.items.values()]
+      .filter((it) => {
+        const m = it.meta;
+        if (m.archived || m.star_color || it.claim) return false;
+        if (m.status !== "done" && m.status !== "dropped") return false;
+        const since = Date.parse(m.finished_at ?? m.updated ?? "");
+        return !Number.isNaN(since) && since + ms <= now;
+      })
+      .map((it) => it.meta.id);
+  }
+
+  async autoArchive(now = Date.now()) {
+    const done: string[] = [];
+    for (const id of this.autoArchiveDue(now)) {
+      try {
+        const it = this.item(id);
+        await this.store.perform(id, it.meta.version, this.daemonActor(), {
+          type: "archive",
+          reason: "auto_archive_after",
+        });
+        done.push(id);
+      } catch {
+        // one failing item must not stall the sweep (e.g. a stale claim)
+      }
+    }
+    return done;
+  }
+
   // ---- human writes -------------------------------------------------------
 
   async approve(id: string) {
@@ -1470,11 +1509,28 @@ export class WorkspaceOps {
   /**
    * Close a plan (epic): no more parts are coming. plan_state turns `active`,
    * then `done` when every descendant finishes. Human-only — an agent actor
-   * is refused by the state machine.
+   * is refused by the state machine. With auto_archive_after set, a plan
+   * that closes already finished also has its parts archived by the daemon —
+   * the starred and the claimed keep their place.
    */
   async closePlan(id: string, actor: Session | "human" = "human") {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "close_plan" });
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "close_plan" });
+    if (this.wsr.ws.config.auto_archive_after && this.index.planState(id) === "done") {
+      for (const cid of this.index.descendants(id)) {
+        const c = this.index.get(cid);
+        if (!c || c.meta.archived || c.meta.star_color || c.claim) continue;
+        try {
+          await this.store.perform(cid, c.meta.version, this.daemonActor(), {
+            type: "archive",
+            reason: "plan closed and finished",
+          });
+        } catch {
+          // a part that refuses to archive never blocks closing the plan
+        }
+      }
+    }
+    return r;
   }
 
   /** Reopen a closed plan — more parts may still be added. Human-only. */

@@ -100,6 +100,12 @@ export const WorkspaceConfig = z
     /** solo: delay between an `ok` peer review and the daemon's auto-accept. */
     auto_accept_after: z.string().default("30m"),
     /**
+     * Routine sweep, unset = off: the daemon archives an item that has been
+     * done or dropped for longer than this duration. A starred item is never
+     * archived by rule.
+     */
+    auto_archive_after: z.string().optional(),
+    /**
      * Failed attempts (AI bounces + handoffs) after which an item's tier is
      * raised one step, so a stronger model takes it (light → standard → heavy).
      */
