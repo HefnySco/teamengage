@@ -102,6 +102,14 @@ beforeAll(async () => {
     join(plans, "items", "WS", "WS-0007.md"),
     `---\nid: WS-0007\ntype: task\ntitle: lesson task\nstatus: draft\nversion: 1\ndomains: [test-domain]\n---\n\n## Summary\nx\n`,
   );
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0008.md"),
+    `---\nid: WS-0008\ntype: task\ntitle: provides source\nstatus: ready\nversion: 1\ntier: heavy\ntargets: ["@self:src/f8.ts"]\n---\n\n## Summary\nx\n`,
+  );
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0009.md"),
+    `---\nid: WS-0009\ntype: task\ntitle: dependent task\nstatus: draft\nversion: 1\ndepends_on: [WS-0008]\n---\n\n## Summary\nx\n`,
+  );
   for (const a of [
     ["init", "-b", "main"],
     ["config", "user.email", "t@t"],
@@ -461,6 +469,33 @@ describe("shared lessons per domain (GL-0322)", () => {
     // brief of an item with that domain lists the lesson
     const brief = await call("GET", "/agent/brief/WS-0007", { token: t });
     expect(brief.text).toContain("run npm build before npm test");
+  });
+});
+
+describe("publish task outputs (GL-0325)", () => {
+  it("submit with provides lists the lines in a dependent's brief dep block", async () => {
+    const t = /^token (\S+)/.exec(
+      (await call("POST", "/agent/hello", { body: { agent: "big", tier: "heavy" } })).text,
+    )![1];
+    expect((await call("POST", "/agent/claim/WS-0008", { token: t })).text).toMatch(/^claimed/);
+    const sub = await call("POST", "/agent/submit/WS-0008", {
+      token: t,
+      body: {
+        walkthrough: "added the things",
+        provides: ["GET /api/lessons route", "lessons/<domain>.md files"],
+        tests: "4 passed",
+      },
+    });
+    expect(sub.text).toMatch(/^in_review/);
+    // the Evidence lines landed in the item file
+    const file = readFileSync(join(plans, "items", "WS", "WS-0008.md"), "utf8");
+    expect(file).toContain("- provides: GET /api/lessons route");
+    expect(file).toContain("- provides: lessons/<domain>.md files");
+    // and a dependent's brief lists them under the dep outcome
+    const brief = await call("GET", "/agent/brief/WS-0009", { token: t });
+    expect(brief.text).toContain("dep WS-0008 in_review");
+    expect(brief.text).toContain("provides: GET /api/lessons route");
+    expect(brief.text).toContain("provides: lessons/<domain>.md files");
   });
 });
 

@@ -256,7 +256,9 @@ export function registerWriteTools(
         "it lands as a cost: line in ## Evidence and feeds te metrics. " +
         "When the last review or bounce left findings, answer them in finding_states — " +
         "{finding: <1-based number>, state: done|skipped, reason?} for each; " +
-        "a `must` finding left unanswered refuses the submit.",
+        "a `must` finding left unanswered refuses the submit. " +
+        "provides is optional — short lines naming what the task now provides " +
+        "(an API, a file, a message id, a command); dependents see them in their brief.",
       inputSchema: {
         id: z.string(),
         commits: z.array(z.string()).optional(),
@@ -264,6 +266,7 @@ export function registerWriteTools(
         notes: z.string().optional(),
         walkthrough: z.string(),
         cost: SubmitCost.optional(),
+        provides: z.array(z.string()).optional(),
         finding_states: z
           .array(
             z.object({
@@ -275,13 +278,13 @@ export function registerWriteTools(
           .optional(),
       },
     },
-    async ({ id, commits, tests, notes, walkthrough, cost, finding_states }) => {
+    async ({ id, commits, tests, notes, walkthrough, cost, provides, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, finding_states });
+        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, provides, finding_states });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);

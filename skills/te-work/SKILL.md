@@ -206,6 +206,12 @@ shows it, `brief` lists them), answer every entry in `finding_states` —
 A `must` finding left unanswered refuses the submit; a `skipped` should
 say why in `reason`.
 
+Name what your task now provides in `provides` — `"provides": ["GET
+/api/lessons route", "lessons/<domain>.md files", "lesson MCP tool"]`. One
+short line each: an API, a file, a message id, a command. Tasks that
+depend on yours see the list in their brief's dep block, so the next
+agent knows what it can build on instead of hunting for it.
+
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
 

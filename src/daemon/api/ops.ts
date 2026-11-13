@@ -370,6 +370,13 @@ export class WorkspaceOps {
           "done",
         outcome: dep ? lastLine(sectionBody(dep, "Log")) : "",
         evidence: dep ? lastLine(sectionBody(dep, "Evidence")) : "",
+        /** provides: lines from all of the dep's ## Evidence (GL-0325) */
+        provides: dep
+          ? sectionBody(dep, "Evidence")
+              .split("\n")
+              .map((l) => /^- provides:\s*(.+)$/.exec(l.trim())?.[1])
+              .filter((x): x is string => Boolean(x))
+          : [],
       };
     });
     const decisions = [...this.index.decisions.values()].filter((d) => {
@@ -721,6 +728,7 @@ export class WorkspaceOps {
       walkthrough?: string;
       cost?: SubmitCost;
       finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
+      provides?: string[];
     },
   ) {
     const it = this.item(id);

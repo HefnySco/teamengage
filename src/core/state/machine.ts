@@ -60,6 +60,13 @@ export type Action =
          * entry — `done` or `skipped` with a reason — or the submit refuses.
          */
         finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
+        /**
+         * What this task now provides (GL-0325): an API, a file, a message
+         * id, a command — short lines a dependent task builds on. Written
+         * as `provides:` lines in ## Evidence and shown in dependents'
+         * brief dep outcomes.
+         */
+        provides?: string[];
       };
     }
   /**
@@ -522,6 +529,7 @@ export function transition(
       if (action.evidence) {
         const lines: string[] = [];
         for (const c of action.evidence.commits ?? []) lines.push(`- commit ${c}`);
+        for (const p of action.evidence.provides ?? []) lines.push(`- provides: ${p}`);
         if (action.evidence.tests) lines.push(`- tests: ${action.evidence.tests}`);
         if (action.evidence.notes) lines.push(`- ${action.evidence.notes}`);
         if (action.evidence.cost) {

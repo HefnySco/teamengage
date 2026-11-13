@@ -437,6 +437,18 @@ describe("review / bounce (AI peer review of a submission)", () => {
     expect(r.events[0].data).toBeUndefined();
   });
 
+  it("submit with provides writes one provides line per entry in Evidence", () => {
+    const r = transition(
+      item("in_progress"),
+      { type: "submit", evidence: { commits: ["abc123"], provides: ["GET /api/lessons", "lesson MCP tool"], tests: "ok" } },
+      agent,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.sectionWrites[0].text).toBe(
+      `- commit abc123\n- provides: GET /api/lessons\n- provides: lesson MCP tool\n- tests: ok\n`,
+    );
+  });
+
   it("review with findings stores the checklist and writes it under ## Review", () => {
     const findings = [
       { text: "add a test for the empty case", where: "src/x.test.ts", severity: "must" as const },
