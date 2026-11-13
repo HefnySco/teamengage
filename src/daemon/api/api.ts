@@ -258,6 +258,14 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
 
   app.get("/api/sessions", async (_req, reply) => {
     try {
+      // GL-0329: the team panel shows what each live session holds
+      const holding = new Map<string, string[]>();
+      for (const wsr of ctx.workspaces.values()) {
+        const index = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home).index;
+        for (const c of index.claims.values()) {
+          holding.set(c.holder, [...(holding.get(c.holder) ?? []), c.item]);
+        }
+      }
       return ctx.sessions.list().map((s) => ({
         id: s.id,
         agent: s.agent,
@@ -266,6 +274,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         role: s.role,
         connected_at: s.connected_at,
         last_seen: s.last_seen,
+        holding: holding.get(s.id) ?? [],
       }));
     } catch (e) {
       return sendErr(reply, e);

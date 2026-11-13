@@ -18,6 +18,8 @@ import type { DispatchAgent } from "../../core/model/workspace.js";
 export class Dispatcher {
   private children = new Map<string, ChildProcess>();
   private failures = new Map<string, number>();
+  /** the team panel shows the last 10 (GL-0329) */
+  private eventLog: Array<{ kind: string; at: string; data: Record<string, unknown> }> = [];
   private enabled: boolean;
 
   constructor(
@@ -46,7 +48,14 @@ export class Dispatcher {
       live_sessions: this.sessions.list().length,
       running: [...this.children.keys()],
       failures: Object.fromEntries(this.failures),
+      events: this.eventLog.slice(-10),
     };
+  }
+
+  private emit(kind: string, data: Record<string, unknown>): void {
+    this.eventLog.push({ kind, at: new Date().toISOString(), data });
+    if (this.eventLog.length > 20) this.eventLog.splice(0, this.eventLog.length - 20);
+    this.onEvent?.(kind, data);
   }
 
   /** One sweep — called from the daemon's timer. */
@@ -99,7 +108,7 @@ export class Dispatcher {
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
     this.children.set(agent.role, child);
-    this.onEvent?.("dispatch_start", {
+    this.emit("dispatch_start", {
       role: agent.role,
       command: agent.command,
       pid: child.pid ?? 0,
@@ -119,10 +128,10 @@ export class Dispatcher {
   private recordFailure(role: string, why: string): void {
     const n = (this.failures.get(role) ?? 0) + 1;
     this.failures.set(role, n);
-    this.onEvent?.("dispatch_fail", { role, failures: n, error: why });
+    this.emit("dispatch_fail", { role, failures: n, error: why });
     if (n >= 3) {
       this.enabled = false;
-      this.onEvent?.("dispatch_off", { reason: `${role} command failed ${n} times in a row` });
+      this.emit("dispatch_off", { reason: `${role} command failed ${n} times in a row` });
     }
   }
 }

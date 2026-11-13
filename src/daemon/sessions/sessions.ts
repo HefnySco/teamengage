@@ -11,6 +11,8 @@ import type { Claim } from "../../core/model/claim.js";
 export class SessionRegistry {
   private sessions = new Map<string, Session>();
   private lastClaimWrite = new Map<string, number>();
+  /** live-UI hook (GL-0329): fires on session start ("start") and end ("end"). */
+  onChange?: (kind: "start" | "end", session: Session) => void;
 
   constructor(
     private machine: string,
@@ -35,6 +37,7 @@ export class SessionRegistry {
       ...(role ? { role } : {}),
     };
     this.sessions.set(session.id, session);
+    this.onChange?.("start", session);
     return session;
   }
 
@@ -69,7 +72,9 @@ export class SessionRegistry {
 
   /** Mark a session dead — its transport closed (or it was replaced). */
   disconnect(id: string): void {
+    const s = this.sessions.get(id);
     this.sessions.delete(id);
+    if (s) this.onChange?.("end", s);
   }
 
   touch(id: string): void {

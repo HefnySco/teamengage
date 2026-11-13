@@ -590,6 +590,10 @@ submissions; accept stays with the human."
   stale/conflicted claims, unresolved plan merge conflicts.
 - **Graph** — Mermaid render, status-coloured, filter by project/resource/epic.
 - **Board** — columns by status; who holds what claim on which machine, claim age.
+  The **Team** panel on top lists each live session (agent, role, tier, the
+  items it holds, time since last seen), the dispatch state with the human's
+  on/off buttons, and the last 10 dispatch events. Session and dispatch
+  notifications stream over SSE, so the panel updates without a reload.
 - **Item** — Simple/technical tabs, log, evidence, decisions, push state per resource.
 - **Metrics** — the `/api/metrics` scorecard as tables (per agent, per tier,
   with token/usd columns once cost is reported) plus plan health per open

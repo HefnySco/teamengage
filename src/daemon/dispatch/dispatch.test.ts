@@ -70,6 +70,8 @@ describe("Dispatcher (GL-0328)", () => {
     expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
     expect(events[0].data.role).toBe("coder");
     expect(d.status().running).toEqual(["coder"]);
+    // the team panel's last-10 feed (GL-0329)
+    expect(d.status().events.map((e) => e.kind)).toEqual(["dispatch_start"]);
   });
 
   it("no start when live sessions reach max_sessions", async () => {

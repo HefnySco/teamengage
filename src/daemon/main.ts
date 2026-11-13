@@ -136,6 +136,14 @@ async function main(): Promise<number | undefined> {
     bus: new EventBus(),
     dispatchers: new Map(),
   };
+  // GL-0329: the team panel tracks sessions live over SSE
+  ctx.sessions.onChange = (kind, s) =>
+    ctx.bus.notify(kind === "start" ? "session_start" : "session_end", {
+      id: s.id,
+      agent: s.agent,
+      role: s.role,
+      tier: s.tier,
+    });
   for (const [name, entry] of Object.entries(registry.workspaces)) {
     try {
       const ws = resolveWorkspace(entry.root, { home });

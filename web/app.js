@@ -43,7 +43,10 @@ const onEvent = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const notify = (e) => listeners.forEach((f) => f(e));
 const es = new EventSource("/events");
 es.onmessage = (e) => notify({ kind: "event", data: JSON.parse(e.data) });
-for (const kind of ["watch", "reconcile"]) {
+for (const kind of [
+  "watch", "reconcile", "auto_accept", "auto_archive", "auto_release", "peer_timeout",
+  "session_start", "session_end", "dispatch_start", "dispatch_fail", "dispatch_off",
+]) {
   es.addEventListener(kind, (e) => notify({ kind, data: JSON.parse(e.data) }));
 }
 
@@ -463,6 +466,45 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
 
 // digest panel at the top of the inbox (GL-0320): finished since the last
 // human action, stuck work, and what waits for the human — ids are links
+// GL-0329 — the live team: sessions with what they hold, plus the daemon's
+// dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
+const TeamPanel = ({ sessions, onOpen }) => {
+  const { data: dispatch, reload } = useApi("/api/dispatch");
+  const set = (enabled) => post("/api/dispatch", { enabled }).then(reload, (e) => toast(e.message));
+  const ss = sessions ?? [];
+  const ev = dispatch?.events ?? [];
+  if (!ss.length && !dispatch?.agents?.length && !ev.length) return null;
+  return html`
+    <details class="team-panel mb-3" open>
+      <summary class="small">
+        <b>Team</b> — ${ss.length} session(s) · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}
+      </summary>
+      <div class="d-flex flex-column gap-1 mt-1">
+        ${ss.map((s) => html`
+          <div class="triage-li" key=${s.id}>
+            <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}</span>
+            <span class="t">
+              ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}
+              ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
+              <span class="text-secondary">${(s.holding ?? []).length ? "" : "idle — "}seen ${ago(s.last_seen)} ago</span>
+            </span>
+          </div>`)}
+        ${dispatch && html`
+          <div class="d-flex align-items-center gap-2 mt-1">
+            <span class="small text-body-tertiary">dispatch</span>
+            ${dispatch.enabled
+              ? html`<button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => set(false)}>off</button>`
+              : html`<button class="btn btn-sm py-0 btn-primary" disabled=${!dispatch.agents?.length} title=${!dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""} onClick=${() => set(true)}>on</button>`}
+            <span class="small text-secondary">${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? ` · running: ${dispatch.running.join(", ")}` : ""}</span>
+          </div>`}
+        ${ev.length > 0 && html`
+          <div class="small text-secondary mt-1">
+            ${[...ev].reverse().map((e, i) => html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`)}
+          </div>`}
+      </div>
+    </details>`;
+};
+
 const DigestPanel = ({ digest, onOpen }) => {
   const list = (label, rows) => html`
     <div class="col-12 col-md-4">
@@ -1217,10 +1259,7 @@ const Board = ({ onOpen }) => {
         title="show only ${k.replace("_", " ")} ideas (click again to clear)" onClick=${() => setIdeaFilter(k)}>${k.replace("_", " ")} <span class="n">${ideaCounts[k]}</span></span>`)}
       ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
-    ${(sessions ?? []).length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
-      <span class="small text-body-tertiary me-1">Sessions</span>
-      ${sessions.map((s) => html`<span key=${s.id} class="triage-tag" title=${`${s.id} — connected ${ago(s.connected_at)} ago`}>${s.agent}@${s.machine}${s.role ? ` · ${s.role}` : ""}${s.tier ? ` · ${s.tier}` : ""}</span>`)}
-    </div>`}
+    <${TeamPanel} sessions=${sessions} onOpen=${onOpen} />
     <div class="board-cols">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);

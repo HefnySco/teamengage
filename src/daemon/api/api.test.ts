@@ -1664,8 +1664,20 @@ describe("shared lessons per domain (GL-0322)", () => {
     const status = (await (await api("/api/dispatch")).json()) as {
       enabled: boolean;
       agents: unknown[];
+      events: unknown[];
     };
     expect(status.enabled).toBe(false); // fixture workspace.yaml has no dispatch:
+    expect(status.events).toEqual([]);
+  });
+
+  it("sessions list each live session's held items (GL-0329)", async () => {
+    const sessions = (await (await api("/api/sessions")).json()) as Array<{
+      id: string;
+      holding: string[];
+    }>;
+    expect(Array.isArray(sessions)).toBe(true);
+    // a live session holding a claim reports it; none in this fixture → []
+    for (const s of sessions) expect(Array.isArray(s.holding)).toBe(true);
   });
 
   it("ops.lessonsFor merges the item's domains newest-first, capped at 10", async () => {
