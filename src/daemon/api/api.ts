@@ -320,6 +320,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  /** Daily digest (GL-0320): finished / stuck / waits-for-you since ?since= ISO ts or the last human event. */
+  app.get("/api/digest", async (req, reply) => {
+    try {
+      const q = req.query as Record<string, string>;
+      const ops = opsFor(ctx, q.ws);
+      return await ops.digest(q.since);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   app.get("/api/plans-git", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));

@@ -544,6 +544,13 @@ per-item stats up per agent name, per tier and per domain;
 `GET /api/metrics?plan=<ID>` rolls up a plan and its parts. `te metrics`
 prints the same scorecards, with token/usd columns once any row reports cost.
 
+**Digest** — `te digest [--since 24h]` prints what happened since the human's
+last action (or the `--since` duration): accepted items grouped by plan,
+stuck work (holds, max_attempts, stale claims, open questions) and what
+waits for the human (flagged/needs_human submissions, drafts). The inbox
+shows the same three lists as a panel; `GET /api/digest` derives it from the
+event log and the index — nothing is stored.
+
 **CLI** `te`: `te ls`, `te show GL-0013`, `te approve`, `te answer`, `te accept`,
 `te claim` / `te release` (human hands-off or freeing a stale claim),
 `te deps <ID> [refs…]` (change depends_on), `te unflag <ID>` (dismiss a drop

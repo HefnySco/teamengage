@@ -461,8 +461,34 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
     </div>`;
 };
 
+// digest panel at the top of the inbox (GL-0320): finished since the last
+// human action, stuck work, and what waits for the human — ids are links
+const DigestPanel = ({ digest, onOpen }) => {
+  const list = (label, rows) => html`
+    <div class="col-12 col-md-4">
+      <div class="small fw-semibold text-secondary">${label}</div>
+      <ul class="list-unstyled small mb-1">
+        ${rows.length
+          ? rows.map((r) => html`<li key=${r.id}><a href="#" onClick=${(e) => (e.preventDefault(), onOpen(r.id))}>${r.id}</a> ${r.title}${r.why ? html` <span class="text-secondary">— ${r.why}</span>` : ""}</li>`)
+          : html`<li class="text-secondary">nothing there</li>`}
+      </ul>
+    </div>`;
+  const finished = digest.finished.flatMap((g) => g.items.map((r) => ({ ...r, why: g.plan })));
+  const attention = digest.stuck.length + digest.waits.length;
+  return html`
+    <details class="card card-body py-2 mb-3 dense" open=${attention}>
+      <summary class="small">digest since ${ago(digest.since)} — ${finished.length} finished, ${digest.stuck.length} stuck, ${digest.waits.length} waiting for you</summary>
+      <div class="row mt-2">
+        ${list("finished", finished)}
+        ${list("stuck", digest.stuck)}
+        ${list("waits for you", digest.waits)}
+      </div>
+    </details>`;
+};
+
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
+  const { data: digest } = useApi("/api/digest");
   // the inbox lists ids; the item list supplies titles, projects and files to search
   const { data: all, reload: reloadAll } = useApi("/api/items?archived=all");
   const [q, setQ] = useState(() => loadSearch("te.inbox.q"));
@@ -694,6 +720,7 @@ const Inbox = ({ onOpen }) => {
     await Promise.all([reload(), reloadAll()]);
   };
   return html`
+    ${digest && html`<${DigestPanel} digest=${digest} onOpen=${onOpen} />`}
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload(), reloadAll(), refreshDomains()])} />

@@ -22,6 +22,7 @@ import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import { opsCmd } from "./commands/ops.js";
 import { metricsCmd } from "./commands/metrics.js";
+import { digestCmd } from "./commands/digest.js";
 import { machinesCmd, envCmd } from "./commands/machines.js";
 import {
   approveCmd,
@@ -132,6 +133,7 @@ const USAGE_ALL = `te — every command
   validate [--json]
   status [--json]
   metrics [--plan <ID>] [--json]  scorecards derived from the event log
+  digest [--since 24h]            finished / stuck / waits-for-you since your last action
   approve | accept | claim | release <ID> [note]
   answer <ID> <text>
   reject | drop <ID> [reason]     (reject --release: claim freed → ready for another agent)
@@ -258,6 +260,8 @@ async function main(argv: string[]): Promise<number> {
       return statusCmd(rest, home);
     case "metrics":
       return metricsCmd(rest, home);
+    case "digest":
+      return digestCmd(rest, home);
     case "sync":
       return syncCmd(rest, home);
     case "ops":

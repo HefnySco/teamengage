@@ -871,6 +871,22 @@ export class WorkspaceOps {
     };
   }
 
+  /**
+   * Daily digest (GL-0320): finished / stuck / waits-for-you since the last
+   * human action — or since an ISO ts the caller passes. Read-only.
+   */
+  async digest(since?: string) {
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const { buildDigest } = await import("../../core/metrics/digest.js");
+    const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
+    const d = buildDigest(r.events, this.index.items, {
+      since,
+      staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
+      maxAttempts: this.wsr.ws.config.max_attempts,
+    });
+    return { ...d, warnings: r.warnings };
+  }
+
   /** `te rollback` — restore claim snapshots back onto live targets (RS-0006/7). */
   async rollback(id: string, force = false) {
     const it = this.item(id);
