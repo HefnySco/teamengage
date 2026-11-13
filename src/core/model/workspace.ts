@@ -106,6 +106,13 @@ export const WorkspaceConfig = z
      */
     auto_archive_after: z.string().optional(),
     /**
+     * Routine sweep, unset = off: the daemon releases a claim stale longer
+     * than this duration whose holder session is not live on this machine —
+     * the worktree and the branch stay. in_review items and claims held on
+     * other machines are never released.
+     */
+    auto_release_after: z.string().optional(),
+    /**
      * Failed attempts (AI bounces + handoffs) after which an item's tier is
      * raised one step, so a stronger model takes it (light → standard → heavy).
      */

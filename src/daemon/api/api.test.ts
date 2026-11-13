@@ -911,6 +911,76 @@ describe("auto_archive_after", () => {
   });
 });
 
+describe("auto_release_after", () => {
+  it("releases dead-session claims past the duration — live, review and other-machine claims stay", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "stuck work" },
+        { type: "task", title: "live work" },
+        { type: "task", title: "review work" },
+        { type: "task", title: "other machine work" },
+      ],
+      human,
+    );
+    const [stuck, live, reviewId, other] = ids;
+    for (const id of ids) await ops.approve(id);
+    const deadAgent = ctx.sessions.hello("dead-agent");
+    const liveAgent = ctx.sessions.hello("live-agent");
+    await ops.claim(stuck, deadAgent);
+    await ops.claim(live, liveAgent);
+    await ops.claim(reviewId, deadAgent);
+    await ops.submit(reviewId, deadAgent, {});
+    // a claim held on another machine — written into the index like a pull does
+    const now = new Date().toISOString();
+    store.idx.setClaim({
+      item: other,
+      holder: "peer@otherbox#aa11",
+      actor: "agent",
+      machine: "otherbox",
+      targets: [],
+      claimed_at: now,
+      last_seen: now,
+    });
+    ctx.sessions.disconnect(deadAgent.id);
+
+    // rule unset — nothing is ever due
+    expect(ops.autoReleaseDue(Date.now() + 30 * 86_400_000)).toEqual([]);
+
+    wsr.ws.config.auto_release_after = "24h";
+    try {
+      const later = Date.now() + 25 * 3_600_000;
+      const due = ops.autoReleaseDue(later);
+      expect(due).toContain(stuck);
+      expect(due).not.toContain(live); // live session
+      expect(due).not.toContain(reviewId); // in_review
+      expect(due).not.toContain(other); // another machine's claim
+      const got = await ops.autoRelease(later);
+      expect(got).toEqual([stuck]);
+      const st = store.idx.get(stuck)!;
+      expect(st.meta.status).toBe("ready");
+      expect(store.idx.claims.get(stuck)).toBeUndefined();
+      // the item log and the event name the daemon
+      const logSec = st.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+      expect(logSec).toMatch(/daemon released/);
+      const { readAllEvents } = await import("../../core/events/log.js");
+      const r = await readAllEvents(join(wsr.ws.plansDir, "events"));
+      expect(r.events.find((e) => e.item === stuck && e.action === "release")?.actor).toBe("daemon");
+      // the live and foreign claims are untouched
+      expect(store.idx.claims.get(live)?.holder).toBe(liveAgent.id);
+      expect(store.idx.claims.get(other)?.machine).toBe("otherbox");
+      await ops.release(live, liveAgent);
+      store.idx.setClaim(null, other);
+    } finally {
+      delete wsr.ws.config.auto_release_after;
+    }
+  });
+});
+
 describe("drop flags: agent asks, human decides", () => {
   it("flag → inbox → unflag keeps it; flag → drop drops it and clears the flag", async () => {
     const { WorkspaceOps } = await import("./ops.js");

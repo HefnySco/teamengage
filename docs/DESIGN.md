@@ -109,6 +109,7 @@ stale_after: 24h                 # inactive agent claim → flagged stale
 autonomy: strict                 # strict | solo  (§5 — solo: fewer human gates)
 auto_accept_after: 30m           # solo: ok peer review → daemon accepts after this
 auto_archive_after: 7d           # unset = off: daemon archives items done/dropped longer than this (§5)
+auto_release_after: 24h          # unset = off: daemon releases dead-session claims stale longer than this (§5)
 projects:
   mission_planner: { prefix: MP }
   global:          { prefix: GL }
@@ -356,6 +357,12 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   released. Each archive lands in the event log with actor `daemon`. With the
   key set, closing a plan whose parts are all finished archives those parts
   in the same step.
+- `auto_release_after` (workspace.yaml, unset = off) releases a dead claim
+  without a click: when a claim is stale longer than the duration and its
+  holder session is not live on this machine, the daemon releases the item
+  to `ready` — the worktree and the branch stay for the next claimant.
+  `in_review` items and claims held on other machines are never released;
+  each release lands in the event log and the item log with actor `daemon`.
 
 ## 6. Concurrency — the core
 

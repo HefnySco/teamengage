@@ -234,6 +234,11 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archived ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archive failed: ${err.message}` }));
+      ops.autoRelease()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("auto_release", { workspace: name, message: `auto-released ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("auto_release", { workspace: name, message: `auto-release failed: ${err.message}` }));
     }
   }, 60_000);
   autoTimer.unref();

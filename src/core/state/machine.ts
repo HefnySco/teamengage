@@ -390,7 +390,15 @@ export function transition(
     }
 
     case "release": {
-      const claim = requireHolder(actor, ctx, action.type);
+      // the daemon releases a dead holder's claim under auto_release_after —
+      // ops decides when; here it only needs an existing claim
+      const claim =
+        actor.kind === "daemon"
+          ? ctx.claim ??
+            (() => {
+              throw new InvalidTransitionError("cannot release: item is not claimed", undefined, action.type);
+            })()
+          : requireHolder(actor, ctx, action.type);
       if (from !== "in_progress" && from !== "waiting") fail(from, action.type);
       set("ready", action.note);
       out.log.push(

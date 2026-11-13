@@ -886,6 +886,46 @@ export class WorkspaceOps {
     return done;
   }
 
+  /**
+   * auto_release_after (workspace.yaml, unset = off): a claim stale longer
+   * than the duration whose holder session is not live on this machine is
+   * released to ready by the daemon — the worktree and the branch stay.
+   * Claims held on other machines and items already in review are kept.
+   */
+  autoReleaseDue(now = Date.now()): string[] {
+    const cfg = this.wsr.ws.config;
+    if (!cfg.auto_release_after) return [];
+    const ms = parseDuration(cfg.auto_release_after);
+    return [...this.index.claims.values()]
+      .filter((c) => {
+        if (c.actor !== "agent" || c.machine !== this.wsr.store.machine) return false;
+        if (this.sessions.isLive(c.holder)) return false;
+        if (now - Date.parse(c.last_seen) <= ms) return false;
+        const st = this.index.items.get(c.item)?.meta.status;
+        return st === "in_progress" || st === "waiting";
+      })
+      .map((c) => c.item);
+  }
+
+  async autoRelease(now = Date.now()) {
+    const done: string[] = [];
+    for (const id of this.autoReleaseDue(now)) {
+      try {
+        const it = this.item(id);
+        // perform alone — unlike ops.release there is no cleanup_work: the
+        // worktree and the branch stay for whoever claims the item next
+        await this.store.perform(id, it.meta.version, this.daemonActor(), {
+          type: "release",
+          note: "auto_release_after",
+        });
+        done.push(id);
+      } catch {
+        // one failing release must not stall the sweep
+      }
+    }
+    return done;
+  }
+
   // ---- human writes -------------------------------------------------------
 
   async approve(id: string) {
