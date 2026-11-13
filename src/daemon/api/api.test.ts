@@ -1751,7 +1751,7 @@ describe("feature item and feature page (GL-0331)", () => {
     mkdirSync(join(plans, "releases"), { recursive: true });
     writeFileSync(
       join(plans, "releases", "r1.release.yaml"),
-      `id: r1\nitems:\n  - { item: ${p1}, title: part one }\n`,
+      `id: r1\ncut: { ts: "2026-10-01T09:00:00Z", by: "human@test" }\nitems:\n  - { item: ${p1}, title: part one }\ndeploys: []\n`,
     );
     expect(await ops.featureStatus(store.idx.get(feat)!)).toBe("shipped");
 
@@ -1784,5 +1784,67 @@ describe("feature item and feature page (GL-0331)", () => {
     await expect(
       wsr.store.createItems([{ type: "feature", title: "x", parent: task, domains: ["teamengage"] }], human),
     ).rejects.toThrow(/may not have a parent/);
+  });
+});
+
+describe("release record (GL-0332)", () => {
+  it("cut freezes accepted tasks with commits and feature; a job deploy links back; notes group by feature", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+
+    // feature + plan + one done part (evidence commit, no deliveries)
+    const { ids } = await store.createItems(
+      [
+        { type: "feature", title: "Rel grouping", domains: ["teamengage"] },
+        { type: "epic", title: "Rel plan", feature: "#0", domains: ["teamengage"] },
+        { type: "task", title: "shipped bit", parent: "#1", domains: ["teamengage"] },
+      ],
+      human,
+    );
+    const [feat2, , task3] = ids;
+    const s = ctx.sessions.hello("coder-y");
+    await ops.approve(task3);
+    await ops.claim(task3, s);
+    await ops.submit(task3, s, { walkthrough: "did it", commits: ["abc1234"] });
+    await ops.accept(task3, human);
+
+    const rel = await ops.cutRelease("r-test-1", "human");
+    const row = rel.items.find((i) => i.item === task3)!;
+    expect(row.feature).toBe(feat2);
+    expect(row.commits).toEqual([{ resource: "unknown", sha: "abc1234" }]);
+    expect(rel.since).toBe("r1"); // the feature test's release is the previous one
+
+    // the record landed under .teamengage/releases/ and the file exists
+    expect(existsSync(join(plans, "releases", "r-test-1.release.yaml"))).toBe(true);
+
+    // a second cut's window is since the first — task3 is not in it again
+    const rel2 = await ops.cutRelease("r-test-2", "human");
+    expect(rel2.since).toBe("r-test-1");
+    expect(rel2.items.some((i) => i.item === task3)).toBe(false);
+
+    // a job naming the release links itself on success
+    mkdirSync(join(wsr.ws.root, "ops"), { recursive: true });
+    writeFileSync(
+      join(wsr.ws.root, "ops", "deploy.playbook.yaml"),
+      "name: deploy\nsteps:\n  - { id: s1, run: 'echo ok' }\n",
+    );
+    const { JobStore } = await import("../../core/ops/job.js");
+    const { loadPlaybooks } = await import("../../core/ops/playbook.js");
+    const loaded = loadPlaybooks(wsr.ws.root).find((p) => p.file.endsWith("deploy.playbook.yaml"))!;
+    const js = new JobStore(wsr.ws.root, plans, "test");
+    const job = await js.start(loaded.playbook!, { by: "human", params: { release: "r-test-1" } });
+    await js.stepResult(job, loaded.playbook!, "s1", { exit_code: 0, output: "ok" }, "human");
+    const linked = await ops.getRelease("r-test-1");
+    expect(linked!.deploys).toContain(job.id);
+    expect((await js.load(job.id))!.params.release).toBe("r-test-1");
+
+    // agents cannot cut a release — FORBIDDEN
+    await expect(ops.cutRelease("r-x", s)).rejects.toThrow(/human-only/);
+
+    // the feature sees its shipped parts
+    expect(await ops.featureStatus(store.idx.get(feat2)!)).toBe("shipped");
   });
 });

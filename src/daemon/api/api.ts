@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
-import { registerOpsApiRoutes } from "./opsapi.js";
+import { registerOpsApiRoutes, opsJobs } from "./opsapi.js";
 import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import { compareIds } from "../../core/address/refs.js";
@@ -20,7 +20,7 @@ import type { Ambiguity } from "../../import/import.js";
 
 const IdParam = z.object({ id: z.string() });
 
-function opsFor(ctx: DaemonCtx, ws?: string): WorkspaceOps {
+function wsrFor(ctx: DaemonCtx, ws?: string): WorkspaceRuntime {
   let wsr: WorkspaceRuntime | undefined;
   if (ws) wsr = ctx.workspaces.get(ws);
   else if (ctx.workspaces.size === 1) wsr = ctx.workspaces.values().next().value;
@@ -29,6 +29,11 @@ function opsFor(ctx: DaemonCtx, ws?: string): WorkspaceOps {
       ws ? `workspace '${ws}' not registered` : "no workspace registered on this machine",
     );
   }
+  return wsr;
+}
+
+function opsFor(ctx: DaemonCtx, ws?: string): WorkspaceOps {
+  const wsr = wsrFor(ctx, ws);
   return new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
 }
 
@@ -113,6 +118,62 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const { id } = IdParam.parse(req.params);
       const ops = opsFor(ctx, wsOf(req.query));
       return ops.brief(id.toUpperCase());
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // ---- releases (GL-0332): human-only records — agents have no route here --
+  app.get("/api/releases", async (req, reply) => {
+    try {
+      const ops = opsFor(ctx, wsOf(req.query));
+      const rels = await ops.releases();
+      return rels.map((r) => ({
+        id: r.id,
+        cut: r.cut,
+        since: r.since,
+        items: r.items.length,
+        deploys: r.deploys.length,
+      }));
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  app.get("/api/releases/:id", async (req, reply) => {
+    try {
+      const { id } = (req.params ?? {}) as { id?: string };
+      if (!id) throw new TeError("USAGE", "release id required");
+      const wsr = wsrFor(ctx, wsOf(req.query));
+      const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+      const rel = await ops.getRelease(id);
+      if (!rel) throw new NotFoundError(`release '${id}'`);
+      // "which machine has it" — join the stored deploy ids over job records
+      const jobs = opsJobs(wsr, ctx);
+      const deploys = rel.deploys.map((jid) => {
+        const j = jobs.find((x) => x.id === jid);
+        return j
+          ? {
+              job: j.id,
+              playbook: j.playbook,
+              target: j.target,
+              machine: j.target ? wsr.ws.config.targets?.[j.target]?.machine : undefined,
+              status: j.status,
+              version: j.version,
+            }
+          : { job: jid, status: "unknown" };
+      });
+      return { ...rel, deploys };
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  app.post("/api/releases", async (req, reply) => {
+    try {
+      const b = (req.body ?? {}) as { name?: string };
+      if (!b.name?.trim()) throw new TeError("USAGE", "release cut needs {name}");
+      return await opsFor(ctx, wsOf(req.query)).cutRelease(b.name.trim(), "human");
     } catch (e) {
       return sendErr(reply, e);
     }

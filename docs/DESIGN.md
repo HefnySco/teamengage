@@ -1004,7 +1004,7 @@ plan, so the mapping stays single-hop.
 
 A release is a **file kind**, not an item — like `machines/` and
 `envs/` records: no status, no claim, no turn. The human cuts it with
-`te release cut <name>` (or the UI); agents get FORBIDDEN.
+`te releases cut <name>` (or the UI's Ops → releases tab); agents get FORBIDDEN. The job side records `params.release` via `te ops start <playbook> --release <id>` — a succeeded job appends itself to `deploys`.
 
 ```
 .teamengage/releases/2026-11-field.release.yaml
@@ -1056,7 +1056,7 @@ of truth; the file is a derived export for customers.
 | feature item (id, title, summary, simple, `relates` to ideas)       | feature status (`planned`/`in_progress`/`shipped`), progress (done/total parts per plan)           |
 | `feature:` field on a plan                                          | a feature's open found problems (`found_by` under its plans)                                       |
 | release file (name, cut time, window, items + commits + feature)    | "which machine has it" — join over succeeded ops jobs naming the release                           |
-| `release:` in a job's `params` + job id in the release's `deploys`  | `CAPABILITIES.md`, `te release notes`, board features filter                                       |
+| `release:` in a job's `params` + job id in the release's `deploys`  | `CAPABILITIES.md`, `te releases notes`, board features filter                                       |
 
 ### 15.7 Questions — decided (D-0046: all four recommendations stand)
 

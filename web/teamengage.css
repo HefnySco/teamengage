@@ -998,6 +998,22 @@ details.sec > .sec-bd {
   font-weight: 600;
 }
 
+/* metrics (GL-0319): scorecard table + share-of-items donut side by side */
+.met-split { display: flex; gap: 1.2rem; align-items: flex-start; flex-wrap: wrap; }
+.met-split-tbl { flex: 1 1 34rem; min-width: 0; }
+.met-donut { display: flex; gap: .9rem; align-items: center; padding: .35rem .6rem; border: 1px solid var(--bs-border-color-translucent); border-radius: .5rem; }
+.met-donut-total { fill: var(--bs-body-color); font-size: 1.35rem; font-weight: 600; }
+.met-donut-legend { display: flex; flex-direction: column; gap: .15rem; font-size: .78rem; }
+.met-donut-row { display: flex; align-items: baseline; gap: .45rem; }
+.met-dot { flex: none; width: .6rem; height: .6rem; border-radius: 50%; align-self: center; }
+.met-key { font-weight: 600; }
+
+/* ops compact type (GL-0278): a dense ledger, not a document — the matrix
+   and the jobs/playbooks lists all use it so a long grid fits on screen */
+.ops-dense, .ops-matrix { font-size: .78rem; }
+.ops-matrix .id { font-size: .8rem; }
+.ops-cell + .ops-cell { border-top: 1px dashed var(--bs-border-color-translucent); margin-top: .3rem; padding-top: .3rem; }
+
 /* ops job stepper (GL-0276) */
 .ops-steps { list-style: none; margin: 0; padding: 0; }
 .ops-step { position: relative; padding: 0 0 .9rem 1.5rem; margin-left: .5rem; border-left: 2px solid var(--bs-border-color); }
@@ -1051,8 +1067,17 @@ details.sec > .sec-bd {
 .ops-subnav { display: inline-flex; border: 1px solid var(--bs-border-color); border-radius: .375rem; overflow: hidden; }
 .ops-subnav a { display: inline-flex; align-items: center; gap: .4em; padding: .25em .8em; color: var(--bs-secondary-color); text-decoration: none; font-size: .85rem; }
 .ops-subnav a + a { border-left: 1px solid var(--bs-border-color); }
-.ops-subnav a.on { background: var(--bs-tertiary-bg); color: var(--bs-body-color); font-weight: 600; }
+/* each tab owns an accent: the icon wears it always, the active tab gets it
+   as a tinted wash — the label keeps body colour so it stays readable */
+.ops-subnav a svg { color: var(--tc, currentColor); }
+.ops-tab-matrix    { --tc: var(--bs-primary); }
+.ops-tab-jobs      { --tc: var(--bs-orange); }
+.ops-tab-playbooks { --tc: var(--bs-purple); }
+.ops-tab-machines  { --tc: var(--bs-teal); }
+.ops-tab-releases  { --tc: var(--bs-cyan); }
+.ops-subnav a.on { background: color-mix(in srgb, var(--tc) 16%, transparent); color: var(--bs-body-color); font-weight: 600; }
 .ops-subnav a:hover { color: var(--bs-body-color); }
+.ops-subnav a:hover svg { filter: brightness(1.25); }
 .ops-subnav-cnt { font-size: .68rem; background: var(--bs-warning); color: #000; border-radius: 1rem; padding: 0 .45em; font-weight: 700; }
 /* machine card (tabbed side panel) */
 .ops-panel { flex: 0 1 430px; min-width: 0; max-width: 100%; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .75rem; background: var(--bs-tertiary-bg); overflow-wrap: anywhere; }

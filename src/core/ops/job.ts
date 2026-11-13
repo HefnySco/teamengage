@@ -235,6 +235,29 @@ export class JobStore {
     }
   }
 
+  /**
+   * GL-0332 (DESIGN §15.4): a succeeded job that names a release in
+   * `params.release` records itself in the release's `deploys` — a stored
+   * back-reference so the release page never scans job files. Best-effort:
+   * a missing release file or a bad write never breaks the job.
+   */
+  private linkRelease(job: Job): void {
+    try {
+      const rel = job.params.release;
+      if (!rel) return;
+      const f = join(this.teDir, "releases", `${rel}.release.yaml`);
+      if (!existsSync(f)) return;
+      const doc = YAML.parse(readFileSync(f, "utf8")) as { deploys?: string[] };
+      if (!doc || typeof doc !== "object") return;
+      doc.deploys = [...new Set([...(doc.deploys ?? []), job.id])];
+      const text = YAML.stringify(doc);
+      writeYamlAtomic(f, text);
+      this.onFileWrite?.(f, text);
+    } catch {
+      /* deploy bookkeeping must never break a job */
+    }
+  }
+
   /** terminal states release the target lock; failed keeps it (resume or abort later) */
   private releaseLock(job: Job): void {
     if (!job.target) return;
@@ -329,6 +352,7 @@ export class JobStore {
         job.version = versionFromTail(vs?.output_tail);
       }
       this.logJobTrans(job);
+      this.linkRelease(job);
       return;
     }
     const kind = jobPlaybook(job, playbook).steps[job.cursor]?.kind;
@@ -359,6 +383,9 @@ export class JobStore {
       }
       params[p.name] = v;
     }
+    // GL-0332: `te ops start --release <id>` tags the job with the release it
+    // deploys — not a playbook param, carried alongside them
+    if (args.params?.release) params.release = args.params.release;
     const job: Job = Job.parse({
       id: this.nextId(),
       machine: this.machine,

@@ -33,7 +33,15 @@ import {
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
-import { releaseItemSets } from "../../core/files/releases.js";
+import {
+  releaseItemSets,
+  listReleases,
+  loadRelease,
+  saveRelease,
+  RELEASE_NAME,
+  type Release,
+  type ReleaseItem,
+} from "../../core/files/releases.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
 import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
@@ -546,6 +554,97 @@ export class WorkspaceOps {
     const out = new Map<string, string>();
     for (const f of feats) out.set(f.meta.id, await this.featureStatus(f));
     return out;
+  }
+
+  // ---- releases (GL-0332, DESIGN §15.3) -----------------------------------
+
+  /**
+   * Cut a release — human only. Freezes the accepted (done) tasks no earlier
+   * release already contains: their merge commits (deliveries on accept, or
+   * the `- commit` evidence lines) and each item's feature through its plan.
+   */
+  async cutRelease(name: string, actor: Session | "human"): Promise<Release> {
+    if (actor !== "human") throw new ForbiddenError("cutting a release is human-only");
+    if (!RELEASE_NAME.test(name)) throw new ValidationError(`bad release name '${name}'`);
+    const rels = await this.releases();
+    if (rels.some((r) => r.id === name)) {
+      throw new ValidationError(`release '${name}' already exists`);
+    }
+    const released = new Set(rels.flatMap((r) => r.items.map((i) => i.item)));
+    const prev = [...rels].sort((a, b) => a.cut.ts.localeCompare(b.cut.ts)).at(-1);
+    const shipped = new Set(["task", "bug", "wish", "spike", "review"]);
+    const items: ReleaseItem[] = [...this.index.items.values()]
+      .filter(
+        (i) =>
+          i.meta.status === "done" &&
+          !i.meta.archived &&
+          shipped.has(i.meta.type) &&
+          !released.has(i.meta.id),
+      )
+      .sort((a, b) => a.meta.id.localeCompare(b.meta.id, undefined, { numeric: true }))
+      .map((i) => ({
+        item: i.meta.id,
+        title: i.meta.title,
+        ...(this.featureOf(i) ? { feature: this.featureOf(i) } : {}),
+        commits: this.commitsOf(i),
+      }));
+    const rel: Release = {
+      id: name,
+      cut: { ts: new Date().toISOString(), by: `human@${this.wsr.store.machine}` },
+      ...(prev ? { since: prev.id } : {}),
+      items,
+      deploys: [],
+    };
+    const relPath = await saveRelease(this.wsr.ws.plansDir, rel);
+    await this.store.commitPlanFiles([relPath], `te: release ${name} cut — ${items.length} item(s)`);
+    return rel;
+  }
+
+  releases(): Promise<Release[]> {
+    return listReleases(this.wsr.ws.plansDir);
+  }
+
+  getRelease(id: string): Promise<Release | undefined> {
+    return loadRelease(this.wsr.ws.plansDir, id);
+  }
+
+  /** The feature a task reaches through its parent chain (nearest epic's `feature:`). */
+  private featureOf(it: IndexedItem): string | undefined {
+    let p = it.meta.parent;
+    const seen = new Set<string>();
+    while (p && !seen.has(p)) {
+      seen.add(p);
+      let pid: string;
+      try {
+        pid = parseItemRef(p).id;
+      } catch {
+        return undefined;
+      }
+      const a = this.index.items.get(pid);
+      if (!a) return undefined;
+      if (a.meta.feature) {
+        try {
+          return parseItemRef(a.meta.feature).id;
+        } catch {
+          return undefined;
+        }
+      }
+      p = a.meta.parent;
+    }
+    return undefined;
+  }
+
+  /** Real merge commits (deliveries on accept), else `- commit` evidence lines. */
+  private commitsOf(it: IndexedItem): { resource: string; sha: string }[] {
+    const deliveries = (it.meta as Record<string, unknown>).deliveries as
+      | Array<{ resource: string; merge_commit: string }>
+      | undefined;
+    if (deliveries?.length) {
+      return deliveries.map((d) => ({ resource: d.resource, sha: d.merge_commit }));
+    }
+    const ev =
+      it.sections.find((s) => s.heading.toLowerCase() === "evidence")?.body ?? "";
+    return [...ev.matchAll(/^- commit\s+(\S+)/gm)].map((m) => ({ resource: "unknown", sha: m[1] }));
   }
 
   /**

@@ -1631,6 +1631,11 @@ export class PlansStore {
     await this.stagePaths(rootRelPaths.map((p) => relative(this.ws.plansDir, join(this.ws.root, p))));
   }
 
+  /** Non-item writes (release records) get the same commit/stage treatment. */
+  async commitPlanFiles(paths: string[], message: string): Promise<void> {
+    await this.commitPaths(paths, message);
+  }
+
   private async commitPaths(paths: string[], message: string, deletes: string[] = []): Promise<void> {
     if (!this.ws.config.commit) {
       // the human commits — but nothing TeamEngage writes is left untracked

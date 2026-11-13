@@ -24,6 +24,7 @@ import { opsCmd } from "./commands/ops.js";
 import { metricsCmd } from "./commands/metrics.js";
 import { dispatchCmd } from "./commands/dispatch.js";
 import { digestCmd } from "./commands/digest.js";
+import { releasesCmd } from "./commands/release.js";
 import { machinesCmd, envCmd } from "./commands/machines.js";
 import {
   approveCmd,
@@ -264,6 +265,8 @@ async function main(argv: string[]): Promise<number> {
       return metricsCmd(rest, home);
     case "digest":
       return digestCmd(rest, home);
+    case "releases":
+      return releasesCmd(rest, home);
     case "dispatch":
       return dispatchCmd(rest, home);
     case "sync":

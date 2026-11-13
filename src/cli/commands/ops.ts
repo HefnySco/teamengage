@@ -33,7 +33,7 @@ const USAGE =
   "  list     [--ws w] [--json]                      playbooks\n" +
   "  targets  [--ws w] [--json]                      workspace targets\n" +
   "  jobs     [--ws w] [--json]                      ops jobs\n" +
-  "  start <playbook> [--target t] [--param k=v]…    start a job\n" +
+  "  start <playbook> [--target t] [--param k=v]… [--release r]    start a job\n" +
   "  exec <job> [--step id] [--ws w] [--json]        run the cursor steps\n" +
   "  status <job> [--ws w] [--json]                  job + step states\n" +
   '  note <playbook> "text" [--ws w]                 add a human note; a ready task asks an agent to apply it\n' +
@@ -147,6 +147,8 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
           if (eq === -1) return console.log(`bad --param '${kv}' — want k=v`), 4;
           params[kv.slice(0, eq)] = kv.slice(eq + 1);
         }
+        const rel = opt(args, "--release");
+        if (rel) params.release = rel; // GL-0332: the job records itself on the release
         const wanted = opt(args, "--target");
         const refused = await guardDeploy(wanted ?? (await playbookTarget(name, ws, home)), ws, home, { playbook: name, params });
         if (refused) return console.log(`refused: ${refused}`), 3;

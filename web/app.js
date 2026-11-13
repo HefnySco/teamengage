@@ -3175,6 +3175,7 @@ const Ops = () => {
   if (sub === "jobs") return html`<${OpsList} />`;
   if (sub === "machines") return html`<${OpsMachines} envId=${seg[2] ? decodeURIComponent(seg[2]) : ""} />`;
   if (sub === "playbooks") return html`<${OpsPlaybooks} />`;
+  if (sub === "releases") return html`<${OpsReleases} />`;
   if (sub === "playbook") return html`<${OpsPlaybook} name=${decodeURIComponent(seg[2] ?? "")} />`;
   return sub ? html`<${OpsJob} id=${sub} />` : html`<${OpsMatrix} />`;
 };
@@ -3187,14 +3188,76 @@ const OpsTabs = ({ view }) => {
     ["jobs", "#/ops/jobs", "jobs"],
     ["playbooks", "#/ops/playbooks", "playbooks"],
     ["machines", "#/ops/machines", "machines"],
+    ["releases", "#/ops/releases", "releases"],
   ];
   return html`
     <div class="d-flex align-items-center gap-3 mb-3">
       <h2 class="h4 mb-0">Ops</h2>
       <span class="ops-subnav">
-        ${tabs.map(([v, href, label]) => html`<a key=${v} href=${href} class=${view === v ? "on" : ""}>${OPS_NAV_ICON[v]()}${label}${v === "jobs" && live ? html`<span class="ops-subnav-cnt">${live}</span>` : ""}</a>`)}
+        ${tabs.map(([v, href, label]) => html`<a key=${v} href=${href} class=${`ops-tab-${v}${view === v ? " on" : ""}`}>${OPS_NAV_ICON[v]()}${label}${v === "jobs" && live ? html`<span class="ops-subnav-cnt">${live}</span>` : ""}</a>`)}
       </span>
     </div>`;
+};
+
+// ---- Ops releases (GL-0332): the human's release records — items frozen at
+// cut, and which machine has it via the ops jobs that named it (§15.4)
+const OpsReleases = () => {
+  const { data: rels, reload: reloadList } = useApi("/api/releases");
+  const [open, setOpen] = useState(null);
+  const { data: detail } = useApi(open ? `/api/releases/${encodeURIComponent(open)}` : null, [open]);
+  const [busy, setBusy] = useState(false);
+  const cut = async () => {
+    const name = await promptDialog("cut a release", { label: "release name (e.g. 2026-11-field)" });
+    if (name === null || !name.trim()) return;
+    setBusy(true);
+    try {
+      const r = await post("/api/releases", { name: name.trim() });
+      toast(`release ${r.id} cut — ${r.items.length} item(s)`, "success");
+      setOpen(r.id);
+      reloadList();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  if (!rels) return html`<${OpsTabs} view="releases" /><p class="text-secondary">loading…</p>`;
+  return html`
+    <${OpsTabs} view="releases" />
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <span class="text-secondary small">the accepted tasks since the last release, with their commits — deploys come from ops jobs naming the release</span>
+      <button class="btn btn-sm btn-primary ms-auto" disabled=${busy} onClick=${cut}>cut release</button>
+    </div>
+    ${!rels.length && html`<p class="text-secondary">no releases yet</p>`}
+    <div class="ops-dense">
+    ${rels.map((r) => html`
+      <div key=${r.id} class="card mb-2 p-2">
+        <div class="d-flex align-items-center gap-2" role="button" onClick=${() => setOpen(open === r.id ? null : r.id)}>
+          <b class="id">${r.id}</b>
+          <span class="small text-secondary">cut ${ago(r.cut.ts)} ago by ${r.cut.by}${r.since ? ` · since ${r.since}` : ""}</span>
+          <span class="ms-auto small text-secondary">${r.items} item(s) · ${r.deploys} deploy(s) ${open === r.id ? "▾" : "▸"}</span>
+        </div>
+        ${open === r.id && detail && html`
+          <div class="mt-2 small">
+            ${detail.items.length === 0 && html`<div class="text-secondary">no items in this release</div>`}
+            ${detail.items.map((i) => html`
+              <div key=${i.item} class="d-flex align-items-center gap-2 py-0">
+                <a class="item id" href=${`#/item/${i.item}`}>${i.item}</a>
+                <span class="text-truncate" title=${i.title}>${i.title}</span>
+                ${i.feature && html`<a class="plan-chip ps-active" href=${`#/item/${i.feature}`}>${i.feature}</a>`}
+                <span class="ms-auto text-secondary">${i.commits.map((c) => html`<code key=${c.sha} title=${`${c.resource}: ${c.sha}`}>${c.sha.slice(0, 8)}</code> `)}</span>
+              </div>`)}
+            ${detail.deploys.length > 0 && html`
+              <div class="mt-2"><b>deployed by</b>
+                ${detail.deploys.map((d) => html`
+                  <div key=${d.job} class="d-flex align-items-center gap-2 py-0">
+                    <a class="id" href=${`#/ops/${encodeURIComponent(d.job)}`}>${d.job}</a>
+                    <span>${d.playbook ?? "?"}${d.target ? ` → ${d.target}` : ""}${d.machine ? ` (${d.machine})` : ""}</span>
+                    <span class="ms-auto">${d.version ?? ""} <span class="badge text-bg-secondary">${d.status}</span></span>
+                  </div>`)}
+              </div>`}
+            ${detail.deploys.length === 0 && html`<div class="mt-2 text-secondary">no deploys yet — run a playbook with <code>te ops start &lt;pb&gt; --release ${r.id}</code></div>`}
+          </div>`}
+      </div>`)}
+    </div>
+  `;
 };
 
 // ---- Ops matrix (GL-0278): service rows × env columns; a cell holds the
@@ -3355,6 +3418,7 @@ const OPS_NAV_ICON = {
   jobs: () => sicon(html`<path d="M5.2 4h8.4M5.2 8h8.4M5.2 12h8.4M2.4 4h.4M2.4 8h.4M2.4 12h.4"/>`),
   playbooks: () => sicon(html`<path d="M3 3.2c1.8-.8 3.4-.6 5 .5 1.6-1.1 3.2-1.3 5-.5v9.6c-1.8-.8-3.4-.6-5 .5-1.6-1.1-3.2-1.3-5-.5z"/><path d="M8 3.7v9.6"/>`),
   machines: () => sicon(MKIND_ICON.server()),
+  releases: () => sicon(html`<path d="M8 2.6v7.4M5.6 7.4 8 9.8l2.4-2.4"/><path d="M3 11.4v1.4a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4v-1.4"/>`),
 };
 
 // GL-0297: the human's notes on a machine or a playbook — each note keeps
@@ -3825,6 +3889,7 @@ const OpsJob = ({ id }) => {
           onClick=${async () => (await confirmDialog(`abort job ${job.id}?`, "The cursor step is cancelled and the target lock is released.", { ok: "abort", danger: true })) && act(`/api/ops/abort/${id}`, {})}>Abort</button>`}
       </span>
     </div>
+    <div class="ops-dense">
     <div class="small text-secondary mb-2">
       ${job.playbook}${job.target ? ` on ${job.target}` : ""} · ${job.machine} · started ${ago(job.started.ts)} ago by ${job.started.by}
       ${job.version ? ` · version ${job.version}` : ""}
