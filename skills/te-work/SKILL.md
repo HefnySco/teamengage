@@ -200,6 +200,12 @@ Send `cost` when your runner reports it — `"cost": {"model": "swe-2-high",
 send what you have). It lands as one `cost:` line in `## Evidence` and feeds
 `te metrics`.
 
+When the last review or bounce left a findings checklist (the item page
+shows it, `brief` lists them), answer every entry in `finding_states` —
+`{"finding": <1-based number>, "state": "done"|"skipped", "reason": "…"}`.
+A `must` finding left unanswered refuses the submit; a `skipped` should
+say why in `reason`.
+
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
 
@@ -230,6 +236,9 @@ curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","summary":"Accepta
   ```bash
   curl -s -X POST $B/bounce/GL-0019 -H "$H" -d '{"reason":"acceptance 2 fails: restart counter never resets","summary":"The restart counter never resets — it goes back for fixes."}'
   ```
+
+  Name concrete fix points in `findings` — `[{"text":"…","where":"f.ts:1","severity":"must"}]` —
+  so the resubmit answers them one by one instead of reading long prose.
 
 - Never review or bounce **your own** submission. After 2 bounces in a row
   the task stays in review for the human — record a `review` verdict

@@ -15,7 +15,13 @@ import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
-import { StarColor, tierRank, type Status, type SubmitCost } from "../../core/model/item.js";
+import {
+  StarColor,
+  tierRank,
+  type ReviewFinding,
+  type Status,
+  type SubmitCost,
+} from "../../core/model/item.js";
 import {
   ClaimRefusedError,
   ForbiddenError,
@@ -645,6 +651,7 @@ export class WorkspaceOps {
       notes?: string;
       walkthrough?: string;
       cost?: SubmitCost;
+      finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
     },
   ) {
     const it = this.item(id);
@@ -684,6 +691,7 @@ export class WorkspaceOps {
     summary?: string,
     needsHuman?: boolean,
     report?: string,
+    findings?: ReviewFinding[],
   ) {
     const it = this.item(id);
     const claim = it.claim;
@@ -691,7 +699,7 @@ export class WorkspaceOps {
       id,
       it.meta.version,
       this.actorFor(session),
-      { type: "review", verdict, note, summary, needs_human: needsHuman, report },
+      { type: "review", verdict, note, summary, needs_human: needsHuman, report, findings },
       { holderAway: () => this.holderAway(this.item(id)) },
     );
     // an `issues` verdict on a holder that can't act released the claim
@@ -705,7 +713,13 @@ export class WorkspaceOps {
    * AI bounce: a reviewer session sends a broken submission back to its
    * holder (in_progress, claim kept — like the human's reject, but capped).
    */
-  async bounce(id: string, session: Session, reason: string, summary?: string) {
+  async bounce(
+    id: string,
+    session: Session,
+    reason: string,
+    summary?: string,
+    findings?: ReviewFinding[],
+  ) {
     const it = this.item(id);
     const claim = it.claim;
     return this.store
@@ -713,7 +727,7 @@ export class WorkspaceOps {
         id,
         it.meta.version,
         this.actorFor(session),
-        { type: "bounce", reason, summary },
+        { type: "bounce", reason, summary, findings },
         {
           priorBounces: () => this.aiBouncesSinceHumanTouch(id),
           holderAway: () => this.holderAway(this.item(id)),

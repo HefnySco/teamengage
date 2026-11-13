@@ -197,6 +197,18 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   checks you couldn't run). Number the findings in `note`, worst first, each
   with file:line or commit, so whoever fixes it doesn't redo your analysis.
   The item stays in review.
+- `findings` — optional structured list for the holder to answer:
+  `[{"text": "…", "where": "src/x.ts:42", "severity": "must"}]` (`where`
+  is optional, `severity` is `must` or `should`). The item page shows them
+  as a checklist, and the next `submit` must set every `must` to `done` or
+  `skipped` (with a reason) or it is refused. Use it for concrete fix
+  points instead of burying them in prose:
+
+  ```bash
+  curl -s -X POST $B/review/GL-0019 -H "$H" \
+    -d '{"verdict":"issues","summary":"Two fix points before this can go in.","note":"1. acceptance 2 fails — see findings","findings":[{"text":"restart counter never resets","where":"src/counter.ts:88","severity":"must"},{"text":"name the flag `restarted` not `rst`","severity":"should"}]}'
+  ```
+
 - "The code is right but the task was wrong" → say exactly that — it is the
   human's call, not yours to fix silently.
 
@@ -205,10 +217,12 @@ ignored — goes back to the holder rather than leaving the human to reject it:
 
 ```bash
 curl -s -X POST $B/bounce/GL-0019 -H "$H" \
-  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes."}'
+  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes.","findings":[{"text":"restart flag ignored on AUTO start","where":"src/main.ts:114","severity":"must"},{"text":"no test run cited in Evidence","severity":"must"}]}'
 ```
 
 `summary` is required on bounce too — the human reads it in `## Review`.
+Give `findings` on a bounce when you can name the exact fix points — the
+holder cannot resubmit until every `must` is marked done or skipped.
 
 **A bounce must name the acceptance item it fails** ("acceptance 2: …") or
 a concrete break (test red, crash, Touches violated). Style, naming or "I'd

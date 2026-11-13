@@ -437,6 +437,102 @@ describe("review / bounce (AI peer review of a submission)", () => {
     expect(r.events[0].data).toBeUndefined();
   });
 
+  it("review with findings stores the checklist and writes it under ## Review", () => {
+    const findings = [
+      { text: "add a test for the empty case", where: "src/x.test.ts", severity: "must" as const },
+      { text: "rename the helper for clarity", severity: "should" as const },
+    ];
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues", summary: "two things to fix", findings },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.findings).toEqual(findings);
+    expect(r.sectionWrites[1]).toEqual({
+      heading: "Review",
+      text: `  findings:\n  1. [must] add a test for the empty case (src/x.test.ts)\n  2. [should] rename the helper for clarity\n`,
+    });
+  });
+
+  it("a review with no findings clears the old checklist", () => {
+    const meta = {
+      ...item("in_review"),
+      findings: [{ text: "old", severity: "must" as const }],
+    };
+    const r = transition(meta, { type: "review", verdict: "ok" }, agent2, ctx({ claim: claimOf() }));
+    expect(r.meta.findings).toBeUndefined();
+  });
+
+  it("bounce with findings stores the fix checklist", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "bounce", reason: "tests red", findings: [{ text: "fix the red test", severity: "must" }] },
+      agent2,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.findings).toEqual([{ text: "fix the red test", severity: "must" }]);
+    expect(r.sectionWrites[1].text).toContain("1. [must] fix the red test");
+  });
+
+  it("submit with finding_states marks each one done or skipped", () => {
+    const meta = {
+      ...item("in_progress"),
+      findings: [
+        { text: "add a test", severity: "must" as const },
+        { text: "rename helper", severity: "should" as const },
+      ],
+    };
+    const r = transition(
+      meta,
+      {
+        type: "submit",
+        evidence: {
+          finding_states: [
+            { finding: 1, state: "done" },
+            { finding: 2, state: "skipped", reason: "helper is gone now" },
+          ],
+        },
+      },
+      agent,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.findings).toEqual([
+      { text: "add a test", severity: "must", state: "done" },
+      { text: "rename helper", severity: "should", state: "skipped", reason: "helper is gone now" },
+    ]);
+    expect(r.sectionWrites[0].text).toContain("answered findings");
+    expect(r.sectionWrites[0].text).toContain("1. done");
+    expect(r.sectionWrites[0].text).toContain("2. skipped — helper is gone now");
+  });
+
+  it("a submit that leaves a must finding with no state is refused", () => {
+    const meta = {
+      ...item("in_progress"),
+      findings: [
+        { text: "add a test", severity: "must" as const },
+        { text: "rename helper", severity: "should" as const },
+      ],
+    };
+    expect(() =>
+      transition(
+        meta,
+        { type: "submit", evidence: { finding_states: [{ finding: 2, state: "done" }] } },
+        agent,
+        ctx({ claim: claimOf() }),
+      ),
+    ).toThrowError(InvalidTransitionError);
+    // …and an out-of-range finding number is refused too
+    expect(() =>
+      transition(
+        meta,
+        { type: "submit", evidence: { finding_states: [{ finding: 9, state: "done" }] } },
+        agent,
+        ctx({ claim: claimOf() }),
+      ),
+    ).toThrowError(InvalidTransitionError);
+  });
+
   it("bounce keeps the claim with the holder, flags issues, logs the reason", () => {
     const r = transition(
       item("in_review"),

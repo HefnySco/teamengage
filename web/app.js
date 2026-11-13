@@ -2521,6 +2521,16 @@ const ItemView = ({ id }) => {
       </div>`}
       ${it.meta.ai_review.summary && html`<div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.summary) }} />`}
       ${it.meta.ai_review.note && html`<div class="md-view mt-1 text-secondary" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
+      ${it.meta.ai_review.report && html`<details class="mt-1"><summary class="text-secondary">report — the reviewer's full notes</summary>
+        <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.report) }} /></details>`}
+    </div>`}
+    ${(it.meta.findings ?? []).length > 0 && html`<div class="alert alert-secondary py-2 px-2 small mb-2">
+      <b>findings</b> <span class="text-secondary">— the last review's checklist; each <b>must</b> needs done or skipped on the next submit</span>
+      ${it.meta.findings.map((f, i) => html`<div key=${i} class="d-flex gap-2 mt-1 align-items-baseline">
+        <span title=${f.state === "done" ? "done" : f.state === "skipped" ? `skipped${f.reason ? `: ${f.reason}` : ""}` : "not answered yet"}>${f.state === "done" ? "☑" : f.state === "skipped" ? "⊘" : "☐"}</span>
+        <span class="badge text-bg-${f.severity === "must" ? "danger" : "warning"}">${f.severity}</span>
+        <span>${i + 1}. ${f.text}${f.where ? html` <span class="text-secondary">(${f.where})</span>` : ""}${f.reason ? html` <span class="text-secondary">— ${f.reason}</span>` : ""}</span>
+      </div>`)}
     </div>`}
     ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}

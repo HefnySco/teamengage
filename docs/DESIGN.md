@@ -276,6 +276,15 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   on the item page); never a gate — `accept`/`reject` stay human-only and
   the turn stays the human's. `submit` clears it (a fresh submission starts
   unreviewed); `bounce` sets it to `issues` with the bounce reason.
+- `findings` is the latest review's **structured checklist** (GL-0321):
+  `review`/`bounce` may carry `findings: [{text, where?, severity:
+  must|should}]`, stored on the item and shown on the item page above the
+  folded report. The holder answers on the next `submit` with
+  `finding_states: [{finding: <1-based>, state: done|skipped, reason?}]` —
+  an unanswered `must` refuses the submit (INVALID_TRANSITION). The states
+  write back onto the checklist and into `## Review`; a review without
+  findings clears the list (it was already answered). Old reviews with
+  only text show as before.
 - An **idea** is a **source document**, not work: a thought, brainstorm or
   spec the human (or an agent, via `propose type:"idea"`) captured for
   later planning. `claim` refuses it ("ideas are sources — plan from them")

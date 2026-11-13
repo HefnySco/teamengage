@@ -57,6 +57,24 @@ export const AiReview = z.object({
 export type AiReview = z.infer<typeof AiReview>;
 
 /**
+ * One structured review finding (GL-0321): what to fix, where, how bad.
+ * `must` blocks resubmission until the holder sets it done or skipped;
+ * `should` is advisory. `state`/`reason` are filled by the holder on
+ * submit — the checklist travels with the latest review on the item.
+ */
+export const ReviewFinding = z.object({
+  text: z.string().min(1),
+  /** file:line or another pointer — free text */
+  where: z.string().optional(),
+  severity: z.enum(["must", "should"]),
+  /** holder's answer on the next submit: done or skipped */
+  state: z.enum(["done", "skipped"]).optional(),
+  /** why skipped (or a short done note) */
+  reason: z.string().optional(),
+});
+export type ReviewFinding = z.infer<typeof ReviewFinding>;
+
+/**
  * Optional cost a session reports with its submission (GL-0318). Every
  * field is optional — agents send what their runner gives them. Written as
  * one `cost:` line in ## Evidence and carried on the submit event's `data`
@@ -126,6 +144,12 @@ export const ItemMeta = z
      * (a new submission starts unreviewed). Shown as a triage badge in review.
      */
     ai_review: AiReview.optional(),
+    /**
+     * The latest review's structured findings checklist (GL-0321).
+     * `review`/`bounce` replace it (a review without findings clears it);
+     * `submit` fills each entry's `state`/`reason` from finding_states.
+     */
+    findings: z.array(ReviewFinding).optional(),
     /**
      * When this item's dependents may start: "done" = a key task, they wait
      * for acceptance; "review" = once it is submitted. Unset → workspace

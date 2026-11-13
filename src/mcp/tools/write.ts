@@ -13,6 +13,13 @@ import { SubmitCost } from "../../core/model/item.js";
  * committed.
  */
 
+/** A finding the reviewer sends (GL-0321) — state/reason are the holder's. */
+const reviewFinding = z.object({
+  text: z.string().min(1),
+  where: z.string().optional(),
+  severity: z.enum(["must", "should"]),
+});
+
 export function registerWriteTools(
   server: McpServer,
   binding: AgentBinding,
@@ -246,7 +253,10 @@ export function registerWriteTools(
         "(Simplified Technical English) walking them through the change (what you changed, how it works, what to look at first), " +
         "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough. " +
         "cost is optional — report {model, tokens_in, tokens_out, usd} when your runner gives them; " +
-        "it lands as a cost: line in ## Evidence and feeds te metrics.",
+        "it lands as a cost: line in ## Evidence and feeds te metrics. " +
+        "When the last review or bounce left findings, answer them in finding_states — " +
+        "{finding: <1-based number>, state: done|skipped, reason?} for each; " +
+        "a `must` finding left unanswered refuses the submit.",
       inputSchema: {
         id: z.string(),
         commits: z.array(z.string()).optional(),
@@ -254,15 +264,24 @@ export function registerWriteTools(
         notes: z.string().optional(),
         walkthrough: z.string(),
         cost: SubmitCost.optional(),
+        finding_states: z
+          .array(
+            z.object({
+              finding: z.number().int().min(1),
+              state: z.enum(["done", "skipped"]),
+              reason: z.string().optional(),
+            }),
+          )
+          .optional(),
       },
     },
-    async ({ id, commits, tests, notes, walkthrough, cost }) => {
+    async ({ id, commits, tests, notes, walkthrough, cost, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, walkthrough, cost });
+        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, finding_states });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);
@@ -281,6 +300,8 @@ export function registerWriteTools(
         "Also give report: the multi-line decision report for the human, in STE, with the sections Verdict, " +
         "What the reviewer checked, What the reviewer could not check, Small notes and Bottom line. " +
         "Agents read summary and note, so keep any note markers there. " +
+        "Use findings for a structured list the holder must answer: {text, where, severity must|should} — " +
+        "a `must` blocks the next submit until the holder marks it done or skipped. " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
         "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
@@ -293,15 +314,16 @@ export function registerWriteTools(
         note: z.string().optional(),
         needs_human: z.boolean().optional(),
         report: z.string().optional(),
+        findings: z.array(reviewFinding).optional(),
       },
     },
-    async ({ id, verdict, summary, note, needs_human, report }) => {
+    async ({ id, verdict, summary, note, needs_human, report, findings }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.review(id, s, verdict, note, summary, needs_human, report);
+        const r = await o.review(id, s, verdict, note, summary, needs_human, report, findings);
         return okText(
           `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}` +
             (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
@@ -322,16 +344,23 @@ export function registerWriteTools(
         "reason is required and goes to the holder; " +
         "summary is required too — one sentence in STE for the human. " +
         "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
+        "List what must be fixed in findings: {text, where, severity must|should} — " +
+        "the holder answers each `must` with done or skipped on the resubmit. " +
         "Each bounce is a failed attempt: on escalation past the holder's tier the claim is released for a stronger agent.",
-      inputSchema: { id: z.string(), reason: z.string(), summary: z.string() },
+      inputSchema: {
+        id: z.string(),
+        reason: z.string(),
+        summary: z.string(),
+        findings: z.array(reviewFinding).optional(),
+      },
     },
-    async ({ id, reason, summary }) => {
+    async ({ id, reason, summary, findings }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.bounce(id, s, reason, summary);
+        const r = await o.bounce(id, s, reason, summary, findings);
         const m = r.meta;
         const where =
           m.status === "in_progress"

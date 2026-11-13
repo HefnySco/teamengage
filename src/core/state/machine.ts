@@ -3,6 +3,7 @@ import type {
   AiReview,
   ItemMeta,
   Question,
+  ReviewFinding,
   StarColor,
   Status,
   SubmitCost,
@@ -53,6 +54,12 @@ export type Action =
         walkthrough?: string;
         /** reported run cost (GL-0318) — one `cost:` line in ## Evidence + event data */
         cost?: SubmitCost;
+        /**
+         * Answers to the latest review's findings (GL-0321): `finding` is the
+         * 1-based index into meta.findings. Every `must` finding needs an
+         * entry — `done` or `skipped` with a reason — or the submit refuses.
+         */
+        finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
       };
     }
   /**
@@ -63,13 +70,14 @@ export type Action =
    * it keeps the accept strictly the human's (no auto-accept). `report` is the
    * optional multi-line decision report for the human; nothing parses it.
    */
-  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string }
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string; findings?: ReviewFinding[] }
   /**
    * A second agent session bounces a broken submission back to its holder
    * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
    * a row the item stays in review for the human (record a review instead).
+   * `findings` lists what must be fixed — the checklist for the resubmit.
    */
-  | { type: "bounce"; reason: string; summary?: string }
+  | { type: "bounce"; reason: string; summary?: string; findings?: ReviewFinding[] }
   /**
    * The holder is stuck: it stops, writes down the problem, what it tried
    * and where it left off, and gives the item back for a fresh session
@@ -472,6 +480,41 @@ export function transition(
     case "submit": {
       requireHolder(actor, ctx, action.type);
       if (from !== "in_progress") fail(from, action.type);
+      // GL-0321: the holder answers the last review's findings. Every `must`
+      // needs done or skipped — an unanswered must refuses the submit.
+      const findingStates = action.evidence?.finding_states;
+      const findings = meta.findings ?? [];
+      const stateByFinding = new Map<number, { state: "done" | "skipped"; reason?: string }>();
+      for (const s of findingStates ?? []) {
+        if (!Number.isInteger(s.finding) || s.finding < 1 || s.finding > findings.length) {
+          throw new InvalidTransitionError(
+            `submit: finding ${s.finding} does not exist — the last review left ${findings.length} findings`,
+          );
+        }
+        stateByFinding.set(s.finding, s);
+      }
+      for (let i = 0; i < findings.length; i++) {
+        if (findings[i].severity === "must" && !stateByFinding.has(i + 1)) {
+          throw new InvalidTransitionError(
+            `submit: must-finding ${i + 1} ("${findings[i].text.slice(0, 60)}") has no state — set it done or skipped (with a reason)`,
+          );
+        }
+      }
+      if (stateByFinding.size) {
+        out.meta.findings = findings.map((f, i) => {
+          const s = stateByFinding.get(i + 1);
+          return s ? { ...f, state: s.state, ...(s.reason ? { reason: s.reason } : {}) } : f;
+        });
+        out.sectionWrites.push({
+          heading: "Review",
+          text:
+            `- ${stamp} ${who} answered findings:\n` +
+            [...stateByFinding.entries()]
+              .map(([n, s]) => `  ${n}. ${s.state}${s.reason ? ` — ${s.reason}` : ""}`)
+              .join("\n") +
+            "\n",
+        });
+      }
       set("in_review", action.note);
       delete out.meta.ai_review; // a fresh submission starts unreviewed
       delete out.meta.auto_accept_off; // …and is eligible for auto-accept again
@@ -547,6 +590,22 @@ export function transition(
             ? `- ${stamp} ${who} ${action.verdict}${action.needs_human ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
             : `- ${stamp} ${who} ${verdict}${action.needs_human ? " (needs the human's call)" : ""}\n`,
       });
+      // GL-0321: a new review replaces the findings checklist; a review
+      // without findings clears the old list (it was already answered).
+      if (action.findings?.length) {
+        out.meta.findings = action.findings;
+        out.sectionWrites.push({
+          heading: "Review",
+          text:
+            `  findings:\n` +
+            action.findings
+              .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}`)
+              .join("\n") +
+            "\n",
+        });
+      } else {
+        delete out.meta.findings;
+      }
       return out;
     }
 
@@ -593,6 +652,19 @@ export function transition(
           ? `- ${stamp} ${who} bounced — ${action.summary} (${action.reason})\n`
           : `- ${stamp} ${who} bounced: ${action.reason}\n`,
       });
+      // GL-0321: a bounce's findings are the fix checklist for the resubmit.
+      if (action.findings?.length) {
+        out.meta.findings = action.findings;
+        out.sectionWrites.push({
+          heading: "Review",
+          text:
+            `  findings:\n` +
+            action.findings
+              .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}`)
+              .join("\n") +
+            "\n",
+        });
+      }
       // the claim is kept on purpose: the holder has the context and the
       // worktree, so it fixes and resubmits (like the human's reject)
       return out;

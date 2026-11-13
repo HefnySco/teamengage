@@ -146,6 +146,14 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
               : "";
           lines.push(`ai_review: ${r.verdict} by ${r.reviewed_by}${r.needs_human ? " (needs the human's call)" : ""}${detail}`);
         }
+        if (it.meta.findings?.length) {
+          lines.push("findings (answer each on submit with finding_states):");
+          for (const [i, f] of it.meta.findings.entries()) {
+            lines.push(
+              `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}${f.state ? ` → ${f.state}${f.reason ? ` — ${f.reason}` : ""}` : ""}`,
+            );
+          }
+        }
         if (it.meta.type === "epic" && it.plan_state) {
           lines.push(
             `plan: ${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0} — epics are plans; work their children, not this item`,
