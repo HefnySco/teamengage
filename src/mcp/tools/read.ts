@@ -41,6 +41,10 @@ export const HELLO_RULES =
 export const SOLO_RULES =
   "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts (a reviewer's needs_human flag keeps it the human's call); key tasks, drop/delete and pushing stay the human's";
 
+/** Session roles: what a session declares at hello, and what `next` picks. */
+export const ROLE_RULES =
+  "role: declare yours at hello (planner|coder|reviewer|ops) — next then picks for it: reviewer → in_review items you did not submit, planner → unplanned ideas + light-authored drafts to vet, coder/ops → ready items; no role → next as usual";
+
 /** Model tiers: what a session declares at hello, and what it may then do. */
 export const TIER_RULES =
   "tiers: declare yours at hello (light|standard|heavy) · you can't claim an item above your tier · stuck (same error twice, no progress)? STOP and handoff with problem/tried/state/next — a fresh session continues from your note · every bounce or handoff is an attempt; after escalate_after attempts the item's tier goes up, at max_attempts it waits for the human";
@@ -51,26 +55,28 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     {
       description:
         "Register a session; returns session id, machine, workspace summary, claims to resume. " +
-        "tier: your model class — light (Haiku-class), standard (Sonnet-class), heavy (Opus-class).",
+        "tier: your model class — light (Haiku-class), standard (Sonnet-class), heavy (Opus-class). " +
+        "role: what you're here to do — planner, coder, reviewer or ops; next picks its pool for it.",
       inputSchema: {
         agent: z.string(),
         workspace: z.string().optional(),
         tier: z.enum(["light", "standard", "heavy"]).optional(),
+        role: z.enum(["planner", "coder", "reviewer", "ops"]).optional(),
       },
     },
-    async ({ agent, workspace, tier }) => {
+    async ({ agent, workspace, tier, role }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
         // a repeat hello on this connection replaces the old session —
         // retire it so its claims rebind instead of looking "live"
         if (binding.session) ctx.sessions.disconnect(binding.session.id);
-        const { session, resume } = await ops.hello(agent, binding.clientPid, tier);
+        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role);
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };
         const lines = [
-          `session ${session.id} on ${session.machine}${session.tier ? ` tier ${session.tier}` : ""}`,
+          `session ${session.id} on ${session.machine}${session.tier ? ` tier ${session.tier}` : ""}${session.role ? ` role ${session.role}` : ""}`,
           `workspace ${ws.name} items:${counts.items} ready:${counts.ready}`,
         ];
         if (resume.length) {
@@ -79,6 +85,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         lines.push(...handoffLines(await handoffStatus(ops.wsr)));
         lines.push(HELLO_RULES);
         lines.push(TIER_RULES);
+        lines.push(ROLE_RULES);
         if (session.tier && session.tier !== "light") {
           const vet = [...ops.index.items.values()].filter(
             (i) => i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by && !i.meta.archived,
@@ -103,7 +110,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
-        const items = ops.next(limit ?? 3, domain, binding.session?.tier);
+        const items = ops.next(limit ?? 3, domain, binding.session);
         if (!items.length) return okText("nothing ready");
         return okText(items.map(itemLine).join("\n"));
       } catch (e) {

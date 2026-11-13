@@ -254,6 +254,22 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  app.get("/api/sessions", async (_req, reply) => {
+    try {
+      return ctx.sessions.list().map((s) => ({
+        id: s.id,
+        agent: s.agent,
+        machine: s.machine,
+        tier: s.tier,
+        role: s.role,
+        connected_at: s.connected_at,
+        last_seen: s.last_seen,
+      }));
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   app.get("/api/claims", async (req, reply) => {
     try {
       const ops = opsFor(ctx, wsOf(req.query));

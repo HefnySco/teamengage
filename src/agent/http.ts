@@ -143,16 +143,24 @@ RULES
      session that can't answer.
   7. Optional: declare a model tier at hello — light (Haiku-class), standard
      (Sonnet-class) or heavy (Opus-class) — and items above it are hidden
-     from next and refused on claim. When stuck — same error twice, no new
+     from next and refused on claim. You may also declare a role at hello —
+     planner, coder, reviewer or ops — and next picks its pool for it:
+     a reviewer gets in_review items it did not submit, a planner gets
+     unplanned ideas and light-authored drafts to vet, a coder gets ready
+     items. When stuck — same error twice, no new
      progress — STOP and call handoff (problem, tried, state, next): the
      claim is released and a fresh session continues from your note. Bounces
      and handoffs count as attempts; the tier goes up after escalate_after
      of them, and at max_attempts the item waits for the human.
 
 AUTHORING
-${AUTHORING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
+${AUTHORING_RULES.split("\n")
+  .map((l) => (l ? `  ${l}` : l))
+  .join("\n")}
 WRITING
-${WRITING_RULES.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}
+${WRITING_RULES.split("\n")
+  .map((l) => (l ? `  ${l}` : l))
+  .join("\n")}
 SESSION
   curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
     → first line: "token <TOKEN>"; send it on every later call:

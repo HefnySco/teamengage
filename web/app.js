@@ -968,6 +968,7 @@ const NewIdea = ({ projects, onClose, onCreated }) => {
 const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
   const { data: ws, reload: reloadWs } = useApi("/api/workspace");
+  const { data: sessions } = useApi("/api/sessions");
   const [ideaOpen, setIdeaOpen] = useState(false);
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
@@ -1070,6 +1071,7 @@ const Board = ({ onOpen }) => {
     saveSearch("te.board.noplans", v ? "1" : "");
   };
   const eff = SORTS[sort] ? sort : "created-asc";
+  const sessRole = new Map((sessions ?? []).map((s) => [s.id, s.role]));
   const domEntries = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
   const domTag = ([d, n]) => html`
     <span key=${d} class="triage-tag clickable ${domain === d ? "on" : ""}" title="show only #${d} (click again to clear)"
@@ -1140,6 +1142,10 @@ const Board = ({ onOpen }) => {
         title="show only ${k.replace("_", " ")} ideas (click again to clear)" onClick=${() => setIdeaFilter(k)}>${k.replace("_", " ")} <span class="n">${ideaCounts[k]}</span></span>`)}
       ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
+    ${(sessions ?? []).length > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
+      <span class="small text-body-tertiary me-1">Sessions</span>
+      ${sessions.map((s) => html`<span key=${s.id} class="triage-tag" title=${`${s.id} — connected ${ago(s.connected_at)} ago`}>${s.agent}@${s.machine}${s.role ? ` · ${s.role}` : ""}${s.tier ? ` · ${s.tier}` : ""}</span>`)}
+    </div>`}
     <div class="board-cols">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
@@ -1192,7 +1198,7 @@ const Board = ({ onOpen }) => {
                         ${i.auto_accept_at && html`<span class="badge text-bg-warning" title=${`autonomy: solo — the daemon accepts this at ${new Date(i.auto_accept_at).toLocaleString()} unless you act (stop it on the item page)`}>⏱ ${untilText(i.auto_accept_at)}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
-                            <span class="av" title=${`${i.claim.holder}@${i.claim.machine} · claimed ${ago(i.claim.claimed_at)} ago`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
+                            <span class="av" title=${`${i.claim.holder}@${i.claim.machine}${sessRole.get(i.claim.holder) ? ` · role ${sessRole.get(i.claim.holder)}` : ""} · claimed ${ago(i.claim.claimed_at)} ago`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>
                             ${i.claim.conflicted && html`<span class="text-danger">conflict</span>`}
                             ${i.claim.unsynced && html`<span class="text-warning-emphasis">unsynced</span>`}
                             ${staleClaim(i.claim) && html`<span class="text-warning-emphasis">stale</span>`}

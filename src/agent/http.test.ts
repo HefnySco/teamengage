@@ -128,21 +128,30 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 
   it("tiers: hidden/refused below tier; a stuck holder hands off and a fresh session reads the note", async () => {
-    const light = (await call("POST", "/agent/hello", { body: { agent: "scout", tier: "light" } })).text;
+    const light = (await call("POST", "/agent/hello", { body: { agent: "scout", tier: "light" } }))
+      .text;
     expect(light).toMatch(/tier light/);
     const lt = /^token (\S+)/.exec(light)![1];
-    expect((await call("GET", "/agent/next?limit=20", { token: lt })).text).not.toContain("WS-0006");
+    expect((await call("GET", "/agent/next?limit=20", { token: lt })).text).not.toContain(
+      "WS-0006",
+    );
     const refused = await call("POST", "/agent/claim/WS-0006", { token: lt });
     expect(refused.status).toBe(409);
     expect(refused.text).toContain("standard-tier");
     const st = /^token (\S+)/.exec(
       (await call("POST", "/agent/hello", { body: { agent: "forge", tier: "standard" } })).text,
     )![1];
-    expect((await call("GET", "/agent/next?limit=20", { token: st })).text.split("\n")[0]).toContain("WS-0006");
+    expect(
+      (await call("GET", "/agent/next?limit=20", { token: st })).text.split("\n")[0],
+    ).toContain("WS-0006");
     expect((await call("POST", "/agent/claim/WS-0006", { token: st })).text).toMatch(/^claimed/);
     const h = await call("POST", "/agent/handoff/WS-0006", {
       token: st,
-      body: { problem: "build fails: X undefined", tried: "renamed import", next: "check the barrel export" },
+      body: {
+        problem: "build fails: X undefined",
+        tried: "renamed import",
+        next: "check the barrel export",
+      },
     });
     expect(h.text).toMatch(/^handed off WS-0006 → ready \(attempt 1, tier standard\)/);
     const st2 = /^token (\S+)/.exec(
@@ -364,6 +373,62 @@ describe("plain-HTTP agent API", () => {
     expect(brief.status).toBe(200);
     expect(brief.text).toContain("WS-0004");
     expect(brief.text).toContain("plan:");
+  });
+
+  it("roles: hello takes one — reviewer gets others' submissions, coder/no-role the ready pool, bad role is USAGE", async () => {
+    // an unknown role is refused with USAGE (GL-0323)
+    const bad = await call("POST", "/agent/hello", { body: { agent: "joker", role: "king" } });
+    expect(bad.status).toBe(400);
+    expect(bad.text).toContain("USAGE");
+
+    // no role: next is the ready pool, unchanged — no in_review items, no epics
+    const plain = await hello("plain");
+    const plainNext = (await call("GET", "/agent/next?limit=20", { token: plain })).text;
+    expect(plainNext).toContain("WS-0006"); // handed off to ready in the tier test
+    expect(plainNext).not.toContain("WS-0005"); // in_review
+    expect(plainNext).not.toContain("WS-0004"); // epic
+
+    // coder behaves the same as no role
+    const coder = await hello("builder");
+    void coder;
+    const coderText = (
+      await call("POST", "/agent/hello", { body: { agent: "builder", role: "coder" } })
+    ).text;
+    const ct = /^token (\S+)/.exec(coderText)![1];
+    expect((await call("GET", "/agent/next?limit=20", { token: ct })).text).toContain("WS-0006");
+
+    // reviewer: only in_review items it did not submit — WS-0005 (worker's)
+    const revText = (
+      await call("POST", "/agent/hello", { body: { agent: "peer", role: "reviewer" } })
+    ).text;
+    expect(revText).toContain("role reviewer");
+    const rev = /^token (\S+)/.exec(revText)![1];
+    let rNext = (await call("GET", "/agent/next?limit=20", { token: rev })).text;
+    expect(rNext).toContain("WS-0005");
+    expect(rNext).not.toContain("WS-0006");
+
+    // its own submission leaves the pool once it becomes the holder
+    expect((await call("POST", "/agent/claim/WS-0006", { token: rev })).text).toMatch(/^claimed/);
+    expect(
+      (
+        await call("POST", "/agent/submit/WS-0006", {
+          token: rev,
+          body: { tests: "1 passed", walkthrough: "Changed the thing." },
+        })
+      ).text,
+    ).toMatch(/^in_review/);
+    rNext = (await call("GET", "/agent/next?limit=20", { token: rev })).text;
+    expect(rNext).toContain("WS-0005");
+    expect(rNext).not.toContain("WS-0006");
+
+    // planner: the fixture has no unplanned ideas or light drafts — empty pool
+    const planText = (
+      await call("POST", "/agent/hello", { body: { agent: "pm", role: "planner" } })
+    ).text;
+    const pt = /^token (\S+)/.exec(planText)![1];
+    expect((await call("GET", "/agent/next?limit=20", { token: pt })).text).toContain(
+      "nothing ready",
+    );
   });
 });
 

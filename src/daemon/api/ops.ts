@@ -85,8 +85,9 @@ export class WorkspaceOps {
     agent: string,
     pid?: number,
     tier?: Session["tier"],
+    role?: Session["role"],
   ): Promise<{ session: Session; resume: Claim[] }> {
-    const session = this.sessions.hello(agent, pid, tier);
+    const session = this.sessions.hello(agent, pid, tier, role);
     // rebind only claims held by DEAD sessions — a second window of the same
     // agent on this machine must not take over a live session's claims.
     // (Dead = transport closed, client process gone, or minted before a
@@ -131,15 +132,35 @@ export class WorkspaceOps {
   // ---- reads ------------------------------------------------------------
 
   /**
-   * `tier`: the asking session's tier — items needing more are left out, and
-   * items at exactly that tier come first (a heavy agent isn't handed light work
-   * while heavy work waits).
+   * `session`: the asking session — its tier hides items above it (its own
+   * tier first) and its role picks the pool: a reviewer gets in_review items
+   * it did not submit, a planner gets unplanned ideas and light-authored
+   * drafts to vet, a coder (or no role) gets ready items as usual (GL-0323).
    */
-  next(limit = 3, domain?: string, tier?: Session["tier"]): IndexedItem[] {
+  next(limit = 3, domain?: string, session?: Session): IndexedItem[] {
+    const d = domain ? normalizeDomain(domain) : undefined;
+    if (session?.role === "reviewer") {
+      return [...this.index.items.values()]
+        .filter((i) => i.meta.status === "in_review" && !i.meta.archived)
+        .filter((i) => i.claim?.holder !== session.id) // never your own submission
+        .filter((i) => !d || i.meta.domains.includes(d))
+        .slice(0, limit);
+    }
+    if (session?.role === "planner") {
+      return [...this.index.items.values()]
+        .filter((i) => !i.meta.archived)
+        .filter(
+          (i) =>
+            (i.meta.type === "idea" && i.idea_state === "unplanned") ||
+            (i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by),
+        )
+        .filter((i) => !d || i.meta.domains.includes(d))
+        .slice(0, limit);
+    }
+    const tier = session?.tier;
     const claimedTargets = [...this.index.claims.values()]
       .filter((c) => !c.conflicted)
       .flatMap((c) => c.targets);
-    const d = domain ? normalizeDomain(domain) : undefined;
     return this.index
       .readyItems()
       .filter((i) => i.meta.type !== "epic" && i.meta.type !== "idea") // plans and sources — agents claim tasks

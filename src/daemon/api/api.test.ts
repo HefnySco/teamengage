@@ -1560,3 +1560,45 @@ describe("idea fields in the item API (DE-0133)", () => {
     expect("idea_progress" in plainBrief.item).toBe(false);
   });
 });
+describe("session role at hello (GL-0323)", () => {
+  it("/api/sessions lists live sessions with their role", async () => {
+    ctx.sessions.hello("planner-1", undefined, undefined, "planner");
+    ctx.sessions.hello("reviewer-1", undefined, "heavy", "reviewer");
+    ctx.sessions.hello("plain-1");
+    const res = await api("/api/sessions");
+    expect(res.status).toBe(200);
+    const list = (await res.json()) as Array<{ id: string; role?: string; tier?: string }>;
+    expect(list.find((s) => s.id.startsWith("planner-1@"))?.role).toBe("planner");
+    expect(list.find((s) => s.id.startsWith("reviewer-1@"))?.role).toBe("reviewer");
+    expect(list.find((s) => s.id.startsWith("reviewer-1@"))?.tier).toBe("heavy");
+    expect("role" in (list.find((s) => s.id.startsWith("plain-1@")) ?? {})).toBe(false);
+  });
+
+  it("role picks next's pool: reviewer sees others' submissions, no role sees ready items", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "role-check" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const submitter = ctx.sessions.hello("doer", undefined, undefined, "reviewer");
+    const reviewer = ctx.sessions.hello("watcher", undefined, undefined, "reviewer");
+    await ops.claim(id, submitter);
+    await ops.submit(id, submitter, { walkthrough: "did it" });
+
+    const reviewerNext = ops.next(50, undefined, reviewer).map((i) => i.meta.id);
+    expect(reviewerNext).toContain(id); // someone else's submission
+
+    // the submitting session itself never sees its own submission
+    expect(ops.next(50, undefined, submitter).map((i) => i.meta.id)).not.toContain(id);
+    // a different session of the same agent did not submit it — it sees it
+    const selfReviewer = ctx.sessions.hello("doer", undefined, undefined, "reviewer");
+    expect(ops.next(50, undefined, selfReviewer).map((i) => i.meta.id)).toContain(id);
+
+    // no role → the ready pool, unchanged
+    const plainNext = ops.next(50, undefined, ctx.sessions.hello("plain")).map((i) => i.meta.id);
+    expect(plainNext).not.toContain(id);
+  });
+});
+
