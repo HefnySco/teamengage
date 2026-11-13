@@ -1179,3 +1179,45 @@ describe("declared model on submit and review (GL-0360)", () => {
     expect(r.meta.ai_review?.reviewer_model).toBe("claude-sonnet-5-5");
   });
 });
+
+describe("review must come from a different model (DE-0161)", () => {
+  const submittedBy = (a: Actor) =>
+    transition(item("in_progress"), { type: "submit" }, a, ctx({ claim: claimOf(a.session) }));
+
+  it("a review by the same declared model is refused", () => {
+    const sub = submittedBy({ ...agent, model: "swe-2" });
+    const sameModel: Actor = { ...agent2, model: "swe-2" };
+    expect(() =>
+      transition(sub.meta, { type: "review", verdict: "ok" }, sameModel, ctx({ claim: claimOf() })),
+    ).toThrow(/different model/);
+    expect(() =>
+      transition(sub.meta, { type: "bounce", reason: "x" }, sameModel, ctx({ claim: claimOf() })),
+    ).toThrow(/different model/);
+  });
+
+  it("a different declared model reviews fine", () => {
+    const sub = submittedBy({ ...agent, model: "swe-2" });
+    const r = transition(
+      sub.meta,
+      { type: "review", verdict: "ok" },
+      { ...agent2, model: "claude-sonnet-5-5" },
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.ai_review?.verdict).toBe("ok");
+  });
+
+  it("with no models declared the agent names compare — same agent refused", () => {
+    const sub = submittedBy(agent);
+    // a second window of the same agent: different session id, same name
+    const twin: Actor = { kind: "agent", session: "claude-code@desktop#beef", machine: "desktop" };
+    expect(() =>
+      transition(sub.meta, { type: "review", verdict: "ok" }, twin, ctx({ claim: claimOf() })),
+    ).toThrow(/different model/);
+  });
+
+  it("either side unknown → the review stands", () => {
+    const sub = submittedBy({ ...agent, model: "swe-2" });
+    const r = transition(sub.meta, { type: "review", verdict: "ok" }, agent2, ctx({ claim: claimOf() }));
+    expect(r.meta.ai_review?.verdict).toBe("ok");
+  });
+});

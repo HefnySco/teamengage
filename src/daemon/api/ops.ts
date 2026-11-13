@@ -158,9 +158,16 @@ export class WorkspaceOps {
   next(limit = 3, domain?: string, session?: Session): IndexedItem[] {
     const d = domain ? normalizeDomain(domain) : undefined;
     if (session?.role === "reviewer") {
+      // DE-0161: the reviewer must be a different model — hide submissions
+      // the same model produced (model id, or agent name as the fallback)
+      const mine = session.model ?? session.agent;
       return [...this.index.items.values()]
         .filter((i) => i.meta.status === "in_review" && !i.meta.archived)
         .filter((i) => i.claim?.holder !== session.id) // never your own submission
+        .filter((i) => {
+          const submitter = i.meta.submitted_model ?? i.claim?.holder.split("@")[0];
+          return !submitter || submitter !== mine;
+        })
         .filter((i) => !d || i.meta.domains.includes(d))
         .slice(0, limit);
     }

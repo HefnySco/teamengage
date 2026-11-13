@@ -36,7 +36,10 @@ H="X-TE-Session: $T"
 Started by `te run`? Use `H="X-TE-Session: $TE_SESSION"` and skip `hello`.
 The task to review is in `$TE_ITEM`.
 
-Name the session `<you>-review` — the human sees who reviewed.
+Name the session `<you>-review` — the human sees who reviewed. Always
+declare `model` — TeamEngage refuses a review or bounce from the same
+model that submitted the work (a session with no model falls back to its
+agent name). `next` already hides those items from you.
 
 The hello output shows workspace + your claims, then the full protocol — the
 same rules as implementing (`plans behind … — STOP` → ask the human to pull

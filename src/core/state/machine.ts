@@ -241,15 +241,27 @@ function requireHumanOrDaemon(actor: Actor, action: string): void {
 }
 
 /**
- * Peer review of a submission is a *second opinion*: agent-only, and never
- * the holder — reviewing your own work would just manufacture a trust marker.
+ * Peer review of a submission is a *second opinion*: agent-only, never
+ * the holder, and never the same model (DE-0161) — a model reviewing its
+ * own output would just manufacture a trust marker. The reviewer key is
+ * its declared model, falling back to its agent name when undeclared;
+ * the submitter key is meta.submitted_model, falling back to the holder's
+ * agent name. Either side unknown → the review stands.
  */
-function requireReviewer(actor: Actor, ctx: TransitionCtx, action: string): void {
+function requireReviewer(actor: Actor, ctx: TransitionCtx, action: string, meta: ItemMeta): void {
   if (actor.kind !== "agent") {
     throw new ForbiddenError(`${action} is an agent-only action (the human has accept/reject)`);
   }
   if (ctx.claim && ctx.claim.holder === actor.session) {
     throw new ForbiddenError(`${action}: the holder may not review its own submission`);
+  }
+  const nameOf = (session: string) => session.split("@")[0];
+  const submitter = meta.submitted_model ?? (ctx.claim ? nameOf(ctx.claim.holder) : undefined);
+  const reviewer = actor.model ?? nameOf(actor.session);
+  if (submitter && reviewer === submitter) {
+    throw new ForbiddenError(
+      `${action}: the reviewer must be a different model — ${reviewer} submitted this work`,
+    );
   }
 }
 
@@ -629,7 +641,7 @@ export function transition(
     }
 
     case "review": {
-      requireReviewer(actor, ctx, action.type);
+      requireReviewer(actor, ctx, action.type, meta);
       if (from !== "in_review") fail(from, action.type);
       out.meta.ai_review = {
         verdict: action.verdict,
@@ -687,7 +699,7 @@ export function transition(
     }
 
     case "bounce": {
-      requireReviewer(actor, ctx, action.type);
+      requireReviewer(actor, ctx, action.type, meta);
       if (from !== "in_review") fail(from, action.type);
       if ((ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES) {
         throw new ForbiddenError(

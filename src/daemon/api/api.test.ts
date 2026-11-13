@@ -1605,9 +1605,21 @@ describe("session role at hello (GL-0323)", () => {
 
     // the submitting session itself never sees its own submission
     expect(ops.next(50, undefined, submitter).map((i) => i.meta.id)).not.toContain(id);
-    // a different session of the same agent did not submit it — it sees it
+    // DE-0161: a second window of the same agent is the same model — hidden
     const selfReviewer = ctx.sessions.hello("doer", { role: "reviewer" });
-    expect(ops.next(50, undefined, selfReviewer).map((i) => i.meta.id)).toContain(id);
+    expect(ops.next(50, undefined, selfReviewer).map((i) => i.meta.id)).not.toContain(id);
+
+    // DE-0161: declared models decide — a same-model reviewer is hidden,
+    // a different-model reviewer sees the item
+    const sameModel = ctx.sessions.hello("watcher", { role: "reviewer", model: "swe-2" });
+    expect(ops.next(50, undefined, sameModel).map((i) => i.meta.id)).toContain(id); // submitter declared no model
+    const subM = ctx.sessions.hello("doer-m", { role: "reviewer", model: "swe-2" });
+    const { ids: ids2 } = await wsr.store.createItems([{ type: "task", title: "model-check" }], human);
+    await ops.approve(ids2[0]);
+    await ops.claim(ids2[0], subM);
+    await ops.submit(ids2[0], subM, { walkthrough: "did it" });
+    expect(ops.next(50, undefined, sameModel).map((i) => i.meta.id)).not.toContain(ids2[0]);
+    expect(ops.next(50, undefined, reviewer).map((i) => i.meta.id)).toContain(ids2[0]);
 
     // no role → the ready pool, unchanged
     const plainNext = ops.next(50, undefined, ctx.sessions.hello("plain")).map((i) => i.meta.id);

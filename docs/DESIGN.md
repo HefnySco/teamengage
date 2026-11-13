@@ -215,11 +215,14 @@ draft ──approve_plan──▶ ready ──claim──▶ in_progress ──s
                           └───────────────── release ◀─────────────────┘
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
                        ready|hold|done ──to_draft──▶ draft
-review  = agent only, in_review, never the holder: records an advisory
-          verdict on the submission (ai_review; status untouched)
-bounce  = agent only, in_review, never the holder: ──▶ in_progress, claim
-          kept — the holder fixes and resubmits; capped at 2 in a row,
-          then the item stays in review and only a verdict may be recorded
+review  = agent only, in_review, never the holder, never the submitter's
+          model (a session without a declared model falls back to its
+          agent name): records an advisory verdict on the submission
+          (ai_review; status untouched)
+bounce  = agent only, in_review, never the holder, never the submitter's
+          model: ──▶ in_progress, claim kept — the holder fixes and
+          resubmits; capped at 2 in a row, then the item stays in review
+          and only a verdict may be recorded
 withdraw = holder only, in_review ──▶ in_progress, claim kept: the
           submitter pulls its submission back to keep working before the
           human looks at it
