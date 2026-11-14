@@ -1583,13 +1583,40 @@ const Plans = ({ onOpen }) => {
 };
 
 // ---- Metrics (GL-0319) ---------------------------------------------------------
-// agent/tier scorecard from /api/metrics + plan health derived from the items
+// agent/tier scorecard from /api/metrics, each with a share-of-items donut
+// donut chart: one stroked ring segment per group — a single-slice chart
+// needs no arc special-casing (its dash runs the full circumference); the
+// segment colour is the stable name-hash colour used for domains
+const ShareDonut = ({ rows }) => {
+  const total = rows.reduce((a, r) => a + r.items, 0);
+  const size = 118, R = 46, C = 2 * Math.PI * R, w = 20;
+  let off = 0;
+  const segs = rows.map((g) => {
+    const s = { key: g.key, items: g.items, done: g.done, frac: total ? g.items / total : 0, off, color: fallbackColor(g.key) };
+    off += s.frac;
+    return s;
+  });
+  return html`<div class="met-donut">
+    <svg width=${size} height=${size} viewBox="0 0 ${size} ${size}" role="img" aria-label="share of items">
+      ${segs.map((s) => html`<circle key=${s.key} cx=${size / 2} cy=${size / 2} r=${R} fill="none" stroke=${s.color} stroke-width=${w}
+        stroke-dasharray="${s.frac * C} ${C}" stroke-dashoffset=${-s.off * C} transform="rotate(-90 ${size / 2} ${size / 2})">
+        <title>${s.key}: ${s.items} item${s.items === 1 ? "" : "s"} (${Math.round(s.frac * 100)}%)</title></circle>`)}
+      <text x=${size / 2} y=${size / 2} text-anchor="middle" dominant-baseline="central" class="met-donut-total">${total}</text>
+    </svg>
+    <div class="met-donut-legend">
+      ${segs.map((s) => html`<div class="met-donut-row" key=${s.key}>
+        <span class="met-dot" style=${{ background: s.color }}></span>
+        <span class="met-key">${s.key}</span>
+        <span class="text-secondary">${s.items} items · ${s.done} done</span>
+      </div>`)}
+    </div>
+  </div>`;
+};
+
 const Metrics = ({ onOpen }) => {
   const { data: m, reload } = useApi("/api/metrics");
-  const { data: items } = useApi("/api/items");
-  const { data: ws } = useApi("/api/workspace");
-  if (!m || !items) return html`<p class="text-secondary">loading…</p>`;
-  const mctx = { byId: new Map(items.map((i) => [i.id, i])), maxAttempts: ws?.max_attempts, staleMs: parseDurMs(ws?.stale_after) ?? STALE_MS };
+  const [openRow, setOpenRow] = useState(null);
+  if (!m) return html`<p class="text-secondary">loading…</p>`;
   const tok = (n) => (!n ? "0" : n < 1000 ? String(n) : n < 1e6 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`);
   const usd = (n) => (!n ? "-" : `$${n < 1 ? n.toFixed(4).replace(/0+$/, "") : n.toFixed(2)}`);
   const pct = (x) => (x === undefined ? "-" : `${Math.round(x * 100)}%`);
@@ -1598,67 +1625,6 @@ const Metrics = ({ onOpen }) => {
     const h = ms / 3600000;
     return h < 1 ? `${Math.round(ms / 60000)}m` : h < 24 ? `${h < 10 ? h.toFixed(1) : Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
   };
-  // plan health: one row per open plan — parts done, parts stuck, oldest
-  // draft age, open found problems
-  const kids = new Map();
-  for (const i of items) {
-    if (!i.parent) continue;
-    if (!kids.has(i.parent)) kids.set(i.parent, []);
-    kids.get(i.parent).push(i);
-  }
-  const subtree = (root) => {
-    const out = [];
-    const walk = (id) => {
-      for (const c of kids.get(id) ?? []) {
-        out.push(c);
-        walk(c.id);
-      }
-    };
-    walk(root);
-    return out;
-  };
-  const byIdMap = mctx.byId;
-  const hasEpicAbove = (i) => {
-    const seen = new Set([i.id]);
-    let p = i.parent;
-    while (p && !seen.has(p)) {
-      seen.add(p);
-      const a = byIdMap.get(p);
-      if (!a) return false;
-      if (a.type === "epic") return true;
-      p = a.parent;
-    }
-    return false;
-  };
-  const isProblem = (i) =>
-    !doneish(i.status) && !i.archived &&
-    ((i.found_by ?? []).length > 0 || (i.found_here ?? []).length > 0 ||
-      ((i.type === "bug" || (i.domains ?? []).includes("bug")) && hasEpicAbove(i)));
-  const plans = items
-    .filter((i) => i.type === "epic" && !i.archived && !doneish(i.status) && i.plan_state !== "done")
-    .map((p) => {
-      const parts = subtree(p.id).filter((x) => !x.archived);
-      const open = parts.filter((x) => !doneish(x.status));
-      const stuck = open.filter((x) => isStuck(x, mctx));
-      const drafts = parts.filter((x) => x.status === "draft");
-      const oldestDraft = drafts.map((d) => d.created ?? d.updated ?? "").sort()[0];
-      return {
-        plan: p,
-        total: parts.length,
-        done: parts.filter((x) => doneish(x.status)).length,
-        stuck: stuck.length,
-        drafts: drafts.length,
-        oldestDraft,
-        problems: parts.filter(isProblem).length,
-      };
-    })
-    .sort((a, b) => b.stuck - a.stuck || b.problems - a.problems || a.plan.id.localeCompare(b.plan.id));
-  const boardSearch = (q, found) => {
-    saveSearch("te.board.q", q);
-    saveSearch("te.board.found", found ? "1" : "");
-    nav("board");
-  };
-  const [openRow, setOpenRow] = useState(null);
   const groupTable = (label, gs) => {
     const cost = gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
     const cols = cost ? 8 : 6;
@@ -1680,18 +1646,32 @@ const Metrics = ({ onOpen }) => {
           </td></tr>`}`)}
       </tbody></table></div>`;
   };
+  const chip = (cls, k, v, title) => html`<span class="met-chip ${cls}" title=${title}>
+    <span class="met-chip-k">${k}</span><span class="met-chip-v">${v}</span></span>`;
+  const bouncePerItem = m.totals.items ? m.totals.bounces / m.totals.items : undefined;
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Metrics</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload()])} />
-      <span class="text-secondary small">${m.totals.items} items with events — ${m.totals.done} done, ${m.totals.review_rounds} review rounds, ${m.totals.bounces} bounces</span>
+      <span class="d-inline-flex gap-2">
+        ${chip("met-chip-items", "total items", m.totals.items, "items with events")}
+        ${chip("met-chip-done", "total done", m.totals.done, "accepted items")}
+        ${chip("met-chip-bounce", "bounce", pct(bouncePerItem), `${m.totals.bounces} bounces over ${m.totals.items} items (weighted per item)`)}
+      </span>
+      <span class="text-secondary small">${m.totals.review_rounds} review rounds</span>
     </div>
     <h3 class="h6 text-secondary">scorecard — per agent</h3>
-    ${(m.agents ?? []).length ? groupTable("agent", m.agents) : html`<p class="text-secondary small">no submissions yet</p>`}
+    ${(m.agents ?? []).length
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("agent", m.agents)}</div><${ShareDonut} rows=${m.agents} /></div>`
+      : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">scorecard — per tier</h3>
-    ${groupTable("tier", m.tiers ?? [])}
+    ${(m.tiers ?? []).length
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("tier", m.tiers)}</div><${ShareDonut} rows=${m.tiers} /></div>`
+      : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">scorecard — per model</h3>
-    ${groupTable("model", m.models ?? [])}
+    ${(m.models ?? []).length
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("model", m.models)}</div><${ShareDonut} rows=${m.models} /></div>`
+      : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">reviewers — per model</h3>
     ${(m.reviewers ?? []).length ? html`<div class="table-responsive"><table class="table table-sm align-middle">
       <thead><tr><th>model</th><th class="text-end">ok</th><th class="text-end">issues</th><th class="text-end">wrong ok</th></tr></thead>
@@ -1703,20 +1683,6 @@ const Metrics = ({ onOpen }) => {
           <td class="text-end" title="ok verdicts the human later rejected">${r.wrong_ok}</td>
         </tr>`)}
       </tbody></table></div>` : html`<p class="text-secondary small">no reviews yet</p>`}
-    <h3 class="h6 text-secondary mt-3">plan health</h3>
-    ${!plans.length && html`<p class="text-secondary small">no open plans</p>`}
-    ${plans.length > 0 && html`<div class="table-responsive"><table class="table table-sm align-middle">
-      <thead><tr><th>plan</th><th class="text-end">done</th><th class="text-end">stuck</th><th class="text-end">drafts</th><th class="text-end">oldest draft</th><th class="text-end">problems</th></tr></thead>
-      <tbody>
-        ${plans.map((r) => html`<tr key=${r.plan.id}>
-          <td><a href=${`#/${r.plan.id}`} onClick=${(e) => (e.preventDefault(), onOpen(r.plan.id))} title=${r.plan.title}>${r.plan.id}</a> <span class="small text-secondary d-inline-block text-truncate align-middle" style=${{ maxWidth: "10rem" }}>${r.plan.title}</span></td>
-          <td class="text-end">${r.done}/${r.total}</td>
-          <td class="text-end">${r.stuck > 0 ? html`<a href="#/board" title="open the board filtered to these items" onClick=${() => boardSearch(`in:${r.plan.id} is:stuck`)}>${r.stuck}</a>` : "0"}</td>
-          <td class="text-end">${r.drafts}</td>
-          <td class="text-end">${r.oldestDraft ? ago(r.oldestDraft) : "-"}</td>
-          <td class="text-end">${r.problems > 0 ? html`<a href="#/board" title="open the board filtered to found problems in this plan" onClick=${() => boardSearch(`in:${r.plan.id}`, true)}>${r.problems}</a>` : "0"}</td>
-        </tr>`)}
-      </tbody></table></div>`}
   `;
 };
 
