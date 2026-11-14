@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -58,6 +58,7 @@ describe("ops UI API (GL-0276)", () => {
   let home2: string;
   let daemon2: DaemonHandle;
   let watcher: PlansWatcher;
+  let ctx2: DaemonCtx;
   const cookie = () => ({ cookie: `te_token=${daemon2.token}` });
 
   beforeAll(async () => {
@@ -111,6 +112,7 @@ describe("ops UI API (GL-0276)", () => {
       sessions: new SessionRegistry("test"),
       bus: new EventBus(),
     };
+    ctx2 = ctx;
     await watcher.start();
     daemon2 = await startDaemon({ home: home2, register: (app) => { registerUiRoutes(app); registerApiRoutes(app, ctx); } });
   }, 30_000);
@@ -183,6 +185,48 @@ describe("ops UI API (GL-0276)", () => {
     // unknown target / no probe refuse the same as the run endpoint
     expect((await fetch(`${daemon2.url}/api/ops/probe/nosuch/result`, { method: "POST", headers: { ...cookie(), "content-type": "application/json" }, body: "{}" })).status).toBe(404);
     expect((await fetch(`${daemon2.url}/api/ops/probe/unprobed/result`, { method: "POST", headers: { ...cookie(), "content-type": "application/json" }, body: "{}" })).status).toBe(400);
+  });
+
+  // GL-0339: `te ops exec` under an agent session (X-TE-Session = a live
+  // session id) records that session as the step actor and on the job
+  // step record; no header stays "human"
+  it("a step result records the real actor — agent session or human", async () => {
+    const s = ctx2.sessions.hello("step-agent");
+    const startJob = async () => {
+      const r = await fetch(`${daemon2.url}/api/ops/start`, {
+        method: "POST",
+        headers: { ...cookie(), "content-type": "application/json" },
+        body: JSON.stringify({ playbook: "demo" }),
+      });
+      return (await r.json()) as { id: string };
+    };
+    const postStep = async (jobId: string, sessionId?: string) => {
+      const r = await fetch(`${daemon2.url}/api/ops/step/${jobId}`, {
+        method: "POST",
+        headers: { ...cookie(), "content-type": "application/json", ...(sessionId ? { "x-te-session": sessionId } : {}) },
+        body: JSON.stringify({ step: "a", status: "passed" }),
+      });
+      return (await r.json()) as { steps: Array<{ session?: string }> };
+    };
+
+    const agentJob = await startJob();
+    const j1 = await postStep(agentJob.id, s.id);
+    if (!("steps" in j1)) throw new Error(`postStep → ${JSON.stringify(j1)} start→${JSON.stringify(agentJob)}`);
+    expect(j1.steps[0].session).toBe(s.id);
+
+    const humanJob = await startJob();
+    const j2 = await postStep(humanJob.id);
+    expect(j2.steps[0].session).toBeUndefined();
+
+    // the ops.step.result events carry the same actors
+    const dir = join(home2, "ws", ".teamengage", "events", "test");
+    const lines = readdirSync(dir).flatMap((f) =>
+      readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean),
+    );
+    const events = lines.map((l) => JSON.parse(l) as { action: string; actor: string; data?: { job?: string } });
+    const stepResults = events.filter((e) => e.action === "ops.step.result");
+    expect(stepResults.find((e) => e.data?.job === agentJob.id)?.actor).toBe(s.id);
+    expect(stepResults.find((e) => e.data?.job === humanJob.id)?.actor).toBe("human");
   });
 
   it("a probe over the timeout is killed and marked timeout", async () => {

@@ -46,6 +46,8 @@ export async function daemonApi(
     method,
     headers: {
       authorization: `Bearer ${token}`,
+      // te run gives the agent TE_SESSION — the daemon records it as the real actor (GL-0339)
+      ...(process.env.TE_SESSION ? { "x-te-session": process.env.TE_SESSION } : {}),
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),

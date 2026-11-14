@@ -674,7 +674,12 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
   app.post("/api/ops/step/:id", async (req, reply) => {
     try {
       const { id } = req.params as { id: string };
-      return await opsStep(opsWsr(ctx, wsOf(req.query)), ctx, id, (req.body ?? {}) as OpsStepArgs);
+      // GL-0339: an agent's `te ops exec` carries its session — it becomes the
+      // step actor; an unknown or absent id stays "human"
+      const session = req.headers["x-te-session"]
+        ? ctx.sessions.get(String(req.headers["x-te-session"]))
+        : undefined;
+      return await opsStep(opsWsr(ctx, wsOf(req.query)), ctx, id, (req.body ?? {}) as OpsStepArgs, session);
     } catch (e) {
       return sendOpsErr(reply, e);
     }
@@ -684,7 +689,10 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       const { id } = req.params as { id: string };
       const b = (req.body ?? {}) as { step?: string; reason?: string };
       if (!b.step) throw new ValidationError("skip needs {step}");
-      return await opsSkip(opsWsr(ctx, wsOf(req.query)), ctx, id, { step: b.step, reason: b.reason });
+      const session = req.headers["x-te-session"]
+        ? ctx.sessions.get(String(req.headers["x-te-session"]))
+        : undefined;
+      return await opsSkip(opsWsr(ctx, wsOf(req.query)), ctx, id, { step: b.step, reason: b.reason }, session);
     } catch (e) {
       return sendOpsErr(reply, e);
     }
