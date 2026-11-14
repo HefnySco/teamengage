@@ -242,13 +242,24 @@ export function machineFindings(loaded: LoadedMachine[]): Finding[] {
  * machines/ and its app must be in that machine's apps list.
  */
 export function targetMachineFindings(
-  targets: Readonly<Record<string, { machine?: string; app?: string }>>,
+  targets: Readonly<Record<string, { machine?: string; app?: string; version_match?: string }>>,
   loaded: LoadedMachine[],
 ): Finding[] {
   const out: Finding[] = [];
   const f = (t: string, message: string) => out.push({ severity: "error", kind: "machine", path: "workspace.yaml", message: `target '${t}': ${message}` });
   const machines = new Map(loaded.flatMap((l) => (l.machine ? [[l.machine.id, l.machine] as const] : [])));
   for (const [t, cfg] of Object.entries(targets)) {
+    if (cfg.version_match !== undefined) {
+      try {
+        // one capture group exactly: "|()" makes the re always match, the
+        // last group is the appended one — match.length - 2 is the count
+        const re = new RegExp(`(?:${cfg.version_match})|()`);
+        const groups = (re.exec("")?.length ?? 2) - 2;
+        if (groups !== 1) f(t, `version_match '${cfg.version_match}' must have exactly one capture group (has ${groups})`);
+      } catch (e) {
+        f(t, `version_match '${cfg.version_match}' is not a valid regular expression: ${(e as Error).message}`);
+      }
+    }
     if (!cfg.machine) continue;
     const m = machines.get(kebab(cfg.machine));
     if (!m) {

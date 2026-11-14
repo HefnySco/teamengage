@@ -38,6 +38,12 @@ export interface DeployedTarget {
   probe?: DeployedProbe;
   /** the probe version differs from the job version */
   drift: boolean;
+  /**
+   * A version_match rule exists but failed to extract from the job or the
+   * probe text — the compare is undecidable, so this is neither drift nor
+   * match (GL-0336).
+   */
+  version_unknown?: boolean;
 }
 
 export interface DeployedApp {
@@ -55,6 +61,21 @@ function jobFinished(job: Job): string {
     if (s.ended && s.ended > last) last = s.ended;
   }
   return last;
+}
+
+/**
+ * Apply a target's version_match rule (GL-0336): with no rule the text
+ * compares raw; with a rule group 1 is extracted — no match means the
+ * version is undecidable (undefined), never an automatic drift.
+ */
+export function matchVersion(rule: string | undefined, text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  if (!rule) return text;
+  try {
+    return new RegExp(rule).exec(text)?.[1];
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -97,7 +118,14 @@ export function deployedForMachine(
         target: t,
         job: j ? { id: j.id, version: j.version, finished: jobFinished(j), machine: j.machine } : undefined,
         probe: p ? { ts: p.ts, ok: p.ok, version: probeVersion, output: p.output } : undefined,
-        drift: j?.version !== undefined && probeVersion !== undefined && j.version !== probeVersion,
+        drift:
+          matchVersion(targets[t].version_match, j?.version) !== undefined &&
+          matchVersion(targets[t].version_match, probeVersion) !== undefined &&
+          matchVersion(targets[t].version_match, j?.version) !== matchVersion(targets[t].version_match, probeVersion),
+        version_unknown:
+          targets[t].version_match !== undefined &&
+          ((j?.version !== undefined && matchVersion(targets[t].version_match, j?.version) === undefined) ||
+            (probeVersion !== undefined && matchVersion(targets[t].version_match, probeVersion) === undefined)),
       };
     });
     return { name: app.name, env: app.env, port: app.port, targets: list, state: appState(list) };
@@ -108,6 +136,7 @@ function appState(list: DeployedTarget[]): DeployedState {
   if (!list.length) return "no_target";
   if (list.some((t) => t.drift)) return "drift";
   if (!list.some((t) => t.job || t.probe)) return "unknown";
+  if (list.some((t) => t.version_unknown)) return "unknown";
   return "deployed";
 }
 

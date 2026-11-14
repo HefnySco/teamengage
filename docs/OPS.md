@@ -92,6 +92,7 @@ targets:
     env: prod
     probe: ssh prod 'systemctl is-active myapp'   # read-only version probe the daemon may run
     probe_every: 5m      # `te ops watch` re-runs the probe on this cadence (unset = manual only)
+    version_match: '(\d+\.\d+\.\d+)'   # drift rule: one capture group compared on both sides
     ssh_opts: -i ~/.ssh/prod_key
 ```
 
@@ -400,7 +401,15 @@ Each app has a state:
 |---|---|
 | `deployed` | a job and a probe agree, or a job ran and there is no probe |
 | `drift` | the stored probe version differs from the job version |
-| `unknown` | a target names the app, but it has no job and no probe |
+| `unknown` | a target names the app, but it has no job and no probe — or a `version_match` rule could not extract the version |
+
+`version_match` normalizes the two texts before the compare: a regular
+expression with one capture group applied to the job version and to the
+probe version — `Andruav Communication Server version: "6.0.2"` and
+`node 6.0.2` match with `(\d+\.\d+\.\d+)`. With no rule the raw
+strings compare. A text the rule does not match reports `unknown`, never
+drift. `te validate` reports a rule that is not a valid one-group
+expression.
 | `no_target` | no target names this app |
 
 The line shows the app name, port, `prod` or `shadow` badge, the version,

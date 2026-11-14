@@ -187,3 +187,47 @@ describe("deployedAppLine (GL-0305)", () => {
     expect(deployedAppLine(byName(list, "de_auth_2026"))).toContain("auth-prod");
   });
 });
+
+describe("version_match (GL-0336)", () => {
+  const rule = String.raw`(\d+\.\d+\.\d+)`;
+  const tgts = (rule?: string): Record<string, TargetConfig> => ({
+    "web-prod": { machine: "cloud", app: "de_web_server", probe: "x", ...(rule ? { version_match: rule } : {}) },
+  });
+  const jv = 'Andruav Communication Server version: "6.0.2"';
+
+  it("no drift when the rule extracts the same version from different shapes", () => {
+    const a = byName(
+      apps([job("runner-1-0001", "web-prod", "succeeded", jv, "2026-01-01T00:00:00Z")], { "web-prod": probe("web-prod", "node 6.0.2") }, tgts(rule)),
+      "de_web_server",
+    );
+    expect(a.state).toBe("deployed");
+    expect(a.targets[0].drift).toBe(false);
+  });
+
+  it("drift when the captured versions differ", () => {
+    const a = byName(
+      apps([job("runner-1-0001", "web-prod", "succeeded", jv, "2026-01-01T00:00:00Z")], { "web-prod": probe("web-prod", "node 6.0.3") }, tgts(rule)),
+      "de_web_server",
+    );
+    expect(a.state).toBe("drift");
+    expect(a.targets[0].drift).toBe(true);
+  });
+
+  it("unknown, not drift, when the rule matches neither text", () => {
+    const a = byName(
+      apps([job("runner-1-0001", "web-prod", "succeeded", "build abc", "2026-01-01T00:00:00Z")], { "web-prod": probe("web-prod", "build def") }, tgts(rule)),
+      "de_web_server",
+    );
+    expect(a.state).toBe("unknown");
+    expect(a.targets[0].drift).toBe(false);
+    expect(a.targets[0].version_unknown).toBe(true);
+  });
+
+  it("raw string compare stays when no rule exists", () => {
+    const a = byName(
+      apps([job("runner-1-0001", "web-prod", "succeeded", jv, "2026-01-01T00:00:00Z")], { "web-prod": probe("web-prod", "node 6.0.2") }, tgts()),
+      "de_web_server",
+    );
+    expect(a.targets[0].drift).toBe(true); // different raw texts, no rule
+  });
+});

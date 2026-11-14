@@ -54,6 +54,12 @@ export const TargetConfig = z
     probe: z.string().optional(),
     /** `te ops watch` runs the probe on this cadence (a duration like "5m"); unset = manual only */
     probe_every: z.string().optional(),
+    /**
+     * Drift compare rule (GL-0336): a regex with one capture group applied to
+     * the job version and the probe version before the compare; unset = raw
+     * string compare. A text the rule does not match reports unknown, not drift.
+     */
+    version_match: z.string().optional(),
     /** machine file id this target lives on — deploy edges decide which runners may run jobs */
     machine: z.string().optional(),
     /** app name inside the target machine's apps list */

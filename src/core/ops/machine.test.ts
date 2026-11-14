@@ -122,4 +122,19 @@ describe("machine files", () => {
     expect(f.some((x) => x.message.includes("target 'ghost'") && x.message.includes("no machines/ghost.machine.md"))).toBe(true);
     expect(f.some((x) => x.message.includes("target 'badapp'") && x.message.includes("not in machine web's apps list"))).toBe(true);
   });
+
+  it("targetMachineFindings (GL-0336): reports a version_match that is not a valid one-group regex", () => {
+    write("web2.machine.md", { id: "web2", apps: [{ name: "site" }] });
+    const f = targetMachineFindings(
+      {
+        good: { machine: "web2", app: "site", version_match: String.raw`(\d+\.\d+\.\d+)` },
+        badre: { machine: "web2", version_match: "([" },
+        twog: { machine: "web2", version_match: String.raw`(a)(b)` },
+      },
+      loadMachines(root),
+    );
+    expect(f.filter((x) => x.message.startsWith("target 'good'") && x.message.includes("version_match"))).toEqual([]);
+    expect(f.some((x) => x.message.includes("target 'badre'") && x.message.includes("not a valid regular expression"))).toBe(true);
+    expect(f.some((x) => x.message.includes("target 'twog'") && x.message.includes("exactly one capture group"))).toBe(true);
+  });
 });
