@@ -208,6 +208,12 @@ describe("plain-HTTP agent API", () => {
     for (const tool of ["next", "brief", "claim", "log", "ask", "submit", "propose"]) {
       expect(r.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
     }
+    // GL-0346: the guide names the human layer's fields and their word limits
+    expect(r.text).toContain("max 40 words");   // what / problem
+    expect(r.text).toContain("max 60 words");   // how
+    expect(r.text).toContain("max 25 words");   // review summary
+    expect(r.text).toContain("ask_human");
+    expect(r.text).toContain("walkthrough is the optional agent layer");
   });
 
   it("refuses browsers: any Origin header, or a non-loopback Host (DNS rebinding)", async () => {

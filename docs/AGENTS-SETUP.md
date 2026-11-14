@@ -54,6 +54,13 @@ human decides. A second session may peer-review a submission
 (`query status=in_review` → `review`, or `bounce` to send broken work back
 to its holder, max 2 in a row); accept/reject stay human-only.
 
+Agent output has two layers. `submit` takes `what` and `how` (the human's
+short lines, 40 and 60 words, no code names) plus an optional `walkthrough`
+(the agent layer, no limit). `review`/`bounce` take `summary` and —
+when the human must decide — `ask_human`: `problem`, `recommendation` and
+`options` for the decision card. The detail stays in `note`, `report` and
+`findings`.
+
 ## Multiple machines
 
 The MCP server talks only to the local daemon (`127.0.0.1`). Each machine runs

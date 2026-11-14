@@ -175,6 +175,21 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   human reads on the item page.
 - `note` is the technical detail for whoever fixes it — what you ran, what
   passed, over which diff. `"looks fine"` tells nobody anything.
+- `ask_human` is the **human's decision card** — required on `issues`,
+  on `ok` + `needs_human`, and on every `bounce`. Plain words the human
+  reads first; no file names, no code names, no commit ids:
+  - `problem` — what is wrong or what needs deciding, max 40 words.
+  - `recommendation` — what you would do, max 30 words.
+  - `options` — 2–3 short labels (max 4 words each) the human picks on
+    the item page; their pick is recorded as a decision.
+  Depth goes in `note`, `report` and `findings` — no limit there.
+
+  ```text
+  problem, good:        "the change touches the auth path; the reviewer could not fully verify it"
+  problem, weak:        "checkSessionToken() in auth.ts looks wrong"        (code names, no decision)
+  recommendation, good: "look at the session edge cases yourself before accepting"
+  recommendation, weak: "review the code"                                    (says nothing)
+  ```
 - **Write `summary` and `note` in STE** (ASD-STE100 Simplified Technical
   English) — prose a human who did not watch the work can follow. Open
   the note with a sentence or two on what you actually did and the
@@ -199,7 +214,7 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
 
   ```bash
   curl -s -X POST $B/review/GL-0019 -H "$H" \
-    -d '{"verdict":"ok","needs_human":true,"summary":"The change does what the task asked, but it touches the auth path — worth your own look before accepting.","note":"acceptance 1–3 verified; diff inside Touches; auth/session edge cases are the part I cannot fully judge"}'
+    -d '{"verdict":"ok","needs_human":true,"summary":"The change does what the task asked, but it touches the auth path — worth your own look before accepting.","note":"acceptance 1–3 verified; diff inside Touches; auth/session edge cases are the part I cannot fully judge","ask_human":{"problem":"the change touches the auth path and some session edge cases could not be fully verified","recommendation":"check the session edge cases yourself before accepting","options":["accept","keep in review"]}}'
   ```
 
 - `issues` — verified concerns the human should weigh before deciding (or
@@ -215,7 +230,7 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
 
   ```bash
   curl -s -X POST $B/review/GL-0019 -H "$H" \
-    -d '{"verdict":"issues","summary":"Two fix points before this can go in.","note":"1. acceptance 2 fails — see findings","findings":[{"text":"restart counter never resets","where":"src/counter.ts:88","severity":"must"},{"text":"name the flag `restarted` not `rst`","severity":"should"}]}'
+    -d '{"verdict":"issues","summary":"Two fix points before this can go in.","note":"1. acceptance 2 fails — see findings","findings":[{"text":"restart counter never resets","where":"src/counter.ts:88","severity":"must"},{"text":"name the flag `restarted` not `rst`","severity":"should"}],"ask_human":{"problem":"two acceptance items are not met yet — the restart counter never resets","recommendation":"keep it in review; the holder fixes the findings and submits again"}}'
   ```
 
 - "The code is right but the task was wrong" → say exactly that — it is the
@@ -226,7 +241,7 @@ ignored — goes back to the holder rather than leaving the human to reject it:
 
 ```bash
 curl -s -X POST $B/bounce/GL-0019 -H "$H" \
-  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes.","findings":[{"text":"restart flag ignored on AUTO start","where":"src/main.ts:114","severity":"must"},{"text":"no test run cited in Evidence","severity":"must"}]}'
+  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes.","findings":[{"text":"restart flag ignored on AUTO start","where":"src/main.ts:114","severity":"must"},{"text":"no test run cited in Evidence","severity":"must"}],"ask_human":{"problem":"the submission ignores the restart flag and ran no tests — it goes back to the holder","recommendation":"let the holder fix it and submit again"}}'
 ```
 
 `summary` is required on bounce too — the human reads it in `## Review`.

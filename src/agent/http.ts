@@ -122,16 +122,22 @@ RULES
   1. Read freely: GET endpoints, or the plan files themselves.
   2. Change state ONLY through these endpoints — never edit .teamengage/ files.
   3. claim before touching code; work only in the paths brief/claim return.
-  4. ask instead of guessing; submit with evidence AND a walkthrough —
-     an STE "what I changed and how it works" for the human.
+  4. ask instead of guessing; submit with evidence: what (what the task
+     does now, max 40 words) and how (how you did it, max 60 words) are
+     required — the human's two short lines under ## For the human, plain
+     words, no code names. walkthrough is the optional agent layer.
      Never mark work done. Never git push. The human approves, answers,
      and accepts.
   5. A session that is NOT the holder may review submissions (query
      status=in_review): review records your verdict for the human, bounce
      sends broken work back to the holder. Never review your own submission.
      Both need a summary — in STE, for the human: what you verified
-     and why the verdict. Also give report: the multi-line decision report
-     for the human (see the te-review skill). "ok, but the human should decide" → set
+     and why the verdict (max 25 words on a plain ok). Anything the human
+     must decide on — needs_human, issues, every bounce — also needs
+     ask_human: {problem (max 40 words), recommendation (max 30 words),
+     options (2–3 labels, max 4 words each)} — the human's decision card.
+     The depth goes in note, report and findings — the agent layer with no
+     limit (see the te-review skill). "ok, but the human should decide" → set
      needs_human so the accept is never automatic.
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,
@@ -195,7 +201,7 @@ EXAMPLES
   curl -s -X POST ${base}/agent/log/MP-0002 -H "X-TE-Session: $T" -d '{"note":"tests green"}'
   curl -s -X POST ${base}/agent/ask/MP-0002 -H "X-TE-Session: $T" -d '{"question":"A or B?","options":["A","B"]}'
   curl -s -X POST ${base}/agent/attach/MP-0002 -H "X-TE-Session: $T" -d '{"path":"mockups/home.png","caption":"home tab mockup"}'
-  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed","walkthrough":"Added a retry loop in connect(): …"}'
+  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed","what":"the link retries on timeout","how":"added a retry loop in connect"}'
 
 Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.
 `;

@@ -20,6 +20,14 @@ the daemon does the condensing, not the agent.
   Reviewed items end their label with `· AI ✓` / `· AI ✗` (+ `⚑` when the
   reviewer flagged needs_human, `⏱` when auto-accept is armed) — the same
   badge the board and inbox show.
+- Agent-written text has two layers. The human's short lines —
+  `what` (40 words) and `how` (60 words) on `submit`, `summary` (25 words
+  on a plain ok), and the `ask_human` card (`problem` 40 words,
+  `recommendation` 30 words, `options` of 2–3 labels of up to 4 words) —
+  use plain words, no code names, and are word-limited; the daemon refuses
+  over-limit text with the observed count. The agent layer — `walkthrough`,
+  `note`, `report`, `findings`, `context` on `ask` — has no limit and
+  carries the depth (files, functions, reasoning).
 - Agents never see other sessions' data, credentials, or file paths outside
   the workspace unless they are resolved target paths.
 

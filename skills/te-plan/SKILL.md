@@ -11,6 +11,13 @@ is ASD-STE100 Simplified Technical English: short sentences, one idea each,
 active voice, plain approved words. Technical names stay as-is. No vague
 prose — the human reads all of it and other agents work from it.
 
+**Two layers.** Text the human reads first stays short and names no code —
+`what`/`how` on submit, `problem`/`recommendation` on a review card, the
+task title and `simple` version. The depth — file names, functions,
+reasons — goes in the agent fields: `summary`, acceptance, notes,
+walkthrough, report, findings. Never put the depth in the short human
+lines, and never leave it out of the agent fields.
+
 You are writing tasks that **other agents** will claim and execute, and that
 the human will approve and accept. A good task can be picked up cold by an
 agent that has never seen this conversation: it says what to change, where,
