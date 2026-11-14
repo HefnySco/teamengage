@@ -22,6 +22,8 @@ export interface ExecStepResult {
   /** full step output, masked for secret_env values — safe to post */
   output: string;
   log_file: string;
+  /** the step was killed on its timeout */
+  timed_out?: boolean;
 }
 
 export type ExecState = "succeeded" | "stopped" | "failed" | "waiting" | "paused" | "aborted" | "refused";
@@ -61,16 +63,17 @@ export function maskSecrets(text: string, values: (string | undefined)[]): strin
   return text;
 }
 
-function secretValues(playbook: Playbook, env: Record<string, string | undefined>): (string | undefined)[] {
+function secretValues(playbook: Pick<Playbook, "secret_env">, env: Record<string, string | undefined>): (string | undefined)[] {
   return playbook.secret_env.map((name) => env[name]);
 }
 
 /** Run one cmd/check step under bash, stream + log its output, mask secrets. */
 export async function execStep(
   step: PlaybookStep,
-  job: Job,
+  job: Pick<Job, "id" | "params">,
   opts: {
-    playbook: Playbook;
+    /** only secret_env is read — callers may pass a partial playbook */
+    playbook: Pick<Playbook, "secret_env">;
     cwd: string;
     env?: Record<string, string | undefined>;
     logsDir: string;
@@ -90,7 +93,7 @@ export async function execStep(
       throw new Error(`step '${step.id}' has a bad timeout '${step.timeout}'`);
     }
   }
-  const ran = await new Promise<{ code: number; output: string }>((resolvePromise, rejectPromise) => {
+  const ran = await new Promise<{ code: number; output: string; timed_out?: boolean }>((resolvePromise, rejectPromise) => {
     const stream = createWriteStream(log_file);
     const child = spawn(opts.bash ?? "bash", ["-c", step.run ?? ""], { cwd: opts.cwd, env });
     let text = "";
@@ -121,11 +124,11 @@ export async function execStep(
         text += note;
         stream.write(note);
       }
-      stream.end(() => resolvePromise({ code: timed_out ? -1 : (code ?? -1), output: text }));
+      stream.end(() => resolvePromise({ code: timed_out ? -1 : (code ?? -1), output: text, timed_out }));
     });
   });
   const output = maskSecrets(ran.output, secretValues(opts.playbook, env));
-  return { exit_code: ran.code, output, log_file };
+  return { exit_code: ran.code, output, log_file, timed_out: ran.timed_out };
 }
 
 /**

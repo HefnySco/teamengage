@@ -21,6 +21,7 @@ import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import { opsCmd } from "./commands/ops.js";
+import { verifyCmd } from "./commands/verify.js";
 import { metricsCmd } from "./commands/metrics.js";
 import { dispatchCmd } from "./commands/dispatch.js";
 import { digestCmd } from "./commands/digest.js";
@@ -133,6 +134,7 @@ const USAGE_ALL = `te — every command
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   validate [--json]
+  verify <ID> [--ws w] [--json]               run the item's ## Checks and print pass/fail per check
   status [--json]
   metrics [--plan <ID>] [--json]  scorecards derived from the event log
   digest [--since 24h]            finished / stuck / waits-for-you since your last action
@@ -273,6 +275,8 @@ async function main(argv: string[]): Promise<number> {
       return syncCmd(rest, home);
     case "ops":
       return opsCmd(rest, home);
+    case "verify":
+      return verifyCmd(rest, home);
     case "machines":
       return machinesCmd(rest, home);
     case "env":
