@@ -12,6 +12,7 @@ import {
   TEMPLATE_EXAMPLE,
 } from "./template.js";
 import { readTeTag } from "./source.js";
+import { parseChecks } from "./markdown.js";
 import { planImport } from "../../import/import.js";
 
 describe("task template", () => {
@@ -109,6 +110,46 @@ describe("task template", () => {
   it("te template example uses the same renderer", () => {
     expect(TEMPLATE_EXAMPLE).toContain("## Acceptance\n- [ ] a second AUTO run");
     expect(TEMPLATE_EXAMPLE).toContain("**Touches:** droneengage_mavlink: src/mission/**");
+  });
+});
+
+describe("checks section (GL-0348)", () => {
+  it("renders a ## Checks section between Acceptance and Artifacts", () => {
+    const body = renderTaskBody({
+      id: "GL-0001",
+      type: "task",
+      title: "Test task",
+      acceptance: ["it works"],
+      checks: [{ name: "unit tests", repo: "teamengage", run: "npm test", timeout: 120, expect_exit: 0 }],
+    });
+    const at = body.indexOf("## Checks");
+    expect(at).toBeGreaterThan(body.indexOf("## Acceptance"));
+    expect(at).toBeLessThan(body.indexOf("## Artifacts"));
+    expect(body).toContain("- name: unit tests");
+    expect(body).toContain("repo: teamengage");
+    expect(body).toContain("run: npm test");
+  });
+
+  it("no checks, no section; ideas never get one", () => {
+    expect(renderTaskBody({ id: "GL-0002", type: "task", title: "T" })).not.toContain("## Checks");
+    expect(
+      renderTaskBody({
+        id: "GL-0003",
+        type: "idea",
+        title: "I",
+        checks: [{ name: "x", repo: "r", run: "true" }],
+      }),
+    ).not.toContain("## Checks");
+  });
+
+  it("the rendered section parses back with parseChecks", () => {
+    const checks = [
+      { name: "unit tests", repo: "teamengage", run: "npm test", timeout: 120, expect_exit: 0 },
+      { name: "typecheck", repo: "teamengage", run: "npm run typecheck" },
+    ];
+    const body = renderTaskBody({ id: "GL-0004", type: "task", title: "T", checks });
+    const section = body.slice(body.indexOf("## Checks") + 10, body.indexOf("## Artifacts"));
+    expect(parseChecks(section)).toEqual(checks);
   });
 });
 

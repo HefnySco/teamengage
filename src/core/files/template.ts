@@ -1,6 +1,8 @@
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { withTeTag } from "./source.js";
+import { renderChecks } from "./markdown.js";
+import type { Check } from "../model/index.js";
 
 /**
  * The task-file standard (docs/TASK-FORMAT.md). `propose` renders new task
@@ -24,6 +26,8 @@ export interface TaskDraft {
   touches?: string[];
   /** checkable acceptance criteria, one per line */
   acceptance?: string[];
+  /** machine checks — `te verify` runs them in their repo (GL-0348) */
+  checks?: Check[];
 }
 
 /** Body of a task file (without the `te:` frontmatter). */
@@ -41,6 +45,7 @@ export function renderTaskBody(d: TaskDraft): string {
   const acceptance = d.acceptance?.length
     ? d.acceptance.map((a) => `- [ ] ${a.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`)
     : ["- [ ] TBD — the human or the planner fills this in before approval"];
+  const checks = d.checks?.length ? renderChecks(d.checks) : "";
   return [
     `# ${d.title}`,
     "",
@@ -50,6 +55,7 @@ export function renderTaskBody(d: TaskDraft): string {
     "",
     // an idea is a source document — no acceptance checklist
     ...(idea ? [] : ["## Acceptance", ...acceptance, ""]),
+    ...(idea || !checks ? [] : ["## Checks", checks]),
     "## Artifacts",
     "",
     "## Notes",

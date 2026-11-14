@@ -357,6 +357,25 @@ export function removeSectionLines(
   return out.join(eol);
 }
 
+/** Remove a whole `## <heading>` section (heading included). No such section → text unchanged. */
+export function removeSection(text: string, heading: string): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  let at = -1;
+  const headings: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    if (inFence) return;
+    if (/^##\s/.test(l)) headings.push(i);
+    if (new RegExp(`^##\\s+${heading}\\s*$`, "i").test(l)) at = i;
+  });
+  if (at === -1) return text;
+  const next = headings.find((h) => h > at) ?? lines.length;
+  const out = [...lines.slice(0, at), ...lines.slice(next)];
+  return out.join(eol);
+}
+
 /** Header of a daemon-written note block: `**YYYY-MM-DD HH:MM · who**`. */
 const NOTE_HEADER = /^\*\*(\d{4}-\d\d-\d\d \d\d:\d\d) · (\S+)\*\*\s*$/;
 

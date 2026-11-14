@@ -6,6 +6,8 @@ import {
   getSection,
   setSection,
   emitFrontmatter,
+  parseChecks,
+  renderChecks,
 } from "./markdown.js";
 import { ConflictMarkersError, ParseError } from "../model/errors.js";
 
@@ -202,5 +204,61 @@ describe("meta changes", () => {
     const fm = emitFrontmatter({ title: "t", id: "X-1", extra_z: 1, extra_a: 2 });
     expect(fm.indexOf("id:")).toBeLessThan(fm.indexOf("title:"));
     expect(fm.indexOf("extra_z")).toBeLessThan(fm.indexOf("extra_a"));
+  });
+});
+
+describe("checks (GL-0348)", () => {
+  const WITH_CHECKS = SAMPLE.replace(
+    "## Log\n",
+    `## Checks
+- name: unit tests
+  repo: droneengage_mavlink
+  run: ctest -R mission_restart
+  timeout: 120
+  expect_exit: 0
+- name: no-run check
+  repo: droneengage_comm
+
+## Log\n`,
+  );
+
+  it("parses a ## Checks section into item.checks", () => {
+    const doc = parseItemFile(WITH_CHECKS);
+    expect(doc.checks).toEqual([
+      { name: "unit tests", repo: "droneengage_mavlink", run: "ctest -R mission_restart", timeout: 120, expect_exit: 0 },
+      { name: "no-run check", repo: "droneengage_comm" },
+    ]);
+  });
+
+  it("a file with no ## Checks loads with checks: []", () => {
+    const doc = parseItemFile(SAMPLE);
+    expect(doc.checks).toEqual([]);
+  });
+
+  it("renderChecks is the inverse of parseChecks", () => {
+    const doc = parseItemFile(WITH_CHECKS);
+    const rendered = renderChecks(doc.checks);
+    expect(parseChecks(rendered)).toEqual(doc.checks);
+  });
+
+  it("parseChecks: absent, empty and null bodies give []", () => {
+    expect(parseChecks(undefined)).toEqual([]);
+    expect(parseChecks("")).toEqual([]);
+    expect(parseChecks("   \n")).toEqual([]);
+    expect(parseChecks("---\n")).toEqual([]);
+  });
+
+  it("parseChecks throws on a section that is not a YAML list", () => {
+    expect(() => parseChecks("just some prose\n")).toThrow(ParseError);
+    expect(() => parseChecks("name: build\n")).toThrow(ParseError);
+  });
+
+  it("parseChecks throws on YAML that does not parse", () => {
+    expect(() => parseChecks("- name: [unclosed\n")).toThrow(ParseError);
+  });
+
+  it("parseChecks throws on an entry with an invalid field", () => {
+    expect(() => parseChecks("- name: x\n  timeout: soon\n")).toThrow(ParseError);
+    expect(() => parseChecks("- timeout: 5\n")).toThrow(ParseError);
   });
 });

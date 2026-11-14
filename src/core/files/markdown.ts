@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import { ParseError, ConflictMarkersError } from "../model/errors.js";
-import { ItemMeta, type Artifact, type Section } from "../model/index.js";
+import { ItemMeta, Check, type Artifact, type Section } from "../model/index.js";
 import { normalizeDomains } from "../domains/domains.js";
 import type { z, ZodTypeAny } from "zod";
 
@@ -103,6 +103,8 @@ export function parseMarkdown<S extends ZodTypeAny>(
 export interface ParsedItemFile extends ParsedFile<ItemMeta> {
   /** `## Artifacts` lines parsed into entries (see parseArtifacts). */
   artifacts: Artifact[];
+  /** `## Checks` entries parsed at index time (GL-0348; overlay items carry [] — their checks live in the task file). */
+  checks: Check[];
 }
 
 const ARTIFACT_LINE = /^-\s+(\S+)\s+[—–]\s+(.+?)\s*$/;
@@ -147,8 +149,48 @@ export const parseItemFile = (text: string, path?: string): ParsedItemFile => {
   return {
     ...doc,
     artifacts: parseArtifacts(getSection(doc, "artifacts"), doc.meta.domains),
+    checks: parseChecks(getSection(doc, "checks"), path),
   };
 };
+
+/**
+ * Parse a `## Checks` body (GL-0348): a YAML list of {name, repo, run,
+ * timeout, expect_exit}. Absent or empty → []. A section that is present
+ * but not a valid list throws — the file is machine-managed, so a bad
+ * hand-edit must be loud (invalid file → `te validate`), not silent.
+ */
+export function parseChecks(body: string | undefined, path?: string): Check[] {
+  if (!body || !body.trim()) return [];
+  let raw: unknown;
+  try {
+    raw = YAML.parse(body);
+  } catch (e) {
+    throw new ParseError(
+      `## Checks does not parse as a YAML list: ${e instanceof Error ? e.message : String(e)}`,
+      path,
+    );
+  }
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ParseError("## Checks must be a YAML list of checks", path);
+  }
+  return raw.map((entry, i) => {
+    const parsed = Check.safeParse(entry);
+    if (!parsed.success) {
+      throw new ParseError(
+        `## Checks entry ${i + 1}: ${parsed.error.issues.map((x) => `${x.path.join(".") || "entry"} ${x.message}`).join("; ")}`,
+        path,
+      );
+    }
+    return parsed.data;
+  });
+}
+
+/** Render a `## Checks` body from checks (inverse of parseChecks). */
+export function renderChecks(checks: Check[]): string {
+  if (!checks.length) return "";
+  return `${YAML.stringify(checks).trimEnd()}\n`;
+}
 
 function orderedMeta(meta: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

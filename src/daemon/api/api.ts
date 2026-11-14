@@ -390,7 +390,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             reason: i.meta.drop_request!.reason,
             at: i.meta.drop_request!.at,
           })),
-        findings: ops.findings(),
+        findings: await ops.findings(),
       };
     } catch (e) {
       return sendErr(reply, e);

@@ -82,6 +82,21 @@ export const SubmitCost = z.object({
 export type SubmitCost = z.infer<typeof SubmitCost>;
 
 /**
+ * One machine check of an item's `## Checks` section (GL-0348): a command
+ * `te verify` (GL-0357) runs in `repo`. `run`/`repo` are optional at parse
+ * time so a hand-edit lands as a validate finding, not a broken file;
+ * `timeout` is seconds, `expect_exit` defaults to 0.
+ */
+export const Check = z.object({
+  name: z.string().min(1),
+  repo: z.string().optional(),
+  run: z.string().optional(),
+  timeout: z.number().int().positive().optional(),
+  expect_exit: z.number().int().optional(),
+});
+export type Check = z.infer<typeof Check>;
+
+/**
  * Model tier — how capable an agent must be to work an item (light ≈ Haiku,
  * standard ≈ Sonnet, heavy ≈ Opus). Sessions declare theirs at hello; an
  * item's tier is the minimum that may claim it (unset = anyone).

@@ -485,7 +485,7 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
 
     // A is rejected → B started on top of it: inbox warning
     await ops.reject(a, "needs rework");
-    expect(ops.findings().some((f) => f.kind === "started_on_open_dep" && f.item === b)).toBe(true);
+    expect((await ops.findings()).some((f) => f.kind === "started_on_open_dep" && f.item === b)).toBe(true);
 
     // review_unblocks: false → only done unblocks
     const { ids: more } = await store.createItems(
@@ -1349,11 +1349,11 @@ describe("reject --release and dead-holder takeover", () => {
     await expect(ops.claim(id, s2)).rejects.toThrow(/already claimed/);
     // the holder's session ends → dead_claim finding + takeover allowed
     ctx.sessions.disconnect(s1.id);
-    expect(ops.findings().some((f) => f.kind === "dead_claim" && f.item === id)).toBe(true);
+    expect((await ops.findings()).some((f) => f.kind === "dead_claim" && f.item === id)).toBe(true);
     const c = await ops.claim(id, s2);
     expect(c.claim.holder).toBe(s2.id);
     expect(store.idx.get(id)!.meta.status).toBe("in_progress");
-    expect(ops.findings().some((f) => f.kind === "dead_claim" && f.item === id)).toBe(false);
+    expect((await ops.findings()).some((f) => f.kind === "dead_claim" && f.item === id)).toBe(false);
   });
 });
 
@@ -1846,5 +1846,55 @@ describe("release record (GL-0332)", () => {
 
     // the feature sees its shipped parts
     expect(await ops.featureStatus(store.idx.get(feat2)!)).toBe("shipped");
+  });
+});
+
+describe("## Checks (GL-0348)", () => {
+  it("propose writes the section, brief lists the checks, validate reports bad ones", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await ops.propose(
+      [
+        {
+          type: "task",
+          title: "Checks feature",
+          domains: ["teamengage"],
+          touches: ["self: src/a.ts"],
+          checks: [
+            { name: "good", repo: "self", run: "npm test", timeout: 60, expect_exit: 0 },
+            { name: "no-run", repo: "self" },
+            { name: "far-repo", repo: "elsewhere", run: "true" },
+            { name: "good", repo: "self", run: "npm run typecheck" },
+          ],
+        },
+      ],
+      "human",
+    );
+    const [id] = ids;
+
+    // 1. the item file carries the ## Checks section
+    const path = join(plans, "items", "WS", `${id}.md`);
+    const text = readFileSync(path, "utf8");
+    expect(text).toContain("## Checks");
+    expect(text).toContain("- name: good");
+
+    // 2. the item API (brief) returns the list
+    const b = await ops.brief(id);
+    expect(b.checks).toHaveLength(4);
+    expect(b.checks[0]).toEqual({ name: "good", repo: "self", run: "npm test", timeout: 60, expect_exit: 0 });
+
+    // 3. findings: no run, repo outside Touches (this item has no Touches line), duplicate
+    const findings = await ops.findings();
+    const mine = findings.filter((f) => f.item === id && f.kind === "check");
+    expect(mine.some((f) => f.message.includes("check 'no-run' has no run"))).toBe(true);
+    expect(mine.some((f) => f.message.includes("names repo 'elsewhere' outside Touches"))).toBe(true);
+    expect(mine.some((f) => f.message.includes("duplicate check name 'good'"))).toBe(true);
+
+    // 4. a task with no ## Checks loads as before and adds no findings
+    const clean = await ops.propose([{ type: "task", title: "No checks here", domains: ["teamengage"] }], human);
+    const cleanFindings = (await ops.findings()).filter((f) => f.item === clean.ids[0] && f.kind === "check");
+    expect(cleanFindings).toHaveLength(0);
   });
 });

@@ -20,6 +20,15 @@ const reviewFinding = z.object({
   severity: z.enum(["must", "should"]),
 });
 
+/** A machine check of a `## Checks` section (GL-0348). */
+const checkInput = z.object({
+  name: z.string().min(1),
+  repo: z.string().optional(),
+  run: z.string().optional(),
+  timeout: z.number().int().positive().optional(),
+  expect_exit: z.number().int().optional(),
+});
+
 export function registerWriteTools(
   server: McpServer,
   binding: AgentBinding,
@@ -503,6 +512,7 @@ export function registerWriteTools(
       description:
         "Rewrite a DRAFT — any of: title, summary, acceptance (replaces the whole checklist), touches " +
         "(the **Touches:** line), depends_on, parent (\"\" clears), relates, found_by (ids of items where the problem was found; [] clears), targets, tier (any clears), domains, " +
+        "checks (replaces the ## Checks section; [] or null clears), " +
         "sections ({\"## Heading\": new body}; ## Artifacts/Notes/Review/Evidence/Walkthrough/Handoff/Log/History are managed — refused). " +
         "Only drafts: for anything else ask the human to move it back to draft first (that is the go-ahead). " +
         "reason says why. Planner tiers only (standard/heavy). It stays a draft — the human approves the new version.",
@@ -521,9 +531,10 @@ export function registerWriteTools(
         tier: z.enum(["light", "standard", "heavy", "any"]).optional(),
         domains: z.array(z.string()).optional(),
         sections: z.record(z.string(), z.string()).optional(),
+        checks: z.array(checkInput).nullable().optional(),
       },
     },
-    async ({ id, reason, title, summary, acceptance, touches, depends_on, parent, relates, found_by, targets, tier, domains, sections }) => {
+    async ({ id, reason, title, summary, acceptance, touches, depends_on, parent, relates, found_by, targets, tier, domains, sections, checks }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
@@ -543,6 +554,7 @@ export function registerWriteTools(
           tier: tier === "any" ? null : tier,
           domains,
           sections,
+          checks,
         });
         return okText(`edited ${id}${r.path ? ` → ${r.path}` : ""} (still draft — the human approves)`);
       } catch (e) {
@@ -623,6 +635,8 @@ export function registerWriteTools(
         "In a task-folder workspace each item becomes <project>/TASK-NN-<slug>.md (epics: PHASE-NN-…, " +
         "ideas: IDEA-NN-… — source documents an agent can be asked to plan from; never claimed) " +
         "from the standard template — give acceptance criteria an agent can check and the repos/paths it touches. " +
+        "checks adds a ## Checks section: machine commands ({name, repo, run, timeout?, expect_exit?}) te verify runs in their repo — " +
+        "repo must be named in touches. " +
         "Every task needs at least one domain — give them in domains, or they are inferred from title/touches/summary; " +
         "a fix (type `bug`, or fix/bug/defect/regression words in title or summary) always gets the `bug` domain. " +
         "depends_on/parent/relates may use #N for the N-th (0-based) earlier item of the same call; " +
@@ -646,6 +660,7 @@ export function registerWriteTools(
             summary: z.string().optional(),
             acceptance: z.array(z.string()).optional(),
             touches: z.array(z.string()).optional(),
+            checks: z.array(checkInput).optional(),
             simple: z.string().optional(),
             domains: z.array(z.string()).optional(),
             /** minimum model tier to claim it: light | standard | heavy */

@@ -12,6 +12,7 @@ import {
   appendToSection,
   emitFrontmatter,
   parseArtifacts,
+  renderChecks,
 } from "../../core/files/markdown.js";
 import {
   withTeTag,
@@ -28,6 +29,7 @@ import {
   setRelatesLine,
   setFoundByLine,
   replaceSection,
+  removeSection,
   sectionBody,
   removeSectionLines,
   PROTECTED_SECTIONS,
@@ -48,7 +50,7 @@ import {
 } from "../../core/files/template.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
-import { DecisionMeta, type Event, type ItemMeta, type Question } from "../../core/model/index.js";
+import { DecisionMeta, type Check, type Event, type ItemMeta, type Question } from "../../core/model/index.js";
 import type { Claim } from "../../core/model/claim.js";
 import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
@@ -324,6 +326,7 @@ export class PlansStore {
       summary?: string;
       acceptance?: string[];
       touches?: string[];
+      checks?: Check[];
       simple?: string;
       domains?: string[];
       tier?: "light" | "standard" | "heavy";
@@ -444,6 +447,7 @@ export class PlansStore {
           if (d.acceptance?.length) {
             body += `\n## Acceptance\n${d.acceptance.map((a) => `- [ ] ${a}`).join("\n")}\n`;
           }
+          if (d.checks?.length) body += `\n## Checks\n${renderChecks(d.checks)}`;
           if (d.simple?.trim()) body += `\n## Simple\n${d.simple.trim()}\n`;
         }
         writes.push({
@@ -1316,6 +1320,8 @@ export class PlansStore {
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
       sections?: Record<string, string>;
+      /** replaces the `## Checks` section (GL-0348); [] clears it */
+      checks?: Check[] | null;
     },
     actor: Actor,
   ): Promise<{ path?: string }> {
@@ -1384,6 +1390,7 @@ export class PlansStore {
         throw new ValidationError("edit: touches is the task file's **Touches:** line — task-folder items only");
       }
       const bodyEdits: Array<[string, string]> = [];
+      const clearSections: string[] = [];
       if (change.summary !== undefined) {
         bodyEdits.push(["Summary", change.summary]);
         what.push("summary");
@@ -1391,6 +1398,11 @@ export class PlansStore {
       if (change.acceptance) {
         bodyEdits.push(["Acceptance", checklist(change.acceptance)]);
         what.push("acceptance");
+      }
+      if (change.checks !== undefined) {
+        if (change.checks && change.checks.length) bodyEdits.push(["Checks", renderChecks(change.checks)]);
+        else clearSections.push("Checks");
+        what.push(`checks → ${change.checks?.length ?? 0}`);
       }
       for (const [h, b] of sections) {
         bodyEdits.push([h, b]);
@@ -1412,12 +1424,14 @@ export class PlansStore {
           what.push("touches");
         }
         for (const [h, b] of bodyEdits) out = replaceSection(out, h, b);
+        for (const h of clearSections) out = removeSection(out, h);
         const abs = join(this.ws.root, found.path);
         await writeFileAtomic(abs, out);
         this.onFileWrite?.(abs, out);
         path = found.path;
       } else {
         for (const [h, b] of bodyEdits) itemText = replaceSection(itemText, h, b);
+        for (const h of clearSections) itemText = removeSection(itemText, h);
       }
       await this.writeItemDoc(absItem, itemText, meta, [
         `- ${now} ${who} edited the draft (${what.join(", ") || "no changes"}): ${change.reason}`,

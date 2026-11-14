@@ -25,6 +25,7 @@ export type FindingKind =
   | "playbook"
   | "machine"
   | "env"
+  | "check"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"

@@ -1,7 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
-import { parseArtifacts } from "../../core/files/markdown.js";
+import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import {
   normalizeDomain,
   normalizeDomains,
@@ -19,6 +20,7 @@ import type { Claim } from "../../core/model/claim.js";
 import {
   StarColor,
   tierRank,
+  type Check,
   type ReviewFinding,
   type Status,
   type SubmitCost,
@@ -79,6 +81,15 @@ export interface Links {
 /** Title/summary words that mark an item as a fix — it always carries `bug`. */
 const FIX_WORDS =
   /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
+
+/** mtime-cached checks+touches per file — findings() runs per request (GL-0348). */
+interface ChecksAndTouches {
+  mtimeMs: number;
+  checks: Check[];
+  error?: string;
+  touches: Touch[];
+}
+const checkFileCache = new Map<string, ChecksAndTouches>();
 
 export class WorkspaceOps {
   constructor(
@@ -470,6 +481,7 @@ export class WorkspaceOps {
       referenced_by,
       question: it.meta.question,
       source,
+      checks: (await this.checksOf(it)).checks,
       reviewUnblocks: this.wsr.ws.config.review_unblocks,
       autonomy: this.wsr.ws.config.autonomy,
       autoAcceptAt: this.autoAcceptAt(it),
@@ -663,6 +675,24 @@ export class WorkspaceOps {
   }
 
   /**
+   * An item's `## Checks` (GL-0348): the overlay task file for overlay
+   * items, the item file otherwise. A section that does not parse comes
+   * back as `error` — a finding, never a broken index.
+   */
+  private async checksOf(it: IndexedItem): Promise<{ checks: Check[]; error?: string }> {
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      const found = await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source);
+      if (!found) return { checks: [] };
+      try {
+        return { checks: parseChecks(sectionBody(found.text, "Checks")) };
+      } catch (e) {
+        return { checks: [], error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    return { checks: it.checks ?? [] };
+  }
+
+  /**
    * Open items whose Touches paths overlap `id`'s — a warning, never a
    * refusal (GL-0326). Only items an agent could pick up or is working on
    * count: ready or in_progress leaf items, not archived, not done/dropped.
@@ -746,7 +776,7 @@ export class WorkspaceOps {
     return this.index.descendants(id);
   }
 
-  findings(): Finding[] {
+  async findings(): Promise<Finding[]> {
     // claims whose holder session ended on this machine strand their item
     // (in_progress forever, invisible to next) — a day-late stale_claim is
     // not enough, so warn now: take it over (claim) or release it
@@ -779,7 +809,83 @@ export class WorkspaceOps {
       ...dead,
       ...ops,
       ...(this.wsr.overlay?.findings() ?? []),
+      ...this.checkFindings(),
     ];
+  }
+
+  /**
+   * `## Checks` findings (GL-0348): a section that does not parse, a check
+   * with no run, a check naming a repo outside the item's Touches, and a
+   * duplicate check name. Cached per file by mtime — findings() runs on
+   * every request and must not re-read unchanged task files.
+   */
+  private checkFindings(): Finding[] {
+    const out: Finding[] = [];
+    const overlay = this.wsr.ws.config.mode === "overlay";
+    for (const it of this.index.items.values()) {
+      const file =
+        overlay && it.meta.source
+          ? join(this.wsr.ws.root, it.meta.source)
+          : join(this.wsr.ws.plansDir, it.path);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = statSync(file).mtimeMs;
+      } catch {
+        continue; // missing source has its own overlay finding
+      }
+      const cached = checkFileCache.get(file);
+      if (cached?.mtimeMs === mtimeMs) {
+        out.push(...this.checkFindingsOf(it, cached));
+        continue;
+      }
+      let entry: ChecksAndTouches;
+      try {
+        const text = readFileSync(file, "utf8");
+        entry = {
+          mtimeMs,
+          touches: parseTouches(text),
+          ...(() => {
+            try {
+              return { checks: overlay ? parseChecks(sectionBody(text, "Checks")) : it.checks ?? [], error: undefined };
+            } catch (e) {
+              return { checks: [] as Check[], error: e instanceof Error ? e.message : String(e) };
+            }
+          })(),
+        };
+      } catch {
+        continue;
+      }
+      checkFileCache.set(file, entry);
+      out.push(...this.checkFindingsOf(it, entry));
+    }
+    return out;
+  }
+
+  /** The findings for one item's cached checks+touches. */
+  private checkFindingsOf(it: IndexedItem, c: ChecksAndTouches): Finding[] {
+    const id = it.meta.id;
+    const f = (message: string): Finding => ({ severity: "error", kind: "check", item: id, path: it.path, message });
+    if (c.error) return [f(`${id}: ${c.error}`)];
+    if (!c.checks.length) return [];
+    const out: Finding[] = [];
+    const repos = new Set(c.touches.map((t) => t.repo).filter(Boolean));
+    const seen = new Set<string>();
+    for (const check of c.checks) {
+      if (seen.has(check.name)) out.push(f(`${id}: duplicate check name '${check.name}'`));
+      seen.add(check.name);
+      if (!check.run?.trim()) out.push(f(`${id}: check '${check.name}' has no run`));
+      if (!check.repo?.trim()) {
+        out.push(f(`${id}: check '${check.name}' has no repo`));
+      } else if (!repos.has(check.repo)) {
+        out.push(
+          f(
+            `${id}: check '${check.name}' names repo '${check.repo}' outside Touches` +
+              (repos.size ? ` (${[...repos].join(", ")})` : " (Touches has no repos)"),
+          ),
+        );
+      }
+    }
+    return out;
   }
 
   // ---- agent writes -----------------------------------------------------
@@ -1347,6 +1453,7 @@ export class WorkspaceOps {
       summary?: string;
       acceptance?: string[];
       touches?: string[];
+      checks?: Check[];
       simple?: string;
       domains?: string[];
       tier?: "light" | "standard" | "heavy";
@@ -2153,6 +2260,8 @@ export class WorkspaceOps {
       tier?: "light" | "standard" | "heavy" | null;
       domains?: string[];
       sections?: Record<string, string>;
+      /** replaces the `## Checks` section (GL-0348); [] or null clears it */
+      checks?: Check[] | null;
     },
   ) {
     this.item(id);

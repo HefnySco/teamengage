@@ -205,6 +205,14 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         else lines.push(`source: ${b.source.path}${b.source.moved ? " (moved)" : ""}`, b.source.text.trim());
         const acc = sec("Acceptance");
         if (acc) lines.push(`acceptance:\n${acc}`);
+        if (b.checks.length) {
+          lines.push("checks (te verify runs them):");
+          for (const c of b.checks) {
+            lines.push(
+              `  - ${c.name}: ${c.run ?? "(no run)"}${c.repo ? ` [${c.repo}]` : ""}${c.timeout ? ` (timeout ${c.timeout}s)` : ""}${c.expect_exit !== undefined ? ` (expect exit ${c.expect_exit})` : ""}`,
+            );
+          }
+        }
         for (const d of b.deps) {
           lines.push(
             `dep ${d.ref} ${d.status}${d.key && !["done", "dropped"].includes(d.status) ? " [key task — wait for its acceptance]" : ""}${d.pending ? " (not accepted yet — build on it, but it may still change)" : ""}${d.archived ? " [archived]" : ""}${d.outcome ? ` — ${d.outcome}` : ""}`,

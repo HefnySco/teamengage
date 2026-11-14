@@ -43,6 +43,13 @@ previous run must be cleared so the second run fires them again.
 - [ ] jumping back to an earlier waypoint re-fires the events from that waypoint on
 - [ ] unit test for the restart handler passes: ctest -R mission_restart
 
+## Checks
+- name: unit tests
+  repo: droneengage_mavlink
+  run: ctest -R mission_restart
+  timeout: 120
+  expect_exit: 0
+
 ## Artifacts
 - andruav/an0133-v2-sms.png — SMS tab mockup
 - mission_planner/mp0409-fence.png — geofence editor mockup #mission-planner !sensitive
@@ -62,6 +69,7 @@ previous run must be cleared so the second run fires them again.
 | `## Artifacts` | yes (may be empty) | Managed — `edit` refuses it, like `## Notes`. One attached file per line: `- <path under .artifacts/> — <caption> [#domain ...] [!sensitive]` (example: `- andruav/an0133-v2-sms.png — SMS tab mockup`). #tags are the artifact's own domains; a line without one takes the item's domains. `!sensitive` marks a file with private data. Written by `attach`, never by hand. |
 | `## Notes` | yes (may be empty) | Append-only working notes. |
 | `**Relates:**` | optional | Loose references — e.g. the `IDEA-` source doc(s) the work was generated from. Reference only, never ordering. |
+| `## Checks` | optional | Machine checks (GL-0348): a YAML list of `{name, repo, run, timeout, expect_exit}`. `te verify` runs each `run` in `repo` (must be named in `**Touches:**`), `timeout` in seconds, `expect_exit` defaults to 0. Written by `propose`/`edit` (`checks` argument); `te validate` reports a check with no run, a repo outside Touches and a duplicate name. |
 
 Agent-written text — the title, `## Summary`, `## Acceptance`, `## Notes`
 and the `.simple.md` companion — is written in ASD-STE100 Simplified
