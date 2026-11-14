@@ -88,7 +88,7 @@ describe("takeover of an AI-flagged submission", () => {
 
     await ops.claim("WS-0003", holder);
     await ops.submit("WS-0003", holder);
-    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet");
+    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
 
     // a session from another machine may not take over — worktrees are local
     const remote = {

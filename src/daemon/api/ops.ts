@@ -57,6 +57,7 @@ import { loadMachines, machineFindings, targetMachineFindings } from "../../core
 import { envFindings, loadEnvs } from "../../core/ops/env.js";
 import { transFindings } from "../../core/ops/trans.js";
 import { probeHistory, probeStats } from "../../core/ops/probe.js";
+import type { AskHuman } from "../../core/model/item.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -87,6 +88,36 @@ export interface Links {
 }
 
 /** Title/summary words that mark an item as a fix — it always carries `bug`. */
+/** GL-0343/0344: word-count guard for the short human-facing fields. */
+function checkWords(field: string, text: string | undefined, max: number, required = false): void {
+  const t = text?.trim() ?? "";
+  if (!t) {
+    if (required) throw new TeError("USAGE", `${field} is required`);
+    return;
+  }
+  const n = t.split(/\s+/).filter(Boolean).length;
+  if (n > max) throw new TeError("USAGE", `${field} is ${n} words — max ${max}`);
+}
+
+/**
+ * GL-0344: the human's decision card on reviews and bounces — problem
+ * ≤40 words, recommendation ≤30 words, two or three options of ≤4 words.
+ */
+function checkAskHuman(a: AskHuman | undefined, required: boolean): void {
+  if (!a) {
+    if (required) throw new TeError("USAGE", "ask_human is required — {problem, recommendation, options?}");
+    return;
+  }
+  checkWords("ask_human.problem", a.problem, 40, true);
+  checkWords("ask_human.recommendation", a.recommendation, 30, true);
+  if (a.options !== undefined) {
+    if (a.options.length < 2 || a.options.length > 3) {
+      throw new TeError("USAGE", `ask_human.options has ${a.options.length} entries — want 2 or 3`);
+    }
+    for (const o of a.options) checkWords("ask_human option", o, 4, true);
+  }
+}
+
 const FIX_WORDS =
   /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
 
@@ -1250,12 +1281,14 @@ export class WorkspaceOps {
     );
   }
 
-  async ask(id: string, session: Session, text: string, options?: string[], to?: "peer") {
+  async ask(id: string, session: Session, text: string, options?: string[], to?: "peer", context?: string) {
     const it = this.item(id);
     this.assertLiveClaim(it);
+    checkWords("question", text, 40, true);
     const question = {
       text,
       options,
+      ...(context !== undefined ? { context } : {}),
       asked_by: session.id,
       asked_at: new Date().toISOString(),
     };
@@ -1396,14 +1429,19 @@ export class WorkspaceOps {
     needsHuman?: boolean,
     report?: string,
     findings?: ReviewFinding[],
+    askHuman?: AskHuman,
   ) {
+    // GL-0344: a plain ok needs only a ≤25-word summary; anything the
+    // human must decide on needs the ask_human card
+    if (verdict === "ok" && !needsHuman) checkWords("summary", summary, 25);
+    else checkAskHuman(askHuman, true);
     const it = this.item(id);
     const claim = it.claim;
     const r = await this.store.perform(
       id,
       it.meta.version,
       this.actorFor(session),
-      { type: "review", verdict, note, summary, needs_human: needsHuman, report, findings },
+      { type: "review", verdict, note, summary, needs_human: needsHuman, report, findings, ask_human: askHuman },
       { holderAway: () => this.holderAway(this.item(id)) },
     );
     // an `issues` verdict on a holder that can't act released the claim
@@ -1423,7 +1461,9 @@ export class WorkspaceOps {
     reason: string,
     summary?: string,
     findings?: ReviewFinding[],
+    askHuman?: AskHuman,
   ) {
+    checkAskHuman(askHuman, true);
     const it = this.item(id);
     const claim = it.claim;
     return this.store
@@ -1431,7 +1471,7 @@ export class WorkspaceOps {
         id,
         it.meta.version,
         this.actorFor(session),
-        { type: "bounce", reason, summary, findings },
+        { type: "bounce", reason, summary, findings, ask_human: askHuman },
         {
           priorBounces: () => this.aiBouncesSinceHumanTouch(id),
           holderAway: () => this.holderAway(this.item(id)),

@@ -332,7 +332,7 @@ describe("plain-HTTP agent API", () => {
       (
         await call("POST", "/agent/submit/WS-0005", {
           token: holder,
-          body: { tests: "1 passed", walkthrough: "Changed the counter reset path." },
+          body: { tests: "1 passed", walkthrough: "Changed the counter reset path." , what: "task done", how: "ran the steps" },
         })
       ).text,
     ).toMatch(/^in_review/);
@@ -367,19 +367,27 @@ describe("plain-HTTP agent API", () => {
     for (let n = 1; n <= 2; n++) {
       const bounced = await call("POST", "/agent/bounce/WS-0005", {
         token: reviewer,
-        body: { reason: `tests red (${n})`, summary: `The tests are failing (${n}).` },
+        body: { reason: `tests red (${n})`, summary: `The tests are failing (${n}).`, ask_human: {
+                  problem: "tests are red after the change",
+                  recommendation: "revert or fix the failing path, then resubmit",
+                  options: ["bounce it", "I will check"],
+                } },
       });
       expect(bounced.status).toBe(200);
       const resubmit = await call("POST", "/agent/submit/WS-0005", {
         token: holder,
-        body: { notes: "fixed", walkthrough: "Fixed the red tests." },
+        body: { notes: "fixed", walkthrough: "Fixed the red tests.", what: "task done", how: "ran the steps" },
       });
       expect(resubmit.text).toMatch(/^in_review/);
     }
     // third bounce in a row: refused — the human must review now
     const capped = await call("POST", "/agent/bounce/WS-0005", {
       token: reviewer,
-      body: { reason: "still red", summary: "The tests still fail." },
+      body: { reason: "still red", summary: "The tests still fail.", ask_human: {
+                problem: "tests are red after the change",
+                recommendation: "revert or fix the failing path, then resubmit",
+                options: ["bounce it", "I will check"],
+              } },
     });
     expect(capped.status).toBe(403);
     expect(capped.text).toContain("AI bounces");
@@ -392,6 +400,11 @@ describe("plain-HTTP agent API", () => {
             verdict: "issues",
             summary: "The tests still fail.",
             note: "still red",
+            ask_human: {
+                      problem: "tests are red after the change",
+                      recommendation: "revert or fix the failing path, then resubmit",
+                      options: ["bounce it", "I will check"],
+                    },
           },
         })
       ).text.trim(),
@@ -460,7 +473,7 @@ describe("plain-HTTP agent API", () => {
       (
         await call("POST", "/agent/submit/WS-0006", {
           token: rev,
-          body: { tests: "1 passed", walkthrough: "Changed the thing." },
+          body: { tests: "1 passed", walkthrough: "Changed the thing." , what: "task done", how: "ran the steps" },
         })
       ).text,
     ).toMatch(/^in_review/);
@@ -534,6 +547,7 @@ describe("publish task outputs (GL-0325)", () => {
         walkthrough: "added the things",
         provides: ["GET /api/lessons route", "lessons/<domain>.md files"],
         tests: "4 passed",
+        what: "task done", how: "ran the steps",
       },
     });
     expect(sub.text).toMatch(/^in_review/);

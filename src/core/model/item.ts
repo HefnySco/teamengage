@@ -25,6 +25,18 @@ export type Turn = "human" | "agent";
  * Latest AI peer review of a submission (review/bounce by an agent session
  * that is not the holder). Advisory only: the human still accepts.
  */
+/**
+ * The short card a review or bounce shows the human (GL-0344):
+ * problem ≤40 words, recommendation ≤30 words, two or three options of
+ * ≤4 words each. The agent layer (note, report, findings) has no limit.
+ */
+export const AskHuman = z.object({
+  problem: z.string(),
+  recommendation: z.string(),
+  options: z.array(z.string()).max(3).optional(),
+});
+export type AskHuman = z.infer<typeof AskHuman>;
+
 export const AiReview = z.object({
   verdict: z.enum(["ok", "issues"]),
   /** reviewing session id (`agent@machine#hex`) */
@@ -46,6 +58,8 @@ export const AiReview = z.object({
   needs_human: z.boolean().optional(),
   /** Multi-line plain report for the human. Agents use summary and note. */
   report: z.string().optional(),
+  /** the human's decision card — required on needs_human and issues verdicts and on bounces (GL-0344) */
+  ask_human: AskHuman.optional(),
 });
 export type AiReview = z.infer<typeof AiReview>;
 
@@ -138,6 +152,8 @@ export function tierRank(t: Tier | undefined): number {
  * and the item stays in_progress; unset: a human question on a `waiting` item. */
 export const Question = z.object({
   text: z.string().min(1),
+  /** the detail behind the question — kept apart from the ≤40-word text (GL-0344) */
+  context: z.string().optional(),
   options: z.array(z.string()).optional(),
   asked_by: z.string(),
   asked_at: z.string(),

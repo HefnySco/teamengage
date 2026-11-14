@@ -89,14 +89,14 @@ export type Action =
    * it keeps the accept strictly the human's (no auto-accept). `report` is the
    * optional multi-line decision report for the human; nothing parses it.
    */
-  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string; findings?: ReviewFinding[] }
+  | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string; findings?: ReviewFinding[]; ask_human?: AiReview["ask_human"] }
   /**
    * A second agent session bounces a broken submission back to its holder
    * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
    * a row the item stays in review for the human (record a review instead).
    * `findings` lists what must be fixed — the checklist for the resubmit.
    */
-  | { type: "bounce"; reason: string; summary?: string; findings?: ReviewFinding[] }
+  | { type: "bounce"; reason: string; summary?: string; findings?: ReviewFinding[]; ask_human?: AiReview["ask_human"] }
   /**
    * The holder is stuck: it stops, writes down the problem, what it tried
    * and where it left off, and gives the item back for a fresh session
@@ -674,6 +674,7 @@ export function transition(
         // review on it is needs_human, whatever the verdict
         ...(action.needs_human || meta.unverified_reason ? { needs_human: true } : {}),
         ...(action.report ? { report: action.report } : {}),
+        ...(action.ask_human ? { ask_human: action.ask_human } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
       // an issues verdict only records the review: it never releases the claim.
@@ -753,6 +754,7 @@ export function transition(
         reviewed_at: ctx.now,
         note: action.reason,
         ...(action.summary ? { summary: action.summary } : {}),
+        ...(action.ask_human ? { ask_human: action.ask_human } : {}),
       };
       out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason} (attempt ${out.meta.attempts})`);
       if (f.escalated) out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);

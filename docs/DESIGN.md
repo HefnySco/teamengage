@@ -302,7 +302,14 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   `ok|issues`, reviewer session, date, note. Pure triage hint for the
   human's review queue (badge on board cards, marker in the inbox, banner
   on the item page); never a gate — `accept`/`reject` stay human-only and
-  the turn stays the human's. `submit` clears it (a fresh submission starts
+  the turn stays the human's. Anything the human must decide on carries
+  `ask_human` — the short decision card (GL-0344): `problem` ≤40 words,
+  `recommendation` ≤30 words, optional 2–3 `options` of ≤4 words each. A
+  `needs_human` review, an `issues` verdict and every `bounce` require it;
+  a plain `ok` needs only `summary` ≤25 words. `ask` takes an optional
+  `context` for the detail — the question text stays ≤40 words; `note`,
+  `report` and `findings` stay the agent layer with no limit.
+  `submit` clears it (a fresh submission starts
   unreviewed); `bounce` sets it to `issues` with the bounce reason.
 - `findings` is the latest review's **structured checklist** (GL-0321):
   `review`/`bounce` may carry `findings: [{text, where?, severity:

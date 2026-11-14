@@ -754,7 +754,7 @@ describe("autonomy: solo", () => {
       await ops.submit(base, agent, { notes: "done" });
       const reviewer = ctx.sessions.hello("solo-reviewer");
       expect(ops.autoAcceptDue()).not.toContain(base); // unreviewed
-      await ops.review(base, reviewer, "issues", "broken");
+      await ops.review(base, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       await ops.review(base, reviewer, "ok");
       expect(ops.autoAcceptDue()).not.toContain(base); // too fresh
@@ -770,7 +770,7 @@ describe("autonomy: solo", () => {
       expect((await api(`/api/items/${base}/stop-auto-accept`, { method: "POST" })).status).toBe(200);
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       // a resubmit re-arms it
-      await ops.bounce(base, reviewer, "one more pass");
+      await ops.bounce(base, reviewer, "one more pass", undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
       await ops.submit(base, agent, {});
       await ops.review(base, reviewer, "ok");
       expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(base);
@@ -807,7 +807,7 @@ describe("autonomy: solo", () => {
     wsr.ws.config.auto_accept_after = "30m";
     try {
       // "ok, but the human should decide" — flagged, never auto-accepted
-      await ops.review(id, reviewer, "ok", "auth-adjacent change", "looks right, wants your eyes", true);
+      await ops.review(id, reviewer, "ok", "auth-adjacent change", "looks right, wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
       const it = store.idx.get(id)!;
       expect(it.meta.ai_review?.needs_human).toBe(true);
       expect(ops.autoAcceptAt(it)).toBeUndefined();
@@ -851,7 +851,7 @@ describe("autonomy: solo", () => {
       await ops.claim(id, agent);
       await ops.submit(id, agent, {});
     }
-    await ops.review(nh, reviewer, "ok", "borderline", "looks right, wants your eyes", true);
+    await ops.review(nh, reviewer, "ok", "borderline", "looks right, wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
     for (const id of [light, meta, plain]) await ops.review(id, reviewer, "ok");
 
     wsr.ws.config.autonomy = "solo";
@@ -1090,8 +1090,8 @@ describe("batch actions", () => {
     await ops.review(ok1, reviewer, "ok");
     await ops.review(ok2, reviewer, "ok");
     await ops.review(ok3, reviewer, "ok");
-    await ops.review(bad, reviewer, "issues", "broken");
-    await ops.review(nh, reviewer, "ok", "risky bit", "wants your eyes", true);
+    await ops.review(bad, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
+    await ops.review(nh, reviewer, "ok", "risky bit", "wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
     await ops.setParent(da, epic);
     await ops.setParent(db, epic);
     await ops.complete(fa);
@@ -1896,5 +1896,87 @@ describe("## Checks (GL-0348)", () => {
     const clean = await ops.propose([{ type: "task", title: "No checks here", domains: ["teamengage"] }], human);
     const cleanFindings = (await ops.findings()).filter((f) => f.item === clean.ids[0] && f.kind === "check");
     expect(cleanFindings).toHaveLength(0);
+  });
+});
+
+describe("ask_human decision card (GL-0344)", () => {
+  const AH = { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] };
+
+  const submitted = async (ops: InstanceType<typeof import("./ops.js").WorkspaceOps>, title: string) => {
+    const wsr = ctx.workspaces.get("ws")!;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`holder-${id}`);
+    await ops.claim(id, holder);
+    // what/how via spread: required where the GL-0343 gate is active, ignored otherwise
+    await ops.submit(id, holder, { notes: "done", ...({ what: "task done", how: "ran the steps" } as Record<string, string>) });
+    return id;
+  };
+
+  it("a needs_human or issues review without ask_human is refused with USAGE", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
+    const reviewer = ctx.sessions.hello("r-344");
+    const a = await submitted(ops, "Card check A");
+    const b = await submitted(ops, "Card check B");
+    await expect(ops.review(a, reviewer, "ok", "n", "s", true)).rejects.toMatchObject({ code: "USAGE" });
+    await expect(ops.review(b, reviewer, "issues", "n")).rejects.toMatchObject({ code: "USAGE" });
+    // with the card both go through
+    await ops.review(a, reviewer, "ok", "n", "s", true, undefined, undefined, AH);
+    await ops.review(b, reviewer, "issues", "n", undefined, undefined, undefined, undefined, AH);
+  });
+
+  it("an ok review with a 26-word summary is refused and the error shows the count", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
+    const reviewer = ctx.sessions.hello("r-344b");
+    const id = await submitted(ops, "Summary length");
+    const long = Array.from({ length: 26 }, (_, i) => `w${i}`).join(" ");
+    await expect(ops.review(id, reviewer, "ok", undefined, long)).rejects.toThrow(/26 words — max 25/);
+    await ops.review(id, reviewer, "ok", undefined, "short enough");
+  });
+
+  it("ask_human lands on ai_review and the item API returns it", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
+    const reviewer = ctx.sessions.hello("r-344c");
+    const id = await submitted(ops, "Card stored");
+    await ops.review(id, reviewer, "issues", "broken bit", undefined, undefined, undefined, undefined, AH);
+    const stored = ctx.workspaces.get("ws")!.store.idx.get(id)!.meta.ai_review;
+    expect(stored?.ask_human).toEqual(AH);
+    const body = (await (await api(`/api/items/${id}`)).json()) as { item: { meta: { ai_review?: { ask_human?: unknown } } } };
+    expect(body.item.meta.ai_review?.ask_human).toEqual(AH);
+  });
+
+  it("ask with context stores it apart from the question", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
+    const wsr = ctx.workspaces.get("ws")!;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Ask context" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`holder-${id}`);
+    await ops.claim(id, holder);
+    await ops.ask(id, holder, "keep the old path or take the new one?", undefined, undefined, "long detail: the new path drops the lock but changes the retry shape, see src/x.ts");
+    const q = wsr.store.idx.get(id)!.meta.question!;
+    expect(q.text).toBe("keep the old path or take the new one?");
+    expect(q.context).toContain("long detail");
+    // and a 41-word question is refused
+    await expect(ops.ask(id, holder, Array.from({ length: 41 }, (_, i) => `w${i}`).join(" "))).rejects.toThrow(/41 words — max 40/);
+  });
+
+  it("a review record made before ask_human loads with no error", async () => {
+    const { AiReview } = await import("../../core/model/item.js");
+    const old = {
+      verdict: "ok",
+      reviewed_by: "agent@m#abcd",
+      reviewed_at: "2026-01-01T00:00:00Z",
+      summary: "looked fine",
+    };
+    expect(AiReview.parse(old).verdict).toBe("ok");
+    expect(AiReview.parse(old).ask_human).toBeUndefined();
   });
 });

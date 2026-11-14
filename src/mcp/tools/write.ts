@@ -14,6 +14,13 @@ import { SubmitCost } from "../../core/model/item.js";
  */
 
 /** A finding the reviewer sends (GL-0321) — state/reason are the holder's. */
+/** GL-0344: the human's short decision card — problem ≤40 w, recommendation ≤30 w, 2–3 options ≤4 w each. */
+const askHuman = z.object({
+  problem: z.string(),
+  recommendation: z.string(),
+  options: z.array(z.string()).optional(),
+});
+
 const reviewFinding = z.object({
   text: z.string().min(1),
   where: z.string().optional(),
@@ -239,21 +246,23 @@ export function registerWriteTools(
         "Record a question → item waits for the human. " +
         "to: \"peer\" asks another agent first — the item stays in_progress, " +
         "an eligible session answers with answer_peer, and only a question " +
-        "left unanswered past peer_answer_after reaches the human.",
+        "left unanswered past peer_answer_after reaches the human. " +
+        "question is at most 40 words — context carries the detail, no limit, stored apart.",
       inputSchema: {
         id: z.string(),
         question: z.string(),
         options: z.array(z.string()).optional(),
         to: z.literal("peer").optional(),
+        context: z.string().optional(),
       },
     },
-    async ({ id, question, options, to }) => {
+    async ({ id, question, options, to, context }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.ask(id, s, question, options, to);
+        await o.ask(id, s, question, options, to, context);
         return okText(to === "peer" ? `peer question on ${id} — item stays yours` : `waiting ${id}: human's turn`);
       } catch (e) {
         return errFrom(e);
@@ -352,6 +361,9 @@ export function registerWriteTools(
         "Agents read summary and note, so keep any note markers there. " +
         "Use findings for a structured list the holder must answer: {text, where, severity must|should} — " +
         "a `must` blocks the next submit until the holder marks it done or skipped. " +
+        "summary is at most 25 words on a plain ok. " +
+        "A review with needs_human or verdict issues needs ask_human — the human's short card: " +
+        "{problem ≤40 words, recommendation ≤30 words, options? two or three labels ≤4 words each}. " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
         "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
@@ -365,15 +377,16 @@ export function registerWriteTools(
         needs_human: z.boolean().optional(),
         report: z.string().optional(),
         findings: z.array(reviewFinding).optional(),
+        ask_human: askHuman.optional(),
       },
     },
-    async ({ id, verdict, summary, note, needs_human, report, findings }) => {
+    async ({ id, verdict, summary, note, needs_human, report, findings, ask_human }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.review(id, s, verdict, note, summary, needs_human, report, findings);
+        const r = await o.review(id, s, verdict, note, summary, needs_human, report, findings, ask_human);
         return okText(
           `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}` +
             (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
@@ -393,6 +406,7 @@ export function registerWriteTools(
         "longer live, where the claim is released to ready instead (a bounced item must not strand). " +
         "reason is required and goes to the holder; " +
         "summary is required too — one sentence in STE for the human. " +
+        "ask_human is required — the human's short card: {problem ≤40 words, recommendation ≤30 words, options? ≤4 words each}. " +
         "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
         "List what must be fixed in findings: {text, where, severity must|should} — " +
         "the holder answers each `must` with done or skipped on the resubmit. " +
@@ -402,15 +416,16 @@ export function registerWriteTools(
         reason: z.string(),
         summary: z.string(),
         findings: z.array(reviewFinding).optional(),
+        ask_human: askHuman,
       },
     },
-    async ({ id, reason, summary, findings }) => {
+    async ({ id, reason, summary, findings, ask_human }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.bounce(id, s, reason, summary, findings);
+        const r = await o.bounce(id, s, reason, summary, findings, ask_human);
         const m = r.meta;
         const where =
           m.status === "in_progress"
