@@ -7,7 +7,7 @@ import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
-import { loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ProbeResult, type ReachProbeResult } from "../../core/ops/probe.js";
+import { ProbeResult, loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ReachProbeResult } from "../../core/ops/probe.js";
 import { loadMachines, type Machine } from "../../core/ops/machine.js";
 import { deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
 import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseNotes, readNotes } from "../../core/ops/notes.js";
@@ -105,6 +105,21 @@ export async function opsProbe(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: st
   if (!t.probe) throw new ValidationError(`target '${target}' has no probe command in workspace.yaml`);
   const run = await runProbe(t.probe, { cwd: wsr.ws.root, timeoutMs: (t.probe_timeout_ms as number | undefined) ?? PROBE_TIMEOUT_MS });
   const result: ProbeResult = { target, by: "human", ...run };
+  saveProbe(result, ctx.home);
+  return result;
+}
+
+/**
+ * Record a probe result posted by `te ops watch` (GL-0334): the runner
+ * executes the probe, the daemon only stores it — by: "watch" and the
+ * daemon's machine name are stamped here so a post cannot fake them.
+ */
+export function opsProbeResult(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: string, body: unknown): ProbeResult {
+  const t = wsr.ws.config.targets[target];
+  if (!t) throw new NotFoundError(`target '${target}' not in workspace.yaml targets:`);
+  if (!t.probe) throw new ValidationError(`target '${target}' has no probe command in workspace.yaml`);
+  const run = ProbeResult.omit({ target: true, by: true, machine: true }).parse(body ?? {});
+  const result: ProbeResult = { target, by: "watch", machine: ctx.machine, ...run };
   saveProbe(result, ctx.home);
   return result;
 }
@@ -561,6 +576,14 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       // an agent session identity on the human API refuses — probes are human-only
       const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
       return await opsProbe(opsWsr(ctx, wsOf(req.query)), ctx, target, session);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.post("/api/ops/probe/:target/result", async (req, reply) => {
+    try {
+      const { target } = req.params as { target: string };
+      return opsProbeResult(opsWsr(ctx, wsOf(req.query)), ctx, target, req.body);
     } catch (e) {
       return sendOpsErr(reply, e);
     }

@@ -5,7 +5,8 @@ import { teHome } from "../../core/config/config.js";
 import { deployGuard, execJob, jobRepoDirs, type ExecOutcome } from "../../core/ops/runner.js";
 import { jobPlaybook, type Job } from "../../core/ops/job.js";
 import type { LoadedPlaybook } from "../../core/ops/playbook.js";
-import type { ProbeResult } from "../../core/ops/probe.js";
+import { runProbe, type ProbeResult } from "../../core/ops/probe.js";
+import { runProbeWatch } from "../../core/ops/watch.js";
 import type { TargetConfig } from "../../core/model/workspace.js";
 
 /**
@@ -33,6 +34,8 @@ const USAGE =
   "  list     [--ws w] [--json]                      playbooks\n" +
   "  targets  [--ws w] [--json]                      workspace targets\n" +
   "  jobs     [--ws w] [--json]                      ops jobs\n" +
+  "  probe [<target>] [--ws w] [--json]              run the target probe now (human)\n" +
+  "  watch    [--ws w]                                run due probes on probe_every forever\n" +
   "  start <playbook> [--target t] [--param k=v]… [--release r]    start a job\n" +
   "  exec <job> [--step id] [--ws w] [--json]        run the cursor steps\n" +
   "  status <job> [--ws w] [--json]                  job + step states\n" +
@@ -130,6 +133,18 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         }
         if (json) console.log(JSON.stringify(one ? results[0] : results, null, 2));
         return bad;
+      }
+      case "watch": {
+        // `te ops watch` (GL-0334): run due probes here, post results to the daemon.
+        console.log("watching targets with probe_every — Ctrl+C to stop");
+        await runProbeWatch({
+          targets: () => api("GET", `/api/ops/targets${ws}`, undefined, home),
+          last: () => api("GET", "/api/ops/probes", undefined, home),
+          run: (command) => runProbe(command),
+          post: (t, r) => api("POST", `/api/ops/probe/${encodeURIComponent(t)}/result${ws}`, r, home),
+          log: (l) => console.log(`${new Date().toISOString().slice(11, 19)} ${l}`),
+        });
+        return 0;
       }
       case "jobs": {
         const jobs = await api<Job[]>("GET", `/api/ops/jobs${ws}`, undefined, home);

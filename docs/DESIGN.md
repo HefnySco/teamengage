@@ -910,6 +910,12 @@ each playbook; `gate` steps are human-only. This ordering and these
 gates prevent skipped steps and mistakes by an honest agent — they are
 not a defence against a hostile local user.
 
+Scheduled probes keep the same boundary (GL-0334): a target may set
+`probe_every` in workspace.yaml; `te ops watch` on the runner machine
+runs each due probe and posts the result. The daemon stores it stamped
+`by: "watch"` with the machine name — it never starts a probe on a
+timer itself.
+
 ### 14.6 Machines and envs
 
 Machines and envs describe where ops work lands. They are files, not

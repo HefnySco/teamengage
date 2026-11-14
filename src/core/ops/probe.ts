@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { teHome } from "../config/config.js";
 import { versionFromTail } from "./job.js";
+import { parseDuration } from "../model/workspace.js";
 
 /**
  * Target probes (GL-0278, DESIGN §14.5): a read-only shell a target
@@ -20,8 +21,10 @@ const OUTPUT_TAIL = 8_000;
 
 export const ProbeResult = z.object({
   target: z.string(),
-  /** started-by marker: "human" for the UI/CLI probe */
+  /** started-by marker: "human" for the UI/CLI probe, "watch" for `te ops watch` */
   by: z.string(),
+  /** the machine that ran the probe — set by the daemon from ctx.machine */
+  machine: z.string().optional(),
   ts: z.string(),
   ok: z.boolean(),
   /** true when the probe was killed at the timeout */
@@ -98,6 +101,31 @@ export function runProbeArgv(
   opts: { cwd?: string; timeoutMs?: number } = {},
 ): Promise<Omit<ProbeResult, "target" | "by"> & { stdout: string }> {
   return capture(file, args, opts).then((c) => ({ ...toProbeResult(c), stdout: c.stdout }));
+}
+
+/**
+ * `probe_every` scheduling (GL-0334): the targets due for a watch sweep —
+ * those with a probe and a probe_every whose last stored result is older
+ * than the interval (or missing). `now` is injectable for tests.
+ */
+export function dueProbes(
+  targets: Record<string, { probe?: string; probe_every?: string }>,
+  last: Record<string, ProbeResult | undefined>,
+  now = Date.now(),
+): string[] {
+  const due: string[] = [];
+  for (const [id, t] of Object.entries(targets)) {
+    if (!t.probe || !t.probe_every) continue;
+    let every: number;
+    try {
+      every = parseDuration(t.probe_every);
+    } catch {
+      continue;
+    }
+    const ts = last[id]?.ts;
+    if (!ts || now - Date.parse(ts) >= every) due.push(id);
+  }
+  return due.sort();
 }
 
 function probesDir(home?: string): string {

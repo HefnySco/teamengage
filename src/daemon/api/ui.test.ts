@@ -167,6 +167,24 @@ describe("ops UI API (GL-0276)", () => {
     expect((await list.json()).stage.version).toBe("v1.0.0");
   });
 
+  // GL-0334: `te ops watch` posts results it ran — the daemon stamps
+  // by: "watch" + the machine and stores; it never runs the command itself
+  it("POST /api/ops/probe/:target/result stores a watch result — the daemon runs nothing", async () => {
+    const r = await fetch(`${daemon2.url}/api/ops/probe/stage/result`, {
+      method: "POST",
+      headers: { ...cookie(), "content-type": "application/json" },
+      body: JSON.stringify({ ts: new Date().toISOString(), ok: true, timeout: false, version: "v9.watch", output: "watch ran this" }),
+    });
+    expect(r.status).toBe(200);
+    const stored = JSON.parse(readFileSync(join(home2, ".teamengage", "ops-probes", "stage.json"), "utf8"));
+    expect(stored.by).toBe("watch");
+    expect(stored.machine).toBe("test");
+    expect(stored.version).toBe("v9.watch");
+    // unknown target / no probe refuse the same as the run endpoint
+    expect((await fetch(`${daemon2.url}/api/ops/probe/nosuch/result`, { method: "POST", headers: { ...cookie(), "content-type": "application/json" }, body: "{}" })).status).toBe(404);
+    expect((await fetch(`${daemon2.url}/api/ops/probe/unprobed/result`, { method: "POST", headers: { ...cookie(), "content-type": "application/json" }, body: "{}" })).status).toBe(400);
+  });
+
   it("a probe over the timeout is killed and marked timeout", async () => {
     const r = await fetch(`${daemon2.url}/api/ops/probe/slow`, { method: "POST", headers: cookie() });
     expect(r.status).toBe(200);

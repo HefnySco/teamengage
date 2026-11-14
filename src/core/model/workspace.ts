@@ -52,6 +52,8 @@ export const TargetConfig = z
     service: z.string().optional(),
     env: z.string().optional(),
     probe: z.string().optional(),
+    /** `te ops watch` runs the probe on this cadence (a duration like "5m"); unset = manual only */
+    probe_every: z.string().optional(),
     /** machine file id this target lives on — deploy edges decide which runners may run jobs */
     machine: z.string().optional(),
     /** app name inside the target machine's apps list */

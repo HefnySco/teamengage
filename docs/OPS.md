@@ -91,6 +91,7 @@ targets:
     service: myapp
     env: prod
     probe: ssh prod 'systemctl is-active myapp'   # read-only version probe the daemon may run
+    probe_every: 5m      # `te ops watch` re-runs the probe on this cadence (unset = manual only)
     ssh_opts: -i ~/.ssh/prod_key
 ```
 
@@ -396,6 +397,18 @@ tiers.
 The view runs nothing: it shows the stored job records and the stored
 probe results only. To refresh a probe, use the probe buttons — they
 stay human-only.
+
+### Scheduled probes — `te ops watch`
+
+`te ops watch` is a long-running command on the runner machine. Every
+second it checks each target with `probe_every` in `workspace.yaml` and
+runs the ones whose last stored result is older than that interval (a
+target with no result runs at once). It runs the probe itself and posts
+the result to the daemon — the daemon only stores it, stamped
+`by: "watch"` and the machine name, so the DESIGN §14.5 boundary stays:
+the daemon never runs a probe on a schedule. A target without
+`probe_every` is manual-only. `te ops probe [<target>]` stays the
+human's run-now; Ctrl+C stops the watch.
 
 ### The machine activity log (trans)
 
