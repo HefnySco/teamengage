@@ -164,3 +164,41 @@ describe("reach probe (GL-0289)", () => {
     }
   });
 });
+
+describe("probe history (GL-0335)", () => {
+  it("appends one row per result and keeps the last 500", async () => {
+    const { saveProbe, probeHistory, probeStats, PROBE_HISTORY_MAX } = await import("./probe.js");
+    const home = mkdtempSync(join(tmpdir(), "te-hist-"));
+    try {
+      for (let i = 0; i < 3; i++) {
+        saveProbe({ target: "t", by: "watch", ts: new Date(1_000 * i).toISOString(), ok: i !== 1, timeout: false, output: "", version: `v${i}` }, home);
+      }
+      let hist = probeHistory("t", home);
+      expect(hist).toHaveLength(3);
+
+      for (let i = 0; i < PROBE_HISTORY_MAX + 20; i++) {
+        saveProbe({ target: "t", by: "watch", ts: new Date(1_000_000 + i).toISOString(), ok: true, timeout: false, output: "" }, home);
+      }
+      hist = probeHistory("t", home);
+      expect(hist).toHaveLength(PROBE_HISTORY_MAX);
+      expect(hist[hist.length - 1].ts).toBe(new Date(1_000_000 + PROBE_HISTORY_MAX + 19).toISOString());
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("probeStats gives the ok share, the last ok→fail time and the last version change", async () => {
+    const { probeStats } = await import("./probe.js");
+    const at = (s: number) => new Date(1_000_000 + s).toISOString();
+    const hist = [
+      { target: "t", by: "w", ts: at(0), ok: true, timeout: false, output: "", version: "v1" },
+      { target: "t", by: "w", ts: at(1), ok: true, timeout: false, output: "", version: "v2" },
+      { target: "t", by: "w", ts: at(2), ok: false, timeout: false, output: "", version: "v2" },
+      { target: "t", by: "w", ts: at(3), ok: false, timeout: false, output: "", version: "v2" },
+    ];
+    const st = probeStats(hist);
+    expect(st.ok_ratio).toBe(0.5);
+    expect(st.last_state_change).toBe(at(2));
+    expect(st.last_version_change).toBe(at(1));
+  });
+});

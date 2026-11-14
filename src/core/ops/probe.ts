@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -139,6 +139,62 @@ export function probePath(target: string, home?: string): string {
 export function saveProbe(result: ProbeResult, home?: string): void {
   mkdirSync(probesDir(home), { recursive: true });
   writeFileSync(probePath(result.target, home), JSON.stringify(result, null, 2) + "\n");
+  appendProbeHistory(result, home);
+}
+
+/**
+ * Per-target probe history (GL-0335): one JSONL row per result, capped at
+ * the last 500 — the ops panel derives uptime and last changes from it.
+ */
+export const PROBE_HISTORY_MAX = 500;
+
+function historyPath(target: string, home?: string): string {
+  return join(probesDir(home), "history", `${target}.jsonl`);
+}
+
+export function appendProbeHistory(result: ProbeResult, home?: string): void {
+  const dir = join(probesDir(home), "history");
+  mkdirSync(dir, { recursive: true });
+  const path = historyPath(result.target, home);
+  appendFileSync(path, JSON.stringify(result) + "\n");
+  const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+  if (lines.length > PROBE_HISTORY_MAX) {
+    writeFileSync(path, lines.slice(-PROBE_HISTORY_MAX).join("\n") + "\n");
+  }
+}
+
+export function probeHistory(target: string, home?: string): ProbeResult[] {
+  try {
+    return readFileSync(historyPath(target, home), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => ProbeResult.parse(JSON.parse(l)));
+  } catch {
+    return [];
+  }
+}
+
+/** Stats over a history: ok share, the last ok→not-ok flip, the last version change. */
+export function probeStats(history: ProbeResult[]): {
+  ok_ratio: number;
+  last_state_change?: string;
+  last_version_change?: string;
+} {
+  const ok_ratio = history.length ? history.filter((r) => r.ok).length / history.length : 0;
+  let last_state_change: string | undefined;
+  let last_version_change: string | undefined;
+  for (let i = history.length - 1; i > 0 && (last_state_change === undefined || last_version_change === undefined); i--) {
+    if (last_state_change === undefined && history[i - 1].ok && !history[i].ok) last_state_change = history[i].ts;
+    if (
+      last_version_change === undefined &&
+      history[i].version !== undefined &&
+      history[i - 1].version !== undefined &&
+      history[i].version !== history[i - 1].version
+    ) {
+      last_version_change = history[i].ts;
+    }
+  }
+  return { ok_ratio, last_state_change, last_version_change };
 }
 
 /** every stored probe result, keyed by target — corrupt files are skipped */

@@ -35,6 +35,7 @@ const USAGE =
   "  targets  [--ws w] [--json]                      workspace targets\n" +
   "  jobs     [--ws w] [--json]                      ops jobs\n" +
   "  probe [<target>] [--ws w] [--json]              run the target probe now (human)\n" +
+  "  probe --history <target> [--ws w] [--json]      the stored probe rows of one target\n" +
   "  watch    [--ws w]                                run due probes on probe_every forever\n" +
   "  start <playbook> [--target t] [--param k=v]… [--release r]    start a job\n" +
   "  exec <job> [--step id] [--ws w] [--json]        run the cursor steps\n" +
@@ -116,6 +117,17 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         return console.log(json ? JSON.stringify(t, null, 2) : formatTargets(t)), 0;
       }
       case "probe": {
+        const histOf = opt(args, "--history");
+        if (histOf) {
+          const r = await api<{ history: ProbeResult[]; stats: { ok_ratio: number; last_state_change?: string; last_version_change?: string } }>(
+            "GET", `/api/ops/targets/${encodeURIComponent(histOf)}/probes${ws}`, undefined, home);
+          if (json) return console.log(JSON.stringify(r, null, 2)), 0;
+          for (const h of r.history) {
+            console.log(`${h.ts}  ${h.ok ? "ok" : "FAIL"}${h.version ? `  ${h.version}` : ""}${h.timeout ? "  (timeout)" : ""}  by ${h.by}`);
+          }
+          console.log(`${r.history.length} rows — ok ${(r.stats.ok_ratio * 100).toFixed(0)}%${r.stats.last_state_change ? ` — last ok→fail ${r.stats.last_state_change}` : ""}${r.stats.last_version_change ? ` — last version change ${r.stats.last_version_change}` : ""}`);
+          return 0;
+        }
         const targets = await api<Record<string, { probe?: string }>>("GET", `/api/ops/targets${ws}`, undefined, home);
         const one = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
         const ids = one ? [one] : Object.keys(targets).filter((k) => targets[k].probe).sort();

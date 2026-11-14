@@ -8,7 +8,7 @@ import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
 import { loadPlaybooks, Playbook, type LoadedPlaybook } from "../../core/ops/playbook.js";
-import { ProbeResult, loadProbes, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ReachProbeResult } from "../../core/ops/probe.js";
+import { ProbeResult, loadProbes, probeHistory, probeStats, runProbe, saveProbe, loadReachProbes, saveReachProbes, runReachProbe, PROBE_TIMEOUT_MS, type ReachProbeResult } from "../../core/ops/probe.js";
 import { loadMachines, type Machine } from "../../core/ops/machine.js";
 import { deployedForMachine, type DeployedApp } from "../../core/ops/deployed.js";
 import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseNotes, readNotes } from "../../core/ops/notes.js";
@@ -630,6 +630,17 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       // an agent session identity on the human API refuses — probes are human-only
       const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
       return await opsProbe(opsWsr(ctx, wsOf(req.query)), ctx, target, session);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/targets/:id/probes", async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const wsr = opsWsr(ctx, wsOf(req.query));
+      if (!wsr.ws.config.targets[id]) throw new NotFoundError(`target '${id}' not in workspace.yaml targets:`);
+      const history = probeHistory(id, ctx.home);
+      return { history, stats: probeStats(history) };
     } catch (e) {
       return sendOpsErr(reply, e);
     }

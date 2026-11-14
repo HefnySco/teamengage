@@ -187,10 +187,31 @@ describe("ops UI API (GL-0276)", () => {
     expect((await fetch(`${daemon2.url}/api/ops/probe/unprobed/result`, { method: "POST", headers: { ...cookie(), "content-type": "application/json" }, body: "{}" })).status).toBe(400);
   });
 
+  // GL-0335: per-target history rows + derived stats
+  it("GET /api/ops/targets/:id/probes serves the history and the last ok→fail time", async () => {
+    for (const [ok, ts] of [[true, "2026-01-01T00:00:01Z"], [true, "2026-01-01T00:00:02Z"], [false, "2026-01-01T00:00:03Z"]] as const) {
+      const r = await fetch(`${daemon2.url}/api/ops/probe/stage/result`, {
+        method: "POST",
+        headers: { ...cookie(), "content-type": "application/json" },
+        body: JSON.stringify({ ts, ok, timeout: false, version: "v1", output: "" }),
+      });
+      expect(r.status).toBe(200);
+    }
+    const r = await fetch(`${daemon2.url}/api/ops/targets/stage/probes`, { headers: cookie() });
+    const body = (await r.json()) as { history: Array<{ ts: string; ok: boolean }>; stats: { ok_ratio: number; last_state_change?: string } };
+    expect(body.history.length).toBeGreaterThanOrEqual(3);
+    expect(body.stats.last_state_change).toBe("2026-01-01T00:00:03Z");
+    expect(body.stats.ok_ratio).toBeGreaterThan(0);
+  });
+
   // GL-0339: `te ops exec` under an agent session (X-TE-Session = a live
   // session id) records that session as the step actor and on the job
   // step record; no header stays "human"
   it("a step result records the real actor — agent session or human", async () => {
+    // earlier tests leave a running job holding the target lock — abort it
+    for (const j of await (await fetch(`${daemon2.url}/api/ops/jobs?status=running`, { headers: cookie() })).json()) {
+      await fetch(`${daemon2.url}/api/ops/abort/${j.id}`, { method: "POST", headers: cookie() });
+    }
     const s = ctx2.sessions.hello("step-agent");
     const startJob = async () => {
       const r = await fetch(`${daemon2.url}/api/ops/start`, {
