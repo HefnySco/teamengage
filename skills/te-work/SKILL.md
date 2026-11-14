@@ -127,6 +127,15 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   stays out of the commit; carry it in a new dependent task (`propose` with
   `depends_on` = this one, its own Touches + acceptance). Never widen the
   task's own Touches to make a commit fit.
+- **Never rewrite or drop commits.** No `git reset --hard`, no
+  `git reset HEAD^`, no `git rebase` that drops or rewrites commits, no
+  `git checkout .` / `git restore .` that wipes the tree. A shared
+  checkout or a claim worktree can hold commits and edits that are not
+  yours (another claim's work, the human's uncommitted changes) — a reset
+  erases them for everyone, and a cited Evidence commit goes missing.
+  Committed the wrong files → `git revert <sha>` or restore single files
+  (`git restore --source=HEAD -- <path>`). History looks wrong → `ask`
+  the human; never repair history yourself.
 - `log` at real milestones (not every step) — it is the human's record:
 
   ```bash
@@ -354,6 +363,9 @@ curl -s -X POST $B/release/GL-0019 -H "$H" -d '{"note":"blocked: needs firmware 
 - mark a task done, approve, or accept — the human does;
 - review or bounce your own submission — second opinions only;
 - `git push`, or move files (into `done/` or anywhere);
+- `git reset --hard`, `git reset HEAD^`, or any command that drops or
+  rewrites commits — `git revert` / file-level `git restore` instead,
+  or `ask` (§5);
 - edit files under `Tasks/.teamengage/` or a task's `te:` line;
 - start without a claim, or keep working after `ask` until it is answered;
 - create task files by hand — new work found along the way → `propose`

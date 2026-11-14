@@ -95,6 +95,18 @@ te skills --install    # detects ~/.claude, ~/.config/devin, ~/.codeium/windsurf
 te skills --check      # exit 1 on drift (copy, stale copy, missing, broken link)
 ```
 
+## Git safety
+
+Agents never rewrite or drop commits: no `git reset --hard`, no
+`git reset HEAD^`, no rebase that drops commits, no wiping the working
+tree. A shared checkout or a claim worktree can hold other tasks' commits
+and the human's uncommitted edits — a reset erases them for everyone, and
+a cited Evidence commit disappears. The safe fixes are `git revert <sha>`
+(undo a commit, keep history), file-level `git restore --source=<sha> --
+<path>`, or `git cherry-pick` of the task's own commits onto a fresh
+branch. Anything bigger goes to the human — agents ask, they do not
+repair history.
+
 ## Enforcing the rules (when instructions aren't enough)
 
 Agents can ignore `AGENTS.md`. Three layers make the rules hard to miss or

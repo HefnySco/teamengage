@@ -281,6 +281,18 @@ claim is released to `ready` so a session that can act picks it up. Taking over
 fixes the submission within its approved scope — the task's Touches and
 acceptance don't change. Anything wider → `propose` a dependent task.
 
+**Colliding commits on a shared branch.** When the branch or worktree holds
+commits that belong to another task (a wrong merge, a shared checkout, a
+claim that resumed on top of the wrong base), never remove them with
+`git reset --hard`, `git reset HEAD^`, or by rewriting the branch — the
+other task loses its work and its Evidence commits go missing. Report it
+in `note` / a bounce finding naming the commits. The safe fixes, when you
+take over the fix yourself: `git revert <sha>` to undo a foreign commit
+while keeping history, `git cherry-pick` of the task's own commits onto a
+fresh branch from the base, or `git restore --source=<sha> -- <path>` to
+put single files back. History repair is the human's call — name the
+commits and let them decide.
+
 Tell the human the outcome: _"GL-0019 reviewed ok"_ or _"GL-0019 bounced —
 acceptance 2 unimplemented"_.
 
@@ -290,4 +302,7 @@ acceptance 2 unimplemented"_.
 - accept, reject, or treat your verdict as a status — it changes nothing; the human accepts;
 - claim the task or touch its worktree just to review — found a bug → `bounce`/`issues`, the holder fixes (or take over: `issues` verdict, then `claim` on the same machine);
 - edit `.teamengage/` files or a task's `te:` line; never `git push`;
+- `git reset --hard` / `git reset HEAD^` or dropping commits — even to fix
+  a colliding branch; revert, cherry-pick, or file-level restore instead,
+  and let the human repair history;
 - rubber-stamp — a verdict without verification degrades the marker for everyone.
