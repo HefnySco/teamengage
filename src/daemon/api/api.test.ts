@@ -1691,6 +1691,60 @@ describe("review_models: which model may review which tier (GL-0361)", () => {
   });
 });
 
+describe("auto-accept follows the model rule (GL-0362)", () => {
+  it("a review without reviewer_model never arms auto-accept; batch accept skips it", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "old-reviewed heavy", tier: "heavy" },
+        { type: "task", title: "well-reviewed heavy", tier: "heavy" },
+      ],
+      human,
+    );
+    const [old, fresh] = ids;
+    await ops.approve(old);
+    await ops.approve(fresh);
+    const doer = ctx.sessions.hello("aa-doer", { model: "sonnet" });
+    for (const id of [old, fresh]) {
+      await ops.claim(id, doer);
+      await ops.submit(id, doer, { what: "work done", how: "ran the steps" });
+    }
+
+    // an ok review recorded before review_models existed — no reviewer_model
+    const oldRev = ctx.sessions.hello("aa-old", { role: "reviewer" });
+    await ops.review(old, oldRev, "ok");
+    expect(wsr.store.idx.get(old)!.meta.ai_review?.reviewer_model).toBeUndefined();
+
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.review_models = { deep: "opus", quick: "haiku", deep_from_tier: "heavy" };
+    try {
+      const itOld = ops.index.get(old)!;
+      expect(ops.autoAcceptAt(itOld)).toBeUndefined();
+      expect(ops.autoAcceptRuleLabel(itOld)).toContain("waits for you");
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(old);
+
+      // a compliant deep-model review arms the delay
+      const deep = ctx.sessions.hello("aa-deep", { role: "reviewer", model: "opus" });
+      await ops.review(fresh, deep, "ok");
+      const itFresh = ops.index.get(fresh)!;
+      expect(ops.autoAcceptAt(itFresh)).toBeTruthy();
+      expect(ops.autoAcceptDue(Date.now() + 3_600_000)).toContain(fresh);
+
+      // batch accept applies the same test and reports the skip
+      const res = await ops.batch("accept", { ids: [old, fresh] });
+      expect(res.done).toEqual([fresh]);
+      expect(res.skipped).toEqual([{ id: old, reason: "no review by a different model" }]);
+      expect(wsr.store.idx.get(fresh)!.meta.status).toBe("done");
+    } finally {
+      wsr.ws.config.review_models = undefined;
+      wsr.ws.config.autonomy = "strict";
+    }
+  });
+});
+
 
 describe("shared lessons per domain (GL-0322)", () => {
   it("GET /api/lessons lists lines per domain; delete removes one — agents get FORBIDDEN", async () => {

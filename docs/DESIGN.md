@@ -229,6 +229,9 @@ workspace.yaml review_models = {deep, quick, deep_from_tier (default
           declare a model, items at or above deep_from_tier need the deep
           model, lower items the quick or deep model; next filters the
           reviewer pool the same way; te validate warns on unset models
+          Auto-accept and batch accept also apply the rule: an ok review
+          without a compliant reviewer_model never arms the delay — the
+          item waits for the human and says so
 withdraw = holder only, in_review ──▶ in_progress, claim kept: the
           submitter pulls its submission back to keep working before the
           human looks at it

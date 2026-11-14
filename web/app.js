@@ -558,7 +558,7 @@ const Inbox = ({ onOpen }) => {
     const at = it?.auto_accept_at;
     const cls = r ? (r.verdict === "ok" ? "text-success" : "text-danger") : "text-secondary";
     const tip = r
-      ? `AI review: ${r.verdict}${r.needs_human ? " — needs your call" : ""} — ${r.reviewed_by}${r.summary ? `\n${r.summary}` : ""}${r.note ? `\n${r.note}` : ""}${at ? `\nauto-accepts ${untilText(at)}` : ""}`
+      ? `AI review: ${r.verdict}${r.needs_human ? " — needs your call" : ""} — ${r.reviewed_by}${r.summary ? `\n${r.summary}` : ""}${r.note ? `\n${r.note}` : ""}${at ? `\nauto-accepts ${untilText(at)}` : it.auto_accept_rule ? `\n${it.auto_accept_rule}` : ""}`
       : "no AI review yet";
     const badge = !r
       ? null
