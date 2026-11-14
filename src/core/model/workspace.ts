@@ -180,6 +180,21 @@ export const WorkspaceConfig = z
      */
     auto_accept_rules: z.array(AutoAcceptRule).default([]),
     /**
+     * GL-0361: which model may review which work. `deep`/`quick` are model
+     * ids a session declares at hello. Three rules apply when set: the
+     * reviewer must declare a model; its model must differ from the
+     * submitter's (always required anyway); an item at or above
+     * deep_from_tier needs the deep model, a lower item the quick or the
+     * deep model. Unset = the different-model rule only.
+     */
+    review_models: z
+      .object({
+        deep: z.string().optional(),
+        quick: z.string().optional(),
+        deep_from_tier: Tier.default("heavy"),
+      })
+      .optional(),
+    /**
      * Routine sweep, unset = off: the daemon archives an item that has been
      * done or dropped for longer than this duration. A starred item is never
      * archived by rule.

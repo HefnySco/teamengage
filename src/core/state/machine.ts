@@ -183,6 +183,8 @@ export interface TransitionCtx {
    * it back to a session that will never answer (never set for human claims).
    */
   holderAway?: boolean;
+  /** workspace review_models (GL-0361) — which declared model may review which tier */
+  reviewModels?: { deep?: string; quick?: string; deep_from_tier: Tier };
 }
 
 export type Effect =
@@ -272,6 +274,30 @@ function requireReviewer(actor: Actor, ctx: TransitionCtx, action: string, meta:
     throw new ForbiddenError(
       `${action}: the reviewer must be a different model — ${reviewer} submitted this work`,
     );
+  }
+  // GL-0361: review_models — a declared model, gated by the item's tier
+  const rm = ctx.reviewModels;
+  if (rm) {
+    if (!actor.model) {
+      throw new ForbiddenError(
+        `${action}: review_models is set — the reviewer session must declare a model at hello`,
+      );
+    }
+    if (tierRank(meta.tier) >= tierRank(rm.deep_from_tier)) {
+      if (actor.model !== rm.deep) {
+        throw new ForbiddenError(
+          `${action}: an item at or above deep_from_tier (${rm.deep_from_tier}) needs the deep model` +
+            (rm.deep ? ` (${rm.deep})` : " — review_models.deep is not set"),
+        );
+      }
+    } else {
+      const allowed = [rm.quick, rm.deep].filter((m): m is string => !!m);
+      if (allowed.length && !allowed.includes(actor.model)) {
+        throw new ForbiddenError(
+          `${action}: an item below deep_from_tier (${rm.deep_from_tier}) needs the quick or deep model`,
+        );
+      }
+    }
   }
 }
 

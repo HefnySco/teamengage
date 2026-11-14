@@ -31,6 +31,7 @@ export type FindingKind =
   | "check"
   | "ops_probe"
   | "context_file"
+  | "review_models"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"
@@ -52,6 +53,8 @@ export interface ValidateOpts {
   roots?: Roots;
   /** GL-0355: repos/ dir holding <repo>.context.md files (≤80 lines each) */
   contextDir?: string;
+  /** GL-0361: workspace review_models — warns on an unset deep/quick */
+  reviewModels?: { deep?: string; quick?: string; deep_from_tier?: string };
 }
 
 export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
@@ -210,6 +213,24 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
     } catch {
       /* no repos dir — nothing to check */
     }
+  }
+
+  // GL-0361: a configured review gate whose model is not set leaves work
+  // unreviewable — warn so the human names the model.
+  const rm = opts.reviewModels;
+  if (rm && !rm.deep) {
+    f({
+      severity: "warning",
+      kind: "review_models",
+      message: `review_models: deep is not set — items at or above deep_from_tier (${rm.deep_from_tier ?? "heavy"}) cannot be reviewed`,
+    });
+  }
+  if (rm && !rm.quick) {
+    f({
+      severity: "warning",
+      kind: "review_models",
+      message: `review_models: quick is not set — items below deep_from_tier (${rm.deep_from_tier ?? "heavy"}) accept only the deep model`,
+    });
   }
 
   return findings;

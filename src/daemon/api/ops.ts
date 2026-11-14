@@ -240,6 +240,17 @@ export class WorkspaceOps {
           const submitter = i.meta.submitted_model ?? i.claim?.holder.split("@")[0];
           return !submitter || submitter !== mine;
         })
+        // GL-0361: review_models — only items this model may review
+        .filter((i) => {
+          const rm = this.wsr.ws.config.review_models;
+          if (!rm) return true;
+          if (!session.model) return false;
+          if (tierRank(i.meta.tier) >= tierRank(rm.deep_from_tier)) {
+            return !!rm.deep && session.model === rm.deep;
+          }
+          const allowed = [rm.quick, rm.deep].filter(Boolean);
+          return allowed.length === 0 || allowed.includes(session.model);
+        })
         .filter((i) => !d || i.meta.domains.includes(d))
         .slice(0, limit);
     }
@@ -1199,6 +1210,7 @@ export class WorkspaceOps {
         staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
         roots: resourceRoots(this.wsr.ws),
         contextDir: join(this.wsr.ws.root, "repos"),
+        reviewModels: this.wsr.ws.config.review_models,
       }),
       ...dead,
       ...ops,

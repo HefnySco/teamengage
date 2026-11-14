@@ -1628,6 +1628,69 @@ describe("session role at hello (GL-0323)", () => {
   });
 });
 
+describe("review_models: which model may review which tier (GL-0361)", () => {
+  it("gates reviews by declared model and item tier; next hides what a model may not review", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "heavy work", tier: "heavy" },
+        { type: "task", title: "light work", tier: "light" },
+        { type: "task", title: "baseline work", tier: "heavy" },
+      ],
+      human,
+    );
+    const [heavy, light, base] = ids;
+    await ops.approve(heavy);
+    await ops.approve(light);
+    await ops.approve(base);
+    const doer = ctx.sessions.hello("rm-doer", { model: "sonnet" });
+    for (const [id, w] of [[heavy, "heavy work done"], [light, "light work done"], [base, "baseline work done"]] as const) {
+      await ops.claim(id, doer);
+      await ops.submit(id, doer, { what: w, how: "ran the steps" });
+    }
+
+    const quick = ctx.sessions.hello("rm-quick", { role: "reviewer", model: "haiku" });
+    const deep = ctx.sessions.hello("rm-deep", { role: "reviewer", model: "opus" });
+    const noModel = ctx.sessions.hello("rm-none", { role: "reviewer" });
+    const sameModel = ctx.sessions.hello("rm-same", { role: "reviewer", model: "sonnet" });
+
+    // unset review_models: the DE-0161 different-model rule only
+    await ops.review(base, quick, "ok");
+    expect(wsr.store.idx.get(base)!.meta.ai_review?.verdict).toBe("ok");
+
+    wsr.ws.config.review_models = { deep: "opus", quick: "haiku", deep_from_tier: "heavy" };
+    try {
+      // rule 1: no declared model — refused
+      await expect(ops.review(heavy, noModel, "ok")).rejects.toThrow(/declare a model/);
+      // rule 2: same model as the submitter — refused
+      await expect(ops.review(heavy, sameModel, "ok")).rejects.toThrow(/different model/);
+      // rule 3: a heavy item needs the deep model — quick is refused, error names deep_from_tier
+      await expect(ops.review(heavy, quick, "ok")).rejects.toThrow(/deep_from_tier/);
+      // a light item takes the quick or the deep model
+      await ops.review(light, quick, "ok");
+      expect(wsr.store.idx.get(light)!.meta.ai_review?.reviewer_model).toBe("haiku");
+      // the deep model reviews the heavy item
+      await ops.review(heavy, deep, "ok");
+      expect(wsr.store.idx.get(heavy)!.meta.ai_review?.reviewer_model).toBe("opus");
+
+      // next: the quick reviewer sees the light item only; no model sees nothing
+      expect(ops.next(50, undefined, quick).map((i) => i.meta.id)).not.toContain(heavy);
+      expect(ops.next(50, undefined, noModel)).toHaveLength(0);
+      // bounce follows the same gate
+      await expect(
+        ops.bounce(light, noModel, "bad", "broken work", undefined, {
+          problem: "the submission is broken", recommendation: "send it back",
+        }),
+      ).rejects.toThrow(/declare a model/);
+    } finally {
+      wsr.ws.config.review_models = undefined;
+    }
+  });
+});
+
 
 describe("shared lessons per domain (GL-0322)", () => {
   it("GET /api/lessons lists lines per domain; delete removes one — agents get FORBIDDEN", async () => {

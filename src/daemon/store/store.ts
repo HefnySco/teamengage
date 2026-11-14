@@ -216,6 +216,7 @@ export class PlansStore {
         holderAway: ctx.holderAway ? ctx.holderAway() : undefined,
         planHold: ctx.planHold ? ctx.planHold() : undefined,
         escalation: { after: this.ws.config.escalate_after, max: this.ws.config.max_attempts },
+        reviewModels: this.ws.config.review_models,
       });
 
       const newMeta = { ...tr.meta, version: expectedVersion + 1 };
