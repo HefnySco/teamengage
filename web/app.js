@@ -465,8 +465,6 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
     </div>`;
 };
 
-// digest panel at the top of the inbox (GL-0320): finished since the last
-// human action, stuck work, and what waits for the human — ids are links
 // GL-0329 — the live team: sessions with what they hold, plus the daemon's
 // dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
 const TeamPanel = ({ sessions, onOpen }) => {
@@ -506,29 +504,6 @@ const TeamPanel = ({ sessions, onOpen }) => {
     </details>`;
 };
 
-const DigestPanel = ({ digest, onOpen }) => {
-  const list = (label, rows) => html`
-    <div class="col-12 col-md-4">
-      <div class="small fw-semibold text-secondary">${label}</div>
-      <ul class="list-unstyled small mb-1">
-        ${rows.length
-          ? rows.map((r) => html`<li key=${r.id}><a href="#" onClick=${(e) => (e.preventDefault(), onOpen(r.id))}>${r.id}</a> ${r.what ?? r.title}${r.why ? html` <span class="text-secondary">— ${r.why}</span>` : ""}</li>`)
-          : html`<li class="text-secondary">nothing there</li>`}
-      </ul>
-    </div>`;
-  const finished = digest.finished.flatMap((g) => g.items.map((r) => ({ ...r, why: g.plan })));
-  const attention = digest.stuck.length + digest.waits.length;
-  return html`
-    <details class="card card-body py-2 mb-3 dense" open=${attention}>
-      <summary class="small">digest since ${ago(digest.since)} — ${finished.length} finished, ${digest.stuck.length} stuck, ${digest.waits.length} waiting for you</summary>
-      <div class="row mt-2">
-        ${list("finished", finished)}
-        ${list("stuck", digest.stuck)}
-        ${list("waits for you", digest.waits)}
-      </div>
-    </details>`;
-};
-
 const Inbox = ({ onOpen }) => {
   const { data, reload } = useApi("/api/inbox");
   const { data: digest } = useApi("/api/digest");
@@ -540,6 +515,20 @@ const Inbox = ({ onOpen }) => {
   const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
   const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
   const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
+  // folded inbox sections, remembered per tab — {groupKey: true} means closed
+  const [fold, setFold] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("te.inbox.fold") ?? "{}") ?? {};
+    } catch {
+      return {};
+    }
+  });
+  const toggleFold = (key) =>
+    setFold((f) => {
+      const n = { ...f, [key]: !f[key] };
+      saveSearch("te.inbox.fold", JSON.stringify(n));
+      return n;
+    });
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const byId = Object.fromEntries((all ?? []).map((i) => [i.id, i]));
   const title = (id) => byId[id]?.title ?? "";
@@ -586,9 +575,18 @@ const Inbox = ({ onOpen }) => {
     drop_flags: (x) => byId[x.id] ?? { id: x.id },
     claims: (c) => byId[c.item] ?? { id: c.item },
     findings: (f) => byId[f.item] ?? { id: f.item ?? "", title: f.message ?? f.path ?? "" },
+    digest_finished: (x) => byId[x.id] ?? { id: x.id, title: x.title },
+    digest_stuck: (x) => byId[x.id] ?? { id: x.id, title: x.title },
+    digest_waits: (x) => byId[x.id] ?? { id: x.id, title: x.title },
   };
   const sortRows = (key, arr) =>
     effSort ? [...arr].sort((a, b) => SORTS[effSort](itemOf[key](a), itemOf[key](b))) : arr;
+  // the digest (GL-0320) is no panel of its own — its three lists are inbox
+  // sections like the others (DE-0164); finished rows carry their plan as why
+  const digestFinished = (digest?.finished ?? []).flatMap((g) => g.items.map((r) => ({ ...r, why: g.plan })));
+  const digestStuck = digest?.stuck ?? [];
+  const digestWaits = digest?.waits ?? [];
+  const digestTotal = digestFinished.length + digestStuck.length + digestWaits.length;
   const view = {
     questions: sortRows("questions", data.questions.filter((x) => hit(x.id, x.question?.text))),
     peer_questions: sortRows("peer_questions", (data.peer_questions ?? []).filter((x) => hit(x.id, x.question?.text, x.question?.asked_by))),
@@ -597,6 +595,9 @@ const Inbox = ({ onOpen }) => {
     drop_flags: sortRows("drop_flags", (data.drop_flags ?? []).filter((x) => hit(x.id, x.by, x.reason))),
     claims: sortRows("claims", data.claims.filter((c) => hit(c.item, c.holder, c.machine))),
     findings: sortRows("findings", data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind))),
+    digest_finished: sortRows("digest_finished", digestFinished.filter((x) => hit(x.id, x.title, x.what, x.why))),
+    digest_stuck: sortRows("digest_stuck", digestStuck.filter((x) => hit(x.id, x.title, x.what, x.why))),
+    digest_waits: sortRows("digest_waits", digestWaits.filter((x) => hit(x.id, x.title, x.what, x.why))),
   };
   const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0);
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
@@ -611,6 +612,9 @@ const Inbox = ({ onOpen }) => {
       ...(data.drop_flags ?? []).map((f) => f.id),
       ...data.claims.map((c) => c.item),
       ...data.findings.map((f) => f.item).filter(Boolean),
+      ...digestFinished.map((x) => x.id),
+      ...digestStuck.map((x) => x.id),
+      ...digestWaits.map((x) => x.id),
     ]),
   ];
   // the "updated" page: stalest on top — each row shows how long since it was last touched
@@ -659,6 +663,14 @@ const Inbox = ({ onOpen }) => {
       ${ageCell(byId[id])}
       <span class="acts">${acts}</span>
     </div>`;
+  // a digest row is an item row plus the what line and the reason it is listed
+  const digestRow = (r, status) =>
+    itemRow(
+      r.id,
+      html`<${InboxStatus} s=${status} />`,
+      html` <span class="text-secondary">· ${r.what ?? r.title ?? ""}${r.why ? ` — ${r.why}` : ""}</span>`,
+      "",
+    );
   const groups = [
     {
       key: "questions",
@@ -759,6 +771,24 @@ const Inbox = ({ onOpen }) => {
         ),
       ),
     },
+    // DE-0164 — the digest lists live inside the table as sections; each row
+    // shows the item's what line and why it is in the list (the plan, or the
+    // reason like "stale claim")
+    {
+      key: "digest_finished",
+      label: "Finished",
+      rows: view.digest_finished.map((r) => digestRow(r, byId[r.id]?.status ?? "done")),
+    },
+    {
+      key: "digest_stuck",
+      label: "Stuck",
+      rows: view.digest_stuck.map((r) => digestRow(r, byId[r.id]?.status ?? "hold")),
+    },
+    {
+      key: "digest_waits",
+      label: "Waits for you",
+      rows: view.digest_waits.map((r) => digestRow(r, byId[r.id]?.status ?? "")),
+    },
   ].map((g) => ({ ...g, n: g.rows.length }));
   // when the picked group runs empty (or never had anything) fall back to all
   const effKind = (kind === "updated" && updatedItems.length > 0) || groups.some((g) => g.key === kind && g.n > 0) ? kind : "all";
@@ -778,7 +808,6 @@ const Inbox = ({ onOpen }) => {
     await Promise.all([reload(), reloadAll()]);
   };
   return html`
-    ${digest && html`<${DigestPanel} digest=${digest} onOpen=${onOpen} />`}
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Inbox</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload(), reloadAll(), refreshDomains()])} />
@@ -814,9 +843,9 @@ const Inbox = ({ onOpen }) => {
         />
         ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
       </span>
-      ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total}${updatedItems.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${words.length > 0 && html`<span class="text-secondary small">${shown} of ${total + digestTotal}${updatedItems.length === 1 ? " — Enter opens it" : ""}</span>`}
       <${SortSeg} eff=${effSort} onSort=${setSort} title="order rows inside each group" />
-      ${!empty && html`
+      ${(!empty || digestTotal > 0) && html`
         <span class="btn-group btn-group-sm ms-auto" role="group">
           <button class="btn btn-outline-secondary${effKind === "all" ? " active" : ""}" onClick=${() => setKind("all")}>All ${shown}</button>
           ${groups.map(
@@ -829,8 +858,11 @@ const Inbox = ({ onOpen }) => {
       ? html`
           <div class="triage">
             <div>
-              <div class="triage-group">Updated <span class="n">${updatedItems.length}</span></div>
-              ${updatedItems.map(
+              <div class="triage-group fold" role="button" title="fold the section" onClick=${() => toggleFold("updated")}>
+                <span class="fold-arrow">${fold.updated ? "◂" : "▾"}</span>Updated <span class="n">${updatedItems.length}</span>
+              </div>
+              ${!fold.updated &&
+              updatedItems.map(
                 (i) => html`
                   <div class="triage-li" key=${i.id}>
                     ${idCell(i.id)}
@@ -847,8 +879,10 @@ const Inbox = ({ onOpen }) => {
         ${shownGroups.map(
           (g) => html`
             <div key=${g.key}>
-              <div class="triage-group">${g.label} <span class="n">${g.n}</span></div>
-              ${g.rows}
+              <div class="triage-group fold" role="button" title="fold the section" onClick=${() => toggleFold(g.key)}>
+                <span class="fold-arrow">${fold[g.key] ? "◂" : "▾"}</span>${g.label} <span class="n">${g.n}</span>
+              </div>
+              ${!fold[g.key] && g.rows}
             </div>`,
         )}
       </div>`}

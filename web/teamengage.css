@@ -790,6 +790,15 @@ details.sec > .sec-bd {
   text-transform: none;
   font-variant-numeric: tabular-nums;
 }
+/* DE-0164 — every inbox section folds behind its header arrow */
+.triage-group.fold {
+  cursor: pointer;
+  user-select: none;
+}
+.triage-group .fold-arrow {
+  flex: none;
+  width: 0.8em;
+}
 .triage-li {
   grid-column: 1 / -1;
   margin: 0 -0.75rem;
