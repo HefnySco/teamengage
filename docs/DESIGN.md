@@ -223,6 +223,12 @@ bounce  = agent only, in_review, never the holder, never the submitter's
           model: ──▶ in_progress, claim kept — the holder fixes and
           resubmits; capped at 2 in a row, then the item stays in review
           and only a verdict may be recorded
+
+workspace.yaml review_models = {deep, quick, deep_from_tier (default
+          heavy)}: when set, review/bounce also require the reviewer to
+          declare a model, items at or above deep_from_tier need the deep
+          model, lower items the quick or deep model; next filters the
+          reviewer pool the same way; te validate warns on unset models
 withdraw = holder only, in_review ──▶ in_progress, claim kept: the
           submitter pulls its submission back to keep working before the
           human looks at it
