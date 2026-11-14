@@ -859,7 +859,7 @@ const Inbox = ({ onOpen }) => {
           <div class="triage">
             <div>
               <div class="triage-group fold" role="button" title="fold the section" onClick=${() => toggleFold("updated")}>
-                <span class="fold-arrow">${fold.updated ? "◂" : "▾"}</span>Updated <span class="n">${updatedItems.length}</span>
+                <span class="fold-arrow">${fold.updated ? "▸" : "▾"}</span>Updated <span class="n">${updatedItems.length}</span>
               </div>
               ${!fold.updated &&
               updatedItems.map(
@@ -880,7 +880,7 @@ const Inbox = ({ onOpen }) => {
           (g) => html`
             <div key=${g.key}>
               <div class="triage-group fold" role="button" title="fold the section" onClick=${() => toggleFold(g.key)}>
-                <span class="fold-arrow">${fold[g.key] ? "◂" : "▾"}</span>${g.label} <span class="n">${g.n}</span>
+                <span class="fold-arrow">${fold[g.key] ? "▸" : "▾"}</span>${g.label} <span class="n">${g.n}</span>
               </div>
               ${!fold[g.key] && g.rows}
             </div>`,
