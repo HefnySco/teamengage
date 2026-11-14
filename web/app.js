@@ -465,43 +465,49 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
     </div>`;
 };
 
-// GL-0329 — the live team: sessions with what they hold, plus the daemon's
-// dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
-const TeamPanel = ({ sessions, onOpen }) => {
-  const { data: dispatch, reload } = useApi("/api/dispatch");
-  const set = (enabled) => post("/api/dispatch", { enabled }).then(reload, (e) => toast(e.message));
+// GL-0329 — the live team page: sessions with what they hold, plus the
+// daemon's dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
+const Team = ({ onOpen }) => {
+  const { data: sessions, reload: reloadSessions } = useApi("/api/sessions");
+  const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
+  const set = (enabled) => post("/api/dispatch", { enabled }).then(reloadDispatch, (e) => toast(e.message));
   const ss = sessions ?? [];
   const ev = dispatch?.events ?? [];
-  if (!ss.length && !dispatch?.agents?.length && !ev.length) return null;
   return html`
-    <details class="team-panel mb-3" open>
-      <summary class="small">
-        <b>Team</b> — ${ss.length} session(s) · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}
-      </summary>
-      <div class="d-flex flex-column gap-1 mt-1">
-        ${ss.map((s) => html`
-          <div class="triage-li" key=${s.id}>
-            <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}${s.label ? ` · ${s.label}` : ""}</span>
-            <span class="t">
-              ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}${s.model ? html`<span class="triage-tag">${s.model}</span> ` : ""}
-              ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
-              <span class="text-secondary">${(s.holding ?? []).length ? "" : "idle — "}seen ${ago(s.last_seen)} ago</span>
-            </span>
-          </div>`)}
-        ${dispatch && html`
-          <div class="d-flex align-items-center gap-2 mt-1">
-            <span class="small text-body-tertiary">dispatch</span>
-            ${dispatch.enabled
-              ? html`<button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => set(false)}>off</button>`
-              : html`<button class="btn btn-sm py-0 btn-primary" disabled=${!dispatch.agents?.length} title=${!dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""} onClick=${() => set(true)}>on</button>`}
-            <span class="small text-secondary">${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? ` · running: ${dispatch.running.join(", ")}` : ""}</span>
-          </div>`}
-        ${ev.length > 0 && html`
-          <div class="small text-secondary mt-1">
-            ${[...ev].reverse().map((e, i) => html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`)}
-          </div>`}
-      </div>
-    </details>`;
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Team</h2>
+      <${RefreshBtn} refresh=${() => Promise.all([reloadSessions(), reloadDispatch()])} />
+      <span class="small text-secondary">${ss.length} session(s) · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}</span>
+    </div>
+    <div class="triage-group">sessions <span class="n">${ss.length}</span></div>
+    <div class="d-flex flex-column gap-1 mt-1 mb-3">
+      ${ss.length === 0 && html`<div class="small text-secondary">no live sessions — agents appear here when they say hello</div>`}
+      ${ss.map((s) => html`
+        <div class="triage-li" key=${s.id}>
+          <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}${s.label ? ` · ${s.label}` : ""}</span>
+          <span class="t">
+            ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}${s.model ? html`<span class="triage-tag">${s.model}</span> ` : ""}
+            ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
+            <span class="text-secondary">${(s.holding ?? []).length ? "" : "idle — "}seen ${ago(s.last_seen)} ago</span>
+          </span>
+        </div>`)}
+    </div>
+    <div class="triage-group">dispatch</div>
+    ${dispatch
+      ? html`
+        <div class="d-flex align-items-center gap-2 mt-1 mb-2">
+          ${dispatch.enabled
+            ? html`<button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => set(false)}>off</button>`
+            : html`<button class="btn btn-sm py-0 btn-primary" disabled=${!dispatch.agents?.length} title=${!dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""} onClick=${() => set(true)}>on</button>`}
+          <span class="small text-secondary">${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? ` · running: ${dispatch.running.join(", ")}` : ""}</span>
+        </div>
+        ${ev.length > 0
+          ? html`
+            <div class="small text-secondary mt-1">
+              ${[...ev].reverse().map((e, i) => html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`)}
+            </div>`
+          : html`<div class="small text-secondary">no dispatch events yet</div>`}`
+      : html`<div class="small text-secondary mt-1">loading…</div>`}`;
 };
 
 const Inbox = ({ onOpen }) => {
@@ -1316,7 +1322,6 @@ const Board = ({ onOpen }) => {
         title="show only ${k.replace("_", " ")} ideas (click again to clear)" onClick=${() => setIdeaFilter(k)}>${k.replace("_", " ")} <span class="n">${ideaCounts[k]}</span></span>`)}
       ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
-    <${TeamPanel} sessions=${sessions} onOpen=${onOpen} />
     ${deep && words.length > 0 ? html`
       <div class="triage"><div>
         <div class="triage-group">deep search <span class="n">${deepHits === null ? "…" : deepHits.length}</span></div>
@@ -4251,7 +4256,7 @@ const Artifacts = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, plans: Plans, graph: Graph, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
+const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, graph: Graph, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {
