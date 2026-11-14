@@ -247,6 +247,9 @@ export const ItemMeta = z
     star_color: StarColor.optional(),
     /** autonomy: solo — the human stopped auto-accept for this submission (cleared on submit) */
     auto_accept_off: z.boolean().optional(),
+    /** set when the submission went in with unverified_reason (GL-0349) —
+     * an ok review on it records needs_human, so it is never auto-accepted */
+    unverified_reason: z.string().optional(),
     starred_at: z.string().optional(),
     /**
      * epic only: the human closed the plan — no more parts are coming.

@@ -947,6 +947,14 @@ in the plans repo, writes a `verified:` line in ## Evidence, and
 commits all of it with the event. The item API returns the stored
 results; `verify-logs/` under `~/.teamengage` keeps the full output.
 
+On submit the stored results gate the transition (GL-0349): an item
+with checks needs a passed result per check at the current HEAD of
+its repo — missing, failed or stale (a newer commit) refuses the
+submit and the error names the check. `unverified_reason` is the
+escape: it lands as an `unverified:` line in ## Evidence, marks the
+item, and every review on that submission records needs_human — the
+item is never auto-accepted. An item with no checks submits as before.
+
 ## 15. Features and releases (GL-0330)
 
 The work chain today is idea → plan → task → found problem. Two more

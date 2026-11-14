@@ -61,6 +61,12 @@ export type Action =
         /** reported run cost (GL-0318) — one `cost:` line in ## Evidence + event data */
         cost?: SubmitCost;
         /**
+         * GL-0349: submit without the checks gate — the reason lands as an
+         * `unverified:` line in ## Evidence and the ok review gets
+         * needs_human, so the item is never auto-accepted.
+         */
+        unverified_reason?: string;
+        /**
          * Answers to the latest review's findings (GL-0321): `finding` is the
          * 1-based index into meta.findings. Every `must` finding needs an
          * entry — `done` or `skipped` with a reason — or the submit refuses.
@@ -600,6 +606,7 @@ export function transition(
       set("in_review", action.note);
       delete out.meta.ai_review; // a fresh submission starts unreviewed
       delete out.meta.auto_accept_off; // …and is eligible for auto-accept again
+      delete out.meta.unverified_reason; // a verified resubmit clears the gate mark
       // GL-0360: remember which model produced this submission — on the
       // item and on the submit event's data (metrics reads it later)
       if (actor.model) {
@@ -631,6 +638,15 @@ export function transition(
             last.data = { ...(last.data ?? {}), cost: action.evidence.cost };
           }
         }
+        // GL-0349: an unverified submit says so in Evidence and marks the
+        // item — the review transition turns it into needs_human
+        if (action.evidence.unverified_reason?.trim()) {
+          out.meta.unverified_reason = action.evidence.unverified_reason.trim();
+          out.sectionWrites.push({
+            heading: "Evidence",
+            text: `- unverified: ${out.meta.unverified_reason}\n`,
+          });
+        }
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
         // the submitter's own walkthrough, kept per submission like Handoff
         if (action.evidence.walkthrough?.trim()) {
@@ -654,7 +670,9 @@ export function transition(
         reviewed_at: ctx.now,
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
-        ...(action.needs_human ? { needs_human: true } : {}),
+        // GL-0349: an unverified submission is never auto-accepted — every
+        // review on it is needs_human, whatever the verdict
+        ...(action.needs_human || meta.unverified_reason ? { needs_human: true } : {}),
         ...(action.report ? { report: action.report } : {}),
       };
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;

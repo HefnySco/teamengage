@@ -38,6 +38,7 @@ import {
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
+import { isRepo, revParse } from "../../resources/git/git.js";
 import {
   releaseItemSets,
   listReleases,
@@ -1209,10 +1210,48 @@ export class WorkspaceOps {
       cost?: SubmitCost;
       finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
       provides?: string[];
+      /** GL-0349: skip the checks gate — the reason is stored and the
+       * ok review on this submission becomes needs_human */
+      unverified_reason?: string;
     },
   ) {
     const it = this.item(id);
     this.assertLiveClaim(it);
+    // GL-0349: an item with checks needs a passed verify result per check
+    // at the current HEAD of its repo — unverified_reason is the way around
+    const { checks } = await this.checksOf(it);
+    if (checks.length && !evidence?.unverified_reason?.trim()) {
+      const results = await this.verifyOf(it);
+      const byName = new Map(results.map((r) => [r.check, r]));
+      const firstRes = it.meta.targets[0]
+        ? parseTargetRef(it.meta.targets[0]).resource
+        : undefined;
+      for (const check of checks) {
+        const r = byName.get(check.name);
+        if (!r) {
+          throw new InvalidTransitionError(
+            `submit: check '${check.name}' has no verify result — run te verify (or give unverified_reason)`,
+          );
+        }
+        if (!r.passed) {
+          throw new InvalidTransitionError(
+            `submit: check '${check.name}' did not pass (exit ${r.exit_code}) — fix it or give unverified_reason`,
+          );
+        }
+        const resource = check.repo ?? firstRes;
+        const dir = resource
+          ? (it.claim?.paths?.[resource] ?? this.wsr.ws.resources.get(resource)?.path)
+          : undefined;
+        if (dir && (await isRepo(dir))) {
+          const head = await revParse(dir, "HEAD").catch(() => "");
+          if (head && r.commit !== head) {
+            throw new InvalidTransitionError(
+              `submit: check '${check.name}' result is stale — it passed at ${r.commit.slice(0, 10) || "?"}, the repo is at ${head.slice(0, 10)} — run te verify again`,
+            );
+          }
+        }
+      }
+    }
     // RS-0006/7: attach the live-vs-snapshot diff for ssh/folder targets
     const diffs: string[] = [];
     const seen = new Set<string>();
@@ -1644,6 +1683,7 @@ export class WorkspaceOps {
       m.status !== "in_review" ||
       rv?.verdict !== "ok" ||
       rv.needs_human ||
+      m.unverified_reason ||
       m.unblocks_on === "done" ||
       m.archived ||
       m.auto_accept_off ||
@@ -1673,6 +1713,7 @@ export class WorkspaceOps {
       m.status !== "in_review" ||
       rv?.verdict !== "ok" ||
       rv.needs_human ||
+      m.unverified_reason ||
       m.unblocks_on === "done" ||
       m.archived ||
       m.auto_accept_off ||

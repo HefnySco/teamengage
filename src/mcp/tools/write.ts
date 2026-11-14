@@ -301,7 +301,10 @@ export function registerWriteTools(
         "{finding: <1-based number>, state: done|skipped, reason?} for each; " +
         "a `must` finding left unanswered refuses the submit. " +
         "provides is optional — short lines naming what the task now provides " +
-        "(an API, a file, a message id, a command); dependents see them in their brief.",
+        "(an API, a file, a message id, a command); dependents see them in their brief. " +
+        "If the item has ## Checks, submit needs a passed te verify result per check at the repo HEAD — " +
+        "unverified_reason submits without it; the reason lands in ## Evidence and the ok review " +
+        "becomes needs_human (never auto-accepted).",
       inputSchema: {
         id: z.string(),
         commits: z.array(z.string()).optional(),
@@ -310,6 +313,7 @@ export function registerWriteTools(
         walkthrough: z.string(),
         cost: SubmitCost.optional(),
         provides: z.array(z.string()).optional(),
+        unverified_reason: z.string().optional(),
         finding_states: z
           .array(
             z.object({
@@ -321,13 +325,13 @@ export function registerWriteTools(
           .optional(),
       },
     },
-    async ({ id, commits, tests, notes, walkthrough, cost, provides, finding_states }) => {
+    async ({ id, commits, tests, notes, walkthrough, cost, provides, unverified_reason, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, provides, finding_states });
+        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, provides, unverified_reason, finding_states });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);
