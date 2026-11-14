@@ -231,3 +231,38 @@ describe("version_match (GL-0336)", () => {
     expect(a.targets[0].drift).toBe(true); // different raw texts, no rule
   });
 });
+
+describe("not_reachable (GL-0337)", () => {
+  // the panel is airgap's own machine card; the runner is the daemon's
+  // machine — env reach edges from it decide whether the target is probed
+  const airgap = { id: "airgap", apps: [{ name: "de_web_server", port: 8001 }] };
+  const airgapTgts: Record<string, TargetConfig> = {
+    "air-prod": { machine: "airgap", app: "de_web_server", probe: "ssh airgap true" },
+  };
+  const envWork = { id: "work", network: [], machines: [], reach: [{ from: "lap", to: "box", via: "ssh" }] } as const;
+  const envHome = { id: "home", network: [], machines: [], reach: [{ from: "lap", to: "airgap", via: "ssh" }] } as const;
+
+  it("env work: a target on a machine with no reach edge from the runner is not_reachable", () => {
+    const a = byName(deployedForMachine(airgap, airgapTgts, [], {}, { runner: "lap", env: envWork as never }), "de_web_server");
+    expect(a.state).toBe("not_reachable");
+    expect(a.targets[0].not_reachable).toBe("work");
+    expect(a.targets[0].drift).toBe(false);
+  });
+
+  it("env home: the same target is reachable — probe evidence counts", () => {
+    const a = byName(
+      deployedForMachine(airgap, airgapTgts, [], { "air-prod": probe("air-prod", "v1") }, { runner: "lap", env: envHome as never }),
+      "de_web_server",
+    );
+    expect(a.state).toBe("deployed");
+    expect(a.targets[0].not_reachable).toBeUndefined();
+  });
+
+  it("no env selected keeps today's behaviour — the target stays live", () => {
+    const a = byName(
+      deployedForMachine(airgap, airgapTgts, [], { "air-prod": probe("air-prod", "v1") }, { runner: "lap" }),
+      "de_web_server",
+    );
+    expect(a.state).toBe("deployed");
+  });
+});

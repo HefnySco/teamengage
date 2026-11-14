@@ -50,3 +50,37 @@ describe("te ops watch (GL-0334)", () => {
     expect(dueProbes(targets, last, now)).toEqual(["old"]);
   });
 });
+
+describe("not_reachable skip (GL-0337)", () => {
+  it("a due target the runner cannot reach is skipped with one log line, never run", async () => {
+    const posts: string[] = [];
+    const lines: string[] = [];
+    let runs = 0;
+    const ac = new AbortController();
+    const last: Record<string, ProbeResult | undefined> = {};
+    const done = runProbeWatch({
+      targets: async () => ({ far: { probe: "true", probe_every: "20ms" }, near: { probe: "true", probe_every: "20ms" } }),
+      last: async () => last,
+      unreachable: async () => ({ env: "work", targets: ["far"] }),
+      run: () => {
+        runs++;
+        return run();
+      },
+      post: async (t, r) => {
+        posts.push(t);
+        last[t] = { target: t, by: "watch", ...r };
+      },
+      log: (l) => lines.push(l),
+      tickMs: 5,
+      signal: ac.signal,
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    ac.abort();
+    await done;
+    // 'near' ran, 'far' never did — every run/post is 'near'
+    expect(posts.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(posts)).toEqual(new Set(["near"]));
+    expect(lines.some((l) => l.includes("far: skipped") && l.includes("work"))).toBe(true);
+    expect(runs).toBe(posts.length); // 'far' was never executed
+  });
+});

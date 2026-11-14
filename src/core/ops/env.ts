@@ -158,6 +158,19 @@ export function currentEnv(
   return { how: "none" };
 }
 
+/**
+ * Can `from` reach `to` in this env (GL-0337)? Same machine or a target
+ * with no machine is local; no runner or no selected env means there is
+ * nothing to decide with — today's behaviour (the probe runs) stays.
+ * Only expected edges count: an expected:false edge documents a link
+ * that is down in this env.
+ */
+export function reachableFrom(env: Env | undefined, from: string | undefined, to: string | undefined): boolean {
+  if (!to || !from || kebab(from) === to) return true;
+  if (!env) return true;
+  return env.reach.some((r) => r.from === kebab(from) && r.to === to && r.expected !== false);
+}
+
 /** Pin an env in the runner machine's .machine.local — returns the file written. */
 export function setEnvPin(root: string, envId: string): string | undefined {
   const local = runnerLocalFile(root);

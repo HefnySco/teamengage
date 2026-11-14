@@ -3516,6 +3516,8 @@ const OpsMachineCard = ({ m, targets, jobs, reload, onClose, onProbe, onRename }
         ${t?.job ? html`<a class="small" href=${`#/ops/${encodeURIComponent(t.job.id)}`} title=${`job ${t.job.id} on ${t.job.machine}`}>${t.job.id}</a>` : ""}
         ${a.state === "drift"
           ? html`<span class="badge text-bg-warning" title=${`probe ${t?.probe?.version ?? "?"} ≠ job ${t?.job?.version ?? "?"}`}>drift</span>`
+          : a.state === "not_reachable"
+            ? html`<span class="badge text-bg-secondary" title=${`no reach edge from this machine in env '${a.targets.find((x) => x.not_reachable)?.not_reachable ?? "?"}'`}>not reachable · env ${a.targets.find((x) => x.not_reachable)?.not_reachable ?? "?"}</span>`
           : a.state === "unknown"
             ? html`<span class="badge text-bg-secondary" title=${`${a.targets.map((x) => x.target).join(", ")} — no job and no probe`}>unknown</span>`
             : a.state === "no_target"

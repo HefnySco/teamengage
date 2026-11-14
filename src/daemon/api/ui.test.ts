@@ -68,7 +68,7 @@ describe("ops UI API (GL-0276)", () => {
     mkdirSync(join(plans, "items", "WS"), { recursive: true });
     writeFileSync(
       join(plans, "workspace.yaml"),
-      `name: ws\nprefix: WS\ntargets:\n  stage: { title: staging, service: auth, env: staging, probe: 'echo v1.0.0', machine: box, app: myapp }\n  slow: { title: slow, service: auth, env: prod, probe: 'sleep 5', probe_timeout_ms: 200 }\n  unprobed: { title: no probe, service: auth, env: dev }\n  panel: { machine: box, app: sideapp, probe: 'touch ${home2}/probe-ran' }\n`,
+      `name: ws\nprefix: WS\ntargets:\n  stage: { title: staging, service: auth, env: staging, probe: 'echo v1.0.0', machine: box, app: myapp }\n  slow: { title: slow, service: auth, env: prod, probe: 'sleep 5', probe_timeout_ms: 200 }\n  unprobed: { title: no probe, service: auth, env: dev }\n  panel: { machine: box, app: sideapp, probe: 'touch ${home2}/probe-ran' }\n  far: { machine: airgapped, app: farapp, probe: 'touch ${home2}/far-ran' }\n`,
     );
     mkdirSync(join(root, "ops"), { recursive: true });
     mkdirSync(join(root, "machines"), { recursive: true });
@@ -76,6 +76,9 @@ describe("ops UI API (GL-0276)", () => {
     const doc = (fm: Record<string, unknown>, body = "") => `---\n${YAML.stringify(fm)}---\n${body}`;
     writeFileSync(join(root, "machines", "lap.machine.md"), doc({ id: "lap", host: hostname(), tier: "dev", roles: ["runner"], rules: ["never cut over by hand"] }, "the laptop\n"));
     writeFileSync(join(root, "machines", "box.machine.md"), doc({ id: "box", host: "box.local", tier: "prod", ssh: { user: "pi", key: "~/.ssh/box" }, apps: [{ name: "myapp", port: 8080, env: "prod" }, { name: "sideapp", port: 8081 }] }));
+    writeFileSync(join(root, "machines", "airgapped.machine.md"), doc({ id: "airgapped", host: "airgapped.local", tier: "prod", apps: [{ name: "farapp", port: 9000 }] }));
+    // pin env work on the runner — no wifi match in a test process (GL-0337)
+    writeFileSync(join(root, "machines", "lap.machine.local"), "env: work\n");
     writeFileSync(
       join(root, "envs", "work.env.md"),
       doc({
@@ -204,6 +207,26 @@ describe("ops UI API (GL-0276)", () => {
     expect(body.stats.ok_ratio).toBeGreaterThan(0);
   });
 
+  // GL-0337: no reach edge lap→airgapped in the pinned env 'work' — the
+  // probe answers not_reachable, runs nothing, stores nothing
+  it("a target with no reach edge answers not_reachable — no run, no stored result", async () => {
+    const r = await fetch(`${daemon2.url}/api/ops/probe/far`, { method: "POST", headers: cookie() });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { not_reachable?: string };
+    expect(body.not_reachable).toBe("work");
+    expect(existsSync(join(home2, "far-ran"))).toBe(false); // the command never ran
+    expect(existsSync(join(home2, ".teamengage", "ops-probes", "far.json"))).toBe(false); // nothing stored
+    const reach = await (await fetch(`${daemon2.url}/api/ops/reach`, { headers: cookie() })).json();
+    expect(reach.env).toBe("work");
+    expect(reach.unreachable).toContain("far");
+    expect(reach.unreachable).not.toContain("stage"); // lap→box edge exists
+    // the machine panel carries the grey state and the env name
+    const air = await (await fetch(`${daemon2.url}/api/ops/machines/airgapped`, { headers: cookie() })).json();
+    const app = air.deployed.find((a: { name: string }) => a.name === "farapp");
+    expect(app.state).toBe("not_reachable");
+    expect(app.targets[0].not_reachable).toBe("work");
+  });
+
   // GL-0339: `te ops exec` under an agent session (X-TE-Session = a live
   // session id) records that session as the step actor and on the job
   // step record; no header stays "human"
@@ -306,7 +329,7 @@ describe("ops UI API (GL-0276)", () => {
   it("/api/ops/machines and /api/ops/envs serve the fixture data", async () => {
     const ms = await (await fetch(`${daemon2.url}/api/ops/machines`, { headers: cookie() })).json();
     expect(ms.runner).toBe("lap");
-    expect(ms.machines.map((m: { id: string }) => m.id).sort()).toEqual(["box", "lap"]);
+    expect(ms.machines.map((m: { id: string }) => m.id).sort()).toEqual(["airgapped", "box", "lap"]);
     const box = await (await fetch(`${daemon2.url}/api/ops/machines/box`, { headers: cookie() })).json();
     expect(box.host).toBe("box.local");
     const envs = await (await fetch(`${daemon2.url}/api/ops/envs`, { headers: cookie() })).json();

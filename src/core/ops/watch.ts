@@ -14,6 +14,12 @@ export interface WatchDeps {
   targets(): Promise<Record<string, { probe?: string; probe_every?: string }>>;
   /** the stored last result per target — re-read every sweep so a human "probe now" resets the clock */
   last(): Promise<Record<string, ProbeResult | undefined>>;
+  /**
+   * Targets the runner cannot reach in the selected env (GL-0337) —
+   * re-read every sweep; a due target in this list is skipped with one
+   * log line, never run.
+   */
+  unreachable?(): Promise<{ env?: string; targets: string[] }>;
   /** run one probe command — the real impl is runProbe */
   run(command: string): Promise<Omit<ProbeResult, "target" | "by" | "machine">>;
   /** post one result to the daemon */
@@ -31,7 +37,13 @@ export async function runProbeWatch(deps: WatchDeps): Promise<void> {
   for (;;) {
     const targets = await deps.targets();
     const last = await deps.last();
+    const unreach = await deps.unreachable?.();
+    const unreachSet = new Set(unreach?.targets ?? []);
     for (const id of dueProbes(targets, last)) {
+      if (unreachSet.has(id)) {
+        deps.log?.(`${id}: skipped — not reachable in env '${unreach?.env ?? "?"}'`);
+        continue;
+      }
       const run = await deps.run(targets[id].probe!);
       await deps.post(id, run);
       last[id] = { target: id, by: "watch", ...run };

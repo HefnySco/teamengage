@@ -15,7 +15,7 @@ import { appendNote, bodyWithoutNotes, linkNote, noteFile, noteTaskDraft, parseN
 import { loadTrans } from "../../core/ops/trans.js";
 import { WorkspaceOps } from "./ops.js";
 import { basename } from "node:path";
-import { currentEnv, loadEnvs, wifiName } from "../../core/ops/env.js";
+import { currentEnv, loadEnvs, reachableFrom, wifiName, type Env } from "../../core/ops/env.js";
 import { runnerMachine } from "../../core/ops/runner.js";
 import { renameMachine } from "../../core/ops/rename.js";
 import { resolveWorkspace } from "../../core/config/config.js";
@@ -99,11 +99,14 @@ export function opsProbes(ctx: DaemonCtx): Record<string, ProbeResult> {
  * (DESIGN §14.5): read-only, killed at 30 s (or the target's
  * probe_timeout_ms). Human-only: a session identity refuses.
  */
-export async function opsProbe(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: string, session?: Session): Promise<ProbeResult> {
+export async function opsProbe(wsr: WorkspaceRuntime, ctx: DaemonCtx, target: string, session?: Session): Promise<ProbeResult | { target: string; not_reachable: string }> {
   if (session) throw new ForbiddenError("probes are human-only — an agent session cannot start one");
   const t = wsr.ws.config.targets[target];
   if (!t) throw new NotFoundError(`target '${target}' not in workspace.yaml targets:`);
   if (!t.probe) throw new ValidationError(`target '${target}' has no probe command in workspace.yaml`);
+  // GL-0337: no reach edge in the selected env — answer, run nothing, store nothing
+  const { runner, env } = reachContext(wsr);
+  if (!reachableFrom(env, runner, t.machine)) return { target, not_reachable: env!.id };
   const run = await runProbe(t.probe, { cwd: wsr.ws.root, timeoutMs: (t.probe_timeout_ms as number | undefined) ?? PROBE_TIMEOUT_MS });
   const result: ProbeResult = { target, by: "human", ...run };
   saveProbe(result, ctx.home);
@@ -143,18 +146,41 @@ export function opsMachines(wsr: WorkspaceRuntime) {
 /**
  * The deployed join's inputs (GL-0305): workspace targets, every job of
  * every runner and the stored probes — read-only, no probe runs.
+ * `reach` is the runner machine and the selected env (GL-0337): a
+ * target with no reach edge from the runner is not_reachable.
  */
 function deployedInputs(wsr: WorkspaceRuntime, ctx: DaemonCtx) {
   return {
     targets: opsTargets(wsr),
     jobs: jobStore(wsr, ctx).listAll(),
     probes: opsProbes(ctx),
+    reach: reachContext(wsr),
+  };
+}
+
+/** The runner machine id and the selected env — reach edges decide not_reachable (GL-0337). */
+function reachContext(wsr: WorkspaceRuntime): { runner?: string; env?: Env } {
+  return {
+    runner: runnerMachine(wsr.ws.root, hostname())?.id,
+    env: currentEnv(wsr.ws.root, loadEnvs(wsr.ws.root), wifiName() || undefined).env,
+  };
+}
+
+/** Which targets the runner cannot reach in the selected env — `te ops watch` skips them (GL-0337). */
+export function opsReach(wsr: WorkspaceRuntime) {
+  const { runner, env } = reachContext(wsr);
+  return {
+    runner,
+    env: env?.id,
+    unreachable: Object.entries(wsr.ws.config.targets)
+      .filter(([, t]) => !reachableFrom(env, runner, t.machine))
+      .map(([id]) => id),
   };
 }
 
 function deployedOf(machine: Machine, wsr: WorkspaceRuntime, ctx: DaemonCtx): DeployedApp[] {
-  const { targets, jobs, probes } = deployedInputs(wsr, ctx);
-  return deployedForMachine(machine, targets, jobs, probes);
+  const { targets, jobs, probes, reach } = deployedInputs(wsr, ctx);
+  return deployedForMachine(machine, targets, jobs, probes, reach);
 }
 
 export function opsMachine(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
@@ -255,7 +281,7 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
     ),
   );
   const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id === l.env.id;
-  const { targets, jobs, probes } = deployedInputs(wsr, ctx);
+  const { targets, jobs, probes, reach } = deployedInputs(wsr, ctx);
   return {
     ...l.env,
     file: l.file,
@@ -263,7 +289,7 @@ export function opsEnv(wsr: WorkspaceRuntime, ctx: DaemonCtx, id: string) {
     notes: l.body ?? "",
     machines: l.env.machines.map((p) => {
       const m = machines.get(p.id);
-      return { ...p, machine: m ? { ...m, deployed: deployedForMachine(m, targets, jobs, probes), trans: loadTrans(wsr.ws.root, m.id) } : undefined };
+      return { ...p, machine: m ? { ...m, deployed: deployedForMachine(m, targets, jobs, probes, reach), trans: loadTrans(wsr.ws.root, m.id) } : undefined };
     }),
     probes: loadReachProbes(l.env.id, ctx.home),
   };
@@ -630,6 +656,13 @@ export function registerOpsApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void
       // an agent session identity on the human API refuses — probes are human-only
       const session = req.headers["x-te-session"] ? ({ id: String(req.headers["x-te-session"]) } as Session) : undefined;
       return await opsProbe(opsWsr(ctx, wsOf(req.query)), ctx, target, session);
+    } catch (e) {
+      return sendOpsErr(reply, e);
+    }
+  });
+  app.get("/api/ops/reach", async (req, reply) => {
+    try {
+      return opsReach(opsWsr(ctx, wsOf(req.query)));
     } catch (e) {
       return sendOpsErr(reply, e);
     }

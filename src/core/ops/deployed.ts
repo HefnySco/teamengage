@@ -1,5 +1,6 @@
 import { kebab, sameApp, type Machine } from "./machine.js";
 import { versionFromTail, type Job } from "./job.js";
+import type { Env } from "./env.js";
 import type { ProbeResult } from "./probe.js";
 import type { TargetConfig } from "../model/workspace.js";
 
@@ -13,7 +14,7 @@ import type { TargetConfig } from "../model/workspace.js";
  * probe and no ssh.
  */
 
-export type DeployedState = "deployed" | "drift" | "unknown" | "no_target";
+export type DeployedState = "deployed" | "drift" | "unknown" | "no_target" | "not_reachable";
 
 export interface DeployedJob {
   id: string;
@@ -44,6 +45,13 @@ export interface DeployedTarget {
    * match (GL-0336).
    */
   version_unknown?: boolean;
+  /**
+   * The runner has no reach edge to this target's machine in the active
+   * env (GL-0337) — the value is the env id, so a view can name it. Such
+   * a target's evidence is stale by definition: it stays listed (grey)
+   * but is excluded from the app's state decision.
+   */
+  not_reachable?: string;
 }
 
 export interface DeployedApp {
@@ -93,7 +101,16 @@ export function deployedForMachine(
   targets: Record<string, TargetConfig>,
   jobs: readonly Job[],
   probes: Record<string, ProbeResult>,
+  /** the runner machine id and the selected env — reach edges decide not_reachable (GL-0337) */
+  reach?: { runner?: string; env?: Env },
 ): DeployedApp[] {
+  const notReachable = (t: string): string | undefined => {
+    const to = targets[t].machine;
+    if (!to || !reach?.runner || !reach.env || kebab(reach.runner) === to) return undefined;
+    return reach.env.reach.some((r) => r.from === kebab(reach.runner!) && r.to === to && r.expected !== false)
+      ? undefined
+      : reach.env.id;
+  };
   // the last succeeded job per target — jobs of every runner machine count
   const lastJob = new Map<string, Job>();
   for (const j of jobs) {
@@ -118,6 +135,7 @@ export function deployedForMachine(
         target: t,
         job: j ? { id: j.id, version: j.version, finished: jobFinished(j), machine: j.machine } : undefined,
         probe: p ? { ts: p.ts, ok: p.ok, version: probeVersion, output: p.output } : undefined,
+        not_reachable: notReachable(t),
         drift:
           matchVersion(targets[t].version_match, j?.version) !== undefined &&
           matchVersion(targets[t].version_match, probeVersion) !== undefined &&
@@ -134,9 +152,11 @@ export function deployedForMachine(
 
 function appState(list: DeployedTarget[]): DeployedState {
   if (!list.length) return "no_target";
-  if (list.some((t) => t.drift)) return "drift";
-  if (!list.some((t) => t.job || t.probe)) return "unknown";
-  if (list.some((t) => t.version_unknown)) return "unknown";
+  const live = list.filter((t) => !t.not_reachable);
+  if (!live.length) return "not_reachable";
+  if (live.some((t) => t.drift)) return "drift";
+  if (!live.some((t) => t.job || t.probe)) return "unknown";
+  if (live.some((t) => t.version_unknown)) return "unknown";
   return "deployed";
 }
 

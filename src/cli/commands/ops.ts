@@ -132,16 +132,23 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         const one = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
         const ids = one ? [one] : Object.keys(targets).filter((k) => targets[k].probe).sort();
         if (!ids.length) return console.log(one ? `target '${one}' has no probe command` : "no targets with a probe command"), 4;
-        const results: ProbeResult[] = [];
+        const results: Array<ProbeResult | { target: string; not_reachable: string }> = [];
         let bad = 0;
         for (const t of ids) {
-          const r = await api<ProbeResult>("POST", `/api/ops/probe/${encodeURIComponent(t)}${ws}`, {}, home);
+          const r = await api<ProbeResult | { target: string; not_reachable: string }>("POST", `/api/ops/probe/${encodeURIComponent(t)}${ws}`, {}, home);
           results.push(r);
           if (!json) {
-            const what = r.timeout ? "timeout" : r.ok ? `ok — ${r.version ?? "no version line"}` : `exit ${r.exit_code ?? "?"}${r.error ? ` — ${r.error}` : ""}`;
+            const what =
+              "not_reachable" in r
+                ? `not reachable in env '${r.not_reachable}'`
+                : r.timeout
+                  ? "timeout"
+                  : r.ok
+                    ? `ok — ${r.version ?? "no version line"}`
+                    : `exit ${r.exit_code ?? "?"}${r.error ? ` — ${r.error}` : ""}`;
             console.log(`${t}: ${what}`);
           }
-          if (!r.ok) bad = 1;
+          if (!("ok" in r) || !r.ok) bad = 1;
         }
         if (json) console.log(JSON.stringify(one ? results[0] : results, null, 2));
         return bad;
@@ -152,6 +159,11 @@ export async function opsCmd(args: string[], home?: string): Promise<number> {
         await runProbeWatch({
           targets: () => api("GET", `/api/ops/targets${ws}`, undefined, home),
           last: () => api("GET", "/api/ops/probes", undefined, home),
+          unreachable: () =>
+            api<{ env?: string; unreachable: string[] }>("GET", `/api/ops/reach${ws}`, undefined, home).then((r) => ({
+              env: r.env,
+              targets: r.unreachable,
+            })),
           run: (command) => runProbe(command),
           post: (t, r) => api("POST", `/api/ops/probe/${encodeURIComponent(t)}/result${ws}`, r, home),
           log: (l) => console.log(`${new Date().toISOString().slice(11, 19)} ${l}`),

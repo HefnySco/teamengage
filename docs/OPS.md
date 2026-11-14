@@ -402,6 +402,15 @@ Each app has a state:
 | `deployed` | a job and a probe agree, or a job ran and there is no probe |
 | `drift` | the stored probe version differs from the job version |
 | `unknown` | a target names the app, but it has no job and no probe — or a `version_match` rule could not extract the version |
+| `not_reachable` | every target of the app has no reach edge from the runner in the selected env — the probe is never run |
+
+When the selected env's reach edges give the runner no path to a
+target's machine, the target is `not_reachable`: `te ops probe` answers
+without running (and stores nothing), `te ops watch` skips it with one
+log line, and the machine panel shows the app grey with the env name.
+An `expected: false` edge counts as unreachable. No env selected or no
+runner machine means there is nothing to decide with — probes run as
+before.
 
 `version_match` normalizes the two texts before the compare: a regular
 expression with one capture group applied to the job version and to the
