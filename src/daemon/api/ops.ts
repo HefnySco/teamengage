@@ -24,6 +24,7 @@ import {
   type HistoryQuery,
   type HistoryRow,
 } from "../../core/index/history.js";
+import { searchDocs, type SearchDoc, type SearchHit } from "../../core/index/search.js";
 import { JobStore } from "../../core/ops/job.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
@@ -800,6 +801,92 @@ export class WorkspaceOps {
     }
     rows.sort((a, b) => b.date.localeCompare(a.date) || compareIds(b.id, a.id));
     return rows.slice(0, q.limit ?? 5);
+  }
+
+  /** mtime-cached source text per file — deep search re-reads only what changed (GL-0354). */
+  private searchFileCache = new Map<string, { mtimeMs: number; text: string }>();
+
+  /** An item's searchable text: managed sections plus the overlay task file. */
+  private searchTextOf(it: IndexedItem): string {
+    const parts = [
+      it.meta.title,
+      ...it.sections
+        .filter((s) =>
+          /^(summary|notes|for the human|walkthrough|evidence|review|simple)$/i.test(s.heading),
+        )
+        .map((s) => s.body),
+    ];
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      const file = join(this.wsr.ws.root, it.meta.source);
+      try {
+        const mtimeMs = statSync(file).mtimeMs;
+        const cached = this.searchFileCache.get(file);
+        let text: string;
+        if (cached?.mtimeMs === mtimeMs) text = cached.text;
+        else {
+          text = readFileSync(file, "utf8");
+          this.searchFileCache.set(file, { mtimeMs, text });
+        }
+        parts.push(text);
+      } catch {
+        /* missing source — the overlay finding reports it */
+      }
+    }
+    return parts.join("\n");
+  }
+
+  /**
+   * GL-0354: deep search over finished items (summary/what/how/walkthrough/
+   * notes), decisions and lessons — every query word must hit, ranked by
+   * match count, one ≤30-word snippet per hit. In memory, no database.
+   */
+  async search(q: { text: string; domain?: string; limit?: number }): Promise<SearchHit[]> {
+    const docs: SearchDoc[] = [];
+    for (const it of this.index.items.values()) {
+      if (it.meta.status !== "done" && it.meta.status !== "dropped") continue;
+      docs.push({
+        kind: "item",
+        id: it.meta.id,
+        title: it.meta.title,
+        domains: it.meta.domains,
+        date: historyRow(it).date,
+        text: this.searchTextOf(it),
+      });
+    }
+    for (const d of this.index.decisions.values()) {
+      let domains: string[] = [];
+      try {
+        domains = this.index.get(parseItemRef(d.meta.item).id)?.meta.domains ?? [];
+      } catch {
+        /* a decision naming an item this workspace doesn't have */
+      }
+      docs.push({
+        kind: "decision",
+        id: d.meta.id,
+        title: d.meta.title,
+        domains,
+        date: d.meta.created ?? "",
+        text: [d.meta.title, ...d.sections.map((s) => s.body)].join("\n"),
+      });
+    }
+    try {
+      for (const f of readdirSync(join(this.wsr.ws.plansDir, "lessons")).filter((f) =>
+        f.endsWith(".md"),
+      )) {
+        const domain = f.slice(0, -3);
+        docs.push({
+          kind: "lesson",
+          id: `#${domain}`,
+          title: `lessons for #${domain}`,
+          domains: [domain],
+          date: "",
+          text: readFileSync(join(this.wsr.ws.plansDir, "lessons", f), "utf8"),
+        });
+      }
+    } catch {
+      /* no lessons dir yet */
+    }
+    return searchDocs(docs, q.text, { domain: q.domain, limit: q.limit ?? 10 });
   }
 
   /**

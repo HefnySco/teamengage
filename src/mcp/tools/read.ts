@@ -284,6 +284,34 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
   );
 
   server.registerTool(
+    "search",
+    {
+      description:
+        "Deep search over finished items (summary, what, how, walkthrough, notes), decisions and " +
+        "lessons. Every word must hit; one snippet per result, ranked by match count. " +
+        "domain: restrict to a #domain; limit: rows (default 10).",
+      inputSchema: {
+        text: z.string(),
+        domain: z.string().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+    },
+    async ({ text, domain, limit }) => {
+      try {
+        const ops = opsFor(binding, ctx);
+        if ("content" in ops) return ops;
+        const hits = await ops.search({ text, domain, limit });
+        if (!hits.length) return okText(`no hits for "${text}"`);
+        return okText(
+          hits.map((h) => `${h.kind} ${h.id} "${h.title}" — ${h.snippet}`).join("\n"),
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "history",
     {
       description:

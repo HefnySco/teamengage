@@ -123,6 +123,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // GL-0354: deep search over finished work, decisions and lessons.
+  app.get("/api/search", async (req, reply) => {
+    try {
+      const q = req.query as { ws?: string; text?: string; domain?: string; limit?: string };
+      if (!q.text) return reply.code(400).send({ error: "USAGE", message: "text is required" });
+      const ops = opsFor(ctx, q.ws);
+      return await ops.search({ text: q.text, domain: q.domain, limit: q.limit ? Number(q.limit) : undefined });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   // GL-0353: history by file path — the finished items that changed it.
   app.get("/api/history", async (req, reply) => {
     try {

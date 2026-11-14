@@ -1101,6 +1101,26 @@ const Board = ({ onOpen }) => {
     setFoundOnlyState(v);
     saveSearch("te.board.found", v ? "1" : "");
   };
+  // GL-0354: deep search — server-side word match over finished items,
+  // decisions and lessons; replaces the columns while it has a query
+  const [deep, setDeepState] = useState(() => loadSearch("te.board.deep") === "1");
+  const [deepHits, setDeepHits] = useState(null);
+  const setDeep = (v) => {
+    setDeepState(v);
+    saveSearch("te.board.deep", v ? "1" : "");
+  };
+  useEffect(() => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!deep || !words.length) {
+      setDeepHits(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      api(`/api/search?text=${encodeURIComponent(q)}${domain ? `&domain=${encodeURIComponent(domain)}` : ""}`)
+        .then(setDeepHits, () => setDeepHits([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [deep, q, domain]);
   const [ideaFilter, setIdeaFilterState] = useState(() => (IDEA_STATES.includes(loadSearch("te.board.idea")) ? loadSearch("te.board.idea") : ""));
   const setIdeaFilter = (v) => {
     const nv = v === ideaFilter ? "" : v; // clicking the active state clears it
@@ -1231,6 +1251,7 @@ const Board = ({ onOpen }) => {
         />
         ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
       </span>
+      <button class="btn btn-sm ${deep ? "btn-primary" : "btn-outline-secondary"}" title="deep search — match words inside finished items, decisions and lessons (searches the whole bank, not just these cards)" onClick=${() => setDeep(!deep)}>deep</button>
       <button class="btn btn-sm btn-outline-warning" title="capture a thought as an idea — a source document an agent can plan from; lands as a draft" onClick=${() => setIdeaOpen(true)}><${BulbIcon} /></button>
       <${SortSeg} eff=${eff} onSort=${setSort} title="order cards inside each column" />
       <button class="btn btn-sm ${starredOnly ? "btn-primary" : "btn-outline-secondary"}" title="show only starred" onClick=${() => setStarredOnly(!starredOnly)}><${StarIcon} filled=${starredOnly} /> starred</button>
@@ -1262,7 +1283,23 @@ const Board = ({ onOpen }) => {
       ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
     <${TeamPanel} sessions=${sessions} onOpen=${onOpen} />
-    <div class="board-cols">
+    ${deep && words.length > 0 ? html`
+      <div class="triage"><div>
+        <div class="triage-group">deep search <span class="n">${deepHits === null ? "…" : deepHits.length}</span></div>
+        ${deepHits === null
+          ? html`<div class="triage-li"><span class="t">searching…</span></div>`
+          : deepHits.length === 0
+            ? html`<div class="triage-li"><span class="t">no hits</span></div>`
+            : deepHits.map(
+                (hit) => html`
+                  <div class="triage-li" key=${hit.kind + hit.id} onClick=${() => hit.kind === "item" && onOpen(hit.id)}>
+                    <span class="item id">${hit.kind === "item" ? hit.id : `${hit.kind} ${hit.id}`}</span>
+                    <span class="t" title=${hit.title}>${hit.title}</span>
+                    <span class="text-secondary small">${hit.snippet}</span>
+                  </div>`,
+              )}
+      </div></div>`
+    : html`<div class="board-cols">
       ${STATUSES.map((s) => {
         const items = hits.filter((i) => i.status === s);
         if (SORTS[eff]) items.sort(SORTS[eff]);
@@ -1335,7 +1372,7 @@ const Board = ({ onOpen }) => {
           </div>
         `;
       })}
-    </div>
+    </div>`}
   `;
 };
 

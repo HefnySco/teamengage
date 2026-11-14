@@ -128,6 +128,39 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
   return 0;
 }
 
+/** `te search <words…>` — deep search over finished work, decisions and lessons (GL-0354). */
+export async function searchCmd(args: string[], home?: string): Promise<number> {
+  const words = args.filter((a) => !a.startsWith("-"));
+  if (!words.length) {
+    process.stderr.write("usage: te search <words…> [--domain <d>] [--limit N] [--ws <name>]\n");
+    return 2;
+  }
+  const q = [
+    `text=${encodeURIComponent(words.join(" "))}`,
+    wsQ(args),
+    opt(args, "--domain") ? `domain=${encodeURIComponent(opt(args, "--domain")!)}` : "",
+    opt(args, "--limit") ? `limit=${encodeURIComponent(opt(args, "--limit")!)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
+  const hits = (await daemonApi("GET", `/api/search?${q}`, undefined, home)) as {
+    kind: string;
+    id: string;
+    title: string;
+    snippet: string;
+  }[];
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify(hits, null, 2) + "\n");
+    return 0;
+  }
+  if (!hits.length) {
+    process.stdout.write(`no hits for "${words.join(" ")}"\n`);
+    return 0;
+  }
+  for (const h of hits) process.stdout.write(`${h.kind} ${h.id} "${h.title}" — ${h.snippet}\n`);
+  return 0;
+}
+
 /** `te history <path>` — the finished items that changed it (GL-0353). */
 export async function historyCmd(args: string[], home?: string): Promise<number> {
   let path = args.find((a) => !a.startsWith("-"));

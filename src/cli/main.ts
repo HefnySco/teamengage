@@ -13,6 +13,7 @@ import {
   showCmd,
   graphCmd,
   historyCmd,
+  searchCmd,
   validateCmd,
   statusCmd,
   syncCmd,
@@ -137,6 +138,7 @@ const USAGE_ALL = `te — every command
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   history <path> [--repo <name>] [--limit N] [--json]   the finished items that changed a path
+  search <words…> [--domain d] [--limit N] [--json]   deep search over finished work, decisions, lessons
   validate [--json]
   verify <ID> [--ws w] [--json]               run the item's ## Checks and print pass/fail per check
   status [--json]
@@ -266,6 +268,8 @@ async function main(argv: string[]): Promise<number> {
       return graphCmd(rest, home);
     case "history":
       return historyCmd(rest, home);
+    case "search":
+      return searchCmd(rest, home);
     case "validate":
       return validateCmd(rest, home);
     case "status":
