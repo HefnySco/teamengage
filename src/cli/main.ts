@@ -20,6 +20,7 @@ import { originBackfillCmd } from "./commands/backfill.js";
 import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
 import { runCmd, waitCmd } from "./commands/run.js";
+import { restartCmd } from "./commands/restart.js";
 import { opsCmd } from "./commands/ops.js";
 import { verifyCmd } from "./commands/verify.js";
 import { metricsCmd } from "./commands/metrics.js";
@@ -116,6 +117,7 @@ set up
   te init --overlay --root <task folder> [--repos '../*']
   te import <folder> --apply      te hooks --install      te skills --install
   ~/.teamengage/machine.yaml      which agents te run starts (te run --help)
+  te restart             restart the daemon (systemd unit, or kill + respawn)
 
 te help all — every command (hold, drop, archive, deps, tier, rollback, …)
 `;
@@ -179,6 +181,7 @@ const USAGE_ALL = `te — every command
              copies go stale and teach agents an outdated protocol)
   guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
   daemon     run the daemon in the foreground
+  restart    restart the daemon (systemd unit if installed, else kill + respawn)
              systemd service (Linux): npm run autorun (install) | npm run restart | scripts/service.sh stop|status
 
 options:
@@ -347,6 +350,8 @@ async function main(argv: string[]): Promise<number> {
       return runCmd(rest, home);
     case "wait":
       return waitCmd(rest, home);
+    case "restart":
+      return restartCmd(rest, home);
     case "mcp": {
       const { runShim } = await import("../mcp/shim/shim.js");
       await runShim(home);
