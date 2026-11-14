@@ -67,16 +67,21 @@ export function defaultWebDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "web");
 }
 
-/** GL-0368: true when a web source file is newer than dist/app.js (or it is missing). */
+/** GL-0368/DE-0163: true when any web source file (web/*.js, web/*.css —
+ *  app.js imports markdown.js, dialogs.js and teamengage.css) is newer
+ *  than dist/app.js, or sources exist and the bundle is missing. */
 export function webBundleStale(webDir: string): boolean {
   try {
-    const srcApp = join(webDir, "app.js");
-    if (!existsSync(srcApp)) return false;
     const distApp = join(webDir, "dist", "app.js");
     const distM = existsSync(distApp) ? statSync(distApp).mtimeMs : 0;
-    if (statSync(srcApp).mtimeMs > distM) return true;
-    const srcCss = join(webDir, "teamengage.css");
-    return existsSync(srcCss) && statSync(srcCss).mtimeMs > distM;
+    let newest = 0;
+    for (const name of readdirSync(webDir)) {
+      if (!name.endsWith(".js") && !name.endsWith(".css")) continue;
+      const p = join(webDir, name);
+      if (!statSync(p).isFile()) continue;
+      newest = Math.max(newest, statSync(p).mtimeMs);
+    }
+    return newest > 0 && newest > distM;
   } catch {
     return false;
   }

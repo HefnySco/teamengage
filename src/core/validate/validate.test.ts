@@ -151,6 +151,14 @@ describe("validate", () => {
     t(srcApp, 1000); t(srcCss, 4000);
     expect(webBundleStale(web)).toBe(true);
 
+    // DE-0163: an imported source file (dialogs.js / markdown.js) newer
+    // than the bundle is stale too — app.js itself untouched
+    const srcDlg = join(web, "dialogs.js");
+    writeFileSync(srcDlg, "x");
+    t(srcApp, 1000); t(srcCss, 1000); t(srcDlg, 5000);
+    expect(webBundleStale(web)).toBe(true);
+    expect(validate(idx, { webDir: web }).some((f) => f.kind === "web_bundle")).toBe(true);
+
     // missing bundle with sources present — stale
     rmSync(distApp);
     expect(webBundleStale(web)).toBe(true);
