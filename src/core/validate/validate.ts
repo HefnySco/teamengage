@@ -2,6 +2,9 @@ import { isStale } from "../model/claim.js";
 import { parseItemRef, parseTargetRef } from "../address/refs.js";
 import { targetsOverlap, type Roots } from "../claims/claims.js";
 import { depSatisfied, type Index } from "../index/index.js";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONTEXT_MAX_LINES } from "../files/repo-context.js";
 
 /** Plan-graph health check (DESIGN CR-0009). Feeds the human inbox + `te validate`. */
 
@@ -27,6 +30,7 @@ export type FindingKind =
   | "env"
   | "check"
   | "ops_probe"
+  | "context_file"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"
@@ -46,6 +50,8 @@ export interface ValidateOpts {
   staleAfterMs?: number;
   /** resource name → root, for absolute-path overlap checks */
   roots?: Roots;
+  /** GL-0355: repos/ dir holding <repo>.context.md files (≤80 lines each) */
+  contextDir?: string;
 }
 
 export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
@@ -183,6 +189,26 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
           message: `targets of ${claims[i].item} and ${claims[j].item} overlap at ${o.via?.[0]}`,
         });
       }
+    }
+  }
+
+  // GL-0355: repos/<repo>.context.md — one context card per repo, ≤80 lines
+  if (opts.contextDir) {
+    try {
+      for (const name of readdirSync(opts.contextDir).filter((n) => n.endsWith(".context.md"))) {
+        const p = join(opts.contextDir, name);
+        const n = readFileSync(p, "utf8").split("\n").length;
+        if (n > CONTEXT_MAX_LINES) {
+          f({
+            severity: "warning",
+            kind: "context_file",
+            path: p,
+            message: `${name} has ${n} lines — a repo context card stays under ${CONTEXT_MAX_LINES}`,
+          });
+        }
+      }
+    } catch {
+      /* no repos dir — nothing to check */
     }
   }
 

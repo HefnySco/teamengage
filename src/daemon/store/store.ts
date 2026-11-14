@@ -113,6 +113,11 @@ export class PlansStore {
     this.ready = true;
   }
 
+  /** Append one event outside a transition — for ops that write state directly (GL-0355). */
+  logEvent(e: Omit<Event, "seq" | "machine">): Promise<Event> {
+    return this.events.append(e);
+  }
+
   /** Re-read every plan file from disk (after a pull changed many at once). */
   reindex(): Promise<void> {
     return (async () => {

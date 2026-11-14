@@ -537,6 +537,9 @@ export async function scanTaskTree(root: string, ignore: string[] = []): Promise
         if (/\.(machine|env)\.md$/i.test(e.name) || /\.machine\.trans\.md$/i.test(e.name)) continue;
         const rel = toSourcePath(root, p);
         if (/^ops\/[^/]+\.notes\.md$/i.test(rel)) continue;
+        // repos/<repo>.context.md — per-repo context cards (GL-0355),
+        // tool-managed, not task files
+        if (/^repos\//i.test(rel)) continue;
         const tag = readTeTag(await readFile(p, "utf8"));
         if (tag) tagged.set(tag, [...(tagged.get(tag) ?? []), rel]);
         else if (!ig.some((r) => r.test(rel))) untracked.push(rel);

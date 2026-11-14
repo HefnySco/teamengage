@@ -50,6 +50,7 @@ import {
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
+import { readRepoContext, writeRepoContext } from "../../core/files/repo-context.js";
 import { isRepo, revParse, commitFiles as gitCommitFiles } from "../../resources/git/git.js";
 import {
   releaseItemSets,
@@ -338,6 +339,39 @@ export class WorkspaceOps {
   }
 
   /**
+   * An agent updates one section of a repo's context card
+   * (repos/<repo>.context.md, GL-0355) — e.g. a build command that
+   * turned out wrong. The daemon writes it and logs the event.
+   */
+  async repoContext(session: Session, repo: string, section: string, text: string) {
+    if (!repo?.trim() || !section?.trim() || !text?.trim()) {
+      throw new ValidationError("repo_context needs a repo, a section and a text");
+    }
+    await writeRepoContext(this.wsr.ws.root, repo.trim(), section, text);
+    await this.store.logEvent({
+      ts: new Date().toISOString(),
+      actor: session.id,
+      session: session.id,
+      action: "repo_context",
+      note: `${repo.trim()} — ${section.trim()}`,
+    });
+    return { repo: repo.trim(), section: section.trim() };
+  }
+
+  /** Context cards for the repos named in an item's Touches. For `brief`. */
+  private async repoContextsOf(it: IndexedItem): Promise<{ repo: string; text: string }[]> {
+    const repos = new Set(
+      (await this.touchesOf(it)).map((t) => t.repo).filter((r): r is string => Boolean(r)),
+    );
+    const out: { repo: string; text: string }[] = [];
+    for (const repo of repos) {
+      const text = await readRepoContext(this.wsr.ws.root, repo);
+      if (text) out.push({ repo, text });
+    }
+    return out;
+  }
+
+  /**
    * Lessons for these item domains — newest first (the date each line
    * starts with), at most `limit`. For `brief`.
    */
@@ -531,6 +565,7 @@ export class WorkspaceOps {
       plan_problems: it.plan_problems,
       referenced_by,
       question: it.meta.question,
+      repo_context: await this.repoContextsOf(it),
       source,
       checks: (await this.checksOf(it)).checks,
       verify: await this.verifyOf(it),
@@ -1163,6 +1198,7 @@ export class WorkspaceOps {
       ...validate(this.index, {
         staleAfterMs: parseDuration(this.wsr.ws.config.stale_after),
         roots: resourceRoots(this.wsr.ws),
+        contextDir: join(this.wsr.ws.root, "repos"),
       }),
       ...dead,
       ...ops,

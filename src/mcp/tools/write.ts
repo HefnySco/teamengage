@@ -733,4 +733,29 @@ export function registerWriteTools(
       }
     },
   );
+
+  server.registerTool(
+    "repo_context",
+    {
+      description:
+        "Fix one section of a repo's context card — {repo, section, text}: the card lives at " +
+        "repos/<repo>.context.md (≤80 lines: what the repo is, structure, build, test, rules) " +
+        "and brief shows it to whoever works that repo next. A command or path in the card " +
+        "turned out wrong? Correct the section — don't let the next agent hit it. One section " +
+        "per call; the daemon writes it and logs the change.",
+      inputSchema: { repo: z.string(), section: z.string(), text: z.string() },
+    },
+    async ({ repo, section, text }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.repoContext(s, repo, section, text);
+        return okText(`repo context updated: ${r.repo} — ${r.section}`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
 }

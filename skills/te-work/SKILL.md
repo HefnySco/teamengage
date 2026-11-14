@@ -310,6 +310,21 @@ already exist (an unknown one is refused). Wrong or stale lessons are the
 human's to delete on the domains page — if one misleads you, say so in a
 `note` on your task instead of editing the file.
 
+## 8d. Fix the repo context card when it lies
+
+`brief` shows the context card of each repo your task touches
+(`repos/<repo>.context.md` — what the repo is, structure, build, test,
+rules). A build or test command in it failed, or a path does not exist?
+Correct that section so the next agent does not hit it:
+
+```bash
+curl -s -X POST $B/repo_context -H "$H" -d '{"repo":"de_mavlink","section":"Build","text":"cmake -B build && cmake --build build"}'
+```
+
+One section per call; the daemon writes the card and logs the change.
+Keep the card under 80 lines — `te validate` reports a card that outgrows it.
+Missing a section you need (Build, Test, Rules)? The call creates it.
+
 ## 9. Giving it back
 
 Can't finish (blocked, out of time, wrong approach)? Release it with what
