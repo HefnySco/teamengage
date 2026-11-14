@@ -75,6 +75,17 @@ beforeAll(async () => {
   const mk = (id: string, run: string) => checksItem(id, [{ name: `chk-${id}`, repo: "code", run }]);
   writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001"));
   writeFileSync(join(plans, "items", "WS", "WS-0010.md"), item("WS-0010"));
+  // GL-0340: a playbook that deploys the code repo, and an item whose
+  // ## Evidence cites a commit of it
+  mkdirSync(join(plans, "..", "ops"), { recursive: true });
+  writeFileSync(
+    join(plans, "..", "ops", "deploy.playbook.yaml"),
+    `name: deploy\nrepos: [${JSON.stringify(repo)}]\nsteps:\n  - { id: a, kind: cmd, run: "true" }\n`,
+  );
+  writeFileSync(
+    join(plans, "..", "ops", "plain.playbook.yaml"),
+    `name: plain\nsteps:\n  - { id: a, kind: cmd, run: "true" }\n`,
+  );
   for (const id of ["WS-0005", "WS-0006", "WS-0007", "WS-0008", "WS-0009", "WS-0011"]) {
     writeFileSync(join(plans, "items", "WS", `${id}.md`), mk(id, "true"));
   }
@@ -230,5 +241,63 @@ describe("verified badge + require_verified (GL-0350)", () => {
     const results = ops.verifyOf(ops.index.get("WS-0011")!);
     expect(results).toHaveLength(2);
     expect(new Set(results.map((r) => r.actor)).size).toBe(2);
+  });
+});
+
+describe("repo commits at job start (GL-0340)", () => {
+  const api = (path: string, init: RequestInit = {}) =>
+    fetch(`${daemon.url}${path}`, {
+      ...init,
+      headers: { authorization: `Bearer ${daemon.token}`, "content-type": "application/json", ...(init.headers ?? {}) },
+    });
+  const startJob = async (playbook: string) => {
+    const r = await api("/api/ops/start?ws=ws", { method: "POST", body: JSON.stringify({ playbook }) });
+    return (await r.json()) as { id: string; repos?: { path: string; commit?: string; dirty?: boolean }[] };
+  };
+
+  it("a job on a playbook with repos stores one commit per repo; a dirty repo is flagged", async () => {
+    const job = await startJob("deploy");
+    expect(job.repos).toHaveLength(1);
+    expect(job.repos![0].commit).toBe(head(repo));
+    expect(job.repos![0].dirty ?? false).toBe(false);
+
+    appendFileSync(join(repo, "a.txt"), "dirty\n");
+    const dirty = await startJob("deploy");
+    expect(dirty.repos![0].dirty).toBe(true);
+    execFileSync("git", ["checkout", "--", "a.txt"], { cwd: repo });
+  });
+
+  it("a playbook with no repos starts as before", async () => {
+    const job = await startJob("plain");
+    expect(job.repos).toBeUndefined();
+  });
+
+  it("the item api lists a job that deployed its Evidence commit", async () => {
+    const sha = head(repo);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0012.md"),
+      item("WS-0012", "", `## Summary\nWS-0012\n## Evidence\n- commit code@${sha}\n`),
+    );
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-m", "ws-0012"], { cwd: plans });
+    await new Promise((r) => setTimeout(r, 300)); // let the watcher index it
+    await startJob("deploy");
+
+    const b = (await (await api("/api/items/WS-0012?ws=ws")).json()) as { ops_jobs?: { id: string }[] };
+    expect((b.ops_jobs ?? []).length).toBeGreaterThanOrEqual(1);
+    // a commit the job did NOT record does not link
+    execFileSync("git", ["-C", repo, "commit", "--allow-empty", "-m", "newer"]);
+    const later = head(repo);
+    writeFileSync(
+      join(plans, "items", "WS", "WS-0013.md"),
+      item("WS-0013", "", `## Summary\nWS-0013\n## Evidence\n- commit code@${later}\n`),
+    );
+    execFileSync("git", ["add", "-A"], { cwd: plans });
+    execFileSync("git", ["commit", "-m", "ws-0013"], { cwd: plans });
+    await new Promise((r) => setTimeout(r, 300));
+    const b2 = (await (await api("/api/items/WS-0013?ws=ws")).json()) as { ops_jobs?: { id: string }[] };
+    // no job started at `later` — the earlier jobs hold the older HEAD, so
+    // `later` is not their ancestor (it is their descendant)
+    expect(b2.ops_jobs ?? []).toHaveLength(0);
   });
 });

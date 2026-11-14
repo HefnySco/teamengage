@@ -57,6 +57,8 @@ export const Playbook = z.object({
   params: z.array(PlaybookParam).default([]),
   /** env names whose values are masked in posted output */
   secret_env: z.array(z.string()).default([]),
+  /** the repos the job deploys — paths (workspace-relative or absolute); the daemon records each HEAD+dirty at start */
+  repos: z.array(z.string()).default([]),
   /** step id whose last non-empty output line becomes the deployed version */
   version_from: z.string().optional(),
   steps: z.array(PlaybookStep).min(1),

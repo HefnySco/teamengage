@@ -57,6 +57,16 @@ export const JobStepRecord = z.object({
 });
 export type JobStepRecord = z.infer<typeof JobStepRecord>;
 
+/** The HEAD commit + dirty flag of one playbook repo, recorded at job start (GL-0340). */
+export const JobRepoState = z.object({
+  path: z.string(),
+  commit: z.string().optional(),
+  dirty: z.boolean().optional(),
+  /** set when the path is missing or not a git repo */
+  error: z.string().optional(),
+});
+export type JobRepoState = z.infer<typeof JobRepoState>;
+
 export const Job = z.object({
   /** <machine>-<NNNN> — also the file name */
   id: z.string(),
@@ -74,6 +84,8 @@ export const Job = z.object({
   cursor: z.number().int().default(0),
   /** on success: last non-empty output line of the version_from step */
   version: z.string().optional(),
+  /** the playbook repos' HEAD/dirty at job start (GL-0340) */
+  repos: z.array(JobRepoState).optional(),
   /** rollback jobs: the job they roll back; source jobs: the rollback job id */
   rollback_of: z.string().optional(),
   rollback_job: z.string().optional(),
@@ -372,6 +384,8 @@ export class JobStore {
       session?: string;
       /** set when the plans remote could not be fetched — the lock is marked unsynced */
       unsynced?: boolean;
+      /** the playbook repos' HEAD+dirty, resolved by the caller (GL-0340) */
+      repos?: JobRepoState[];
     },
   ): Promise<Job> {
     const params: Record<string, string> = {};
@@ -397,6 +411,7 @@ export class JobStore {
       started: { ts: new Date().toISOString(), by: args.by },
       cursor: 0,
       steps: playbook.steps.map((s) => ({ id: s.id, status: "pending" })),
+      ...(args.repos?.length ? { repos: args.repos } : {}),
     });
     this.settle(job, playbook);
     // one live job per target: a live lock — running, waiting or failed

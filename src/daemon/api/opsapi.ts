@@ -1,8 +1,9 @@
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { join, resolve } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import YAML from "yaml";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { JobStore, jobPlaybook, type Job, type StepResult } from "../../core/ops/job.js";
+import { JobStore, jobPlaybook, type Job, type JobRepoState, type StepResult } from "../../core/ops/job.js";
 import { EventLog } from "../../core/events/log.js";
 import type { EventBus } from "./events.js";
 import type { Event } from "../../core/model/event.js";
@@ -353,6 +354,26 @@ function startPolicy(pb: Playbook, session?: Session): void {
   }
 }
 
+/**
+ * The playbook repos' HEAD commit + dirty flag at job start (GL-0340).
+ * git reads only — same class as the plans-repo commits the daemon makes;
+ * the job record keeps them so a later release knows exactly what shipped.
+ */
+function repoStates(wsr: WorkspaceRuntime, pb: Playbook): JobRepoState[] {
+  const out: JobRepoState[] = [];
+  for (const p of pb.repos) {
+    const dir = resolve(wsr.ws.root, p);
+    try {
+      const commit = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      const dirty = execFileSync("git", ["-C", dir, "status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+      out.push({ path: p, commit, dirty });
+    } catch (e) {
+      out.push({ path: p, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    }
+  }
+  return out;
+}
+
 export async function opsStart(
   wsr: WorkspaceRuntime,
   ctx: DaemonCtx,
@@ -364,12 +385,45 @@ export async function opsStart(
   let unsynced = false;
   if (target) ({ unsynced } = await checkRemoteTargetLock(wsr, target));
   const by = args.session?.id ?? "human";
+  const repos = repoStates(wsr, pb);
   return mutate(
     wsr,
     ctx,
-    (s) => s.start(pb, { params: args.params, target, by, session: args.session?.id, unsynced }),
+    (s) => s.start(pb, { params: args.params, target, by, session: args.session?.id, unsynced, repos }),
     (j) => `ops: job ${j.id} started — ${pb.name}${target ? ` on ${target}` : ""} by ${by}`,
   );
+}
+
+/**
+ * The ops jobs that deployed one of an item's Evidence commits (GL-0340):
+ * for each `commit <repo>@<sha>` line, a job matches when its recorded
+ * repo path resolves to the resource's path and the sha is an ancestor
+ * of the recorded HEAD.
+ */
+export function opsJobsForItem(wsr: WorkspaceRuntime, ctx: DaemonCtx, commits: { repo: string; sha: string }[]): Job[] {
+  if (!commits.length) return [];
+  const jobs: Job[] = [];
+  const seen = new Set<string>();
+  for (const c of commits) {
+    const res = wsr.ws.resources.get(c.repo);
+    if (!res?.path) continue;
+    const dir = resolve(res.path);
+    for (const job of jobStore(wsr, ctx).listAll()) {
+      if (seen.has(job.id) || !job.repos) continue;
+      for (const r of job.repos) {
+        if (!r.commit || resolve(wsr.ws.root, r.path) !== dir) continue;
+        try {
+          execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit]);
+          jobs.push(job);
+          seen.add(job.id);
+        } catch {
+          /* sha not in this job's recorded HEAD */
+        }
+        break;
+      }
+    }
+  }
+  return jobs;
 }
 
 export interface OpsStepArgs {

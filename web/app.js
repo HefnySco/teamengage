@@ -2701,6 +2701,12 @@ const ItemView = ({ id }) => {
         <span class="text-secondary">exit ${r.exit_code} @${(r.commit ?? "").slice(0, 8) || "?"} · by <b class=${whoCls(r.actor)}>${r.actor}</b> · ${ago(r.at)} ago</span>
       </div>`)}
     </div>`}
+    ${(b.ops_jobs ?? []).length > 0 && html`<div class="alert alert-secondary py-2 px-2 small mb-2">
+      <b>deployed by ops</b> <span class="text-secondary">— a job recorded this task's commit at its start</span>
+      ${(b.ops_jobs ?? []).map((j, i) => html`<div key=${i} class="mt-1 small">
+        <a href="#/ops/jobs/${j.id}">${j.id}</a> ${j.playbook} · ${j.status}${j.version ? ` · ${j.version}` : ""}
+      </div>`)}
+    </div>`}
     ${(it.meta.findings ?? []).length > 0 && html`<div class="alert alert-secondary py-2 px-2 small mb-2">
       <b>findings</b> <span class="text-secondary">— the last review's checklist; each <b>must</b> needs done or skipped on the next submit</span>
       ${it.meta.findings.map((f, i) => html`<div key=${i} class="d-flex gap-2 mt-1 align-items-baseline">
@@ -3905,6 +3911,9 @@ const OpsJob = ({ id }) => {
       ${job.version ? ` · version ${job.version}` : ""}
     </div>
     ${Object.keys(job.params ?? {}).length > 0 && html`<div class="small text-secondary mb-2">params: ${Object.entries(job.params).map(([k, v]) => `${k}=${v}`).join("  ")}</div>`}
+    ${(job.repos ?? []).length > 0 && html`<div class="small text-secondary mb-2">repos:
+      ${job.repos.map((r, i) => html`<span key=${i} class="me-3">${r.path} @${r.commit ? r.commit.slice(0, 8) : "?"}${r.dirty ? html` <span class="badge text-bg-warning" title="the repo had uncommitted changes at job start">dirty</span>` : ""}${r.error ? html` <span class="badge text-bg-danger" title=${r.error}>unreadable</span>` : ""}</span>`)}
+    </div>`}
     <details class="small mb-2"><summary class="text-secondary">playbook sha256</summary><code>${job.playbook_sha256}</code></details>
     <ol class="ops-steps">
       ${job.steps.map((s, i) => {

@@ -1,7 +1,8 @@
 import YAML from "yaml";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import {
@@ -15,6 +16,7 @@ import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/ref
 import { targetsOverlap } from "../../core/claims/claims.js";
 import { depSatisfied, isProblemItem, type IndexedItem } from "../../core/index/index.js";
 import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
+import { JobStore } from "../../core/ops/job.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
@@ -492,6 +494,7 @@ export class WorkspaceOps {
       checks: (await this.checksOf(it)).checks,
       verify: await this.verifyOf(it),
       verified: this.verifiedBadge(it),
+      ops_jobs: this.opsJobsForItem(it),
       reviewUnblocks: this.wsr.ws.config.review_unblocks,
       autonomy: this.wsr.ws.config.autonomy,
       autoAcceptAt: this.autoAcceptAt(it),
@@ -752,6 +755,56 @@ export class WorkspaceOps {
     const ok =
       checks.length > 0 && checks.every((c) => results.some((r) => r.check === c.name && r.passed));
     return { ok, results: [...latest.values()] };
+  }
+
+  /**
+   * The ops jobs that deployed one of this item's Evidence commits
+   * (GL-0340): for each `commit <repo>@<sha>` line a job matches when its
+   * recorded repo path resolves to the resource's path and the sha is an
+   * ancestor of the job's recorded HEAD.
+   */
+  opsJobsForItem(it: IndexedItem): { id: string; playbook: string; status: string; version?: string }[] {
+    let lines: string[] = [];
+    try {
+      const text = readFileSync(join(this.wsr.ws.plansDir, it.path), "utf8");
+      lines = (sectionBody(text, "Evidence") ?? "").split("\n");
+    } catch {
+      /* source-doc items keep evidence in the source file — try it */
+      try {
+        const text = readFileSync(join(this.wsr.ws.root, it.meta.source ?? ""), "utf8");
+        lines = (sectionBody(text, "Evidence") ?? "").split("\n");
+      } catch {
+        return [];
+      }
+    }
+    const commits = lines
+      .map((l) => /^- commit (\S+)@([0-9a-f]+)/.exec(l))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => ({ repo: m[1], sha: m[2] }));
+    if (!commits.length) return [];
+    const jobs = new JobStore(this.wsr.ws.root, this.wsr.ws.plansDir, this.wsr.store.machine).listAll();
+    const out: { id: string; playbook: string; status: string; version?: string }[] = [];
+    const seen = new Set<string>();
+    for (const c of commits) {
+      const res = this.wsr.ws.resources.get(c.repo);
+      if (!res?.path) continue;
+      const dir = resolve(res.path);
+      for (const job of jobs) {
+        if (seen.has(job.id) || !job.repos) continue;
+        for (const r of job.repos) {
+          if (!r.commit || resolve(this.wsr.ws.root, r.path) !== dir) continue;
+          try {
+            execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit]);
+            out.push({ id: job.id, playbook: job.playbook, status: job.status, version: job.version });
+            seen.add(job.id);
+          } catch {
+            /* the sha is not in this job's recorded HEAD */
+          }
+          break;
+        }
+      }
+    }
+    return out;
   }
 
   /**

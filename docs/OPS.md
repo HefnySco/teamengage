@@ -95,6 +95,21 @@ targets:
     ssh_opts: -i ~/.ssh/prod_key
 ```
 
+A playbook may name the repos it deploys:
+
+```yaml
+name: auth-shadow-deploy
+target: cloud_auth
+repos: ["../droneengage_authenticator"]   # HEAD commit + dirty flag recorded at job start
+steps: ...
+```
+
+The job record keeps each repo's commit and a `dirty` flag when the
+checkout had uncommitted changes — the job view shows them, and an
+accepted task's page lists the jobs whose recorded HEAD contains one of
+its Evidence commits.
+```
+
 ## Running a job
 
 ```bash
