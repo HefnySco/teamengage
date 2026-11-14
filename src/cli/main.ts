@@ -12,6 +12,7 @@ import {
   ideasCmd,
   showCmd,
   graphCmd,
+  historyCmd,
   validateCmd,
   statusCmd,
   syncCmd,
@@ -135,6 +136,7 @@ const USAGE_ALL = `te — every command
   ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
+  history <path> [--repo <name>] [--limit N] [--json]   the finished items that changed a path
   validate [--json]
   verify <ID> [--ws w] [--json]               run the item's ## Checks and print pass/fail per check
   status [--json]
@@ -262,6 +264,8 @@ async function main(argv: string[]): Promise<number> {
       return showCmd(rest, home);
     case "graph":
       return graphCmd(rest, home);
+    case "history":
+      return historyCmd(rest, home);
     case "validate":
       return validateCmd(rest, home);
     case "status":

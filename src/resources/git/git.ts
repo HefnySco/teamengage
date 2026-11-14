@@ -208,6 +208,19 @@ export async function remoteBranchesContaining(repo: string, commitSha: string):
   }
 }
 
+/** Paths changed by one commit ([] for an unknown sha — GL-0353 history). */
+export async function commitFiles(repo: string, sha: string): Promise<string[]> {
+  try {
+    const out = await git(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha]);
+    return out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** `git show <ref>:<path>` — read a file from a ref without touching the tree. */
 export async function showFile(repo: string, ref: string, path: string): Promise<string> {
   return git(repo, ["show", `${ref}:${path}`]);

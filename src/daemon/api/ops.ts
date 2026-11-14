@@ -1,8 +1,8 @@
 import YAML from "yaml";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
-import { readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
+import { join, resolve, basename, dirname, sep } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import {
@@ -12,10 +12,18 @@ import {
   rankDomains,
   type DomainDef,
 } from "../../core/domains/domains.js";
-import { parseItemRef, parseTargetRef, allocateId } from "../../core/address/refs.js";
+import { parseItemRef, parseTargetRef, allocateId, normPath, compareIds } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import { depSatisfied, isProblemItem, type IndexedItem } from "../../core/index/index.js";
 import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
+import {
+  evidenceCommits,
+  fileMatches,
+  historyRow,
+  touchMatches,
+  type HistoryQuery,
+  type HistoryRow,
+} from "../../core/index/history.js";
 import { JobStore } from "../../core/ops/job.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
@@ -41,7 +49,7 @@ import {
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
-import { isRepo, revParse } from "../../resources/git/git.js";
+import { isRepo, revParse, commitFiles as gitCommitFiles } from "../../resources/git/git.js";
 import {
   releaseItemSets,
   listReleases,
@@ -717,6 +725,81 @@ export class WorkspaceOps {
       text = await readFile(join(this.wsr.ws.plansDir, it.path), "utf8").catch(() => "");
     }
     return parseTouches(text);
+  }
+
+  /** Repo name → local checkout dir, built once (git resources, `repos:` globs, the root). */
+  private repoDirs?: Map<string, string>;
+  private repoDir(name: string): string | undefined {
+    if (this.repoDirs === undefined) {
+      const map = new Map<string, string>();
+      for (const [n, r] of this.wsr.ws.resources) {
+        if (r.config.kind === "git" && r.path) map.set(n, r.path);
+      }
+      map.set(basename(this.wsr.ws.root), this.wsr.ws.root);
+      for (const pat of this.wsr.ws.config.repos ?? []) {
+        const abs = resolve(this.wsr.ws.root, pat);
+        try {
+          if (abs.endsWith(`${sep}*`) || abs.endsWith("*")) {
+            for (const d of readdirSync(dirname(abs), { withFileTypes: true })) {
+              if (d.isDirectory() && !map.has(d.name)) map.set(d.name, join(dirname(abs), d.name));
+            }
+          } else if (!map.has(basename(abs))) map.set(basename(abs), abs);
+        } catch {
+          /* a repos glob whose parent is missing */
+        }
+      }
+      this.repoDirs = map;
+    }
+    // `databus/client`-style names: a dir inside one of the glob parents
+    const direct = this.repoDirs.get(name);
+    if (direct || !name.includes("/")) return direct;
+    for (const dir of this.repoDirs.values()) {
+      const candidate = join(dir, "..", name);
+      if (existsSync(join(candidate, ".git"))) return resolve(candidate);
+    }
+    return undefined;
+  }
+
+  private commitFileCache = new Map<string, Promise<string[]>>();
+  private commitFiles(repo: string, sha: string): Promise<string[]> {
+    const key = `${repo}@${sha}`;
+    let p = this.commitFileCache.get(key);
+    if (!p) {
+      p = gitCommitFiles(repo, sha);
+      this.commitFileCache.set(key, p);
+    }
+    return p;
+  }
+
+  /**
+   * GL-0353: the last finished items that changed `path` — a Touches glob
+   * covers it, or one of the item's Evidence commits touched it when the
+   * repo is on this machine. Newest first, `limit` rows (default 5).
+   */
+  async history(q: HistoryQuery): Promise<HistoryRow[]> {
+    const query: HistoryQuery = { ...q, path: normPath(q.path) };
+    const rows: HistoryRow[] = [];
+    for (const it of this.index.items.values()) {
+      if (it.meta.status !== "done") continue;
+      let hit = (await this.touchesOf(it)).some((t) => touchMatches(t, query));
+      if (!hit) {
+        for (const c of evidenceCommits(it)) {
+          if (query.repo !== undefined && c.repo !== query.repo) continue;
+          const dir = this.repoDir(c.repo);
+          if (!dir) continue;
+          for (const sha of c.shas) {
+            if (fileMatches(await this.commitFiles(dir, sha), query.path)) {
+              hit = true;
+              break;
+            }
+          }
+          if (hit) break;
+        }
+      }
+      if (hit) rows.push(historyRow(it));
+    }
+    rows.sort((a, b) => b.date.localeCompare(a.date) || compareIds(b.id, a.id));
+    return rows.slice(0, q.limit ?? 5);
   }
 
   /**

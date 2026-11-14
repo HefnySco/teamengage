@@ -30,7 +30,7 @@ export function parseTouches(text: string): Touch[] {
 }
 
 /** Does path `a` cover path `b`? Exact match, or a glob whose literal prefix reaches b. */
-function covers(a: string, b: string): boolean {
+export function covers(a: string, b: string): boolean {
   if (a === b) return true;
   const star = a.indexOf("*");
   if (star < 0) return false;

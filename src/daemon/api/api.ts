@@ -123,6 +123,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // GL-0353: history by file path — the finished items that changed it.
+  app.get("/api/history", async (req, reply) => {
+    try {
+      const q = req.query as { ws?: string; path?: string; repo?: string; limit?: string };
+      if (!q.path) return reply.code(400).send({ error: "USAGE", message: "path is required" });
+      const ops = opsFor(ctx, q.ws);
+      return await ops.history({ path: q.path, repo: q.repo, limit: q.limit ? Number(q.limit) : undefined });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   app.get("/api/items/:id", async (req, reply) => {
     try {
       const { id } = IdParam.parse(req.params);

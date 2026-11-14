@@ -7,6 +7,7 @@ import { WorkspaceOps } from "../../daemon/api/ops.js";
 import type { Session } from "../../core/model/session.js";
 import { okText, errText, errFrom, itemLine, type ToolResult } from "../format.js";
 import { handoffStatus, handoffLines } from "../../daemon/sync/sync.js";
+import { historyLine } from "../../core/index/history.js";
 
 /**
  * Read tools (DESIGN §7): hello, next, brief, query, graph.
@@ -276,6 +277,39 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         });
         if (!items.length) return okText("no matches");
         return okText(items.slice(0, 50).map(itemLine).join("\n"));
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "history",
+    {
+      description:
+        "Finished items that changed a path — matched by Touches globs and by the files of Evidence " +
+        "commits (when the repo is on this machine). Rows: id, date, title, what line, open problems. " +
+        "path may be `repo:path`; limit defaults to 5, newest first.",
+      inputSchema: {
+        path: z.string(),
+        repo: z.string().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+    },
+    async ({ path, repo, limit }) => {
+      try {
+        const ops = opsFor(binding, ctx);
+        if ("content" in ops) return ops;
+        let p = path;
+        let r = repo;
+        const i = path.indexOf(":");
+        if (r === undefined && i > 0) {
+          r = path.slice(0, i).trim();
+          p = path.slice(i + 1).trim();
+        }
+        const rows = await ops.history({ path: p, repo: r, limit });
+        if (!rows.length) return okText(`no history for ${path}`);
+        return okText(rows.map(historyLine).join("\n"));
       } catch (e) {
         return errFrom(e);
       }

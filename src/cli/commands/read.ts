@@ -1,4 +1,5 @@
 import { daemonApi } from "../client.js";
+import { historyLine, type HistoryRow } from "../../core/index/history.js";
 
 /** Read commands (CL-0001): ls, show, graph, validate, status, inbox. */
 
@@ -124,6 +125,40 @@ export async function showCmd(args: string[], home?: string): Promise<number> {
   for (const r of b.referenced_by ?? []) process.stdout.write(`referenced by ${r.ref} ${r.status}\n`);
   for (const d of b.decisions) process.stdout.write(`decision ${d.meta.id}: ${d.meta.title}\n`);
   for (const t of b.targets) process.stdout.write(`target ${t.ref} → ${t.kind}${t.path ? ` ${t.path}` : ""}\n`);
+  return 0;
+}
+
+/** `te history <path>` — the finished items that changed it (GL-0353). */
+export async function historyCmd(args: string[], home?: string): Promise<number> {
+  let path = args.find((a) => !a.startsWith("-"));
+  if (!path) {
+    process.stderr.write("usage: te history <path> [--repo <name>] [--limit N] [--ws <name>]\n");
+    return 2;
+  }
+  let repo = opt(args, "--repo");
+  const i = path.indexOf(":");
+  if (repo === undefined && i > 0) {
+    repo = path.slice(0, i).trim();
+    path = path.slice(i + 1).trim();
+  }
+  const q = [
+    `path=${encodeURIComponent(path)}`,
+    wsQ(args),
+    repo ? `repo=${encodeURIComponent(repo)}` : "",
+    opt(args, "--limit") ? `limit=${encodeURIComponent(opt(args, "--limit")!)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
+  const rows = (await daemonApi("GET", `/api/history?${q}`, undefined, home)) as HistoryRow[];
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+    return 0;
+  }
+  if (!rows.length) {
+    process.stdout.write(`no history for ${path}\n`);
+    return 0;
+  }
+  for (const r of rows) process.stdout.write(historyLine(r) + "\n");
   return 0;
 }
 
