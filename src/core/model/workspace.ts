@@ -81,6 +81,8 @@ export const AutoAcceptRule = z.object({
   project: z.string().optional(),
   domains: z.array(z.string()).optional(),
   after: z.string(),
+  /** the item must carry the verified badge (a passed te verify result per check) to auto-accept */
+  require_verified: z.boolean().optional(),
 });
 export type AutoAcceptRule = z.infer<typeof AutoAcceptRule>;
 

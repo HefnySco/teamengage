@@ -955,6 +955,14 @@ escape: it lands as an `unverified:` line in ## Evidence, marks the
 item, and every review on that submission records needs_human — the
 item is never auto-accepted. An item with no checks submits as before.
 
+An item whose checks all have a passed result carries the **verified
+badge** (GL-0350) — the board, inbox and item page show it, with the
+runner and time of each result. A reviewer can run `te verify` again:
+the second result is stored beside the submitter's (results dedupe by
+check+actor). `auto_accept_rules` entries take `require_verified:
+true` — a matched item without the badge is never auto-accepted,
+whatever its review verdict.
+
 ## 15. Features and releases (GL-0330)
 
 The work chain today is idea → plan → task → found problem. Two more

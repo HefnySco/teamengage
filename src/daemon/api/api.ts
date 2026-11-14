@@ -97,6 +97,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),
         auto_accept_rule: ops.autoAcceptRuleLabel(i),
+        verified: ops.verifiedBadge(i).ok,
         ...(i.meta.type === "epic"
           ? {
               plan_state: i.plan_state,

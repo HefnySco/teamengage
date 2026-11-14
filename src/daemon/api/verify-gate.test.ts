@@ -74,7 +74,8 @@ beforeAll(async () => {
 
   const mk = (id: string, run: string) => checksItem(id, [{ name: `chk-${id}`, repo: "code", run }]);
   writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001"));
-  for (const id of ["WS-0005", "WS-0006", "WS-0007", "WS-0008"]) {
+  writeFileSync(join(plans, "items", "WS", "WS-0010.md"), item("WS-0010"));
+  for (const id of ["WS-0005", "WS-0006", "WS-0007", "WS-0008", "WS-0009", "WS-0011"]) {
     writeFileSync(join(plans, "items", "WS", `${id}.md`), mk(id, "true"));
   }
   execFileSync("git", ["add", "-A"], { cwd: plans });
@@ -154,5 +155,80 @@ describe("submit checks gate (GL-0349)", () => {
     expect(rv?.verdict).toBe("ok");
     expect(rv?.needs_human).toBe(true);
     expect(ops.autoAcceptAt(ops.item("WS-0008"))).toBeUndefined();
+  });
+});
+
+describe("verified badge + require_verified (GL-0350)", () => {
+  const wsr = () => ctx.workspaces.get("ws")!;
+
+  it("an item with all checks passed shows the badge; a require_verified rule accepts it after its delay", async () => {
+    const s = holder("badge-h");
+    const reviewer = holder("badge-r");
+    await ops.claim("WS-0009", s);
+    await ops.verifyResult("WS-0009", { check: "chk-WS-0009", exit_code: 0, passed: true, commit: head(wt("WS-0009")) }, s);
+    await ops.submit("WS-0009", s, { notes: "done", what: "badge", how: "verify" });
+    await ops.review("WS-0009", reviewer, "ok");
+
+    const brief = await ops.brief("WS-0009");
+    expect(brief.verified?.ok).toBe(true);
+    const listed = (await (
+      await fetch(`${daemon.url}/api/items?status=in_review&ws=ws`, {
+        headers: { authorization: `Bearer ${daemon.token}` },
+      })
+    ).json()) as Array<{ id: string; verified?: boolean }>;
+    expect(listed.find((i) => i.id === "WS-0009")?.verified).toBe(true);
+
+    const cfg = wsr().ws.config;
+    cfg.autonomy = "solo";
+    cfg.auto_accept_after = "30m";
+    cfg.auto_accept_rules = [{ require_verified: true, after: "5m" }];
+    try {
+      const it = ops.index.get("WS-0009")!;
+      const at = ops.autoAcceptAt(it)!;
+      expect(at).toBeTruthy();
+      expect((await ops.brief("WS-0009")).autoAcceptRule).toContain("rule #1");
+      const rv = Date.parse(it.meta.ai_review!.reviewed_at);
+      expect(ops.autoAcceptDue(rv + 4 * 60_000)).not.toContain("WS-0009");
+      expect(ops.autoAcceptDue(rv + 6 * 60_000)).toContain("WS-0009");
+    } finally {
+      cfg.autonomy = "strict";
+      cfg.auto_accept_rules = [];
+    }
+  });
+
+  it("a require_verified rule does not accept an item with no checks", async () => {
+    const s = holder("badge-n");
+    const reviewer = holder("badge-r2");
+    await ops.claim("WS-0010", s);
+    await ops.submit("WS-0010", s, { notes: "done", what: "no checks", how: "plain submit" });
+    await ops.review("WS-0010", reviewer, "ok");
+    expect(ops.verifiedBadge(ops.index.get("WS-0010")!).ok).toBe(false);
+
+    const cfg = wsr().ws.config;
+    cfg.autonomy = "solo";
+    cfg.auto_accept_rules = [{ require_verified: true, after: "1m" }];
+    try {
+      const it = ops.index.get("WS-0010")!;
+      expect(ops.autoAcceptAt(it)).toBeUndefined();
+      const rv = Date.parse(it.meta.ai_review!.reviewed_at);
+      expect(ops.autoAcceptDue(rv + 60 * 60_000)).not.toContain("WS-0010");
+      expect((await ops.brief("WS-0010")).autoAcceptRule).toContain("waits for verified");
+    } finally {
+      cfg.autonomy = "strict";
+      cfg.auto_accept_rules = [];
+    }
+  });
+
+  it("a second te verify by a reviewer stores a second result with the reviewer name", async () => {
+    const s = holder("badge-v");
+    const reviewer = holder("badge-vr");
+    await ops.claim("WS-0011", s);
+    await ops.verifyResult("WS-0011", { check: "chk-WS-0011", exit_code: 0, passed: true, commit: head(wt("WS-0011")) }, s);
+    await ops.submit("WS-0011", s, { notes: "done", what: "two results", how: "verify" });
+    await ops.verifyResult("WS-0011", { check: "chk-WS-0011", exit_code: 0, passed: true, commit: head(wt("WS-0011")) }, reviewer);
+
+    const results = ops.verifyOf(ops.index.get("WS-0011")!);
+    expect(results).toHaveLength(2);
+    expect(new Set(results.map((r) => r.actor)).size).toBe(2);
   });
 });

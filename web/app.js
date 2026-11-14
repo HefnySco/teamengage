@@ -1315,6 +1315,8 @@ const Board = ({ onOpen }) => {
                         ${i.ai_review && html`<span class="badge text-bg-${i.ai_review.verdict === "ok" ? "success" : "danger"}"
                           title=${`AI review: ${i.ai_review.verdict} — ${i.ai_review.reviewed_by}${i.ai_review.needs_human ? "\nflagged for your call — never auto-accepted" : ""}${i.ai_review.summary ? `\n${i.ai_review.summary}` : ""}${i.ai_review.note ? `\n${i.ai_review.note}` : ""} (${ago(i.ai_review.reviewed_at)} ago)`}>
                           AI ${i.ai_review.verdict === "ok" ? "✓" : "✗"}${i.ai_review.needs_human ? " ⚑" : ""}</span>`}
+                        ${i.verified && html`<span class="badge text-bg-success"
+                          title="every check has a passed te verify result">✓ verified</span>`}
                         ${i.auto_accept_at && html`<span class="badge text-bg-warning" title=${`autonomy: solo — the daemon accepts this at ${new Date(i.auto_accept_at).toLocaleString()} unless you act (stop it on the item page)`}>⏱ ${untilText(i.auto_accept_at)}</span>`}
                         <span class="d-inline-flex align-items-center gap-1 ms-auto">
                           ${i.claim && html`
@@ -2690,6 +2692,14 @@ const ItemView = ({ id }) => {
       ${it.meta.ai_review.note && html`<div class="md-view mt-1 text-secondary" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.note) }} />`}
       ${it.meta.ai_review.report && html`<details class="mt-1"><summary class="text-secondary">report — the reviewer's full notes</summary>
         <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.ai_review.report) }} /></details>`}
+    </div>`}
+    ${(b.verify ?? []).length > 0 && html`<div class="alert ${b.verified?.ok ? "alert-success" : "alert-secondary"} py-2 px-2 small mb-2">
+      <b>${b.verified?.ok ? "✓ verified" : "checks"}</b>
+      <span class="text-secondary">— te verify results; every check passed at the recorded commit${b.verified?.ok ? "" : " (not all checks passed)"}</span>
+      ${(b.verify ?? []).map((r, i) => html`<div key=${i} class="mt-1 d-flex gap-2 align-items-baseline flex-wrap">
+        <span class="badge text-bg-${r.passed ? "success" : "danger"}">${r.passed ? "✓" : "✗"} ${r.check}</span>
+        <span class="text-secondary">exit ${r.exit_code} @${(r.commit ?? "").slice(0, 8) || "?"} · by <b class=${whoCls(r.actor)}>${r.actor}</b> · ${ago(r.at)} ago</span>
+      </div>`)}
     </div>`}
     ${(it.meta.findings ?? []).length > 0 && html`<div class="alert alert-secondary py-2 px-2 small mb-2">
       <b>findings</b> <span class="text-secondary">— the last review's checklist; each <b>must</b> needs done or skipped on the next submit</span>

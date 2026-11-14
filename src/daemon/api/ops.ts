@@ -1,3 +1,4 @@
+import YAML from "yaml";
 import { readFile, readdir } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -490,6 +491,7 @@ export class WorkspaceOps {
       source,
       checks: (await this.checksOf(it)).checks,
       verify: await this.verifyOf(it),
+      verified: this.verifiedBadge(it),
       reviewUnblocks: this.wsr.ws.config.review_unblocks,
       autonomy: this.wsr.ws.config.autonomy,
       autoAcceptAt: this.autoAcceptAt(it),
@@ -704,7 +706,7 @@ export class WorkspaceOps {
    * The stored `te verify` results of an item (GL-0358) — `verify/<ID>.yaml`
    * in the plans repo, cached by mtime.
    */
-  async verifyOf(it: IndexedItem): Promise<VerifyResult[]> {
+  verifyOf(it: IndexedItem): VerifyResult[] {
     const file = join(this.wsr.ws.plansDir, "verify", `${it.meta.id}.yaml`);
     let mtimeMs = 0;
     try {
@@ -715,13 +717,41 @@ export class WorkspaceOps {
     const cached = verifyFileCache.get(file);
     if (cached?.mtimeMs === mtimeMs) return cached.file.results;
     try {
-      const YAML = (await import("yaml")).default;
       const parsed = VerifyFile.parse(YAML.parse(readFileSync(file, "utf8")));
       verifyFileCache.set(file, { mtimeMs, file: parsed });
       return parsed.results;
     } catch {
       return [];
     }
+  }
+
+  /** checksOf for sync callers — the recorded source file only (no walk). */
+  private checksSyncOf(it: IndexedItem): Check[] {
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      try {
+        return parseChecks(
+          sectionBody(readFileSync(join(this.wsr.ws.root, it.meta.source), "utf8"), "Checks"),
+        );
+      } catch {
+        return [];
+      }
+    }
+    return it.checks ?? [];
+  }
+
+  /**
+   * The verified badge (GL-0350): the item has checks and every check has a
+   * passed `te verify` result. `results` is the latest stored result per
+   * check — the UI shows its runner (actor) and when.
+   */
+  verifiedBadge(it: IndexedItem): { ok: boolean; results: VerifyResult[] } {
+    const checks = this.checksSyncOf(it);
+    const results = this.verifyOf(it);
+    const latest = new Map<string, VerifyResult>();
+    for (const r of results) if (!latest.has(r.check)) latest.set(r.check, r);
+    const ok =
+      checks.length > 0 && checks.every((c) => results.some((r) => r.check === c.name && r.passed));
+    return { ok, results: [...latest.values()] };
   }
 
   /**
@@ -1694,6 +1724,8 @@ export class WorkspaceOps {
     }
     const hit = this.autoAcceptRule(it);
     if (!hit) return `auto_accept_after (${this.wsr.ws.config.auto_accept_after})`;
+    if (hit.rule.require_verified && !this.verifiedBadge(it).ok)
+      return `rule #${hit.index + 1} — waits for verified`;
     if (hit.rule.after === "never") return `rule #${hit.index + 1} — never (stays yours)`;
     const conds = [
       hit.rule.tier ? `tier: ${hit.rule.tier}` : undefined,
@@ -1723,6 +1755,7 @@ export class WorkspaceOps {
       return undefined;
     }
     const hit = this.autoAcceptRule(it);
+    if (hit?.rule.require_verified && !this.verifiedBadge(it).ok) return undefined;
     if (hit?.rule.after === "never") return undefined;
     const delay = hit?.rule.after ?? cfg.auto_accept_after;
     try {

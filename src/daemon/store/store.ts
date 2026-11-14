@@ -685,7 +685,9 @@ export class PlansStore {
           file = { item: id, results: [] };
         }
       }
-      const rest = file.results.filter((r) => r.check !== result.check);
+      // a result replaces only the same actor's result for the same check —
+      // a reviewer's `te verify` is stored beside the submitter's
+      const rest = file.results.filter((r) => !(r.check === result.check && r.actor === result.actor));
       file = { item: id, results: [...rest, result] };
       await mkdir(join(this.ws.plansDir, "verify"), { recursive: true });
       await writeFileAtomic(verifyAbs, YAML.stringify(file));
