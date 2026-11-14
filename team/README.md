@@ -17,7 +17,16 @@ run:
 ```
 
 Use a different model for the reviewer than for the coder: the point is a
-second opinion. Each command gets its prompt as the last argument, or
+second opinion. Three models are in play: the **coder** model (the `coder:`
+command in `machine.yaml`), and two **reviewer** models named in
+`review_models` in the workspace's `workspace.yaml` — `deep` for items at or
+above `deep_from_tier` (default heavy), `quick` for lower items. The coder
+model must differ from both reviewer models — the daemon refuses a review
+from the submitter's model. The two reviewers run as the `lens-deep` and
+`lens-quick` agent files (`model:` line in each), or as two `reviewer`
+commands routed by item tier — `scout` sends a heavy item to `lens-deep`
+and a lighter item to `lens-quick`. With `review_models` unset only the
+different-model rule applies and one reviewer is enough. Each command gets its prompt as the last argument, or
 wherever you write `"$TE_PROMPT"`. Use `"$TE_PROMPT"` when a flag takes a
 list of values, like Claude's `--allowedTools`, or the prompt ends up in
 that list. Any CLI that takes a prompt and can run
