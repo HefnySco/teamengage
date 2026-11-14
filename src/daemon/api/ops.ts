@@ -2252,6 +2252,43 @@ export class WorkspaceOps {
   }
 
   /**
+   * Plans finish themselves: an epic whose derived plan_state is `done` —
+   * every part done or dropped, no open problem under it — gets `status:
+   * done` from the daemon sweep (plan_auto_done). No close_plan is needed;
+   * a sub-plan's own status never counts, so a plan marked done by hand
+   * with unfinished parts still waits.
+   */
+  autoCompletePlansDue(): string[] {
+    return [...this.index.items.values()]
+      .filter((it) => {
+        const m = it.meta;
+        return (
+          m.type === "epic" &&
+          m.status !== "done" &&
+          m.status !== "dropped" &&
+          this.index.planState(m.id) === "done"
+        );
+      })
+      .map((it) => it.meta.id);
+  }
+
+  async autoCompletePlans() {
+    const done: string[] = [];
+    for (const id of this.autoCompletePlansDue()) {
+      try {
+        const it = this.item(id);
+        await this.store.perform(id, it.meta.version, this.daemonActor(), {
+          type: "plan_auto_done",
+        });
+        done.push(id);
+      } catch {
+        // one failing epic must not stall the sweep
+      }
+    }
+    return done;
+  }
+
+  /**
    * auto_release_after (workspace.yaml, unset = off): a claim stale longer
    * than the duration whose holder session is not live on this machine is
    * released to ready by the daemon — the worktree and the branch stay.
@@ -3031,10 +3068,12 @@ export class WorkspaceOps {
 
   /**
    * Close a plan (epic): no more parts are coming. plan_state turns `active`,
-   * then `done` when every descendant finishes. Human-only — an agent actor
-   * is refused by the state machine. With auto_archive_after set, a plan
-   * that closes already finished also has its parts archived by the daemon —
-   * the starred and the claimed keep their place.
+   * then `done` when every descendant and problem finishes — though a plan
+   * finishes without it too (autoCompletePlans marks the epic done on the
+   * sweep). Human-only — an agent actor is refused by the state machine.
+   * With auto_archive_after set, a plan that closes already finished also
+   * has its parts archived by the daemon — the starred and the claimed keep
+   * their place.
    */
   async closePlan(id: string, actor: Session | "human" = "human") {
     const it = this.item(id);

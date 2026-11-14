@@ -439,17 +439,20 @@ export class Index {
 
   /**
    * An epic's derived plan lifecycle: `draft` while it has no children,
-   * `decomposing` until the human sets `plan_closed`, then `active` while any
-   * part is unfinished and `done` when every descendant is finished —
-   * non-epics done/dropped, sub-plans closed and themselves finished.
-   * Archived descendants still count. Undefined for non-epics.
+   * `done` when every part is finished — non-epics done/dropped, sub-plans
+   * themselves finished or dropped — and no problem under it is open.
+   * Otherwise `decomposing` until the human sets `plan_closed`, then
+   * `active`. A sub-plan's own status never substitutes: one marked done by
+   * hand with unfinished parts still blocks. Parent cycles count as not
+   * done. Archived descendants still count. Undefined for non-epics.
    */
   planState(id: string): PlanState | undefined {
     const it = this.items.get(id);
     if (!it || it.meta.type !== "epic") return undefined;
     if (it.children.length === 0) return "draft";
-    if (it.meta.plan_closed !== true) return "decomposing";
-    return this.planFinished(id, new Set([id])) ? "done" : "active";
+    if (this.planFinished(id, new Set([id])) && (this.planProblems(id)?.open ?? 0) === 0)
+      return "done";
+    return it.meta.plan_closed === true ? "active" : "decomposing";
   }
 
   /** `{done, total}` over all non-epic descendants; done counts done+dropped. */
@@ -523,17 +526,20 @@ export class Index {
     return out;
   }
 
-  /** Every descendant finished — a revisited id means a parent cycle → not done. */
+  /**
+   * Every descendant finished — non-epics done, epics recursively finished;
+   * a dropped part or sub-plan always counts (its subtree is skipped).
+   * A revisited id means a parent cycle → not done.
+   */
   private planFinished(id: string, visited: Set<string>): boolean {
     for (const cid of this.items.get(id)?.children ?? []) {
       if (visited.has(cid)) return false;
       visited.add(cid);
       const c = this.items.get(cid);
       if (!c) continue;
+      if (c.meta.status === "dropped") continue;
       const finished =
-        c.meta.type === "epic"
-          ? c.meta.plan_closed === true && this.planFinished(cid, visited)
-          : c.meta.status === "done" || c.meta.status === "dropped";
+        c.meta.type === "epic" ? this.planFinished(cid, visited) : c.meta.status === "done";
       if (!finished) return false;
     }
     return true;

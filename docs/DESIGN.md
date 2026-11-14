@@ -345,10 +345,16 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   page) when no more parts are coming. `plan_state` is **derived, never
   stored**: `draft` with no children, `decomposing` until closed, `active`
   while any descendant is unfinished, `done` when every descendant is
-  done/dropped and every sub-plan is itself done (parent cycles count as
-  not done). `plan_progress` is finished/total over non-epic descendants;
-  archived parts still count. Epics are plans, not work — `next` skips
-  them and `claim` answers "epics are plans — claim their tasks".
+  done/dropped, every sub-plan is itself finished or dropped, and no
+  problem under the plan is still open (parent cycles count as not done; a
+  sub-plan's own status never substitutes — one marked done by hand with
+  unfinished parts still blocks). `plan_progress` is finished/total over
+  non-epic descendants; archived parts still count. Epics are plans, not
+  work — `next` skips them and `claim` answers "epics are plans — claim
+  their tasks". A plan in `done` state whose status is not yet `done` gets
+  `plan_auto_done` on the daemon sweep — stored status catches up with the
+  derived state and moves forward only, so parts added later show the plan
+  `active` again until the human re-drafts the epic.
 - **Delete** (`te delete <ID> --yes`, delete in the UI) removes an item from
   TeamEngage, not from disk: the tracking file goes, the event log keeps a
   `delete` record, and in overlay mode the task file stays as plain Markdown

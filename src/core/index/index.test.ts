@@ -196,12 +196,12 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planProgress("GL-0001")).toBeUndefined();
   });
 
-  it("nested: a plan isn't done until sub-plans are closed and their parts finish", async () => {
+  it("nested: a plan isn't done until sub-plans and their parts finish", async () => {
     writeItem("PL-0010", { type: "epic", plan_closed: "true" }); // plan A
     writeItem("PL-0011", { type: "epic", parent: "PL-0010" }); // sub-plan B
     writeItem("PL-0012", { parent: "PL-0011" }); // task T
     let idx = await Index.load(plans);
-    expect(idx.planState("PL-0010")).toBe("active"); // B not closed yet
+    expect(idx.planState("PL-0010")).toBe("active"); // B not finished yet
     expect(idx.planState("PL-0011")).toBe("decomposing");
 
     writeItem("PL-0011", { type: "epic", parent: "PL-0010", plan_closed: "true" });
@@ -223,6 +223,48 @@ describe("plan_state and plan_progress (epics)", () => {
     const idx = await Index.load(plans);
     expect(idx.planState("PL-0020")).toBe("done");
     expect(idx.planProgress("PL-0020")).toEqual({ done: 2, total: 2 });
+  });
+
+  it("auto-done: no close_plan needed once every part and problem is finished", async () => {
+    writeItem("AD-0001", { type: "epic" });
+    writeItem("AD-0002", { parent: "AD-0001", status: "done" });
+    writeItem("AD-0003", { parent: "AD-0001", status: "dropped" });
+    let idx = await Index.load(plans);
+    expect(idx.planState("AD-0001")).toBe("done"); // never closed — the work is finished
+
+    // an open problem under the plan blocks done
+    writeItem("AD-0004", { type: "bug", found_by: "[AD-0002]" });
+    idx = await Index.load(plans);
+    expect(idx.planState("AD-0001")).toBe("decomposing");
+    expect(idx.get("AD-0001")!.plan_problems).toEqual({ open: 1, done: 0 });
+
+    // the problem finishing restores done
+    writeItem("AD-0004", { type: "bug", status: "done", found_by: "[AD-0002]" });
+    idx = await Index.load(plans);
+    expect(idx.planState("AD-0001")).toBe("done");
+  });
+
+  it("a manually completed sub-plan with unfinished parts still blocks the parent", async () => {
+    writeItem("AD-0010", { type: "epic" });
+    writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done" }); // done by hand
+    writeItem("AD-0012", { parent: "AD-0011", status: "in_review" }); // can bounce back
+    writeItem("AD-0013", { parent: "AD-0010", status: "done" });
+    let idx = await Index.load(plans);
+    expect(idx.planState("AD-0010")).toBe("decomposing");
+
+    // the review resolving finishes both levels — the hand-set status never counted
+    writeItem("AD-0012", { parent: "AD-0011", status: "done" });
+    idx = await Index.load(plans);
+    expect(idx.planState("AD-0010")).toBe("done");
+  });
+
+  it("a dropped sub-plan counts as finished whatever its subtree holds", async () => {
+    writeItem("AD-0020", { type: "epic" });
+    writeItem("AD-0021", { type: "epic", parent: "AD-0020", status: "dropped" });
+    writeItem("AD-0022", { parent: "AD-0021" }); // never finished — the drop already covered it
+    writeItem("AD-0023", { parent: "AD-0020", status: "done" });
+    const idx = await Index.load(plans);
+    expect(idx.planState("AD-0020")).toBe("done");
   });
 
   it("a parent cycle reports not done instead of hanging", async () => {

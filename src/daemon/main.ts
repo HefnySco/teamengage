@@ -252,7 +252,8 @@ async function main(): Promise<number | undefined> {
   });
   // autonomy: solo — accept submissions whose ok review has aged past
   // auto_accept_after; auto_archive_after — archive items finished past the
-  // duration (strict workspaces / unset keys return nothing)
+  // duration (strict workspaces / unset keys return nothing); a plan whose
+  // parts and problems are all finished is marked done on the same sweep
   const digestSent = new Map<string, string>(); // workspace → last UTC day a digest alert went out
   const autoTimer = setInterval(() => {
     for (const [name, wsr] of ctx.workspaces) {
@@ -262,6 +263,11 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accepted ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_accept", { workspace: name, message: `auto-accept failed: ${err.message}` }));
+      ops.autoCompletePlans()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("auto_plan_done", { workspace: name, message: `auto-completed plans: ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("auto_plan_done", { workspace: name, message: `auto-plan-done sweep failed: ${err.message}` }));
       ops.autoArchive()
         .then((ids) => {
           if (ids.length) ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archived ${ids.join(", ")}` });

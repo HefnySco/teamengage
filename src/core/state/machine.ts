@@ -157,11 +157,19 @@ export type Action =
   | { type: "unstar" }
   /**
    * Human closes a plan (epic): no more parts are coming — plan_state turns
-   * active, then done when every part finishes. Status is untouched.
+   * active, then done when every part and problem finishes. Status is
+   * untouched — a plan also finishes without it (plan_auto_done below).
    */
   | { type: "close_plan" }
   /** Human reopens a closed plan (epic) — more parts may still be added. */
   | { type: "reopen_plan" }
+  /**
+   * Internal (daemon only): the sweep found every part and problem of this
+   * plan finished — the stored status catches up with the derived
+   * plan_state. Forward only: work added later shows `active` again until
+   * the human re-drafts the epic.
+   */
+  | { type: "plan_auto_done" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -1110,6 +1118,22 @@ export function transition(
       out.meta.plan_closed = false;
       out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
       out.log.push(`- ${stamp} ${who} reopened the plan`);
+      return out;
+    }
+
+    case "plan_auto_done": {
+      if (actor.kind !== "daemon")
+        throw new ForbiddenError("plan_auto_done is a daemon-only action");
+      if (meta.type !== "epic") {
+        throw new InvalidTransitionError(
+          `cannot plan_auto_done: ${meta.id} is a ${meta.type}, not an epic`,
+          from,
+          action.type,
+        );
+      }
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      set("done");
+      out.log.push(`- ${stamp} auto-completed: every part and problem finished`);
       return out;
     }
 

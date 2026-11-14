@@ -702,13 +702,69 @@ describe("plan tracking (epics)", () => {
     // the part finishes → the plan is done
     await ops.complete(t1);
     expect(store.idx.planState(epic)).toBe("done");
-    // reopen → back to decomposing (closed flag off again)
+    // reopen → still done: plan_state derives from the parts, and they are
+    // finished — decomposing returns only when unfinished work lands
     const rr = await api(`/api/items/${epic}/reopen_plan`, { method: "POST" });
     expect(rr.status).toBe(200);
-    expect(store.idx.planState(epic)).toBe("decomposing");
+    expect(store.idx.planState(epic)).toBe("done");
     // close_plan on a non-epic fails cleanly
     const bad = await api(`/api/items/${t1}/close_plan`, { method: "POST" });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe("plan auto-done sweep", () => {
+  it("a finished plan gets status=done — open problems and a hand-done sub-plan with open parts block", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "epic", title: "plan that finishes itself" }, // 0
+        { type: "task", title: "part one", parent: "#0" }, // 1
+        { type: "epic", title: "sub-plan", parent: "#0" }, // 2
+        { type: "task", title: "sub part", parent: "#2" }, // 3
+        { type: "bug", title: "problem on part one", found_by: ["#1"] }, // 4
+      ],
+      human,
+    );
+    const [plan, t1, sub, subT, bug] = ids;
+    await ops.approve(plan);
+
+    // part one done; the bug and the sub-plan's task are still open → not done
+    await ops.complete(t1);
+    await ops.complete(sub); // done by hand — its part is still open
+    await ops.approve(subT);
+    const agent = ctx.sessions.hello("pad-agent");
+    await ops.claim(subT, agent);
+    await ops.submit(subT, agent, { what: "part done", how: "ran the steps" }); // in_review — can bounce back
+    expect(store.idx.planState(plan)).toBe("decomposing");
+    expect(ops.autoCompletePlansDue()).not.toContain(plan);
+
+    // problem resolved, review accepted → the whole tree is finished
+    await ops.complete(bug);
+    await ops.accept(subT);
+    expect(store.idx.planState(plan)).toBe("done");
+    // the hand-done sub-plan is already status=done — the parent is due
+    // (other tests' finished plans may be due too — assert membership)
+    expect(ops.autoCompletePlansDue()).toContain(plan);
+    expect(await ops.autoCompletePlans()).toContain(plan);
+    expect(store.idx.get(plan)!.meta.status).toBe("done");
+    expect(store.idx.get(plan)!.meta.finished_at).toBeTruthy();
+
+    // forward-only: new work under it shows active again, the status stays done
+    const { ids: more } = await store.createItems([{ type: "task", title: "late part", parent: plan }], human);
+    expect(store.idx.planState(plan)).toBe("decomposing");
+    expect(store.idx.get(plan)!.meta.status).toBe("done");
+
+    // plan_auto_done is daemon-only — an agent actor is refused
+    await expect(
+      store.perform(more[0], store.idx.get(more[0])!.meta.version, { kind: "agent", session: "x@test", machine: "test" }, {
+        type: "plan_auto_done",
+      }),
+    ).rejects.toThrow(/daemon-only/);
   });
 });
 

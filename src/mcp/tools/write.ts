@@ -611,7 +611,7 @@ export function registerWriteTools(
     "close_plan",
     {
       description:
-        "Close a plan (epic): no more parts coming — plan_state turns active, then done when every part finishes. Human-only; agents are refused.",
+        "Close a plan (epic): no more parts coming — plan_state turns active. A plan also finishes on its own: when every part and problem is done the daemon marks it done. Human-only; agents are refused.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {
