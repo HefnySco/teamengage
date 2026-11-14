@@ -119,7 +119,7 @@ set up
   te init --overlay --root <task folder> [--repos '../*']
   te import <folder> --apply      te hooks --install      te skills --install
   ~/.teamengage/machine.yaml      which agents te run starts (te run --help)
-  te restart             restart the daemon (systemd unit, or kill + respawn)
+  te restart             restart the daemon (systemd unit, or kill + respawn); rebuilds a stale web/dist, --build forces it
 
 te help all — every command (hold, drop, archive, deps, tier, rollback, …)
 `;
@@ -186,6 +186,7 @@ const USAGE_ALL = `te — every command
   guard      hook handler (reads hook JSON on stdin; TE_GUARD=off disables)
   daemon     run the daemon in the foreground
   restart    restart the daemon (systemd unit if installed, else kill + respawn)
+             rebuilds web/dist first when web sources are newer than the bundle; --build forces a rebuild
              systemd service (Linux): npm run autorun (install) | npm run restart | scripts/service.sh stop|status
 
 options:

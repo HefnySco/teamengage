@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Index } from "../index/index.js";
-import { validate, type FindingKind } from "./validate.js";
+import { validate, webBundleStale, type FindingKind } from "./validate.js";
 
 let dir: string;
 let plans: string;
@@ -114,6 +114,53 @@ describe("validate", () => {
     expect(withRoots.some((f) => f.kind === "overlapping_claims")).toBe(true);
     // and the escaping target is flagged
     expect(withRoots.some((f) => f.kind === "bad_target" && f.item === "GL-0003")).toBe(true);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("GL-0368: warns when web sources are newer than the dist bundle", async () => {
+    const d = mkdtempSync(join(tmpdir(), "te-web-"));
+    const p = join(d, ".teamengage", "items");
+    mkdirSync(p, { recursive: true });
+    writeFileSync(join(p, "GL-0001.md"), "---\nid: GL-0001\ntype: task\ntitle: x\nstatus: ready\nversion: 1\n---\n");
+    const idx = await Index.load(join(d, ".teamengage"));
+
+    const web = join(d, "web");
+    mkdirSync(join(web, "dist"), { recursive: true });
+    const srcApp = join(web, "app.js");
+    const srcCss = join(web, "teamengage.css");
+    const distApp = join(web, "dist", "app.js");
+    writeFileSync(srcApp, "x");
+    writeFileSync(srcCss, "x");
+    writeFileSync(distApp, "x");
+    const t = (f: string, s: number) => utimesSync(f, new Date(s), new Date(s));
+
+    // fresh bundle — no finding
+    t(srcApp, 1000); t(srcCss, 1000); t(distApp, 2000);
+    expect(webBundleStale(web)).toBe(false);
+    expect(validate(idx, { webDir: web }).some((f) => f.kind === "web_bundle")).toBe(false);
+
+    // app.js newer than the bundle — warning
+    t(srcApp, 3000);
+    expect(webBundleStale(web)).toBe(true);
+    const stale = validate(idx, { webDir: web });
+    const wb = stale.find((f) => f.kind === "web_bundle");
+    expect(wb?.severity).toBe("warning");
+    expect(wb?.path).toBe(distApp);
+
+    // css newer than the bundle — warning too
+    t(srcApp, 1000); t(srcCss, 4000);
+    expect(webBundleStale(web)).toBe(true);
+
+    // missing bundle with sources present — stale
+    rmSync(distApp);
+    expect(webBundleStale(web)).toBe(true);
+
+    // webDir: null disables the check entirely
+    expect(validate(idx, { webDir: null }).some((f) => f.kind === "web_bundle")).toBe(false);
+
+    // a dir that is not a web dir — no finding
+    expect(webBundleStale(join(d, "nowhere"))).toBe(false);
+
     rmSync(d, { recursive: true, force: true });
   });
 

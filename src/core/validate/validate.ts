@@ -2,8 +2,9 @@ import { isStale } from "../model/claim.js";
 import { parseItemRef, parseTargetRef } from "../address/refs.js";
 import { targetsOverlap, type Roots } from "../claims/claims.js";
 import { depSatisfied, type Index } from "../index/index.js";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CONTEXT_MAX_LINES } from "../files/repo-context.js";
 
 /** Plan-graph health check (DESIGN CR-0009). Feeds the human inbox + `te validate`. */
@@ -32,6 +33,7 @@ export type FindingKind =
   | "ops_probe"
   | "context_file"
   | "review_models"
+  | "web_bundle"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"
@@ -55,6 +57,29 @@ export interface ValidateOpts {
   contextDir?: string;
   /** GL-0361: workspace review_models — warns on an unset deep/quick */
   reviewModels?: { deep?: string; quick?: string; deep_from_tier?: string };
+  /** GL-0368: web/ dir holding app.js, teamengage.css and dist/app.js.
+   *  Defaults to the tool's own web/ dir; null disables the check. */
+  webDir?: string | null;
+}
+
+/** The tool's own web/ dir — src/core/validate → repo root → web (same in dist/). */
+export function defaultWebDir(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "web");
+}
+
+/** GL-0368: true when a web source file is newer than dist/app.js (or it is missing). */
+export function webBundleStale(webDir: string): boolean {
+  try {
+    const srcApp = join(webDir, "app.js");
+    if (!existsSync(srcApp)) return false;
+    const distApp = join(webDir, "dist", "app.js");
+    const distM = existsSync(distApp) ? statSync(distApp).mtimeMs : 0;
+    if (statSync(srcApp).mtimeMs > distM) return true;
+    const srcCss = join(webDir, "teamengage.css");
+    return existsSync(srcCss) && statSync(srcCss).mtimeMs > distM;
+  } catch {
+    return false;
+  }
 }
 
 export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
@@ -230,6 +255,18 @@ export function validate(index: Index, opts: ValidateOpts = {}): Finding[] {
       severity: "warning",
       kind: "review_models",
       message: `review_models: quick is not set — items below deep_from_tier (${rm.deep_from_tier ?? "heavy"}) accept only the deep model`,
+    });
+  }
+
+  // GL-0368: warn when source web files are newer than the compiled bundle —
+  // the daemon serves web/dist, so a stale bundle hides merged UI changes
+  const webDir = opts.webDir === undefined ? defaultWebDir() : opts.webDir;
+  if (webDir && webBundleStale(webDir)) {
+    f({
+      severity: "warning",
+      kind: "web_bundle",
+      path: join(webDir, "dist", "app.js"),
+      message: "web/dist bundle is stale — run npm run build:web (or te restart) to update",
     });
   }
 
