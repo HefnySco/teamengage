@@ -87,7 +87,7 @@ describe("takeover of an AI-flagged submission", () => {
     const fixer = (await ops.hello("fix")).session;
 
     await ops.claim("WS-0003", holder);
-    await ops.submit("WS-0003", holder);
+    await ops.submit("WS-0003", holder, { what: "task done", how: "ran the steps" });
     await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
 
     // a session from another machine may not take over — worktrees are local
@@ -110,7 +110,7 @@ describe("takeover of an AI-flagged submission", () => {
     expect(idx.items.get("WS-0003")!.meta.ai_review?.verdict).toBe("issues");
 
     // fix → resubmit → in_review again, marker cleared
-    await ops.submit("WS-0003", fixer);
+    await ops.submit("WS-0003", fixer, { what: "task done", how: "ran the steps" });
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
     expect(idx.items.get("WS-0003")!.meta.ai_review).toBeUndefined();
   });

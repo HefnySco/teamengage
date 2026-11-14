@@ -301,9 +301,9 @@ export function registerWriteTools(
     {
       description:
         "Hand work to the human with evidence (commits/tests/notes). " +
-        "walkthrough is required — the human's 'explain what you did': a few short paragraphs in STE " +
-        "(Simplified Technical English) walking them through the change (what you changed, how it works, what to look at first), " +
-        "written like a chat explanation, not a diff dump. Shown on the item page as ## Walkthrough. " +
+        "what and how are required — the human's two short lines under ## For the human: " +
+        "what the task does now (≤40 words) and how you did it (≤60 words), plain words, no file or function names. " +
+        "walkthrough is optional — the agent layer's longer STE explanation, shown as ## Walkthrough. " +
         "cost is optional — report {model, tokens_in, tokens_out, usd} when your runner gives them; " +
         "it lands as a cost: line in ## Evidence and feeds te metrics. " +
         "When the last review or bounce left findings, answer them in finding_states — " +
@@ -319,7 +319,9 @@ export function registerWriteTools(
         commits: z.array(z.string()).optional(),
         tests: z.string().optional(),
         notes: z.string().optional(),
-        walkthrough: z.string(),
+        what: z.string(),
+        how: z.string(),
+        walkthrough: z.string().optional(),
         cost: SubmitCost.optional(),
         provides: z.array(z.string()).optional(),
         unverified_reason: z.string().optional(),
@@ -334,13 +336,13 @@ export function registerWriteTools(
           .optional(),
       },
     },
-    async ({ id, commits, tests, notes, walkthrough, cost, provides, unverified_reason, finding_states }) => {
+    async ({ id, commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, walkthrough, cost, provides, unverified_reason, finding_states });
+        await o.submit(id, s, { commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
         return okText(`in_review ${id}`);
       } catch (e) {
         return errFrom(e);

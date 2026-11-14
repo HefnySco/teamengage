@@ -92,7 +92,7 @@ describe("worktree per claim (RS-0002)", () => {
     execFileSync("git", ["add", "-A"], { cwd: wt });
     execFileSync("git", ["commit", "-m", "work"], { cwd: wt });
 
-    await ops.submit("WS-0001", sClaude, { commits: ["work"], tests: "ok" });
+    await ops.submit("WS-0001", sClaude, { commits: ["work"], tests: "ok", what: "task done", how: "ran the steps" });
     const r = (await ops.accept("WS-0001")) as { merged: Array<{ mergeCommit: string }>; bounced?: string[] };
     expect(r.bounced).toBeUndefined();
     expect(r.merged).toHaveLength(1);
@@ -121,7 +121,7 @@ describe("worktree per claim (RS-0002)", () => {
     writeFileSync(join(codeRepo, "a.ts"), "export const a = 3;\n");
     execFileSync("git", ["add", "-A"], { cwd: codeRepo });
     execFileSync("git", ["commit", "-m", "other work"], { cwd: codeRepo });
-    await ops.submit("WS-0002", sCodex, {});
+    await ops.submit("WS-0002", sCodex, { what: "task done", how: "ran the steps" });
 
     const r = (await ops.accept("WS-0002")) as { bounced?: string[] };
     expect(r.bounced).toBeDefined();
@@ -271,7 +271,7 @@ describe("merge + cleanup safety (RS-0002/3)", () => {
     execFileSync("git", ["commit", "-m", "concurrent"], { cwd: code2 });
 
     const codeBefore = execFileSync("git", ["rev-parse", "main"], { cwd: codeRepo, encoding: "utf8" }).trim();
-    await ops4.submit("WS-0006", sCodex, {});
+    await ops4.submit("WS-0006", sCodex, { what: "task done", how: "ran the steps" });
     const r = (await ops4.accept("WS-0006")) as { bounced?: string[] };
     expect(r.bounced).toBeDefined();
     // nothing merged — code's b.ts change must NOT have landed on main
@@ -294,7 +294,7 @@ describe("merge + cleanup safety (RS-0002/3)", () => {
     writeFileSync(join(wt, "other.ts"), "x\n");
     execFileSync("git", ["add", "-A"], { cwd: wt });
     execFileSync("git", ["commit", "-m", "work"], { cwd: wt });
-    await ops5.submit("WS-0007", sClaude, {});
+    await ops5.submit("WS-0007", sClaude, { what: "task done", how: "ran the steps" });
     await ops5.accept("WS-0007");
     const cur = execFileSync("git", ["branch", "--show-current"], { cwd: codeRepo, encoding: "utf8" }).trim();
     expect(cur).toBe("feature-x");
@@ -468,7 +468,7 @@ describe("snapshot target shapes + claim safety", () => {
     writeFileSync(join(codeRepo, "g.ts"), "export const g = 2;\n");
     execFileSync("git", ["add", "g.ts"], { cwd: codeRepo });
     execFileSync("git", ["commit", "-m", "g2"], { cwd: codeRepo });
-    await o.submit("WS-0018", sCodex, {});
+    await o.submit("WS-0018", sCodex, { what: "task done", how: "ran the steps" });
     const r = (await o.accept("WS-0018")) as { bounced?: string[] };
     expect(r.bounced?.join(" ")).toContain("g.ts");
   });
@@ -486,7 +486,7 @@ describe("snapshot target shapes + claim safety", () => {
     const wt = worktreePath(wsr.ws, "WS-0014", "code");
     execFileSync("git", ["worktree", "remove", "--force", wt], { cwd: codeRepo });
     execFileSync("git", ["branch", "-D", claimBranch("WS-0014", sClaude.id)], { cwd: codeRepo });
-    await o.submit("WS-0014", sClaude, {});
+    await o.submit("WS-0014", sClaude, { what: "task done", how: "ran the steps" });
     await expect(o.accept("WS-0014")).rejects.toThrow(/h.ts|reference|branch|rev|GIT|fatal/i);
     await o.reject("WS-0014", "broken");
     await o.release("WS-0014", sClaude, "cleanup");
@@ -532,7 +532,7 @@ describe("snapshot target shapes + claim safety", () => {
     writeFileSync(join(wt2, "more.ts"), "codex continuation\n");
     execFileSync("git", ["add", "-A"], { cwd: wt2 });
     execFileSync("git", ["commit", "-m", "codex part"], { cwd: wt2 });
-    await o.submit("WS-0017", sCodex, {});
+    await o.submit("WS-0017", sCodex, { what: "task done", how: "ran the steps" });
     const r = (await o.accept("WS-0017")) as { merged?: Array<{ mergeCommit: string }> };
     expect(r.merged?.length).toBe(1);
     expect(execFileSync("git", ["show", "main:wip.ts"], { cwd: codeRepo, encoding: "utf8" })).toContain("half-done");

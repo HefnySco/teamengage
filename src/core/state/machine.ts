@@ -58,6 +58,10 @@ export type Action =
         notes?: string;
         /** "walk me through this code" — plain-English explanation of the change for the human */
         walkthrough?: string;
+        /** GL-0343: what the task does now (≤40 words) — lands under ## For the human */
+        what?: string;
+        /** GL-0343: how the agent did it, plain words (≤60 words) — lands under ## For the human */
+        how?: string;
         /** reported run cost (GL-0318) — one `cost:` line in ## Evidence + event data */
         cost?: SubmitCost;
         /**
@@ -648,6 +652,13 @@ export function transition(
           });
         }
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
+        // GL-0343: the two short human-facing lines land in their own
+        // managed section — the Walkthrough stays the agent layer
+        const humanLines: string[] = [];
+        if (action.evidence.what?.trim()) humanLines.push(`- what: ${action.evidence.what.trim()}`);
+        if (action.evidence.how?.trim()) humanLines.push(`- how: ${action.evidence.how.trim()}`);
+        if (humanLines.length)
+          out.sectionWrites.push({ heading: "For the human", text: humanLines.join("\n") + "\n" });
         // the submitter's own walkthrough, kept per submission like Handoff
         if (action.evidence.walkthrough?.trim()) {
           out.sectionWrites.push({

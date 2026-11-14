@@ -97,7 +97,7 @@ describe("agent swarm (MC-0006)", () => {
             await ops.claim(it.meta.id, session);
             checkLive(); // probe: no two live claims may overlap right now
             await ops.log(it.meta.id, session, "working");
-            await ops.submit(it.meta.id, session, { notes: "done" });
+            await ops.submit(it.meta.id, session, { notes: "done", what: "task done", how: "ran the steps" });
             done.add(it.meta.id);
           } catch (e) {
             // claim refused / CAS retry / submit-after-accept — expected

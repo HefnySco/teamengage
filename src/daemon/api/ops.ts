@@ -1348,6 +1348,8 @@ export class WorkspaceOps {
       tests?: string;
       notes?: string;
       walkthrough?: string;
+      what?: string;
+      how?: string;
       cost?: SubmitCost;
       finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
       provides?: string[];
@@ -1393,6 +1395,9 @@ export class WorkspaceOps {
         }
       }
     }
+    // GL-0343: the human reads what/how, the agent layer keeps walkthrough
+    checkWords("what", evidence?.what, 40, true);
+    checkWords("how", evidence?.how, 60, true);
     // RS-0006/7: attach the live-vs-snapshot diff for ssh/folder targets
     const diffs: string[] = [];
     const seen = new Set<string>();

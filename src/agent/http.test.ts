@@ -321,13 +321,13 @@ describe("plain-HTTP agent API", () => {
     expect((await call("POST", "/agent/claim/WS-0005", { token: holder })).text).toMatch(
       /^claimed/,
     );
-    // walkthrough is required — the human's "explain what you did"
-    const noWalkthrough = await call("POST", "/agent/submit/WS-0005", {
+    // what and how are required — the human's two short lines
+    const noWhat = await call("POST", "/agent/submit/WS-0005", {
       token: holder,
       body: { tests: "1 passed" },
     });
-    expect(noWalkthrough.status).toBe(400);
-    expect(noWalkthrough.text).toContain("walkthrough");
+    expect(noWhat.status).toBe(400);
+    expect(noWhat.text).toContain("what");
     expect(
       (
         await call("POST", "/agent/submit/WS-0005", {

@@ -471,7 +471,7 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
     const s1 = ctx.sessions.hello("agent-a");
     await ops.claim(a, s1);
     expect(store.idx.get(b)!.blocked).toBe(true); // A in progress still blocks
-    await ops.submit(a, s1, { notes: "done" });
+    await ops.submit(a, s1, { notes: "done", what: "task done", how: "ran the steps" });
     expect(store.idx.get(a)!.meta.status).toBe("in_review");
 
     // default (review_unblocks: true): B is ready and claimable now
@@ -499,7 +499,7 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
     await ops.approve(c);
     await ops.approve(d);
     await ops.claim(c, s1);
-    await ops.submit(c, s1, {});
+    await ops.submit(c, s1, { what: "task done", how: "ran the steps" });
     expect(store.idx.get(d)!.blocked).toBe(false);
     wsr.ws.config.review_unblocks = false;
     store.idx.setReviewUnblocks(false);
@@ -540,7 +540,7 @@ describe("per-task unblocks_on (key tasks)", () => {
 
     const s = ctx.sessions.hello("key-agent");
     await ops.claim(k, s);
-    await ops.submit(k, s, {});
+    await ops.submit(k, s, { what: "task done", how: "ran the steps" });
     expect(wsr.ws.config.review_unblocks).toBe(true);
     expect(store.idx.get(dep)!.blocked).toBe(true); // key task in review still blocks
     const brief = await ops.brief(dep);
@@ -565,7 +565,7 @@ describe("per-task unblocks_on (key tasks)", () => {
       await ops.approve(more[1]);
       await ops.setUnblocksOn(more[0], "review");
       await ops.claim(more[0], s);
-      await ops.submit(more[0], s, {});
+      await ops.submit(more[0], s, { what: "task done", how: "ran the steps" });
       expect(store.idx.get(more[1])!.blocked).toBe(false);
       // back to default → strict workspace rule applies again
       await ops.setUnblocksOn(more[0], "default");
@@ -751,7 +751,7 @@ describe("autonomy: solo", () => {
 
       // auto-accept: only after an ok review has aged past the delay
       await ops.claim(base, agent);
-      await ops.submit(base, agent, { notes: "done" });
+      await ops.submit(base, agent, { notes: "done", what: "task done", how: "ran the steps" });
       const reviewer = ctx.sessions.hello("solo-reviewer");
       expect(ops.autoAcceptDue()).not.toContain(base); // unreviewed
       await ops.review(base, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
@@ -771,7 +771,7 @@ describe("autonomy: solo", () => {
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       // a resubmit re-arms it
       await ops.bounce(base, reviewer, "one more pass", undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
-      await ops.submit(base, agent, {});
+      await ops.submit(base, agent, { what: "task done", how: "ran the steps" });
       await ops.review(base, reviewer, "ok");
       expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(base);
       expect(store.idx.get(base)!.meta.status).toBe("done");
@@ -799,6 +799,7 @@ describe("autonomy: solo", () => {
     await ops.submit(id, agent, {
       notes: "acceptance checked",
       walkthrough: "Changed the counter reset path — the flag is set on FC restart.",
+      what: "task done", how: "ran the steps",
     });
     // the walkthrough is appended to the item's ## Walkthrough section
     const wt = store.idx.get(id)!.sections.find((s) => s.heading.toLowerCase() === "walkthrough")?.body ?? "";
@@ -849,7 +850,7 @@ describe("autonomy: solo", () => {
     for (const id of ids) {
       await ops.approve(id);
       await ops.claim(id, agent);
-      await ops.submit(id, agent, {});
+      await ops.submit(id, agent, { what: "task done", how: "ran the steps" });
     }
     await ops.review(nh, reviewer, "ok", "borderline", "looks right, wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
     for (const id of [light, meta, plain]) await ops.review(id, reviewer, "ok");
@@ -1010,7 +1011,7 @@ describe("auto_release_after", () => {
     await ops.claim(stuck, deadAgent);
     await ops.claim(live, liveAgent);
     await ops.claim(reviewId, deadAgent);
-    await ops.submit(reviewId, deadAgent, {});
+    await ops.submit(reviewId, deadAgent, { what: "task done", how: "ran the steps" });
     // a claim held on another machine — written into the index like a pull does
     const now = new Date().toISOString();
     store.idx.setClaim({
@@ -1085,7 +1086,7 @@ describe("batch actions", () => {
     for (const id of [ok1, ok2, ok3, bad, nh]) {
       await ops.approve(id);
       await ops.claim(id, agent);
-      await ops.submit(id, agent, {});
+      await ops.submit(id, agent, { what: "task done", how: "ran the steps" });
     }
     await ops.review(ok1, reviewer, "ok");
     await ops.review(ok2, reviewer, "ok");
@@ -1317,7 +1318,7 @@ describe("reject --release and dead-holder takeover", () => {
     await ops.approve(id);
     const s1 = ctx.sessions.hello("coder-1");
     await ops.claim(id, s1);
-    await ops.submit(id, s1, {});
+    await ops.submit(id, s1, { what: "task done", how: "ran the steps" });
 
     const r = await api(`/api/items/${id}/reject`, {
       method: "POST",
@@ -1598,7 +1599,7 @@ describe("session role at hello (GL-0323)", () => {
     const submitter = ctx.sessions.hello("doer", { role: "reviewer" });
     const reviewer = ctx.sessions.hello("watcher", { role: "reviewer" });
     await ops.claim(id, submitter);
-    await ops.submit(id, submitter, { walkthrough: "did it" });
+    await ops.submit(id, submitter, { walkthrough: "did it", what: "task done", how: "ran the steps" });
 
     const reviewerNext = ops.next(50, undefined, reviewer).map((i) => i.meta.id);
     expect(reviewerNext).toContain(id); // someone else's submission
@@ -1617,7 +1618,7 @@ describe("session role at hello (GL-0323)", () => {
     const { ids: ids2 } = await wsr.store.createItems([{ type: "task", title: "model-check" }], human);
     await ops.approve(ids2[0]);
     await ops.claim(ids2[0], subM);
-    await ops.submit(ids2[0], subM, { walkthrough: "did it" });
+    await ops.submit(ids2[0], subM, { walkthrough: "did it", what: "task done", how: "ran the steps" });
     expect(ops.next(50, undefined, sameModel).map((i) => i.meta.id)).not.toContain(ids2[0]);
     expect(ops.next(50, undefined, reviewer).map((i) => i.meta.id)).toContain(ids2[0]);
 
@@ -1740,7 +1741,7 @@ describe("feature item and feature page (GL-0331)", () => {
     // finish one part → in_progress; the plan's progress lands on the view
     await ops.approve(p1);
     await ops.claim(p1, s);
-    await ops.submit(p1, s, { walkthrough: "did it" });
+    await ops.submit(p1, s, { walkthrough: "did it", what: "task done", how: "ran the steps" });
     await ops.accept(p1, human);
     const view = await ops.featureView(store.idx.get(feat)!);
     expect(view.status).toBe("in_progress");
@@ -1808,7 +1809,7 @@ describe("release record (GL-0332)", () => {
     const s = ctx.sessions.hello("coder-y");
     await ops.approve(task3);
     await ops.claim(task3, s);
-    await ops.submit(task3, s, { walkthrough: "did it", commits: ["abc1234"] });
+    await ops.submit(task3, s, { walkthrough: "did it", commits: ["abc1234"], what: "task done", how: "ran the steps" });
     await ops.accept(task3, human);
 
     const rel = await ops.cutRelease("r-test-1", "human");
@@ -1978,5 +1979,60 @@ describe("ask_human decision card (GL-0344)", () => {
     };
     expect(AiReview.parse(old).verdict).toBe("ok");
     expect(AiReview.parse(old).ask_human).toBeUndefined();
+  });
+});
+
+describe("For the human — what/how on submit (GL-0343)", () => {
+  it("submit writes what/how under ## For the human; no walkthrough is fine", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Two short lines" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    // no walkthrough at all — accepted
+    await ops.submit(id, holder, {
+      notes: "done",
+      what: "the counter now resets on FC restart",
+      how: "moved the reset call into the restart path and ran the tests",
+    });
+    const it = wsr.store.idx.get(id)!;
+    const sec = it.sections.find((s) => s.heading.toLowerCase() === "for the human");
+    expect(sec?.body).toContain("- what: the counter now resets on FC restart");
+    expect(sec?.body).toContain("- how: moved the reset call into the restart path and ran the tests");
+    expect(it.meta.status).toBe("in_review");
+  });
+
+  it("a what of 41 words is refused and the error shows 41 and 40", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Long what" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    const long = Array.from({ length: 41 }, (_, i) => `w${i}`).join(" ");
+    await expect(
+      ops.submit(id, holder, { what: long, how: "ran the steps" }),
+    ).rejects.toThrow(/41 words — max 40/);
+  });
+
+  it("an old item with only a walkthrough loads with no error", async () => {
+    const wsr = ctx.workspaces.get("ws")!;
+    // an item written before what/how existed — the sections just carry ## Walkthrough
+    const p = join(plans, "items", "WS", "WS-0099.md");
+    writeFileSync(
+      p,
+      item("WS-0099", "done", "", "## Walkthrough\ndid it the old way\n"),
+    );
+    await wsr.store.init();
+    const it = wsr.store.idx.get("WS-0099")!;
+    expect(it.meta.status).toBe("done");
+    expect(it.sections.find((s) => s.heading.toLowerCase() === "walkthrough")?.body).toContain("old way");
   });
 });
