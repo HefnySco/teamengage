@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveMetrics, rollUp, median, agentName, agentKind } from "./metrics.js";
+import { deriveMetrics, rollUp, median, agentName, agentKind, deriveReviewers } from "./metrics.js";
 import type { Event } from "../model/event.js";
 
 const ev = (
@@ -133,5 +133,38 @@ describe("agentKind (GL-0364)", () => {
 
   it("a name with no separator keeps itself", () => {
     expect(agentKind("devin")).toBe("devin");
+  });
+});
+
+describe("model scorecard + reviewer table (GL-0365)", () => {
+  it("buckets items by submit model; a submit with no model lands in unknown", () => {
+    const events = [
+      ev("2026-11-01T00:00:00Z", "claim", "GL-1"),
+      ev("2026-11-01T01:00:00Z", "submit", "GL-1", "devin@dt#aa", { data: { model: "opus" } }),
+      ev("2026-11-01T00:00:00Z", "claim", "GL-2"),
+      ev("2026-11-01T01:00:00Z", "submit", "GL-2"),
+    ];
+    const per = deriveMetrics(events);
+    expect([...per.get("GL-1")!.models]).toEqual(["opus"]);
+    expect([...per.get("GL-2")!.models]).toEqual(["unknown"]);
+  });
+
+  it("an ok review the human rejects counts as one wrong ok for that model", () => {
+    const events = [
+      ev("2026-11-01T00:00:00Z", "submit", "GL-1"),
+      ev("2026-11-01T01:00:00Z", "review", "GL-1", "rev@dt#bb", { note: "ok", data: { model: "sonnet" } }),
+      ev("2026-11-01T02:00:00Z", "reject", "GL-1", "human"),
+      ev("2026-11-01T03:00:00Z", "submit", "GL-1"),
+      ev("2026-11-01T04:00:00Z", "review", "GL-1", "rev@dt#bb", { note: "issues: broken", data: { model: "sonnet" } }),
+      // a review without a model lands in unknown
+      ev("2026-11-01T00:00:00Z", "submit", "GL-2"),
+      ev("2026-11-01T01:00:00Z", "review", "GL-2", "rev@dt#cc", { note: "ok" }),
+      ev("2026-11-01T02:00:00Z", "accept", "GL-2", "human"),
+    ];
+    const rows = deriveReviewers(events);
+    const sonnet = rows.find((r) => r.model === "sonnet")!;
+    expect(sonnet).toMatchObject({ ok: 1, issues: 1, wrong_ok: 1 });
+    const unknown = rows.find((r) => r.model === "unknown")!;
+    expect(unknown).toMatchObject({ ok: 1, issues: 0, wrong_ok: 0 });
   });
 });

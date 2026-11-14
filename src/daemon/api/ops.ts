@@ -1834,7 +1834,7 @@ export class WorkspaceOps {
    */
   async metrics(plan?: string) {
     const { readAllEvents } = await import("../../core/events/log.js");
-    const { deriveMetrics, rollUp, agentKind } = await import("../../core/metrics/metrics.js");
+    const { deriveMetrics, rollUp, agentKind, deriveReviewers } = await import("../../core/metrics/metrics.js");
     const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
     const stats = deriveMetrics(r.events);
 
@@ -1912,6 +1912,21 @@ export class WorkspaceOps {
           .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
       })(),
       tiers: by((id) => this.index.items.get(id)?.meta.tier ?? "unset"),
+      // GL-0365: one row per submit model ("unknown" for submits without one)
+      models: (() => {
+        const buckets = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+        for (const m of stats.values()) {
+          for (const model of m.models.size ? m.models : ["unknown"]) {
+            const list = buckets.get(model) ?? [];
+            list.push(m);
+            buckets.set(model, list);
+          }
+        }
+        return [...buckets.entries()]
+          .map(([key, list]) => ({ key, ...rollUp(list) }))
+          .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
+      })(),
+      reviewers: deriveReviewers(r.events),
       domains: by((id) => {
         const d = this.index.items.get(id)?.meta.domains;
         return d && d.length ? d : "untagged";

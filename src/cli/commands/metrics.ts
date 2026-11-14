@@ -67,6 +67,8 @@ interface MetricsResponse {
   totals: Rollup;
   agents?: Group[];
   tiers?: Group[];
+  models?: Group[];
+  reviewers?: { model: string; ok: number; issues: number; wrong_ok: number }[];
   domains?: Group[];
   plan?: string;
   parts?: Part[];
@@ -173,6 +175,21 @@ export async function metricsCmd(args: string[], home?: string): Promise<number>
   if (tiers.length) {
     process.stdout.write("tiers\n");
     groupTable("tier", tiers);
+    process.stdout.write("\n");
+  }
+  const models = data.models ?? [];
+  if (models.length) {
+    process.stdout.write("models\n");
+    groupTable("model", models);
+    process.stdout.write("\n");
+  }
+  const reviewers = data.reviewers ?? [];
+  if (reviewers.length) {
+    process.stdout.write("reviewers\n");
+    table(
+      ["model", "ok", "issues", "wrong ok"],
+      reviewers.map((r) => [r.model, String(r.ok), String(r.issues), String(r.wrong_ok)]),
+    );
     process.stdout.write("\n");
   }
   const domains = (data.domains ?? []).filter((g) => g.items > 0);

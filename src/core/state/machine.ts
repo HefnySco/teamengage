@@ -720,6 +720,11 @@ export function transition(
       // Bounces still release it (see the bounce path) so the fix isn't stranded.
       const releaseClaim = false;
       out.events.push(ev(actor, stamp, meta.id, "review", from, releaseClaim ? "ready" : from, verdict));
+      // GL-0365: the reviewer table keys verdicts by model
+      if (actor.model) {
+        const last = out.events[out.events.length - 1];
+        last.data = { ...(last.data ?? {}), model: actor.model };
+      }
       if (releaseClaim) {
         out.meta.status = "ready";
         out.effects.push({ type: "delete_claim" });
@@ -814,6 +819,12 @@ export function transition(
               .join("\n") +
             "\n",
         });
+      }
+      // GL-0365: the reviewer table keys verdicts by model — a bounce
+      // counts as an issues verdict
+      if (actor.model && out.events.length) {
+        const last = out.events[out.events.length - 1];
+        last.data = { ...(last.data ?? {}), model: actor.model };
       }
       // the claim is kept on purpose: the holder has the context and the
       // worktree, so it fixes and resubmits (like the human's reject)

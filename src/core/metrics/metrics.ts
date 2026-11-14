@@ -56,6 +56,8 @@ export interface ItemMetrics {
   claim_to_accept_ms: number[];
   /** agent name of the most recent submit — the item's work is credited to it */
   worker?: string;
+  /** GL-0365: every model that produced a submit (a submit with none counts as "unknown") */
+  models: Set<string>;
   /** reported run cost summed over submits (GL-0318) */
   tokens_in: number;
   tokens_out: number;
@@ -81,6 +83,7 @@ export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
         claim_to_submit_ms: [],
         submit_to_accept_ms: [],
         claim_to_accept_ms: [],
+        models: new Set<string>(),
         tokens_in: 0,
         tokens_out: 0,
         usd: 0,
@@ -104,6 +107,7 @@ export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
         lastSubmitTs.set(e.item, ms(e.ts));
         const w = agentName(e.actor);
         if (w) m.worker = w;
+        m.models.add((e.data?.model as string | undefined) ?? "unknown");
         const cost = e.data?.cost as { tokens_in?: number; tokens_out?: number; usd?: number } | undefined;
         if (cost) {
           if (typeof cost.tokens_in === "number") m.tokens_in += cost.tokens_in;
@@ -198,4 +202,63 @@ export function rollUp(stats: ItemMetrics[]): Rollup {
     median_submit_to_accept_ms: median(flat("submit_to_accept_ms")),
     median_claim_to_accept_ms: median(flat("claim_to_accept_ms")),
   };
+}
+
+export interface ReviewerRow {
+  model: string;
+  ok: number;
+  issues: number;
+  /** ok verdicts the human later rejected — the wrong calls (GL-0365) */
+  wrong_ok: number;
+}
+
+/**
+ * Per-reviewer-model verdict counts (GL-0365). `review` events carry the
+ * verdict in the note ("ok", "issues", optionally ": note"); a `bounce`
+ * counts as an issues verdict. An `ok` verdict the human later rejects —
+ * before any resubmit — is a wrong ok. Events with no model land in
+ * "unknown".
+ */
+export function deriveReviewers(events: Event[]): ReviewerRow[] {
+  const rows = new Map<string, ReviewerRow>();
+  const lastReview = new Map<string, { ok: boolean; model: string }>();
+  const row = (model: string): ReviewerRow => {
+    let r = rows.get(model);
+    if (!r) {
+      r = { model, ok: 0, issues: 0, wrong_ok: 0 };
+      rows.set(model, r);
+    }
+    return r;
+  };
+  for (const e of events) {
+    if (!e.item || !e.ts) continue;
+    const model = (e.data?.model as string | undefined) ?? "unknown";
+    switch (e.action) {
+      case "review": {
+        const ok = (e.note ?? "").split(":")[0].trim() === "ok";
+        lastReview.set(e.item, { ok, model });
+        if (ok) row(model).ok++;
+        else row(model).issues++;
+        break;
+      }
+      case "bounce":
+        lastReview.set(e.item, { ok: false, model });
+        row(model).issues++;
+        break;
+      case "submit":
+        lastReview.delete(e.item);
+        break;
+      case "reject": {
+        const r = lastReview.get(e.item);
+        if (r?.ok && e.actor === "human") row(r.model).wrong_ok++;
+        lastReview.delete(e.item);
+        break;
+      }
+      case "accept":
+      case "complete":
+        lastReview.delete(e.item);
+        break;
+    }
+  }
+  return [...rows.values()].sort((a, b) => b.ok + b.issues - (a.ok + a.issues) || a.model.localeCompare(b.model));
 }
