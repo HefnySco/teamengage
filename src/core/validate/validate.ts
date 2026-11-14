@@ -26,6 +26,7 @@ export type FindingKind =
   | "machine"
   | "env"
   | "check"
+  | "ops_probe"
   // overlay mode (task-file tracking)
   | "untracked_task_file"
   | "missing_source"

@@ -3480,6 +3480,26 @@ const primaryDep = (list) => {
   return best;
 };
 
+// a target's probe history (GL-0338): a strip of the last 50 results, the
+// time since the last ok probe and the last version change — from the
+// GL-0335 history endpoint, so it refreshes on ops events like the rest
+const ProbeStrip = ({ id }) => {
+  const { data } = useApi(`/api/ops/targets/${encodeURIComponent(id)}/probes`);
+  const hist = data?.history ?? [];
+  if (!hist.length) return html`<span class="small text-secondary">no probes</span>`;
+  const last = hist[hist.length - 1];
+  const lastOk = [...hist].reverse().find((r) => r.ok);
+  const st = data?.stats ?? {};
+  return html`<div class="ops-probe-hist">
+    <span class=${`ops-probe-st ${last.ok ? "text-bg-success" : "text-bg-danger"} badge`} title=${`${last.ts} by ${last.by}`}>${last.ok ? "ok" : "fail"}</span>
+    <span class="ops-probe-strip" title=${`${hist.length} probes — ${Math.round((st.ok_ratio ?? 0) * 100)}% ok`}>
+      ${hist.slice(-50).map((r) => html`<i key=${r.ts} class=${r.ok ? "pd-ok" : "pd-fail"} title=${`${r.ts}  ${r.ok ? "ok" : "FAIL"}${r.version ? `  ${r.version}` : ""}`}></i>`)}
+    </span>
+    <span class="small text-secondary" title="last ok probe">${lastOk ? `ok ${ago(lastOk.ts)} ago` : "never ok"}</span>
+    ${st.last_version_change ? html`<span class="small text-secondary" title="last version change">ver change ${ago(st.last_version_change)} ago</span>` : ""}
+  </div>`;
+};
+
 // the picked machine's side card (tabbed): identity header stays put, the
 // detail sections are tabs. `apps` merges the apps list and the deployed
 // join — one row per app carries port, version, age, state and job link.
@@ -3534,7 +3554,7 @@ const OpsMachineCard = ({ m, targets, jobs, reload, onClose, onProbe, onRename }
       : (m.apps ?? []).map((a) => html`<div class="ops-app-row" key=${a.name}><span class="ops-app-name">${a.name}</span>${a.port ? html`<span class="ops-app-port">:${a.port}</span>` : ""}${a.env ? html`<span class="ops-app-st"><span class="badge ${a.env === "prod" ? "text-bg-danger" : "text-bg-info"}">${a.env}</span></span>` : ""}</div>`),
     rules: html`<ul class="ops-rules">${(m.rules ?? []).map((r) => html`<li class=${/never|hands off|no deploys/i.test(r) ? "ops-warn" : ""}>${r}</li>`)}</ul>`,
     storage: html`${m.folders?.length ? html`<div class="ops-envgrp env-other">folders</div>${kv(m.folders)}` : ""}${m.databases?.length ? html`<div class="ops-envgrp env-other">databases</div>${kv(m.databases)}` : ""}`,
-    targets: machineTargets.map(([t]) => html`<div class="ops-app-row" key=${t}><span class="ops-app-name">${t}</span><span class="ops-app-st">${lastOk[t] ? html`<a class="small" href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`} title=${`job ${lastOk[t].id}`}>${lastOk[t].version}</a>` : html`<span class="text-secondary">—</span>`}</span></div>`),
+    targets: machineTargets.map(([t]) => html`<div class="ops-app-row ops-probe-row" key=${t}><span class="ops-app-name">${t}</span><span class="ops-app-st">${lastOk[t] ? html`<a class="small" href=${`#/ops/${encodeURIComponent(lastOk[t].id)}`} title=${`job ${lastOk[t].id}`}>${lastOk[t].version}</a>` : ""}<${ProbeStrip} id=${t} /></span></div>`),
     // the machine's activity log (machines/<id>.machine.trans.md) — newest first
     log: html`<div class="ops-mc-log">${[...(m.trans ?? [])].reverse().map((e) => html`<div class="ops-mc-log-e" key=${e.ts + (e.job ?? "")}>
       <span class="badge ${e.kind === "job" ? "text-bg-info" : "text-bg-secondary"}">${e.kind === "job" ? "job" : "ad-hoc"}</span>

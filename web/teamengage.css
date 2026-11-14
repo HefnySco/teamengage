@@ -1124,3 +1124,11 @@ details.sec > .sec-bd {
   .ops-diagram { flex-basis: 100%; min-width: 0; }
   .ops-machines { min-width: 0; max-width: 100%; }
 }
+
+/* probe history strip (GL-0338) — wraps inside the machine panel, no side scroll at 375 px */
+.ops-probe-hist { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ops-probe-strip { display: inline-flex; flex-wrap: wrap; gap: 2px; max-width: 100%; }
+.ops-probe-strip i { width: 5px; height: 12px; border-radius: 1px; display: inline-block; }
+.ops-probe-strip i.pd-ok { background: #2da44e; }
+.ops-probe-strip i.pd-fail { background: #cf222e; }
+.ops-probe-row { flex-wrap: wrap; }

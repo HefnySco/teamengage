@@ -56,6 +56,7 @@ import { loadPlaybooks, playbookFindings } from "../../core/ops/playbook.js";
 import { loadMachines, machineFindings, targetMachineFindings } from "../../core/ops/machine.js";
 import { envFindings, loadEnvs } from "../../core/ops/env.js";
 import { transFindings } from "../../core/ops/trans.js";
+import { probeHistory, probeStats } from "../../core/ops/probe.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -966,7 +967,31 @@ export class WorkspaceOps {
       ...ops,
       ...(this.wsr.overlay?.findings() ?? []),
       ...this.checkFindings(),
+      ...this.probeFindings(),
     ];
+  }
+
+  /**
+   * Probe down alerts (GL-0338): one inbox line per target whose newest
+   * stored probe row is not ok — derived from the GL-0335 history, so a
+   * target that recovers clears by itself and a not_reachable target
+   * (nothing stored, GL-0337) never lands here.
+   */
+  private probeFindings(): Finding[] {
+    const out: Finding[] = [];
+    for (const t of Object.keys(this.wsr.ws.config.targets)) {
+      const hist = probeHistory(t, this.home);
+      const last = hist[hist.length - 1];
+      if (!last || last.ok) continue;
+      const since = probeStats(hist).last_state_change ?? last.ts;
+      out.push({
+        severity: "warning",
+        kind: "ops_probe",
+        path: "workspace.yaml",
+        message: `target '${t}' probe is not ok since ${since}${last.error ? ` — ${last.error}` : last.exit_code !== undefined ? ` — exit ${last.exit_code}` : ""} (by ${last.by})`,
+      });
+    }
+    return out;
   }
 
   /**

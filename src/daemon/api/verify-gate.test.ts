@@ -56,7 +56,7 @@ beforeAll(async () => {
   mkdirSync(repo, { recursive: true });
   writeFileSync(
     join(plans, "workspace.yaml"),
-    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\n`,
+    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\ntargets:\n  down: { probe: "true" }\n  up: { probe: "true" }\n  far: { probe: "true" }\n`,
   );
   for (const [cwd, a] of [
     [plans, ["init", "-b", "main"]],
@@ -299,5 +299,26 @@ describe("repo commits at job start (GL-0340)", () => {
     // no job started at `later` — the earlier jobs hold the older HEAD, so
     // `later` is not their ancestor (it is their descendant)
     expect(b2.ops_jobs ?? []).toHaveLength(0);
+  });
+});
+
+
+describe("probe down inbox line (GL-0338)", () => {
+  it("a target whose newest history row failed lands one ops_probe line; ok and unreachable targets land none", async () => {
+    const { saveProbe } = await import("../../core/ops/probe.js");
+    saveProbe({ target: "down", by: "watch", ts: "2026-01-01T00:00:00Z", ok: true, timeout: false, output: "" }, home);
+    saveProbe({ target: "down", by: "watch", ts: "2026-01-01T00:01:00Z", ok: false, timeout: false, exit_code: 2, output: "" }, home);
+    saveProbe({ target: "up", by: "watch", ts: "2026-01-01T00:00:00Z", ok: true, timeout: false, output: "" }, home);
+    // 'far' has no stored rows — a not_reachable target stores nothing, so no line
+    const auth = { authorization: `Bearer ${daemon.token}` };
+    const arr = (await (await fetch(`${daemon.url}/api/findings`, { headers: auth })).json()) as Array<{ kind: string; message: string }>;
+    const lines = arr.filter((f) => f.kind === "ops_probe");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].message).toContain("target 'down'");
+    expect(lines[0].message).toContain("2026-01-01T00:01:00Z");
+    // recovery clears the line on its own — derived, no stored flag
+    saveProbe({ target: "down", by: "watch", ts: "2026-01-01T00:02:00Z", ok: true, timeout: false, output: "" }, home);
+    const afterArr = (await (await fetch(`${daemon.url}/api/findings`, { headers: auth })).json()) as Array<{ kind: string }>;
+    expect(afterArr.filter((f) => f.kind === "ops_probe")).toHaveLength(0);
   });
 });
