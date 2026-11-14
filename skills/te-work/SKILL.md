@@ -191,6 +191,11 @@ own. `next` lists the peer questions you may answer.
 ## 7. Prove it, then submit
 
 Go through `## Acceptance` one item at a time and actually run each check.
+When the task has a `## Checks` section, run `te verify <id>` first — it
+runs each check in your claim worktree and posts the result. Submit is
+refused while a check is missing, failed, or stale at the repo HEAD; only
+use `unverified_reason` when a check genuinely cannot run here (it makes
+the review needs_human, never auto-accepted).
 Then submit with the evidence — and a `walkthrough` (**required**): the
 human's "explain what you did". A few paragraphs in STE walking them
 through the change — what you changed, how it works, where to look first —

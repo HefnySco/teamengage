@@ -154,6 +154,10 @@ curl -s -X POST $B/propose -H "$H" -d '{
         "jumping back to an earlier waypoint re-fires the events from that waypoint on",
         "ctest -R mission_restart passes"
       ],
+      "checks": [
+        { "name": "mission tests", "repo": "droneengage_mavlink",
+          "run": "ctest -R mission_restart", "timeout": 120 }
+      ],
       "simple": "If you fly the same mission again, the drone's add-ons react again." },
     { "project": "global", "parent": "#0", "depends_on": ["#1"],
       "title": "TASK-15 — Report restarts to the web client", "tier": "light",
@@ -166,6 +170,11 @@ curl -s -X POST $B/propose -H "$H" -d '{
 
 The reply lists each new id and its file, e.g.
 `proposed GL-0024 → global/TASK-14-clear-latched-events-when-a-mission-restarts.md`.
+
+An acceptance line that is a command belongs in `checks` too (as in the
+example): `{name, repo, run, timeout?, expect_exit?}` — `repo` names a repo
+in `touches`. The worker runs them with `te verify`; submit is refused
+when a check has no passed result at the repo HEAD.
 
 Field notes:
 - `relates`: loose references — the idea(s) this item was generated from,

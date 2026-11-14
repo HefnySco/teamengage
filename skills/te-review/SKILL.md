@@ -117,6 +117,12 @@ Judge the **logic**:
   acceptance item says "verify X", check the test exercises X, not that a
   test exists. Spot-check a test run only when the diff gives you a reason
   to doubt it — never as a substitute for reading.
+- **`## Checks` items.** The item page shows the stored `te verify`
+  results (passed, at which commit). When the diff is risky — new logic,
+  migration, security-relevant — run `te verify <id>` again from your own
+  session; your result is stored next to the submitter's. A result that
+  passed at an older commit than the worktree HEAD is stale — that is a
+  finding.
 - **What you cannot verify is a finding, not a skip** — if a check needs
   hardware or a deploy you don't have, say so in the note rather than passing
   it silently. For missing hardware, SITL, a live browser or a human-only
