@@ -2153,3 +2153,34 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     expect(it.sections.find((s) => s.heading.toLowerCase() === "walkthrough")?.body).toContain("old way");
   });
 });
+
+describe("decide — option pick records a decision (GL-0345)", () => {
+  it("a pick on an in_review item lands a decision, status untouched", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Pick a button" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { notes: "done", what: "added the thing", how: "ran the steps" });
+    const res = await api(`/api/items/${id}/decide`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "accept it", question: { text: "tests are red" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("in_review");
+    const brief = (await (await api(`/api/items/${id}`)).json()) as {
+      decisions: Array<{ meta: { title: string; question?: { text: string } } }>;
+    };
+    const d = brief.decisions.find((x) => x.meta.title === "accept it");
+    expect(d).toBeTruthy();
+    expect(d?.meta.question).toBe("tests are red");
+    // the list rows carry the human lines for the inbox
+    const rows = (await (await api(`/api/items?status=in_review`)).json()) as Array<{ id: string; what?: string }>;
+    expect(rows.find((r) => r.id === id)?.what).toBe("added the thing");
+  });
+});

@@ -87,8 +87,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const featStatus = items.some((i) => i.meta.type === "feature")
         ? await ops.featureStatusMap()
         : new Map<string, string>();
+      // GL-0345: the human's short lines ride the list so a row can show
+      // `what` without fetching every brief
+      const fhLineOf = (it: (typeof items)[number], key: "what" | "how") =>
+        it.sections
+          .find((s) => s.heading.toLowerCase() === "for the human")
+          ?.body.match(new RegExp(`^- ${key}:\\s*(.+)$`, "m"))?.[1]
+          ?.trim() || undefined;
       return items.map((i) => ({
         ...i.meta,
+        what: fhLineOf(i, "what"),
+        how: fhLineOf(i, "how"),
         claim: i.claim ? { ...i.claim, dead: ops.claimDead(i.claim) } : i.claim,
         blocked: i.blocked,
         paused: i.paused,
@@ -898,6 +907,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
 
   act("approve", (ops, id) => ops.approve(id));
   act("answer", (ops, id, b) => ops.answer(id, String(b.text ?? b.title ?? "answered")));
+  act("decide", (ops, id, b) =>
+    ops.recordDecision(
+      id,
+      String(b.text ?? b.title ?? "decided"),
+      b.question && typeof b.question === "object" ? (b.question as never) : undefined,
+    ),
+  );
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
   act("accept", (ops, id) => ops.accept(id));
   act("reject", (ops, id, b) =>

@@ -999,6 +999,13 @@ details.sec > .sec-bd {
 }
 
 /* metrics (GL-0319): scorecard table + share-of-items donut side by side */
+/* header stat chips on the metrics page — tinted like .plan-chip via --mc */
+.met-chip { display: inline-flex; align-items: baseline; gap: .4rem; padding: .22rem .6rem; border: 1px solid var(--mc, var(--bs-border-color-translucent)); border-radius: .5rem; background: color-mix(in srgb, var(--mc, transparent) 14%, transparent); }
+.met-chip-k { font-size: .62rem; text-transform: uppercase; letter-spacing: .05em; color: var(--mc, var(--bs-secondary-color)); }
+.met-chip-v { font-size: .92rem; font-weight: 600; }
+.met-chip-items { --mc: var(--bs-info); }
+.met-chip-done { --mc: var(--te-st-done); }
+.met-chip-bounce { --mc: var(--te-st-dropped); }
 .met-split { display: flex; gap: 1.2rem; align-items: flex-start; flex-wrap: wrap; }
 .met-split-tbl { flex: 1 1 34rem; min-width: 0; }
 .met-donut { display: flex; gap: .9rem; align-items: center; padding: .35rem .6rem; border: 1px solid var(--bs-border-color-translucent); border-radius: .5rem; }
@@ -1132,3 +1139,17 @@ details.sec > .sec-bd {
 .ops-probe-strip i.pd-ok { background: #2da44e; }
 .ops-probe-strip i.pd-fail { background: #cf222e; }
 .ops-probe-row { flex-wrap: wrap; }
+
+/* the human card + view switch (GL-0345) — the card sits at the top of the
+   item page; the switch lives in the page header */
+.hcard { border-color: var(--bs-success-border-subtle); }
+.hc-line { font-size: .9rem; overflow-wrap: anywhere; }
+.hc-k { display: inline-block; min-width: 7.5rem; color: var(--bs-secondary-color); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+.view-sw a { cursor: pointer; color: var(--bs-secondary-color); text-decoration: none; }
+.view-sw a.on { color: var(--bs-body-color); font-weight: 600; }
+.bcard-what { overflow-wrap: anywhere; }
+@media (max-width: 575.98px) {
+  .hc-k { min-width: 0; display: block; }
+  .hcard .card-body { padding: .5rem .75rem; }
+  .sticky-top .view-sw { white-space: nowrap; }
+}

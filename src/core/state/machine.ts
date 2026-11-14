@@ -43,6 +43,8 @@ export type Action =
   | { type: "log"; note: string }
   | { type: "ask"; question: Question; to?: "peer" }
   | { type: "answer"; decisionId: string; decisionTitle: string }
+  /** GL-0345: an ask_human option click — records a decision, status untouched. */
+  | { type: "record_decision"; decisionId: string; decisionTitle: string; question?: Question }
   /** A peer session answers a `to: "peer"` question — item stays with its holder (GL-0324). */
   | { type: "answer_peer"; answer: string }
   /** Daemon sweep: a peer question unanswered past peer_answer_after becomes the human's (GL-0324). */
@@ -574,6 +576,21 @@ export function transition(
         title: action.decisionTitle,
         // keep what was asked: the item's question is cleared on answer
         ...(meta.question ? { question: meta.question } : {}),
+      });
+      return out;
+    }
+
+    case "record_decision": {
+      requireHuman(actor, action.type);
+      // the human's pick on a review's option buttons — a note for the
+      // record, never a status move (answer still owns waiting)
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      out.log.push(`- ${stamp} ${who} picked "${action.decisionTitle}" → ${action.decisionId}`);
+      out.effects.push({
+        type: "create_decision",
+        decisionId: action.decisionId,
+        title: action.decisionTitle,
+        ...(action.question ? { question: action.question } : {}),
       });
       return out;
     }

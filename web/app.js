@@ -512,7 +512,7 @@ const DigestPanel = ({ digest, onOpen }) => {
       <div class="small fw-semibold text-secondary">${label}</div>
       <ul class="list-unstyled small mb-1">
         ${rows.length
-          ? rows.map((r) => html`<li key=${r.id}><a href="#" onClick=${(e) => (e.preventDefault(), onOpen(r.id))}>${r.id}</a> ${r.title}${r.why ? html` <span class="text-secondary">— ${r.why}</span>` : ""}</li>`)
+          ? rows.map((r) => html`<li key=${r.id}><a href="#" onClick=${(e) => (e.preventDefault(), onOpen(r.id))}>${r.id}</a> ${r.what ?? r.title}${r.why ? html` <span class="text-secondary">— ${r.why}</span>` : ""}</li>`)
           : html`<li class="text-secondary">nothing there</li>`}
       </ul>
     </div>`;
@@ -1341,6 +1341,7 @@ const Board = ({ onOpen }) => {
                       </span>
                     </div>
                     <div class="bcard-title">${i.title}</div>
+                    ${i.what && html`<div class="bcard-what small text-secondary" title=${i.how ? `how: ${i.how}` : ""}>${i.what}</div>`}
                     ${((i.domains ?? []).length > 0 || i.claim || i.blocked || i.ai_review || i.updated || i.created) && html`
                       <div class="bcard-meta d-flex align-items-center gap-1 flex-wrap">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
@@ -2275,6 +2276,28 @@ const Deps = ({ deps }) => html`
 `;
 
 // task text: formatted markdown by default, raw source on toggle (per browser)
+// GL-0345: simple | full — the card-first human view vs everything expanded.
+// The choice lives in the browser, not the item.
+const loadItemView = () => {
+  try {
+    return localStorage.getItem("te.item.view") === "full" ? "full" : "simple";
+  } catch {
+    return "simple";
+  }
+};
+const saveItemView = (v) => {
+  try {
+    localStorage.setItem("te.item.view", v);
+  } catch {
+    /* storage blocked — the switch still works for this page view */
+  }
+};
+// the human's short lines from the managed ## For the human section
+const fhLine = (sections, key) =>
+  sections
+    ?.find((s) => s.heading.toLowerCase() === "for the human")
+    ?.body.match(new RegExp(`^- ${key}:\\s*(.+)$`, "m"))?.[1]
+    ?.trim() ?? "";
 const loadMdView = () => {
   try {
     return localStorage.getItem("te.md.view") === "markdown" ? "markdown" : "formatted";
@@ -2496,12 +2519,38 @@ const ArtStrip = ({ arts, onOpen }) => {
   </div>`;
 };
 
+// GL-0345: the card the human reads first — the what/how lines, and on a
+// flagged review the problem and recommendation with one button per option.
+// A button click records the pick as a decision; it never moves the status.
+const HumanCard = ({ it, picked, onDecide }) => {
+  const what = fhLine(it.sections, "what");
+  const how = fhLine(it.sections, "how");
+  const ah = it.meta.ai_review?.ask_human;
+  if (!what && !how && !ah) return null;
+  return html`<div class="card hcard mb-2"><div class="card-body py-2 px-3">
+    ${what && html`<div class="hc-line"><span class="hc-k">what</span> ${what}</div>`}
+    ${how && html`<div class="hc-line"><span class="hc-k">how</span> ${how}</div>`}
+    ${ah && html`
+      ${ah.problem && html`<div class="hc-line"><span class="hc-k">problem</span> ${ah.problem}</div>`}
+      ${ah.recommendation && html`<div class="hc-line"><span class="hc-k">recommendation</span> ${ah.recommendation}</div>`}
+      ${(ah.options ?? []).length > 0 && html`<div class="d-flex gap-2 mt-2 flex-wrap">
+        ${ah.options.map((o) => html`<button key=${o} type="button"
+          class=${`btn btn-sm ${picked === o ? "btn-primary" : "btn-outline-primary"}`}
+          disabled=${picked !== undefined}
+          title="records your pick as a decision on this item"
+          onClick=${() => onDecide(o)}>${o}</button>`)}
+      </div>`}`}
+  </div></div>`;
+};
+
 const ItemView = ({ id }) => {
   const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
   const { data: arts } = useApi(`/api/items/${id}/artifacts`, [id]);
   const [viewing, setViewing] = useState(null); // artifact index being viewed
   const [picked, setTab] = useState(null);
   const [mdView, setMdView] = useState(loadMdView);
+  const [viewMode, setViewMode] = useState(loadItemView);
+  const setItemView = (v) => { setViewMode(v); saveItemView(v); };
   const toggleMd = () => {
     const v = mdView === "formatted" ? "markdown" : "formatted";
     setMdView(v);
@@ -2524,6 +2573,8 @@ const ItemView = ({ id }) => {
   const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
     .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
   // a cancelled prompt (null) aborts the action — only OK fires it
+  const pickedOpt = (b?.decisions ?? []).find((d) => d.meta.id === ownLast)?.meta.title;
+  const ahProblem = it.meta.ai_review?.ask_human?.problem;
   const askThen = async (action, label, extra) => {
     const reason = await promptDialog(label);
     if (reason !== null) act(action, { reason, ...extra });
@@ -2588,41 +2639,7 @@ const ItemView = ({ id }) => {
   // utility buttons after the workflow ones: star/graph always enabled;
   // archive & delete are disabled while a claim holds the item — release it first
   const claimed = Boolean(it.claim);
-  return html`
-    <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
-      <span class="id flex-shrink-0">${it.meta.id}</span>
-      <${Badge} s=${st} />
-      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${ProblemChip} p=${it.plan_problems} />`}
-      ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
-      ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
-      <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
-      <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
-        ${st === "draft" && html`<${ActBtn} variant="primary" title="approve — promote the draft to ready" onClick=${() => act("approve")}><${CheckIcon} /></${ActBtn}>`}
-        ${st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
-        ${(st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
-        ${(st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
-        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
-        ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
-        ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
-        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
-        ${it.meta.type === "epic" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
-        ${st !== "done" && html`<${ActBtn} variant="outline-success" title="mark done — complete it now, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
-        ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
-        ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}
-        <${ActBtn} title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
-          onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}>
-          <span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>
-        </${ActBtn}>
-        <${ActBtn} title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"}
-          onClick=${openGraph}><${GraphIcon} /></${ActBtn}>
-        ${!it.meta.archived && html`<${ActBtn} disabled=${claimed}
-          title=${claimed ? "archive — the claim holds it; release the claim first" : "archive — file away out of the lists"}
-          onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></${ActBtn}>`}
-        <${ActBtn} variant="outline-danger" disabled=${claimed}
-          title=${claimed ? "delete — the claim holds it; release the claim first" : "delete — remove tracking, keep the task file"}
-          onClick=${remove}><${TrashIcon} /></${ActBtn}>
-      </div>
-    </div>
+  const preQ = html`
     ${it.meta.drop_request && html`<div class="alert alert-warning py-2 px-2 small mb-2 d-flex align-items-center gap-2 flex-wrap">
       <span><b>flagged for drop</b> by <b class=${whoCls(it.meta.drop_request.by)}>${it.meta.drop_request.by}</b> · ${ago(it.meta.drop_request.at)} ago${it.meta.drop_request.reason ? html` — ${it.meta.drop_request.reason}` : ""}</span>
       <span class="ms-auto d-flex gap-2">
@@ -2765,11 +2782,8 @@ const ItemView = ({ id }) => {
         <span>${i + 1}. ${f.text}${f.where ? html` <span class="text-secondary">(${f.where})</span>` : ""}${f.reason ? html` <span class="text-secondary">— ${f.reason}</span>` : ""}</span>
       </div>`)}
     </div>`}
-    ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
-      <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}
-      <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
-      ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} id=${id} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
-    </div>`}
+    `;
+  const postQ = html`
     <div class="card mt-2">
       <div class="card-header d-flex align-items-center gap-3 py-1 flex-wrap">
         <div class="vtabs">
@@ -2795,15 +2809,73 @@ const ItemView = ({ id }) => {
     <${ArtStrip} arts=${arts} onOpen=${(i) => setViewing(i)} />
     ${viewing !== null && arts?.length ? html`<${ArtViewer} arts=${arts} i=${viewing}
       onClose=${() => setViewing(null)} onNav=${(d) => setViewing(Math.max(0, Math.min(arts.length - 1, viewing + d)))} />` : ""}
-    ${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!closed && d.meta.id === ownLast}
-      onChange=${(text) => act("change_answer", { text })} />`)}
-    ${b.deps.length > 0 && html`
+      `;
+  const tail = html`
+${b.deps.length > 0 && html`
       <details class="sec"><summary><span class="caret"></span><b>Dependencies</b><span class="text-secondary small">${b.deps.length} — what this task waits on</span></summary>
         <div class="sec-bd"><${Deps} deps=${b.deps} /></div></details>`}
     <details class="sec"><summary><span class="caret"></span><b>Notes</b><span class="text-secondary small">${parseNotes(b.source ? notesSection(b.source.text ?? "") : sec("notes")).length} — kept in the task file's ## Notes, agents see them too</span></summary>
       <div class="sec-bd"><${Notes} id=${id} text=${b.source ? notesSection(b.source.text ?? "") : sec("notes")} onAdded=${reload} /></div></details>
     <details class="sec"><summary><span class="caret"></span><b>History</b><span class="text-secondary small">${history.length} — newest first, notes and reasons</span></summary>
-      <div class="sec-bd"><${History} entries=${history} /></div></details>
+      <div class="sec-bd"><${History} entries=${history} /></div></details>  `;
+  // GL-0345: simple folds the agent layer into one block under the card;
+  // full keeps the old expanded order
+  const agentDetail = html`${preQ} ${postQ} ${tail}`;
+  return html`
+
+    <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
+      <span class="id flex-shrink-0">${it.meta.id}</span>
+      <${Badge} s=${st} />
+      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${ProblemChip} p=${it.plan_problems} />`}
+      ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
+      ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
+      <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
+      <span class="view-sw small text-nowrap ms-auto" title="simple — the human layer first, agent detail folded · full — everything expanded">
+        <a class=${viewMode === "simple" ? "on" : ""} onClick=${() => setItemView("simple")}>simple</a>
+        <span class="text-secondary"> | </span>
+        <a class=${viewMode === "full" ? "on" : ""} onClick=${() => setItemView("full")}>full</a>
+      </span>
+      <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
+        ${st === "draft" && html`<${ActBtn} variant="primary" title="approve — promote the draft to ready" onClick=${() => act("approve")}><${CheckIcon} /></${ActBtn}>`}
+        ${st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
+        ${(st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
+        ${(st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
+        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
+        ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
+        ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
+        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
+        ${it.meta.type === "epic" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
+        ${st !== "done" && html`<${ActBtn} variant="outline-success" title="mark done — complete it now, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
+        ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
+        ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}
+        <${ActBtn} title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+          onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}>
+          <span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>
+        </${ActBtn}>
+        <${ActBtn} title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"}
+          onClick=${openGraph}><${GraphIcon} /></${ActBtn}>
+        ${!it.meta.archived && html`<${ActBtn} disabled=${claimed}
+          title=${claimed ? "archive — the claim holds it; release the claim first" : "archive — file away out of the lists"}
+          onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></${ActBtn}>`}
+        <${ActBtn} variant="outline-danger" disabled=${claimed}
+          title=${claimed ? "delete — the claim holds it; release the claim first" : "delete — remove tracking, keep the task file"}
+          onClick=${remove}><${TrashIcon} /></${ActBtn}>
+      </div>
+    </div>
+    <${HumanCard} it=${it} picked=${pickedOpt}
+      onDecide=${(o) => act("decide", { text: o, ...(ahProblem ? { question: { text: ahProblem } } : {}) })} />
+    ${viewMode === "full" ? preQ : ""}
+${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
+      <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}
+      <div class="md-view mt-1" dangerouslySetInnerHTML=${{ __html: markdownToHtml(it.meta.question.text) }} />
+      ${it.meta.status === "waiting" && html`<div class="mt-2"><${AnswerBox} id=${id} opts=${it.meta.question.options} onAnswer=${(text) => act("answer", { text })} /></div>`}
+    </div>`}
+    ${viewMode === "full" ? postQ : ""}
+${b.decisions.map((d) => html`<${DecisionCard} d=${d} canChange=${!closed && d.meta.id === ownLast}
+      onChange=${(text) => act("change_answer", { text })} />`)}
+        ${viewMode === "simple"
+      ? html`<details class="sec"><summary><span class="caret"></span><b>agent detail</b><span class="text-secondary small">walkthrough, report, findings, evidence and log</span></summary><div class="sec-bd">${agentDetail}</div></details>`
+      : tail}
   `;
 };
 

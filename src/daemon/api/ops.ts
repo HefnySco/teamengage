@@ -67,7 +67,7 @@ import { loadMachines, machineFindings, targetMachineFindings } from "../../core
 import { envFindings, loadEnvs } from "../../core/ops/env.js";
 import { transFindings } from "../../core/ops/trans.js";
 import { probeHistory, probeStats } from "../../core/ops/probe.js";
-import type { AskHuman } from "../../core/model/item.js";
+import type { AskHuman, Question } from "../../core/model/item.js";
 import { renumber as doRenumber } from "../../core/address/renumber.js";
 import {
   plannedPaths,
@@ -2373,6 +2373,19 @@ export class WorkspaceOps {
       type: "answer",
       decisionId,
       decisionTitle,
+    });
+  }
+
+  /** GL-0345: an option-button pick on a review's ask_human card — a decision
+   *  record for the human, the item's status never moves. */
+  async recordDecision(id: string, decisionTitle: string, question?: Question) {
+    const it = this.item(id);
+    const decisionId = allocateId("D", this.index.decisions.keys());
+    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+      type: "record_decision",
+      decisionId,
+      decisionTitle,
+      question,
     });
   }
 

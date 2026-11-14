@@ -14,6 +14,9 @@ import { isStale } from "../model/claim.js";
 export interface DigestLine {
   id: string;
   title: string;
+  /** GL-0345: the human's short lines from ## For the human — the digest shows these, not the walkthrough */
+  what?: string;
+  how?: string;
   /** why the line is in the list ("stale claim", "draft to approve") */
   why?: string;
 }
@@ -44,9 +47,19 @@ export function buildDigest(
 ): Digest {
   const now = opts.now ?? Date.now();
   const since = opts.since ?? digestSince(events, new Date(now - 24 * 3600_000).toISOString());
+  const fhLine = (id: string, key: "what" | "how"): string | undefined => {
+    const body = items
+      .get(id)
+      ?.sections?.find((s) => s.heading.toLowerCase() === "for the human")
+      ?.body.match(new RegExp(`^- ${key}:\\s*(.+)$`, "m"))?.[1]
+      ?.trim();
+    return body || undefined;
+  };
   const line = (id: string, why?: string): DigestLine => ({
     id,
     title: items.get(id)?.meta.title ?? "",
+    what: fhLine(id, "what"),
+    how: fhLine(id, "how"),
     ...(why ? { why } : {}),
   });
   const topPlan = (id: string): string | undefined => {
