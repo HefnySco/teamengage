@@ -933,6 +933,20 @@ workflow items: no status, no claim.
 `te validate` reports unknown machine ids (in envs and edges),
 duplicate ids, secrets in ssh fields and bad edge/via kinds.
 
+### 14.7 Verify results (GL-0358)
+
+A task can declare machine checks (`## Checks` — name, repo, run,
+timeout, expect_exit). `te verify <id>` runs them under `bash` in the
+claim worktree of each repo and posts one result per check to
+`POST /api/items/:id/verify` (or the `verify_result` agent tool — the
+event then carries the agent session). The same trust boundary as ops
+applies: **the daemon never runs a check** — it validates the check
+name against the item's checks (unknown name → INVALID), trims the
+output to its last 50 lines, stores the result in `verify/<ID>.yaml`
+in the plans repo, writes a `verified:` line in ## Evidence, and
+commits all of it with the event. The item API returns the stored
+results; `verify-logs/` under `~/.teamengage` keeps the full output.
+
 ## 15. Features and releases (GL-0330)
 
 The work chain today is idea → plan → task → found problem. Two more

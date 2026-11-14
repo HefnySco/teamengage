@@ -19,6 +19,15 @@ import type { Ambiguity } from "../../import/import.js";
  */
 
 const IdParam = z.object({ id: z.string() });
+const VerifyPost = z.object({
+  check: z.string().min(1),
+  exit_code: z.number().int(),
+  passed: z.boolean(),
+  commit: z.string().optional(),
+  output_tail: z.string().optional(),
+  output_sha256: z.string().optional(),
+  session: z.string().optional(),
+});
 
 function wsrFor(ctx: DaemonCtx, ws?: string): WorkspaceRuntime {
   let wsr: WorkspaceRuntime | undefined;
@@ -118,6 +127,21 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const { id } = IdParam.parse(req.params);
       const ops = opsFor(ctx, wsOf(req.query));
       return ops.brief(id.toUpperCase());
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // GL-0358: `te verify` posts one result per check — the daemon records,
+  // it never runs the command. body.session may name a live session so the
+  // event carries the agent, not "human".
+  app.post("/api/items/:id/verify", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const ops = opsFor(ctx, wsOf(req.query));
+      const body = VerifyPost.parse(req.body ?? {});
+      const session = body.session ? ctx.sessions.get(body.session) : undefined;
+      return await ops.verifyResult(id, body, session ?? "human");
     } catch (e) {
       return sendErr(reply, e);
     }

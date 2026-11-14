@@ -97,6 +97,32 @@ export const Check = z.object({
 export type Check = z.infer<typeof Check>;
 
 /**
+ * One stored `te verify` result (GL-0358): posted by the runner, written to
+ * `verify/<ID>.yaml` in the plans repo and summarised as a `verified:` line
+ * in ## Evidence. `output_tail` holds the last 50 output lines; the daemon
+ * never runs the command itself.
+ */
+export const VerifyResult = z.object({
+  check: z.string().min(1),
+  exit_code: z.number().int(),
+  passed: z.boolean(),
+  /** HEAD of the repo the check ran in */
+  commit: z.string().default(""),
+  at: z.string(),
+  output_sha256: z.string().optional(),
+  output_tail: z.string().optional(),
+  /** who posted it — a session id or "human" */
+  actor: z.string().optional(),
+});
+export type VerifyResult = z.infer<typeof VerifyResult>;
+
+export const VerifyFile = z.object({
+  item: z.string(),
+  results: z.array(VerifyResult).default([]),
+});
+export type VerifyFile = z.infer<typeof VerifyFile>;
+
+/**
  * Model tier — how capable an agent must be to work an item (light ≈ Haiku,
  * standard ≈ Sonnet, heavy ≈ Opus). Sessions declare theirs at hello; an
  * item's tier is the minimum that may claim it (unset = anyone).

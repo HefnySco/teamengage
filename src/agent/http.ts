@@ -74,6 +74,7 @@ const STATUS: Record<string, number> = {
   OPS_NOT_OPTIONAL: 400,
   USAGE: 400,
   VALIDATION: 400,
+  INVALID: 400,
 };
 
 /** `ERROR CODE: msg` → HTTP status; plain text otherwise → 200. */

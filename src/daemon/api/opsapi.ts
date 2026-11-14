@@ -193,6 +193,32 @@ export async function opsAddNote(
   return { file, ts, item };
 }
 
+/**
+ * GL-0358: post one `te verify` result for an item. Shared by the REST route
+ * (CLI `te verify`, actor "human" unless the body names a live session) and
+ * the agent tool `verify_result` (actor = the session). The daemon records
+ * only — it never runs the check.
+ */
+export async function postVerifyResult(
+  wsr: WorkspaceRuntime,
+  ctx: DaemonCtx,
+  id: string,
+  args: {
+    check: string;
+    exit_code: number;
+    passed: boolean;
+    commit?: string;
+    output_tail?: string;
+    output_sha256?: string;
+    session?: string;
+  },
+  session?: Session,
+) {
+  const resolved = session ?? (args.session ? ctx.sessions.get(args.session) : undefined);
+  const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+  return ops.verifyResult(id, args, resolved ?? "human");
+}
+
 export function opsEnvs(wsr: WorkspaceRuntime) {
   const loaded = loadEnvs(wsr.ws.root);
   const active = currentEnv(wsr.ws.root, loaded, wifiName() || undefined).env?.id;

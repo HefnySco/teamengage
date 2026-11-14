@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { daemonApi } from "../client.js";
 import { resolveWorkspace, teHome } from "../../core/config/config.js";
@@ -5,11 +6,12 @@ import { runChecks, type CheckRun } from "../../core/verify/verify.js";
 import type { Check } from "../../core/model/item.js";
 
 /**
- * `te verify <ID>` (GL-0357): run the item's ## Checks — each under bash in
- * the claim worktree of its repo (or the resource base when the item is not
- * claimed here), with its timeout. Prints name / exit code / pass or not /
- * HEAD commit per check; secret-looking env values are masked. Posts
- * nothing — GL-0358 stores the result.
+ * `te verify <ID>` (GL-0357 + GL-0358): run the item's ## Checks — each
+ * under bash in the claim worktree of its repo (or the resource base when
+ * the item is not claimed here), with its timeout. Prints name / exit code
+ * / pass or not / HEAD commit per check; secret-looking env values are
+ * masked. Posts one result per check to the daemon, which stores them on
+ * the item (`--session` or TE_SESSION names the posting agent session).
  */
 
 interface BriefItem {
@@ -42,6 +44,8 @@ export async function verifyCmd(args: string[], home?: string): Promise<number> 
   }
   const wsi = args.indexOf("--ws");
   const ws = wsi === -1 ? "" : `?ws=${encodeURIComponent(args[wsi + 1])}`;
+  const si = args.indexOf("--session");
+  const session = si === -1 ? process.env.TE_SESSION : args[si + 1];
   try {
     const brief = await api<Brief>("GET", `/api/items/${id}${ws}`, undefined, home);
     const checks = brief.checks ?? [];
@@ -72,10 +76,30 @@ export async function verifyCmd(args: string[], home?: string): Promise<number> 
       default_dir,
       logsDir: join(teHome(home), "verify-logs"),
     });
+    // post one result per check — a check that could not run posts nothing
+    const posted: string[] = [];
+    for (const r of results) {
+      if (r.error) continue;
+      try {
+        await api("POST", `/api/items/${id}/verify${ws}`, {
+          check: r.name,
+          exit_code: r.exit_code,
+          passed: r.passed,
+          commit: r.commit || undefined,
+          output_tail: r.output,
+          output_sha256: createHash("sha256").update(r.output).digest("hex"),
+          session,
+        }, home);
+        posted.push(r.name);
+      } catch (e) {
+        r.error = `post failed: ${(e as Error).message}`;
+      }
+    }
     if (json) return console.log(JSON.stringify({ item: id, results }, null, 2)), results.every((r) => r.passed) ? 0 : 1;
     for (const r of results) console.log(fmt(r));
     const failed = results.filter((r) => !r.passed).length;
     console.log(`${id}: ${results.length - failed}/${results.length} checks passed`);
+    if (posted.length) console.log(`posted ${posted.length} result(s)`);
     return failed === 0 ? 0 : 1;
   } catch (e) {
     console.log(`verify ${id} failed: ${(e as Error).message}`);

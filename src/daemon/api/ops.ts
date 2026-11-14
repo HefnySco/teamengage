@@ -22,12 +22,15 @@ import {
   tierRank,
   type Check,
   type ReviewFinding,
+  VerifyFile,
+  type VerifyResult,
   type Status,
   type SubmitCost,
 } from "../../core/model/item.js";
 import {
   ClaimRefusedError,
   ForbiddenError,
+  InvalidError,
   InvalidTransitionError,
   NotFoundError,
   TeError,
@@ -81,6 +84,9 @@ export interface Links {
 /** Title/summary words that mark an item as a fix — it always carries `bug`. */
 const FIX_WORDS =
   /\b(bug|bugfix|broke|broken|crash|defect|fix|fixed|fixes|fixing|hotfix|regression|repair)\b/i;
+
+/** mtime-cached verify/<ID>.yaml per file — brief() runs per request (GL-0358). */
+const verifyFileCache = new Map<string, { mtimeMs: number; file: VerifyFile }>();
 
 /** mtime-cached checks+touches per file — findings() runs per request (GL-0348). */
 interface ChecksAndTouches {
@@ -482,6 +488,7 @@ export class WorkspaceOps {
       question: it.meta.question,
       source,
       checks: (await this.checksOf(it)).checks,
+      verify: await this.verifyOf(it),
       reviewUnblocks: this.wsr.ws.config.review_unblocks,
       autonomy: this.wsr.ws.config.autonomy,
       autoAcceptAt: this.autoAcceptAt(it),
@@ -690,6 +697,71 @@ export class WorkspaceOps {
       }
     }
     return { checks: it.checks ?? [] };
+  }
+
+  /**
+   * The stored `te verify` results of an item (GL-0358) — `verify/<ID>.yaml`
+   * in the plans repo, cached by mtime.
+   */
+  async verifyOf(it: IndexedItem): Promise<VerifyResult[]> {
+    const file = join(this.wsr.ws.plansDir, "verify", `${it.meta.id}.yaml`);
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(file).mtimeMs;
+    } catch {
+      return [];
+    }
+    const cached = verifyFileCache.get(file);
+    if (cached?.mtimeMs === mtimeMs) return cached.file.results;
+    try {
+      const YAML = (await import("yaml")).default;
+      const parsed = VerifyFile.parse(YAML.parse(readFileSync(file, "utf8")));
+      verifyFileCache.set(file, { mtimeMs, file: parsed });
+      return parsed.results;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Record one `te verify` result posted by the runner (GL-0358): the check
+   * name must be one of the item's checks (else INVALID), the output tail is
+   * kept to its last 50 lines, and the store writes the result file, the
+   * `verified:` Evidence line and the event in one commit. The daemon never
+   * runs the command — it only records.
+   */
+  async verifyResult(
+    id: string,
+    args: {
+      check: string;
+      exit_code: number;
+      passed: boolean;
+      commit?: string;
+      output_tail?: string;
+      output_sha256?: string;
+    },
+    actor: Session | "human",
+  ): Promise<VerifyResult> {
+    const it = this.item(id.toUpperCase());
+    const { checks } = await this.checksOf(it);
+    if (!checks.some((c) => c.name === args.check)) {
+      throw new InvalidError(`check '${args.check}' is not one of the item's checks`);
+    }
+    const tail = args.output_tail?.split("\n").slice(-50).join("\n");
+    const result: VerifyResult = {
+      check: args.check,
+      exit_code: args.exit_code,
+      passed: args.passed,
+      commit: args.commit ?? "",
+      at: new Date().toISOString(),
+      ...(args.output_sha256 ? { output_sha256: args.output_sha256 } : {}),
+      ...(tail ? { output_tail: tail } : {}),
+      actor: actor === "human" ? "human" : actor.id,
+    };
+    const at = result.commit ? ` @${result.commit.slice(0, 10)}` : "";
+    const line = `- verified: ${result.check} — ${result.passed ? "passed" : "not passed"} (exit ${result.exit_code})${at}`;
+    await this.store.recordVerify(it.meta.id, result, line, this.actorFor(actor));
+    return result;
   }
 
   /**

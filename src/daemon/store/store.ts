@@ -50,7 +50,7 @@ import {
 } from "../../core/files/template.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { transition, type Action, type Actor, type Effect } from "../../core/state/machine.js";
-import { DecisionMeta, type Check, type Event, type ItemMeta, type Question } from "../../core/model/index.js";
+import { DecisionMeta, type Check, type Event, type ItemMeta, type Question, VerifyFile, type VerifyResult } from "../../core/model/index.js";
 import type { Claim } from "../../core/model/claim.js";
 import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
@@ -658,6 +658,68 @@ export class PlansStore {
         { heading: opts.heading, text: opts.lines.join("\n") + "\n" },
       ]);
       await this.commitPaths([it.path], `te: ${id} annotated`);
+      await this.index.upsertFile(absPath);
+      return meta;
+    });
+  }
+
+  /**
+   * GL-0358: record one `te verify` result — merge it into
+   * `verify/<ID>.yaml` (latest result per check name wins), append the
+   * `verified:` line to ## Evidence, append a `verify` event with the
+   * poster as actor, and commit all three files in one commit.
+   */
+  recordVerify(id: string, result: VerifyResult, evidenceLine: string, actor: Actor): Promise<ItemMeta> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const verifyRel = join("verify", `${id}.yaml`);
+      const verifyAbs = join(this.ws.plansDir, verifyRel);
+      const YAML = (await import("yaml")).default;
+      let file: VerifyFile = { item: id, results: [] };
+      if (existsSync(verifyAbs)) {
+        try {
+          file = VerifyFile.parse(YAML.parse(await readFile(verifyAbs, "utf8")));
+        } catch {
+          file = { item: id, results: [] };
+        }
+      }
+      const rest = file.results.filter((r) => r.check !== result.check);
+      file = { item: id, results: [...rest, result] };
+      await mkdir(join(this.ws.plansDir, "verify"), { recursive: true });
+      await writeFileAtomic(verifyAbs, YAML.stringify(file));
+
+      const absPath = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absPath, "utf8"), absPath);
+      const meta = {
+        ...doc.meta,
+        version: doc.meta.version + 1,
+        updated: new Date().toISOString(),
+      } as ItemMeta;
+      await this.writeItemDoc(absPath, doc.raw.text, meta, [], [
+        { heading: "Evidence", text: evidenceLine + "\n" },
+      ]);
+
+      const ev = await this.events.append({
+        ts: new Date().toISOString(),
+        actor: actor.session,
+        session: actor.kind === "agent" ? actor.session : undefined,
+        item: id,
+        action: "verify",
+        data: {
+          check: result.check,
+          passed: result.passed,
+          exit_code: result.exit_code,
+          commit: result.commit,
+        },
+      });
+      this.onEvent?.(ev, meta);
+
+      await this.commitPaths(
+        [it.path, verifyRel, join("events", this.machine, eventFileName(ev.ts))],
+        `te: ${id} verify ${result.check} by ${actor.session}`,
+      );
       await this.index.upsertFile(absPath);
       return meta;
     });

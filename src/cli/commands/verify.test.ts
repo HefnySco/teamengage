@@ -168,3 +168,52 @@ describe("te verify", () => {
     expect(data.results[0].commit).toBeTruthy();
   });
 });
+
+describe("verify results land on the item (GL-0358)", () => {
+  it("te verify writes one verified line per check in ## Evidence with the commit id", async () => {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const { code } = await capture(() => verifyCmd(["WS-0002"], home));
+    expect(code).toBe(0);
+    // the watcher needs a beat to reindex — the file itself is written sync
+    const text = readFileSync(join(plans, "items", "WS", "WS-0002.md"), "utf8");
+    expect(text).toContain(`- verified: hello — passed (exit 0) @${head.slice(0, 10)}`);
+  });
+
+  it("a result for a check name the item does not have is refused with INVALID", async () => {
+    const { port, token } = JSON.parse(readFileSync(join(teHome(home), "daemon.json"), "utf8"));
+    const res = await fetch(`http://127.0.0.1:${port}/api/items/WS-0002/verify`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ check: "nope", exit_code: 0, passed: true }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe("INVALID");
+  });
+
+  it("the item API returns each result with passed, commit and time", async () => {
+    const { port, token } = JSON.parse(readFileSync(join(teHome(home), "daemon.json"), "utf8"));
+    const res = await fetch(`http://127.0.0.1:${port}/api/items/WS-0002`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const b = await res.json();
+    const r = b.verify.find((x: { check: string }) => x.check === "hello");
+    expect(r.passed).toBe(true);
+    expect(r.commit).toBeTruthy();
+    expect(r.at).toBeTruthy();
+  });
+
+  it("the stored output tail keeps only the last 50 lines", async () => {
+    const { port, token } = JSON.parse(readFileSync(join(teHome(home), "daemon.json"), "utf8"));
+    const tail = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+    const res = await fetch(`http://127.0.0.1:${port}/api/items/WS-0002/verify`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ check: "hello", exit_code: 0, passed: true, output_tail: tail }),
+    });
+    expect(res.status).toBeLessThan(300);
+    const stored = (await res.json()).output_tail as string;
+    expect(stored.split("\n")).toHaveLength(50);
+    expect(stored.startsWith("line 11")).toBe(true);
+  });
+});

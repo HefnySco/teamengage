@@ -6,6 +6,7 @@ export type TeErrorCode =
   | "INVALID_TRANSITION"
   | "CLAIM_REFUSED"
   | "VALIDATION"
+  | "INVALID"
   | "PARSE"
   | "CONFLICT_MARKERS"
   | "GIT"
@@ -70,6 +71,13 @@ export class ClaimRefusedError extends TeError {
 export class ValidationError extends TeError {
   constructor(message: string, details?: Record<string, unknown>) {
     super("VALIDATION", message, details);
+  }
+}
+
+/** A well-formed request named something that does not exist (bad check name, unknown step). */
+export class InvalidError extends TeError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super("INVALID", message, details);
   }
 }
 

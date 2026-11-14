@@ -5,7 +5,7 @@ import type { AgentBinding } from "../mcp/server/mcp.js";
 import { pickWorkspace } from "../mcp/server/mcp.js";
 import { needSession, isToolResult } from "../mcp/tools/read.js";
 import { okText, errFrom } from "../mcp/format.js";
-import { opsPlaybooks, opsTargets, opsJobs, opsJob, opsStart, opsStep, opsSkip, opsApprove, opsAbort, opsResume } from "../daemon/api/opsapi.js";
+import { opsPlaybooks, opsTargets, opsJobs, opsJob, opsStart, opsStep, opsSkip, opsApprove, opsAbort, opsResume, postVerifyResult } from "../daemon/api/opsapi.js";
 
 /**
  * Ops agent tools (GL-0271): the agent half of the playbook protocol. The
@@ -163,6 +163,44 @@ export function registerOpsTools(
           s,
         );
         return okText(jobLine(j));
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "verify_result",
+    {
+      description:
+        "Post one `te verify` result for an item: the check name (must be one of the item's ## Checks — " +
+        "else INVALID), exit_code, passed, the repo HEAD commit, and the output tail (the daemon keeps " +
+        "the last 50 lines). Writes a `verified:` line in ## Evidence. The daemon never runs the check.",
+      inputSchema: {
+        id: z.string(),
+        check: z.string(),
+        exit_code: z.number().int(),
+        passed: z.boolean(),
+        commit: z.string().optional(),
+        output_tail: z.string().optional(),
+        output_sha256: z.string().optional(),
+        workspace: ws,
+      },
+    },
+    async ({ id, check, exit_code, passed, commit, output_tail, output_sha256, workspace }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const w = wsrOf(workspace);
+        if ("content" in w) return w;
+        const r = await postVerifyResult(
+          w,
+          ctx,
+          id,
+          { check, exit_code, passed, commit, output_tail, output_sha256 },
+          s,
+        );
+        return okText(`verified ${r.check}: ${r.passed ? "passed" : "not passed"}`);
       } catch (e) {
         return errFrom(e);
       }
