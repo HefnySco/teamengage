@@ -284,10 +284,32 @@ async function syncStatusCmd(args: string[], home?: string): Promise<number> {
 }
 
 export async function statusCmd(args: string[], home?: string): Promise<number> {
-  const inbox = await daemonApi("GET", `/api/inbox?${wsQ(args)}`, undefined, home);
-  if (flag(args, "--json")) {
-    process.stdout.write(JSON.stringify(inbox, null, 2) + "\n");
-    return 0;
+  // GL-0367: /health carries workspaces that failed to load — print the
+  // real error instead of the bare "no workspace registered" that every
+  // workspace-scoped route returns when nothing loaded.
+  let loadErrors: Record<string, string> = {};
+  try {
+    const h = (await daemonApi("GET", "/health", undefined, home)) as {
+      load_errors?: Record<string, string>;
+    };
+    loadErrors = h.load_errors ?? {};
+  } catch {
+    // no health data — inbox error below reports the real state
+  }
+  let inbox: unknown;
+  try {
+    inbox = await daemonApi("GET", `/api/inbox?${wsQ(args)}`, undefined, home);
+  } catch (e) {
+    if (Object.keys(loadErrors).length && /no workspace registered/.test((e as Error).message)) {
+      if (flag(args, "--json")) {
+        process.stdout.write(JSON.stringify({ load_errors: loadErrors }, null, 2) + "\n");
+      } else {
+        for (const [name, msg] of Object.entries(loadErrors))
+          process.stderr.write(`workspace '${name}' failed to load: ${msg}\n`);
+      }
+      return 1;
+    }
+    throw e;
   }
   const i = inbox as {
     drafts: string[];
@@ -296,7 +318,15 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
     claims: Array<{ item: string }>;
     drop_flags: Array<{ id: string; by: string }>;
     findings: Array<{ severity: string }>;
+    load_errors?: Record<string, string>;
   };
+  const allErrors = { ...loadErrors, ...(i.load_errors ?? {}) };
+  if (flag(args, "--json")) {
+    process.stdout.write(JSON.stringify({ ...i, load_errors: allErrors }, null, 2) + "\n");
+    return 0;
+  }
+  for (const [name, msg] of Object.entries(allErrors))
+    process.stderr.write(`workspace '${name}' failed to load: ${msg}\n`);
   process.stdout.write(
     [
       `drafts: ${i.drafts.join(", ") || "-"}`,

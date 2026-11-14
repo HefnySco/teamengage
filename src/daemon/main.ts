@@ -132,6 +132,7 @@ async function main(): Promise<number | undefined> {
     home: home ?? homedir(),
     machine,
     workspaces: new Map(),
+    loadErrors: new Map(),
     sessions: new SessionRegistry(machine),
     bus: new EventBus(),
     dispatchers: new Map(),
@@ -196,7 +197,9 @@ async function main(): Promise<number | undefined> {
         ),
       );
     } catch (e) {
-      process.stderr.write(`teamengaged: skipping workspace '${name}': ${(e as Error).message}\n`);
+      const msg = (e as Error).message;
+      process.stderr.write(`teamengaged: skipping workspace '${name}': ${msg}\n`);
+      ctx.loadErrors!.set(name, msg);
     }
   }
 
@@ -222,6 +225,9 @@ async function main(): Promise<number | undefined> {
     health: () => ({
       machine,
       workspaces: [...ctx.workspaces.keys()],
+      ...(ctx.loadErrors?.size
+        ? { load_errors: Object.fromEntries(ctx.loadErrors) }
+        : {}),
     }),
     register: async (app) => {
       registerApiRoutes(app, ctx);

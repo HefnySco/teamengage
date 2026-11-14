@@ -416,6 +416,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             at: i.meta.drop_request!.at,
           })),
         findings: await ops.findings(),
+        // GL-0367: a workspace that failed to load is named here so
+        // `te status` can show the real error instead of a silent gap
+        ...(ctx.loadErrors?.size
+          ? { load_errors: Object.fromEntries(ctx.loadErrors) }
+          : {}),
       };
     } catch (e) {
       return sendErr(reply, e);

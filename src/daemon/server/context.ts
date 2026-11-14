@@ -21,6 +21,9 @@ export interface DaemonCtx {
   home: string;
   machine: string;
   workspaces: Map<string, WorkspaceRuntime>;
+  /** GL-0367: workspaces that failed to load (name → error) — surfaced on
+   * /health and /api/inbox so a bad config is visible, not silently absent */
+  loadErrors?: Map<string, string>;
   sessions: SessionRegistry;
   bus: EventBus;
   /** per-workspace agent launcher (GL-0328) — absent in tests that build ctx by hand */
