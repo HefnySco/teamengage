@@ -53,3 +53,37 @@ export function itemLine(it: {
 
 /** Header the `te mcp` shim sends so the daemon can probe client liveness. */
 export const CLIENT_PID_HEADER = "x-te-client-pid";
+
+/** A named block of brief output that may be elided to stay under the line budget (GL-0356). */
+export interface BriefBlock {
+  name: string;
+  /** entry count shown when the block is elided */
+  count: number;
+  lines: string[];
+}
+
+/** The default brief stays under this many lines. */
+export const BRIEF_BUDGET = 120;
+
+/**
+ * Append the brief's context blocks under the line budget: a block that
+ * does not fit becomes one line — its count and `brief <id> more=<name>`.
+ * `more` names one block to print in full.
+ */
+export function briefBudget(
+  lines: string[],
+  blocks: BriefBlock[],
+  more: string | undefined,
+  id: string,
+): string[] {
+  const out = [...lines];
+  for (const b of blocks) {
+    if (!b.lines.length) continue;
+    if (more === b.name || out.length + b.lines.length < BRIEF_BUDGET) {
+      out.push(...b.lines);
+    } else {
+      out.push(`  (${b.count} ${b.name} — brief ${id} more=${b.name})`);
+    }
+  }
+  return out;
+}

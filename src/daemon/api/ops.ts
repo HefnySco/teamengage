@@ -549,6 +549,41 @@ export class WorkspaceOps {
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
       return { ref, status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown" };
     });
+    // GL-0356: context from past work — the parent plan's goal line,
+    // titles of decisions in this item's domains, and the newest done
+    // items that touched the same paths.
+    let plan_goal: string | undefined;
+    if (it.meta.parent) {
+      try {
+        const p = this.index.get(parseItemRef(it.meta.parent).id);
+        if (p) {
+          plan_goal =
+            sectionBody(p, "Summary").trim().split("\n").find((l) => l.trim()) ?? p.meta.title;
+        }
+      } catch {
+        /* bad parent ref — the validator reports it */
+      }
+    }
+    const listed = new Set(decisions.map((d) => d.meta.id));
+    const domain_decisions = [...this.index.decisions.values()]
+      .filter((d) => {
+        if (listed.has(d.meta.id)) return false;
+        try {
+          const src = this.index.get(parseItemRef(d.meta.item).id);
+          return src !== undefined && src.meta.domains.some((x) => it.meta.domains.includes(x));
+        } catch {
+          return false;
+        }
+      })
+      .map((d) => ({ id: d.meta.id, title: d.meta.title }));
+    const myTouches = await this.touchesOf(it);
+    const histAll: HistoryRow[] = [];
+    for (const d of this.index.items.values()) {
+      if (d.meta.id === it.meta.id || d.meta.status !== "done") continue;
+      if (touchesOverlap(myTouches, await this.touchesOf(d)).length) histAll.push(historyRow(d));
+    }
+    histAll.sort((a, b) => b.date.localeCompare(a.date) || compareIds(b.id, a.id));
+
     const wsName = this.wsr.ws.config.name;
     const referenced_by = [...this.index.items.values()]
       .filter(
@@ -577,6 +612,10 @@ export class WorkspaceOps {
       referenced_by,
       question: it.meta.question,
       repo_context: await this.repoContextsOf(it),
+      plan_goal,
+      domain_decisions,
+      history: histAll.slice(0, 3),
+      history_total: histAll.length,
       source,
       checks: (await this.checksOf(it)).checks,
       verify: await this.verifyOf(it),
@@ -2027,6 +2066,27 @@ export class WorkspaceOps {
   }
 
   /**
+   * GL-0362: when review_models is set, an ok review only counts toward
+   * auto-accept (and batch accept) when it names a reviewer_model that
+   * differs from submitted_model and is the right class for the item's
+   * tier. A review from before the rule existed has no reviewer_model and
+   * never qualifies.
+   */
+  modelRuleOk(it: IndexedItem): boolean {
+    const rm = this.wsr.ws.config.review_models;
+    if (!rm) return true;
+    const m = it.meta;
+    const rv = m.ai_review;
+    if (!rv?.reviewer_model) return false;
+    if (m.submitted_model && rv.reviewer_model === m.submitted_model) return false;
+    if (tierRank(m.tier) >= tierRank(rm.deep_from_tier)) {
+      return rv.reviewer_model === rm.deep;
+    }
+    const allowed = [rm.quick, rm.deep].filter(Boolean);
+    return allowed.length === 0 || allowed.includes(rv.reviewer_model);
+  }
+
+  /**
    * The auto_accept_rules entry this item matches, or undefined when no rule
    * matches (auto_accept_after is the delay then). First match wins; every
    * condition a rule lists must match — `domains` means the item carries
@@ -2063,6 +2123,8 @@ export class WorkspaceOps {
     ) {
       return undefined;
     }
+    // GL-0362: a review that breaks the model rule never starts auto-accept
+    if (!this.modelRuleOk(it)) return "waits for you — no review by a different model";
     const hit = this.autoAcceptRule(it);
     if (!hit) return `auto_accept_after (${this.wsr.ws.config.auto_accept_after})`;
     if (hit.rule.require_verified && !this.verifiedBadge(it).ok)
@@ -2095,6 +2157,8 @@ export class WorkspaceOps {
     ) {
       return undefined;
     }
+    // GL-0362: a review that breaks the model rule never starts auto-accept
+    if (!this.modelRuleOk(it)) return undefined;
     const hit = this.autoAcceptRule(it);
     if (hit?.rule.require_verified && !this.verifiedBadge(it).ok) return undefined;
     if (hit?.rule.after === "never") return undefined;
@@ -2256,6 +2320,10 @@ export class WorkspaceOps {
           }
           if (m.auto_accept_off) {
             skipped.push({ id, reason: "auto-accept stopped" });
+            continue;
+          }
+          if (!this.modelRuleOk(it)) {
+            skipped.push({ id, reason: "no review by a different model" });
             continue;
           }
           await this.accept(id);

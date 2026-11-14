@@ -5,7 +5,15 @@ import type { AgentBinding } from "../server/mcp.js";
 import { pickWorkspace } from "../server/mcp.js";
 import { WorkspaceOps } from "../../daemon/api/ops.js";
 import type { Session } from "../../core/model/session.js";
-import { okText, errText, errFrom, itemLine, type ToolResult } from "../format.js";
+import {
+  okText,
+  errText,
+  errFrom,
+  itemLine,
+  briefBudget,
+  type BriefBlock,
+  type ToolResult,
+} from "../format.js";
 import { handoffStatus, handoffLines } from "../../daemon/sync/sync.js";
 import { historyLine } from "../../core/index/history.js";
 
@@ -136,10 +144,13 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "brief",
     {
       description:
-        "What an agent needs to work an item: summary, acceptance, dep outcomes, decisions, resolved targets.",
-      inputSchema: { id: z.string() },
+        "What an agent needs to work an item: summary, acceptance, dep outcomes, decisions, resolved targets. " +
+        "The default brief stays under 120 lines — a block that does not fit shows its count and " +
+        "the call for more: `brief <id> more=<block>` (blocks: lessons, decisions, " +
+        "domain_decisions, history, repo_context).",
+      inputSchema: { id: z.string(), more: z.string().optional() },
     },
-    async ({ id }) => {
+    async ({ id, more }) => {
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
@@ -196,11 +207,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const handoff = sec("Handoff");
         if (handoff) lines.push(`handoff notes:\n${handoff}`);
         if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
+        if (b.plan_goal) lines.push(`plan goal: ${b.plan_goal}`);
         const lessons = await ops.lessonsFor(it.meta.domains);
-        if (lessons.length) {
-          lines.push("lessons (shared by earlier agents — newest first):");
-          for (const l of lessons) lines.push(`  - ${l}`);
-        }
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
         else lines.push(`source: ${b.source.path}${b.source.moved ? " (moved)" : ""}`, b.source.text.trim());
@@ -229,20 +237,52 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         for (const r of b.referenced_by) {
           lines.push(`referenced by ${r.ref} ${r.status}`);
         }
-        for (const d of b.decisions) {
-          lines.push(`decision ${d.meta.id}: ${d.meta.title}`);
-        }
         for (const t of b.targets) {
           lines.push(`target ${t.ref} → ${t.kind}${t.host ? ` ${t.host}` : ""}${t.path ? ` ${t.path}` : ""}`);
         }
-        for (const c of b.repo_context ?? []) {
-          lines.push(`context ${c.repo}:`);
-          for (const l of c.text.trim().split("\n")) lines.push(`  ${l}`);
-        }
+        // GL-0356: context blocks live under a 120-line budget — a block
+        // that does not fit shows its entry count and `brief <id> more=`.
+        const blocks: BriefBlock[] = [];
+        blocks.push({
+          name: "lessons",
+          count: lessons.length,
+          lines: lessons.length
+            ? ["lessons (shared by earlier agents — newest first):", ...lessons.map((l) => `  - ${l}`)]
+            : [],
+        });
+        blocks.push({
+          name: "decisions",
+          count: b.decisions.length,
+          lines: b.decisions.map((d) => `decision ${d.meta.id}: ${d.meta.title}`),
+        });
+        blocks.push({
+          name: "domain_decisions",
+          count: (b.domain_decisions ?? []).length,
+          lines: (b.domain_decisions ?? []).map((d) => `domain decision ${d.id}: ${d.title}`),
+        });
+        blocks.push({
+          name: "history",
+          count: b.history_total ?? 0,
+          lines: (b.history ?? []).length
+            ? [
+                `history (done items on the same paths — \`history <path>\` for all ${b.history_total}):`,
+                ...(b.history ?? []).map((r) => `  ${historyLine(r)}`),
+              ]
+            : [],
+        });
+        blocks.push({
+          name: "repo_context",
+          count: (b.repo_context ?? []).length,
+          lines: (b.repo_context ?? []).flatMap((c) => [
+            `context ${c.repo}:`,
+            ...c.text.trim().split("\n").map((l) => `  ${l}`),
+          ]),
+        });
+        const out = briefBudget(lines, blocks, more, it.meta.id);
         for (const o of b.overlap) {
-          lines.push(`warn: ${o.id} touches ${o.paths.join(", ")}`);
+          out.push(`warn: ${o.id} touches ${o.paths.join(", ")}`);
         }
-        return okText(lines.join("\n"));
+        return okText(out.join("\n"));
       } catch (e) {
         return errFrom(e);
       }
