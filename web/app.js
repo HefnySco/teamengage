@@ -3,7 +3,7 @@ import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import htm from "htm";
 
 const html = htm.bind(h);
@@ -4338,7 +4338,288 @@ const Artifacts = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, graph: Graph, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
+// ---- diagrams: domain coherence network + domain heat ----------------------
+// coherence between two domains = items tagged with both + depends_on links
+// that cross them (finished items count — they are real coupling). The layout
+// is a small deterministic Fruchterman–Reingold sim seeded on a circle — no
+// randomness, so the picture is stable between reloads.
+const DG_W = 920;
+const DG_H = 540;
+const dgLayout = (ids, edges, radius) => {
+  const pad = 80;
+  if (ids.length === 1) return new Map([[ids[0], { x: DG_W / 2, y: DG_H / 2 }]]);
+  const R = Math.min(DG_W, DG_H) / 2 - pad;
+  const pos = new Map(
+    ids.map((id, i) => [
+      id,
+      {
+        x: DG_W / 2 + R * Math.cos((2 * Math.PI * i) / ids.length - Math.PI / 2),
+        y: DG_H / 2 + R * Math.sin((2 * Math.PI * i) / ids.length - Math.PI / 2),
+      },
+    ]),
+  );
+  if (ids.length < 2) return pos;
+  const maxW = Math.max(1, ...edges.map((e) => e.w));
+  const k = Math.sqrt(((DG_W - 2 * pad) * (DG_H - 2 * pad)) / ids.length);
+  const iters = 220;
+  let temp = k;
+  const cool = temp / iters;
+  for (let it = 0; it < iters; it++, temp -= cool) {
+    const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = pos.get(ids[i]);
+        const b = pos.get(ids[j]);
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        const d = Math.hypot(dx, dy) || 0.01;
+        const f = (k * k) / d;
+        dx /= d;
+        dy /= d;
+        disp.get(ids[i]).x += dx * f;
+        disp.get(ids[i]).y += dy * f;
+        disp.get(ids[j]).x -= dx * f;
+        disp.get(ids[j]).y -= dy * f;
+      }
+    }
+    for (const e of edges) {
+      const a = pos.get(e.a);
+      const b = pos.get(e.b);
+      if (!a || !b) continue;
+      let dx = a.x - b.x;
+      let dy = a.y - b.y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      const f = ((d * d) / k) * (0.4 + (2 * e.w) / maxW); // strong pairs pull closer
+      dx /= d;
+      dy /= d;
+      disp.get(e.a).x -= dx * f;
+      disp.get(e.a).y -= dy * f;
+      disp.get(e.b).x += dx * f;
+      disp.get(e.b).y += dy * f;
+    }
+    for (const id of ids) {
+      const p = pos.get(id);
+      const d = disp.get(id);
+      d.x += (DG_W / 2 - p.x) * 0.02; // weak centre pull keeps strays on canvas
+      d.y += (DG_H / 2 - p.y) * 0.02;
+      const len = Math.hypot(d.x, d.y) || 0.01;
+      const step = Math.min(len, temp);
+      p.x = Math.min(DG_W - pad, Math.max(pad, p.x + (d.x / len) * step));
+      p.y = Math.min(DG_H - pad, Math.max(pad, p.y + (d.y / len) * step));
+    }
+  }
+  // relaxation: the force sim works on points, so circles can still overlap —
+  // push each overlapping pair apart until no two circles touch
+  for (let round = 0; round < 80; round++) {
+    let moved = false;
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = pos.get(ids[i]);
+        const b = pos.get(ids[j]);
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let d = Math.hypot(dx, dy);
+        const min = radius(ids[i]) + radius(ids[j]) + 14; // + label room
+        if (d >= min) continue;
+        if (d < 0.01) {
+          dx = 1;
+          dy = 0;
+          d = 1;
+        }
+        const push = (min - d) / 2 + 0.5;
+        a.x -= (dx / d) * push;
+        a.y -= (dy / d) * push;
+        b.x += (dx / d) * push;
+        b.y += (dy / d) * push;
+        moved = true;
+      }
+    }
+    for (const id of ids) {
+      const p = pos.get(id);
+      p.x = Math.min(DG_W - pad, Math.max(pad, p.x));
+      p.y = Math.min(DG_H - pad, Math.max(pad, p.y));
+    }
+    if (!moved) break;
+  }
+  return pos;
+};
+
+// heat colour scale: blue → amber → red — same stops as .dg-grad in the legend
+const dgHeatColor = (f) => {
+  const mix = (c1, c2, t) => c1.map((v, i) => Math.round(v + (c2[i] - v) * t));
+  const c = f < 0.5 ? mix([59, 130, 246], [245, 158, 11], f * 2) : mix([245, 158, 11], [220, 38, 38], (f - 0.5) * 2);
+  return `rgb(${c.join(" ")})`;
+};
+
+const DG_HEAT_W = { waiting: 6, in_progress: 4, in_review: 4, ready: 2, hold: 1 };
+const DG_PART_ORDER = { waiting: 0, in_progress: 1, in_review: 2, blocked: 3, ready: 4, attempts: 5, hold: 6 };
+const DG_PART_LAB = { waiting: "waiting", in_progress: "in progress", in_review: "in review", blocked: "blocked", ready: "ready", attempts: "failed attempts", hold: "hold" };
+
+const Diagrams = () => {
+  const { data: items } = useApi("/api/items");
+  useDomains(); // keeps domainColors warm for the node fills
+  const [minW, setMinW] = useState(1);
+  const [hideIso, setHideIso] = useState(false);
+  const [hover, setHover] = useState(null); // domain under the pointer
+
+  // nodes + weighted undirected edges between domains
+  const graph = useMemo(() => {
+    const count = {};
+    const shared = {};
+    const depLinks = {};
+    if (!items) return { count, edges: [] };
+    const byId = new Map(items.map((i) => [i.id, i]));
+    const pk = (a, b) => [a, b].sort().join(" ");
+    for (const i of items) {
+      const ds = [...new Set(i.domains ?? [])];
+      for (const d of ds) count[d] = (count[d] ?? 0) + 1;
+      for (let x = 0; x < ds.length; x++) {
+        for (let y = x + 1; y < ds.length; y++) {
+          const k = pk(ds[x], ds[y]);
+          shared[k] = (shared[k] ?? 0) + 1;
+        }
+      }
+      for (const ref of i.depends_on ?? []) {
+        const pairs = new Set();
+        for (const b of new Set(byId.get(ref)?.domains ?? [])) {
+          for (const a of ds) {
+            if (a !== b) pairs.add(pk(a, b));
+          }
+        }
+        for (const k of pairs) depLinks[k] = (depLinks[k] ?? 0) + 1;
+      }
+    }
+    const edges = [...new Set([...Object.keys(shared), ...Object.keys(depLinks)])].map((k) => {
+      const [a, b] = k.split(" ");
+      return { a, b, shared: shared[k] ?? 0, deps: depLinks[k] ?? 0, w: (shared[k] ?? 0) + (depLinks[k] ?? 0) };
+    });
+    return { count, edges };
+  }, [items]);
+
+  // the visible edge set and the layout react to the min-strength filter
+  const view = useMemo(() => {
+    const edges = graph.edges.filter((e) => e.w >= minW);
+    const ids = Object.keys(graph.count).sort();
+    return { ids, edges, maxW: Math.max(1, ...edges.map((e) => e.w)), pos: dgLayout(ids, edges, (id) => 8 + 4 * Math.sqrt(graph.count[id])) };
+  }, [graph, minW]);
+
+  // heat: live items only — waiting on the human is hottest
+  const { heat, maxHeat, untagged } = useMemo(() => {
+    const rows = {};
+    let unt = 0;
+    for (const i of items ?? []) {
+      if (i.status === "done" || i.status === "dropped") continue;
+      const ds = new Set(i.domains ?? []);
+      if (!ds.size) {
+        unt++;
+        continue;
+      }
+      for (const d of ds) {
+        const r = (rows[d] ??= { d, heat: 0, parts: {} });
+        const w = DG_HEAT_W[i.status] ?? 0;
+        r.heat += w;
+        if (w) r.parts[i.status] = (r.parts[i.status] ?? 0) + 1;
+        if (i.blocked) {
+          r.heat += 4;
+          r.parts.blocked = (r.parts.blocked ?? 0) + 1;
+        }
+        const att = Math.min(i.attempts ?? 0, 5);
+        if (att) {
+          r.heat += 2 * att;
+          r.parts.attempts = (r.parts.attempts ?? 0) + att;
+        }
+      }
+    }
+    const list = Object.values(rows).sort((a, b) => b.heat - a.heat || a.d.localeCompare(b.d));
+    return { heat: list, maxHeat: Math.max(1, ...list.map((r) => r.heat)), untagged: unt };
+  }, [items]);
+
+  if (!items) return html`<p class="text-secondary">loading…</p>`;
+  const ids = hideIso ? view.ids.filter((id) => view.edges.some((e) => e.a === id || e.b === id)) : view.ids;
+  const nbOf = (id) => view.edges.filter((e) => e.a === id || e.b === id);
+  const openDomain = (d) => {
+    saveSearch("te.board.domain", d);
+    nav("board");
+  };
+  const fmtParts = (r) =>
+    Object.entries(r.parts)
+      .sort((a, b) => (DG_PART_ORDER[a[0]] ?? 9) - (DG_PART_ORDER[b[0]] ?? 9))
+      .map(([k, n]) => `${n} ${DG_PART_LAB[k] ?? k}`)
+      .join(" · ");
+  return html`
+    <div class="card mb-3">
+      <div class="card-header py-2 d-flex align-items-center gap-2 flex-wrap">
+        <b>domain coherence</b>
+        <span class="text-secondary small">edge = items tagged with both + dependency links between them — thicker means tighter coupling</span>
+        <label class="ms-auto small text-secondary d-flex align-items-center gap-1">edge strength ≥
+          <select class="form-select form-select-sm w-auto" value=${minW} onChange=${(e) => setMinW(Number(e.target.value))}>
+            ${[1, 2, 3, 5, 8].map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
+          </select></label>
+        <label class="small text-secondary d-flex align-items-center gap-1"><input type="checkbox" checked=${hideIso} onChange=${(e) => setHideIso(e.target.checked)} /> hide unlinked</label>
+      </div>
+      ${!view.ids.length
+        ? html`<div class="card-body text-secondary small">no domains on any item yet — tag items with #domain first</div>`
+        : html`<svg viewBox=${`0 0 ${DG_W} ${DG_H}`} class="dg-svg">
+            ${view.edges.map((e) => {
+              const a = view.pos.get(e.a);
+              const b = view.pos.get(e.b);
+              const dim = hover && e.a !== hover && e.b !== hover;
+              return html`<line key=${e.a + e.b} x1=${a.x} y1=${a.y} x2=${b.x} y2=${b.y}
+                class=${`dg-edge${dim ? " dim" : ""}`}
+                stroke-width=${(0.8 + (4 * e.w) / view.maxW).toFixed(2)}
+                stroke-opacity=${(0.2 + (0.6 * e.w) / view.maxW).toFixed(2)}>
+                <title>#${e.a} ↔ #${e.b} — coherence ${e.w} (${e.shared} shared item(s), ${e.deps} dependency link(s))</title>
+              </line>`;
+            })}
+            ${ids.map((id) => {
+              const p = view.pos.get(id);
+              const n = graph.count[id];
+              const r = 8 + 4 * Math.sqrt(n);
+              const dim = hover && hover !== id && !nbOf(hover).some((e) => e.a === id || e.b === id);
+              return html`<g key=${id} class=${`dg-node${dim ? " dim" : ""}`}
+                onMouseEnter=${() => setHover(id)} onMouseLeave=${() => setHover(null)} onClick=${() => openDomain(id)}>
+                <circle cx=${p.x} cy=${p.y} r=${r} fill=${domainColors[id] ?? fallbackColor(id)} />
+                ${r >= 12 && html`<text x=${p.x} y=${p.y} class="dg-num" text-anchor="middle" dominant-baseline="central">${n}</text>`}
+                <text x=${p.x} y=${p.y + r + 11} class="dg-lab" text-anchor="middle">#${id}</text>
+                <title>#${id} — ${n} item(s); click to filter the board</title>
+              </g>`;
+            })}
+          </svg>`}
+      <div class="card-footer small text-secondary py-1">
+        ${view.edges.length} link(s) between ${ids.length} domain(s) · finished items count toward coherence · click a node to filter the board
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header py-2 d-flex align-items-center gap-2 flex-wrap">
+        <b>domain heat</b>
+        <span class="text-secondary small">live items only — waiting on you is hottest, then active work, blocks and failed attempts</span>
+        <span class="dg-heat-scale ms-auto">cold <i class="dg-grad"></i> hot</span>
+      </div>
+      ${!heat.length
+        ? html`<div class="card-body text-secondary small">nothing live — no open item carries a domain</div>`
+        : html`<div class="table-responsive"><table class="table table-sm align-middle mb-0">
+            <thead><tr><th class="text-secondary" style=${{ width: "2rem" }}>#</th><th>domain</th><th>heat</th><th class="text-end" style=${{ width: "4rem" }}>score</th><th class="text-secondary">what is hot</th></tr></thead>
+            <tbody>
+              ${heat.map(
+                (r, i) => html`<tr key=${r.d} class=${r.heat ? "" : "dg-cold"}>
+                <td class="text-secondary">${i + 1}</td>
+                <td><a href="#/board" onClick=${() => saveSearch("te.board.domain", r.d)}><${DomainChip} d=${r.d} /></a></td>
+                <td><div class="dg-heat-bar" title=${`${r.d}: ${fmtParts(r) || "cold"}`} style=${{ width: `${Math.max(1.5, (100 * r.heat) / maxHeat)}%`, background: r.heat ? dgHeatColor(r.heat / maxHeat) : "var(--bs-border-color)" }}></div></td>
+                <td class="text-end fw-medium">${r.heat}</td>
+                <td class="small text-secondary">${fmtParts(r)}</td>
+              </tr>`,
+              )}
+            </tbody>
+          </table></div>`}
+      <div class="card-footer small text-secondary py-1">
+        score = 6×waiting + 4×(in progress + in review + blocked) + 2×ready + 1×hold + 2×failed attempt (attempts cap at +10)${untagged ? ` · ${untagged} untagged live item(s) not shown` : ""}
+      </div>
+    </div>
+  `;
+};
+
+const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, graph: Graph, diagrams: Diagrams, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

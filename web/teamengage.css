@@ -1162,3 +1162,16 @@ details.sec > .sec-bd {
   .hcard .card-body { padding: .5rem .75rem; }
   .sticky-top .view-sw { white-space: nowrap; }
 }
+
+/* diagrams page: domain coherence network + domain heat */
+.dg-svg { width: 100%; height: auto; display: block; }
+.dg-edge { stroke: var(--bs-secondary-color); }
+.dg-node { cursor: pointer; }
+.dg-node.dim, .dg-edge.dim { opacity: .12; }
+.dg-node circle { stroke: var(--bs-body-bg); stroke-width: 1.5; }
+.dg-num { font-size: 10px; font-weight: 600; fill: #fff; pointer-events: none; }
+.dg-lab { font-size: 11px; fill: var(--bs-body-color); pointer-events: none; }
+.dg-heat-bar { height: 14px; border-radius: 3px; min-width: 2px; transition: width .2s; }
+.dg-cold td { opacity: .55; }
+.dg-heat-scale { display: inline-flex; align-items: center; gap: .4rem; font-size: .72rem; color: var(--bs-secondary-color); }
+.dg-grad { width: 9rem; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgb(59 130 246), rgb(245 158 11), rgb(220 38 38)); }
