@@ -190,6 +190,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         id: r.id,
         cut: r.cut,
         since: r.since,
+        from: r.from,
         items: r.items.length,
         deploys: r.deploys.length,
       }));
@@ -229,9 +230,29 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
 
   app.post("/api/releases", async (req, reply) => {
     try {
-      const b = (req.body ?? {}) as { name?: string };
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("cutting a release is human-only");
+      }
+      const b = (req.body ?? {}) as { name?: string; from?: string; dry_run?: boolean };
       if (!b.name?.trim()) throw new TeError("USAGE", "release cut needs {name}");
-      return await opsFor(ctx, wsOf(req.query)).cutRelease(b.name.trim(), "human");
+      return await opsFor(ctx, wsOf(req.query)).cutRelease(b.name.trim(), "human", {
+        from: b.from?.trim() || undefined,
+        dryRun: b.dry_run === true,
+      });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  app.delete("/api/releases/:id", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("deleting a release is human-only");
+      }
+      const { id } = (req.params ?? {}) as { id?: string };
+      if (!id) throw new TeError("USAGE", "release id required");
+      await opsFor(ctx, wsOf(req.query)).deleteRelease(id, "human");
+      return { ok: true };
     } catch (e) {
       return sendErr(reply, e);
     }

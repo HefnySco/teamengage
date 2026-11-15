@@ -3352,14 +3352,50 @@ const OpsReleases = () => {
   const cut = async () => {
     const name = await promptDialog("cut a release", { label: "release name (e.g. 2026-11-field)" });
     if (name === null || !name.trim()) return;
+    // GL-0376: an optional start point bounds the window; without it the
+    // dry-run count is shown and the human confirms before the file writes
+    const from = await promptDialog("cut a release", {
+      label: "start point — a date (2026-10-01) or repo@sha; empty = all history",
+    });
+    if (from === null) return;
     setBusy(true);
     try {
-      const r = await post("/api/releases", { name: name.trim() });
+      const body = { name: name.trim(), ...(from.trim() ? { from: from.trim() } : {}) };
+      const dry = await post("/api/releases", { ...body, dry_run: true });
+      if (!(await confirmDialog(
+        `cut ${name.trim()}?`,
+        `${dry.items.length} item(s)${dry.from ? ` finished after ${dry.from.slice(0, 10)}` : " — no start point, all done tasks since the last release"}. The release file is written to the plans repo.`,
+        { ok: `cut ${dry.items.length} item(s)` },
+      ))) return;
+      const r = await post("/api/releases", body);
       toast(`release ${r.id} cut — ${r.items.length} item(s)`, "success");
       setOpen(r.id);
       reloadList();
     } catch (e) { toast(e.message); }
     finally { setBusy(false); }
+  };
+  const del = async (r) => {
+    if (!(await confirmDialog(
+      `delete release ${r.id}?`,
+      `The .release.yaml file is removed and committed. Jobs that named it keep their release=${r.id} param and show it as missing.`,
+      { ok: "delete", danger: true },
+    ))) return;
+    setBusy(true);
+    try {
+      await api(`/api/releases/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+      toast(`release ${r.id} deleted`, "success");
+      if (open === r.id) setOpen(null);
+      reloadList();
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); }
+  };
+  const groups = (items) => {
+    const g = new Map();
+    for (const i of items) {
+      const k = i.feature ?? "";
+      g.set(k, [...(g.get(k) ?? []), i]);
+    }
+    return [...g.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
   };
   if (!rels) return html`<${OpsTabs} view="releases" /><p class="text-secondary">loading…</p>`;
   return html`
@@ -3374,18 +3410,24 @@ const OpsReleases = () => {
       <div key=${r.id} class="card mb-2 p-2">
         <div class="d-flex align-items-center gap-2" role="button" onClick=${() => setOpen(open === r.id ? null : r.id)}>
           <b class="id">${r.id}</b>
-          <span class="small text-secondary">cut ${ago(r.cut.ts)} ago by ${r.cut.by}${r.since ? ` · since ${r.since}` : ""}</span>
+          <span class="small text-secondary">cut ${ago(r.cut.ts)} ago by ${r.cut.by}${r.since ? ` · since ${r.since}` : ""}${r.from ? ` · after ${r.from.slice(0, 10)}` : ""}</span>
           <span class="ms-auto small text-secondary">${r.items} item(s) · ${r.deploys} deploy(s) ${open === r.id ? "▾" : "▸"}</span>
+          <button class="btn btn-sm btn-outline-danger" disabled=${busy}
+            onClick=${(e) => { e.stopPropagation(); del(r); }}>delete</button>
         </div>
         ${open === r.id && detail && html`
           <div class="mt-2 small">
             ${detail.items.length === 0 && html`<div class="text-secondary">no items in this release</div>`}
-            ${detail.items.map((i) => html`
-              <div key=${i.item} class="d-flex align-items-center gap-2 py-0">
-                <a class="item id" href=${`#/item/${i.item}`}>${i.item}</a>
-                <span class="text-truncate" title=${i.title}>${i.title}</span>
-                ${i.feature && html`<a class="plan-chip ps-active" href=${`#/item/${i.feature}`}>${i.feature}</a>`}
-                <span class="ms-auto text-secondary">${i.commits.map((c) => html`<code key=${c.sha} title=${`${c.resource}: ${c.sha}`}>${c.sha.slice(0, 8)}</code> `)}</span>
+            ${groups(detail.items).map(([f, items]) => html`
+              <div key=${f || "other"} class="mt-1">
+                <div class="text-secondary"><b>${f || "other"}</b> · ${items.length}</div>
+                ${items.map((i) => html`
+                  <div key=${i.item} class="d-flex align-items-center gap-2 py-0">
+                    <a class="item id" href=${`#/item/${i.item}`}>${i.item}</a>
+                    <span class="text-truncate" title=${i.title}>${i.title}</span>
+                    ${i.feature && html`<a class="plan-chip ps-active" href=${`#/item/${i.feature}`}>${i.feature}</a>`}
+                    <span class="ms-auto text-secondary">${i.commits.map((c) => html`<code key=${`${c.resource}@${c.sha}`} title=${`${c.resource}: ${c.sha}`}>${c.resource !== "unknown" ? `${c.resource} ` : ""}${c.sha.slice(0, 7)}</code> `)}</span>
+                  </div>`)}
               </div>`)}
             ${detail.deploys.length > 0 && html`
               <div class="mt-2"><b>deployed by</b>
@@ -4009,6 +4051,7 @@ const OpsList = () => {
 const OpsJob = ({ id }) => {
   const { data: job, err, reload } = useApi(`/api/ops/job/${encodeURIComponent(id)}`, [id]);
   const { data: pbs } = useApi("/api/ops/playbooks");
+  const { data: rels } = useApi("/api/releases");
   const { data: ws } = useApi("/api/workspace");
   const [busy, setBusy] = useState(false);
   if (err) return html`<p class="text-danger">${String(err)}</p>`;
@@ -4059,7 +4102,11 @@ const OpsJob = ({ id }) => {
       ${job.playbook}${job.target ? ` on ${job.target}` : ""} · ${job.machine} · started ${ago(job.started.ts)} ago by ${job.started.by}
       ${job.version ? ` · version ${job.version}` : ""}
     </div>
-    ${Object.keys(job.params ?? {}).length > 0 && html`<div class="small text-secondary mb-2">params: ${Object.entries(job.params).map(([k, v]) => `${k}=${v}`).join("  ")}</div>`}
+    ${Object.keys(job.params ?? {}).length > 0 && html`<div class="small text-secondary mb-2">params: ${Object.entries(job.params).map(([k, v]) =>
+      k === "release" && rels && !rels.some((r) => r.id === v)
+        ? html`<span key=${k}>release=${v} <span class="badge text-bg-warning">missing</span>  </span>`
+        : html`<span key=${k}>${k}=${v}  </span>`,
+    )}</div>`}
     ${(job.repos ?? []).length > 0 && html`<div class="small text-secondary mb-2">repos:
       ${job.repos.map((r, i) => html`<span key=${i} class="me-3">${r.path} @${r.commit ? r.commit.slice(0, 8) : "?"}${r.dirty ? html` <span class="badge text-bg-warning" title="the repo had uncommitted changes at job start">dirty</span>` : ""}${r.error ? html` <span class="badge text-bg-danger" title=${r.error}>unreadable</span>` : ""}</span>`)}
     </div>`}
@@ -4124,11 +4171,31 @@ const OpsPlaybooks = () => {
   `;
 };
 
+// click-toggle pick list — a native <select> with many options opens upward
+// and dismisses on mouseup outside; this stays open until a pick or a click away
+const Pick = ({ value, options, none, onPick, title }) => {
+  const [open, setOpen] = useState(false);
+  const sel = (v) => () => (onPick(v), setOpen(false));
+  return html`
+    <span class="position-relative d-inline-block" title=${title}>
+      ${open && html`<div style=${{ position: "fixed", inset: 0, zIndex: 1049 }} onClick=${() => setOpen(false)} />`}
+      <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" onClick=${() => setOpen(!open)}>
+        ${value || none}
+      </button>
+      ${open && html`
+        <div class="sug" style=${{ left: 0, top: "calc(100% + 0.2rem)", minWidth: "14rem" }}>
+          ${none !== undefined && html`<div class=${`it${value === "" ? " sel" : ""}`} onClick=${sel("")}>${none}</div>`}
+          ${options.map((o) => html`<div key=${o.value} class=${`it${o.value === value ? " sel" : ""}`} onClick=${sel(o.value)}>${o.label ?? o.value}</div>`)}
+        </div>`}
+    </span>`;
+};
+
 const OpsPlaybook = ({ name }) => {
   const { data: pbs } = useApi("/api/ops/playbooks");
   const { data: targets } = useApi("/api/ops/targets");
   const { data: jobs } = useApi(`/api/ops/jobs?playbook=${encodeURIComponent(name)}`, [name]);
   const { data: pbNotes, reload: reloadNotes } = useApi(`/api/ops/playbooks/${encodeURIComponent(name)}/notes`, [name]);
+  const { data: rels } = useApi("/api/releases");
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   if (!pbs) return html`<p class="text-secondary">loading…</p>`;
@@ -4139,6 +4206,7 @@ const OpsPlaybook = ({ name }) => {
   const openForm = () =>
     setForm({
       target: pb.target ?? "",
+      release: "",
       params: Object.fromEntries(pb.params.map((p) => [p.name, p.default ?? ""])),
     });
   const start = async () => {
@@ -4147,7 +4215,11 @@ const OpsPlaybook = ({ name }) => {
       const job = await post("/api/ops/start", {
         playbook: pb.name,
         target: form.target || undefined,
-        params: Object.fromEntries(Object.entries(form.params).filter(([, v]) => v !== "")),
+        params: Object.fromEntries(
+          Object.entries(form.params)
+            .filter(([, v]) => v !== "")
+            .concat(form.release ? [["release", form.release]] : []),
+        ),
       });
       nav(`ops/${job.id}`);
     } catch (e) { toast(e.message); }
@@ -4172,16 +4244,26 @@ const OpsPlaybook = ({ name }) => {
       <div class="card card-body mb-3">
         <div class="d-flex align-items-center gap-2 flex-wrap">
           <b class="small">start ${pb.name}</b>
-          <select class="form-select form-select-sm w-auto" value=${form.target} onChange=${(e) => setForm({ ...form, target: e.target.value })}>
-            <option value="">no target</option>
-            ${Object.keys(targets ?? {}).sort().map((t) => html`<option key=${t} value=${t}>${t}</option>`)}
-          </select>
           <span class="ms-auto d-flex gap-1">
             <button class="btn btn-sm btn-primary" disabled=${busy} onClick=${start}>run</button>
             <button class="btn btn-sm btn-outline-secondary" disabled=${busy} onClick=${() => setForm(null)}>cancel</button>
           </span>
         </div>
-        ${pb.params.map((p) => html`
+        <div class="d-flex align-items-center gap-2 mt-2">
+          <label class="small text-secondary" style=${{ minWidth: "10em" }}>target</label>
+          <${Pick} value=${form.target} none="no target"
+            options=${Object.keys(targets ?? {}).sort().map((t) => ({ value: t }))}
+            onPick=${(v) => setForm({ ...form, target: v })} />
+        </div>
+        ${(rels ?? []).length > 0 && html`
+          <div class="d-flex align-items-center gap-2 mt-2">
+            <label class="small text-secondary" style=${{ minWidth: "10em" }}>release</label>
+            <${Pick} value=${form.release} none="no release"
+              title="tag this job with the release it deploys — a succeeded job records itself on the release page"
+              options=${rels.map((r) => ({ value: r.id }))}
+              onPick=${(v) => setForm({ ...form, release: v })} />
+          </div>`}
+        ${pb.params.filter((p) => p.name !== "release" || !(rels ?? []).length).map((p) => html`
           <div class="d-flex align-items-center gap-2 mt-2" key=${p.name}>
             <label class="small text-secondary" style=${{ minWidth: "10em" }}>${p.name}${p.required ? " *" : ""}</label>
             <input class="form-control form-control-sm" value=${form.params[p.name] ?? ""}

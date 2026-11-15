@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import { execFileSync } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve, basename, dirname, sep } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
@@ -51,7 +51,7 @@ import {
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
 import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
 import { readRepoContext, writeRepoContext } from "../../core/files/repo-context.js";
-import { isRepo, revParse, commitFiles as gitCommitFiles } from "../../resources/git/git.js";
+import { isRepo, revParse, git, commitFiles as gitCommitFiles } from "../../resources/git/git.js";
 import {
   releaseItemSets,
   listReleases,
@@ -713,14 +713,24 @@ export class WorkspaceOps {
    * Cut a release — human only. Freezes the accepted (done) tasks no earlier
    * release already contains: their merge commits (deliveries on accept, or
    * the `- commit` evidence lines) and each item's feature through its plan.
+   * `opts.from` is a start point (GL-0376): an ISO date, a `repo@sha`, or a
+   * bare sha in the plans repo — resolved to a date, only items finished
+   * after it enter the window. `opts.dryRun` computes the record without
+   * writing it, so the UI can confirm the item count first.
    */
-  async cutRelease(name: string, actor: Session | "human"): Promise<Release> {
+  async cutRelease(
+    name: string,
+    actor: Session | "human",
+    opts: { from?: string; dryRun?: boolean } = {},
+  ): Promise<Release> {
     if (actor !== "human") throw new ForbiddenError("cutting a release is human-only");
     if (!RELEASE_NAME.test(name)) throw new ValidationError(`bad release name '${name}'`);
     const rels = await this.releases();
     if (rels.some((r) => r.id === name)) {
       throw new ValidationError(`release '${name}' already exists`);
     }
+    const from = opts.from ? await this.resolveFrom(opts.from) : undefined;
+    const fromTs = from ? Date.parse(from) : -Infinity;
     const released = new Set(rels.flatMap((r) => r.items.map((i) => i.item)));
     const prev = [...rels].sort((a, b) => a.cut.ts.localeCompare(b.cut.ts)).at(-1);
     const shipped = new Set(["task", "bug", "wish", "spike", "review"]);
@@ -730,7 +740,8 @@ export class WorkspaceOps {
           i.meta.status === "done" &&
           !i.meta.archived &&
           shipped.has(i.meta.type) &&
-          !released.has(i.meta.id),
+          !released.has(i.meta.id) &&
+          Date.parse(i.meta.finished_at ?? i.meta.updated ?? "") > fromTs,
       )
       .sort((a, b) => a.meta.id.localeCompare(b.meta.id, undefined, { numeric: true }))
       .map((i) => ({
@@ -743,12 +754,59 @@ export class WorkspaceOps {
       id: name,
       cut: { ts: new Date().toISOString(), by: `human@${this.wsr.store.machine}` },
       ...(prev ? { since: prev.id } : {}),
+      ...(from ? { from } : {}),
       items,
       deploys: [],
     };
+    if (opts.dryRun) return rel;
     const relPath = await saveRelease(this.wsr.ws.plansDir, rel);
     await this.store.commitPlanFiles([relPath], `te: release ${name} cut — ${items.length} item(s)`);
     return rel;
+  }
+
+  /**
+   * Delete a release record — human only (GL-0376). Removes the file through
+   * the plan-file commit path; jobs keep `params.release` as history and the
+   * job view marks it missing.
+   */
+  async deleteRelease(id: string, actor: Session | "human"): Promise<void> {
+    if (actor !== "human") throw new ForbiddenError("deleting a release is human-only");
+    if (!RELEASE_NAME.test(id)) throw new ValidationError(`bad release name '${id}'`);
+    const rel = await this.getRelease(id);
+    if (!rel) throw new NotFoundError(`release '${id}'`);
+    const relPath = join("releases", `${id}.release.yaml`);
+    await rm(join(this.wsr.ws.plansDir, relPath), { force: true });
+    await this.store.commitPlanFiles([], `te: release ${id} deleted`, [relPath]);
+  }
+
+  /**
+   * A start point for the cut window: an ISO date as-is, a `repo@sha` (the
+   * same form evidence commit lines use) or a bare sha in the plans repo —
+   * resolved to the committer date, ISO.
+   */
+  private async resolveFrom(from: string): Promise<string> {
+    const asDate = Date.parse(from);
+    if (!Number.isNaN(asDate)) return new Date(asDate).toISOString();
+    const at = from.lastIndexOf("@");
+    const repo = at > 0 ? from.slice(0, at) : undefined;
+    const sha = at > 0 ? from.slice(at + 1) : from;
+    const dirs = repo
+      ? [resolve(this.wsr.ws.root, repo), resolve(this.wsr.ws.root, "..", repo)]
+      : [this.wsr.ws.plansDir];
+    for (const dir of dirs) {
+      if (!(await isRepo(dir))) continue;
+      try {
+        const ts = (
+          await git(dir, ["show", "-s", "--format=%cI", sha])
+        ).trim();
+        if (Date.parse(ts)) return new Date(ts).toISOString();
+      } catch {
+        /* not in this repo — try the next */
+      }
+    }
+    throw new ValidationError(
+      `release start point '${from}' is not a date and no repo has that commit`,
+    );
   }
 
   releases(): Promise<Release[]> {
@@ -795,7 +853,13 @@ export class WorkspaceOps {
     }
     const ev =
       it.sections.find((s) => s.heading.toLowerCase() === "evidence")?.body ?? "";
-    return [...ev.matchAll(/^- commit\s+(\S+)/gm)].map((m) => ({ resource: "unknown", sha: m[1] }));
+    // GL-0376: '- commit <repo>@<sha>' — split at the last '@'; a bare sha has no repo
+    return [...ev.matchAll(/^- commit\s+(\S+)/gm)].map((m) => {
+      const at = m[1].lastIndexOf("@");
+      return at > 0
+        ? { resource: m[1].slice(0, at), sha: m[1].slice(at + 1) }
+        : { resource: "unknown", sha: m[1] };
+    });
   }
 
   /**

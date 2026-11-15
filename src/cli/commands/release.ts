@@ -21,6 +21,7 @@ interface ReleaseRow {
   id: string;
   cut: { ts: string; by: string };
   since?: string;
+  from?: string;
   items: number;
   deploys: number;
 }
@@ -29,6 +30,7 @@ interface ReleaseFull {
   id: string;
   cut: { ts: string; by: string };
   since?: string;
+  from?: string;
   items: { item: string; title: string; feature?: string; commits: { resource: string; sha: string }[] }[];
   deploys: { job: string; playbook?: string; target?: string; machine?: string; status: string; version?: string }[];
 }
@@ -40,15 +42,16 @@ export async function releasesCmd(args: string[], home?: string): Promise<number
     if (!rels.length) return console.log("no releases — cut one with: te releases cut <name>"), 0;
     for (const r of rels)
       console.log(
-        `${r.id}  cut ${r.cut.ts.slice(0, 16).replace("T", " ")} by ${r.cut.by}  ${r.items} item(s)  ${r.deploys} deploy(s)${r.since ? `  since ${r.since}` : ""}`,
+        `${r.id}  cut ${r.cut.ts.slice(0, 16).replace("T", " ")} by ${r.cut.by}  ${r.items} item(s)  ${r.deploys} deploy(s)${r.since ? `  since ${r.since}` : ""}${r.from ? `  after ${r.from.slice(0, 10)}` : ""}`,
       );
     return 0;
   }
   if (sub === "cut") {
     const name = args[1];
-    if (!name || name.startsWith("--")) return console.log("usage: te releases cut <name>"), 4;
-    const r = (await daemonApi("POST", `/api/releases${ws(args)}`, { name }, home)) as ReleaseFull;
-    console.log(`release ${r.id} cut — ${r.items.length} item(s)${r.since ? ` since ${r.since}` : ""}`);
+    if (!name || name.startsWith("--")) return console.log("usage: te releases cut <name> [--from <date|repo@sha>]"), 4;
+    const from = opt(args, "--from");
+    const r = (await daemonApi("POST", `/api/releases${ws(args)}`, { name, ...(from ? { from } : {}) }, home)) as ReleaseFull;
+    console.log(`release ${r.id} cut — ${r.items.length} item(s)${r.since ? ` since ${r.since}` : ""}${r.from ? ` after ${r.from.slice(0, 10)}` : ""}`);
     for (const i of r.items)
       console.log(
         `  ${i.item}  ${i.title}${i.feature ? `  [${i.feature}]` : ""}${i.commits.length ? `  ${i.commits.map((c) => c.sha.slice(0, 8)).join(",")}` : ""}`,
@@ -74,6 +77,13 @@ export async function releasesCmd(args: string[], home?: string): Promise<number
     }
     return 0;
   }
-  console.log("usage: te releases [list|cut <name>|notes <name>] [--ws w]");
+  if (sub === "delete") {
+    const name = args[1];
+    if (!name || name.startsWith("--")) return console.log("usage: te releases delete <name>"), 4;
+    await daemonApi("DELETE", `/api/releases/${encodeURIComponent(name)}${ws(args)}`, undefined, home);
+    console.log(`release ${name} deleted`);
+    return 0;
+  }
+  console.log("usage: te releases [list|cut <name> [--from d]|notes <name>|delete <name>] [--ws w]");
   return 4;
 }

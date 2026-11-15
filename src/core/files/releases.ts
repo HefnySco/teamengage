@@ -27,6 +27,9 @@ export interface Release {
   cut: { ts: string; by: string };
   /** previous release this window opened after */
   since?: string;
+  /** start point given at cut (ISO date resolved from a date or a commit) —
+   * only items finished after it entered the window */
+  from?: string;
   /** frozen at cut — never recomputed later */
   items: ReleaseItem[];
   /** job ids that deployed this release — appended by JobStore on success */
@@ -60,7 +63,19 @@ async function loadReleaseFile(p: string): Promise<Release | undefined> {
     return {
       ...d,
       cut: d.cut ?? { ts: "", by: "" },
-      items: d.items ?? [],
+      items: (d.items ?? []).map((i) => ({
+        ...i,
+        // GL-0376: early records stored 'repo@sha' in sha — split on read so
+        // old files display correctly
+        commits: (i.commits ?? []).map((c) => {
+          const at = c.sha?.lastIndexOf("@") ?? -1;
+          if (at <= 0) return c;
+          return {
+            resource: c.resource === "unknown" ? c.sha.slice(0, at) : c.resource,
+            sha: c.sha.slice(at + 1),
+          };
+        }),
+      })),
       deploys: d.deploys ?? [],
     };
   } catch {

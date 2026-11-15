@@ -2023,6 +2023,93 @@ describe("release record (GL-0332)", () => {
   });
 });
 
+describe("release fixes (GL-0376)", () => {
+  it("cut with a start point only takes items finished after it and records the window; dry run writes nothing", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+
+    const { ids } = await ops.propose([{ type: "task", title: "window item", domains: ["teamengage"] }], human);
+    const s = ctx.sessions.hello("coder-w");
+    await ops.approve(ids[0]);
+    await ops.claim(ids[0], s);
+    await ops.submit(ids[0], s, { walkthrough: "w", commits: ["feed00d"], what: "done", how: "steps" });
+    await ops.accept(ids[0], human);
+
+    // a start point in the future excludes everything; in the past includes it
+    const future = await ops.cutRelease("r-win-far", "human", { from: "2999-01-01", dryRun: true });
+    expect(future.items.some((i) => i.item === ids[0])).toBe(false);
+    expect(future.from).toBe("2999-01-01T00:00:00.000Z");
+    expect(existsSync(join(plans, "releases", "r-win-far.release.yaml"))).toBe(false); // dry run
+
+    const rel = await ops.cutRelease("r-win", "human", { from: "2000-01-01" });
+    expect(rel.items.some((i) => i.item === ids[0])).toBe(true);
+    expect(rel.from).toBe("2000-01-01T00:00:00.000Z");
+
+    // a start point that is neither a date nor a known commit is refused
+    await expect(ops.cutRelease("r-bad", "human", { from: "not-a-date@deadbeef" })).rejects.toThrow(/start point/);
+    // a bare sha in the plans repo resolves to its committer date
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: plans }).toString().trim();
+    const resolved = await ops.cutRelease("r-sha", "human", { from: head, dryRun: true });
+    expect(Date.parse(resolved.from!)).toBeGreaterThan(0);
+  });
+
+  it("'- commit <repo>@<sha>' evidence splits into resource+sha; legacy 'repo@sha' in sha splits on read", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+
+    const { ids } = await ops.propose([{ type: "task", title: "split item", domains: ["teamengage"] }], human);
+    const s = ctx.sessions.hello("coder-s");
+    await ops.approve(ids[0]);
+    await ops.claim(ids[0], s);
+    await ops.submit(ids[0], s, { walkthrough: "w", commits: ["andruav_android_app@4ff5203"], what: "done", how: "steps" });
+    await ops.accept(ids[0], human);
+
+    const rel = await ops.cutRelease("r-split", "human");
+    const row = rel.items.find((i) => i.item === ids[0])!;
+    expect(row.commits).toEqual([{ resource: "andruav_android_app", sha: "4ff5203" }]);
+
+    // a legacy file that stored 'repo@sha' inside sha still reads back split
+    const { loadRelease } = await import("../../core/files/releases.js");
+    writeFileSync(
+      join(plans, "releases", "r-legacy.release.yaml"),
+      "id: r-legacy\ncut: { ts: '2026-01-01T00:00:00Z', by: t }\nitems:\n  - item: WS-0001\n    title: t\n    commits:\n      - { resource: unknown, sha: 'andruav_android_app@4ff5203' }\ndeploys: []\n",
+    );
+    const legacy = await loadRelease(plans, "r-legacy");
+    expect(legacy!.items[0].commits).toEqual([{ resource: "andruav_android_app", sha: "4ff5203" }]);
+  });
+
+  it("delete removes the file through a plan commit; an agent is refused; the job view param marks missing via the list", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const relPath = join(plans, "releases", "r-del.release.yaml");
+    writeFileSync(relPath, "id: r-del\ncut: { ts: '2026-01-01T00:00:00Z', by: t }\nitems: []\ndeploys: []\n");
+    expect(await ops.getRelease("r-del")).toBeTruthy();
+
+    const s = ctx.sessions.hello("coder-d");
+    await expect(ops.deleteRelease("r-del", s)).rejects.toThrow(/human-only/);
+    await ops.deleteRelease("r-del", "human");
+    expect(existsSync(relPath)).toBe(false);
+    expect(await ops.getRelease("r-del")).toBeUndefined();
+    expect((await ops.releases()).some((r) => r.id === "r-del")).toBe(false);
+
+    // the DELETE route exists and a missing release is a 404
+    const gone = await api("/api/releases/r-del", { method: "DELETE" });
+    expect(gone.status).toBe(404);
+    // agent sessions get 403 on the route
+    const agent = ctx.sessions.hello("coder-r");
+    const forbidden = await api("/api/releases/r-split", {
+      method: "DELETE",
+      headers: { "x-te-session": agent.id },
+    });
+    expect(forbidden.status).toBe(403);
+  });
+});
+
 describe("## Checks (GL-0348)", () => {
   it("propose writes the section, brief lists the checks, validate reports bad ones", async () => {
     const { WorkspaceOps } = await import("./ops.js");

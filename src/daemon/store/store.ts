@@ -1716,8 +1716,8 @@ export class PlansStore {
   }
 
   /** Non-item writes (release records) get the same commit/stage treatment. */
-  async commitPlanFiles(paths: string[], message: string): Promise<void> {
-    await this.commitPaths(paths, message);
+  async commitPlanFiles(paths: string[], message: string, deletes: string[] = []): Promise<void> {
+    await this.commitPaths(paths, message, deletes);
   }
 
   private async commitPaths(paths: string[], message: string, deletes: string[] = []): Promise<void> {
