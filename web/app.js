@@ -4251,9 +4251,11 @@ const OpsPlaybook = ({ name }) => {
         </div>
         <div class="d-flex align-items-center gap-2 mt-2">
           <label class="small text-secondary" style=${{ minWidth: "10em" }}>target</label>
-          <${Pick} value=${form.target} none="no target"
-            options=${Object.keys(targets ?? {}).sort().map((t) => ({ value: t }))}
-            onPick=${(v) => setForm({ ...form, target: v })} />
+          ${pb.target
+            ? html`<span class="small">${pb.target}</span>`
+            : html`<${Pick} value=${form.target} none="no target"
+                options=${Object.keys(targets ?? {}).sort().map((t) => ({ value: t }))}
+                onPick=${(v) => setForm({ ...form, target: v })} />`}
         </div>
         ${(rels ?? []).length > 0 && html`
           <div class="d-flex align-items-center gap-2 mt-2">
