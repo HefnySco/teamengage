@@ -7,6 +7,7 @@ import { PlansStore } from "../store/store.js";
 import { resolveWorkspace } from "../../core/config/config.js";
 import { startDaemon, type DaemonHandle } from "../server/server.js";
 import type { DaemonCtx } from "../server/context.js";
+import type { WorkspaceOps } from "./ops.js";
 import { SessionRegistry } from "../sessions/sessions.js";
 import { EventBus, registerEventRoutes, eventId } from "./events.js";
 import { registerApiRoutes } from "./api.js";
@@ -2163,7 +2164,7 @@ describe("## Checks (GL-0348)", () => {
 describe("ask_human decision card (GL-0344)", () => {
   const AH = { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] };
 
-  const submitted = async (ops: InstanceType<typeof import("./ops.js").WorkspaceOps>, title: string) => {
+  const submitted = async (ops: InstanceType<typeof WorkspaceOps>, title: string) => {
     const wsr = ctx.workspaces.get("ws")!;
     const human = { kind: "human" as const, session: "human", machine: "test" };
     const { ids } = await wsr.store.createItems([{ type: "task", title }], human);

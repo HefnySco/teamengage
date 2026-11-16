@@ -167,7 +167,7 @@ describe("reach probe (GL-0289)", () => {
 
 describe("probe history (GL-0335)", () => {
   it("appends one row per result and keeps the last 500", async () => {
-    const { saveProbe, probeHistory, probeStats, PROBE_HISTORY_MAX } = await import("./probe.js");
+    const { saveProbe, probeHistory, PROBE_HISTORY_MAX } = await import("./probe.js");
     const home = mkdtempSync(join(tmpdir(), "te-hist-"));
     try {
       for (let i = 0; i < 3; i++) {

@@ -29,6 +29,7 @@ import { JobStore } from "../../core/ops/job.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
 import type { Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
+import type { ItemMetrics } from "../../core/metrics/metrics.js";
 import {
   StarColor,
   tierRank,
@@ -1929,7 +1930,7 @@ export class WorkspaceOps {
     }
 
     const by = (keyOf: (id: string) => string | string[] | undefined) => {
-      const buckets = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+      const buckets = new Map<string, ItemMetrics[]>();
       for (const m of stats.values()) {
         const keys = keyOf(m.id) ?? "untagged";
         for (const k of Array.isArray(keys) ? keys : [keys]) {
@@ -1948,7 +1949,7 @@ export class WorkspaceOps {
       // GL-0364: scorecard rows are agent KINDS — devin-sl0005 rolls into
       // devin — each row names its member session names with their counts
       agents: (() => {
-        const kinds = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+        const kinds = new Map<string, ItemMetrics[]>();
         for (const m of stats.values()) {
           if (!m.worker) continue;
           const kind = agentKind(m.worker, this.wsr.ws.config.agent_kinds);
@@ -1978,7 +1979,7 @@ export class WorkspaceOps {
       tiers: by((id) => this.index.items.get(id)?.meta.tier ?? "unset"),
       // GL-0365: one row per submit model ("unknown" for submits without one)
       models: (() => {
-        const buckets = new Map<string, import("../../core/metrics/metrics.js").ItemMetrics[]>();
+        const buckets = new Map<string, ItemMetrics[]>();
         for (const m of stats.values()) {
           for (const model of m.models.size ? m.models : ["unknown"]) {
             const list = buckets.get(model) ?? [];

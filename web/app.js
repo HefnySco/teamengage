@@ -1652,7 +1652,7 @@ const ShareDonut = ({ rows }) => {
   </div>`;
 };
 
-const Metrics = ({ onOpen }) => {
+const Metrics = () => {
   const { data: m, reload } = useApi("/api/metrics");
   const [openRow, setOpenRow] = useState(null);
   if (!m) return html`<p class="text-secondary">loading…</p>`;

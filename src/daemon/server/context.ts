@@ -3,6 +3,7 @@ import type { PlansStore } from "../store/store.js";
 import type { PlansWatcher } from "../watch/watch.js";
 import type { OverlayTracker } from "../overlay/tracker.js";
 import type { SessionRegistry } from "../sessions/sessions.js";
+import type { Dispatcher } from "../dispatch/dispatch.js";
 import type { EventBus } from "../api/events.js";
 import type { Links } from "../api/ops.js";
 
@@ -27,5 +28,5 @@ export interface DaemonCtx {
   sessions: SessionRegistry;
   bus: EventBus;
   /** per-workspace agent launcher (GL-0328) — absent in tests that build ctx by hand */
-  dispatchers?: Map<string, import("../dispatch/dispatch.js").Dispatcher>;
+  dispatchers?: Map<string, Dispatcher>;
 }
