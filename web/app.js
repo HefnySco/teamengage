@@ -1626,7 +1626,8 @@ const Plans = ({ onOpen }) => {
 // donut chart: one stroked ring segment per group — a single-slice chart
 // needs no arc special-casing (its dash runs the full circumference); the
 // segment colour is the stable name-hash colour used for domains
-const ShareDonut = ({ rows }) => {
+const ShareDonut = ({ rows, unit }) => {
+  const u = unit ?? { items: "items", done: "done" };
   const total = rows.reduce((a, r) => a + r.items, 0);
   const size = 118, R = 46, C = 2 * Math.PI * R, w = 20;
   let off = 0;
@@ -1646,7 +1647,7 @@ const ShareDonut = ({ rows }) => {
       ${segs.map((s) => html`<div class="met-donut-row" key=${s.key}>
         <span class="met-dot" style=${{ background: s.color }}></span>
         <span class="met-key">${s.key}</span>
-        <span class="text-secondary">${s.items} items · ${s.done} done</span>
+        <span class="text-secondary">${s.items} ${u.items} · ${s.done} ${u.done}</span>
       </div>`)}
     </div>
   </div>`;
@@ -1712,7 +1713,7 @@ const Metrics = () => {
       ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("model", m.models)}</div><${ShareDonut} rows=${m.models} /></div>`
       : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">reviewers — per model</h3>
-    ${(m.reviewers ?? []).length ? html`<div class="table-responsive"><table class="table table-sm align-middle">
+    ${(m.reviewers ?? []).length ? html`<div class="met-split"><div class="met-split-tbl"><div class="table-responsive"><table class="table table-sm align-middle">
       <thead><tr><th>model</th><th class="text-end">ok</th><th class="text-end">issues</th><th class="text-end">wrong ok</th></tr></thead>
       <tbody>
         ${m.reviewers.map((r) => html`<tr key=${r.model}>
@@ -1721,7 +1722,9 @@ const Metrics = () => {
           <td class="text-end">${r.issues}</td>
           <td class="text-end" title="ok verdicts the human later rejected">${r.wrong_ok}</td>
         </tr>`)}
-      </tbody></table></div>` : html`<p class="text-secondary small">no reviews yet</p>`}
+      </tbody></table></div></div>
+      <${ShareDonut} rows=${m.reviewers.map((r) => ({ key: r.model, items: r.ok + r.issues, done: r.ok }))} unit=${{ items: "reviews", done: "ok" }} /></div>`
+      : html`<p class="text-secondary small">no reviews yet</p>`}
   `;
 };
 
