@@ -383,7 +383,7 @@ function startPolicy(pb: Playbook, session?: Session): void {
 /**
  * The playbook repos' HEAD commit + dirty flag at job start (GL-0340).
  * git reads only — same class as the plans-repo commits the daemon makes;
- * the job record keeps them so a later release knows exactly what shipped.
+ * the job record keeps them so the job page shows exactly what code it ran.
  */
 function repoStates(wsr: WorkspaceRuntime, pb: Playbook): JobRepoState[] {
   const out: JobRepoState[] = [];

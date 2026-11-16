@@ -1922,18 +1922,10 @@ describe("feature item and feature page (GL-0331)", () => {
     expect(view.progress).toEqual({ done: 1, total: 2 });
     expect(view.plans[0]).toMatchObject({ id: plan, done: 1, total: 2 });
 
-    // a release containing every accepted part → shipped
-    mkdirSync(join(plans, "releases"), { recursive: true });
-    writeFileSync(
-      join(plans, "releases", "r1.release.yaml"),
-      `id: r1\ncut: { ts: "2026-10-01T09:00:00Z", by: "human@test" }\nitems:\n  - { item: ${p1}, title: part one }\ndeploys: []\n`,
-    );
-    expect(await ops.featureStatus(store.idx.get(feat)!)).toBe("shipped");
-
     // the board's feature filter sees it through /api/items
     const res = await api("/api/items?type=feature&ws=ws");
     const rows = (await res.json()) as Array<{ id: string; feature_status: string }>;
-    expect(rows.find((r) => r.id === feat)?.feature_status).toBe("shipped");
+    expect(rows.find((r) => r.id === feat)?.feature_status).toBe("in_progress");
   });
 
   it("refuses a feature on a non-plan and a parent on a feature", async () => {
@@ -1959,155 +1951,6 @@ describe("feature item and feature page (GL-0331)", () => {
     await expect(
       wsr.store.createItems([{ type: "feature", title: "x", parent: task, domains: ["teamengage"] }], human),
     ).rejects.toThrow(/may not have a parent/);
-  });
-});
-
-describe("release record (GL-0332)", () => {
-  it("cut freezes accepted tasks with commits and feature; a job deploy links back; notes group by feature", async () => {
-    const { WorkspaceOps } = await import("./ops.js");
-    const wsr = ctx.workspaces.get("ws")!;
-    const store = wsr.store;
-    const ops = new WorkspaceOps(wsr, ctx.sessions);
-    const human = { kind: "human" as const, session: "human", machine: "test" };
-
-    // feature + plan + one done part (evidence commit, no deliveries)
-    const { ids } = await store.createItems(
-      [
-        { type: "feature", title: "Rel grouping", domains: ["teamengage"] },
-        { type: "epic", title: "Rel plan", feature: "#0", domains: ["teamengage"] },
-        { type: "task", title: "shipped bit", parent: "#1", domains: ["teamengage"] },
-      ],
-      human,
-    );
-    const [feat2, , task3] = ids;
-    const s = ctx.sessions.hello("coder-y");
-    await ops.approve(task3);
-    await ops.claim(task3, s);
-    await ops.submit(task3, s, { walkthrough: "did it", commits: ["abc1234"], what: "task done", how: "ran the steps" });
-    await ops.accept(task3, human);
-
-    const rel = await ops.cutRelease("r-test-1", "human");
-    const row = rel.items.find((i) => i.item === task3)!;
-    expect(row.feature).toBe(feat2);
-    expect(row.commits).toEqual([{ resource: "unknown", sha: "abc1234" }]);
-    expect(rel.since).toBe("r1"); // the feature test's release is the previous one
-
-    // the record landed under .teamengage/releases/ and the file exists
-    expect(existsSync(join(plans, "releases", "r-test-1.release.yaml"))).toBe(true);
-
-    // a second cut's window is since the first — task3 is not in it again
-    const rel2 = await ops.cutRelease("r-test-2", "human");
-    expect(rel2.since).toBe("r-test-1");
-    expect(rel2.items.some((i) => i.item === task3)).toBe(false);
-
-    // a job naming the release links itself on success
-    mkdirSync(join(wsr.ws.root, "ops"), { recursive: true });
-    writeFileSync(
-      join(wsr.ws.root, "ops", "deploy.playbook.yaml"),
-      "name: deploy\nsteps:\n  - { id: s1, run: 'echo ok' }\n",
-    );
-    const { JobStore } = await import("../../core/ops/job.js");
-    const { loadPlaybooks } = await import("../../core/ops/playbook.js");
-    const loaded = loadPlaybooks(wsr.ws.root).find((p) => p.file.endsWith("deploy.playbook.yaml"))!;
-    const js = new JobStore(wsr.ws.root, plans, "test");
-    const job = await js.start(loaded.playbook!, { by: "human", params: { release: "r-test-1" } });
-    await js.stepResult(job, loaded.playbook!, "s1", { exit_code: 0, output: "ok" }, "human");
-    const linked = await ops.getRelease("r-test-1");
-    expect(linked!.deploys).toContain(job.id);
-    expect((await js.load(job.id))!.params.release).toBe("r-test-1");
-
-    // agents cannot cut a release — FORBIDDEN
-    await expect(ops.cutRelease("r-x", s)).rejects.toThrow(/human-only/);
-
-    // the feature sees its shipped parts
-    expect(await ops.featureStatus(store.idx.get(feat2)!)).toBe("shipped");
-  });
-});
-
-describe("release fixes (GL-0376)", () => {
-  it("cut with a start point only takes items finished after it and records the window; dry run writes nothing", async () => {
-    const { WorkspaceOps } = await import("./ops.js");
-    const wsr = ctx.workspaces.get("ws")!;
-    const ops = new WorkspaceOps(wsr, ctx.sessions);
-    const human = { kind: "human" as const, session: "human", machine: "test" };
-
-    const { ids } = await ops.propose([{ type: "task", title: "window item", domains: ["teamengage"] }], human);
-    const s = ctx.sessions.hello("coder-w");
-    await ops.approve(ids[0]);
-    await ops.claim(ids[0], s);
-    await ops.submit(ids[0], s, { walkthrough: "w", commits: ["feed00d"], what: "done", how: "steps" });
-    await ops.accept(ids[0], human);
-
-    // a start point in the future excludes everything; in the past includes it
-    const future = await ops.cutRelease("r-win-far", "human", { from: "2999-01-01", dryRun: true });
-    expect(future.items.some((i) => i.item === ids[0])).toBe(false);
-    expect(future.from).toBe("2999-01-01T00:00:00.000Z");
-    expect(existsSync(join(plans, "releases", "r-win-far.release.yaml"))).toBe(false); // dry run
-
-    const rel = await ops.cutRelease("r-win", "human", { from: "2000-01-01" });
-    expect(rel.items.some((i) => i.item === ids[0])).toBe(true);
-    expect(rel.from).toBe("2000-01-01T00:00:00.000Z");
-
-    // a start point that is neither a date nor a known commit is refused
-    await expect(ops.cutRelease("r-bad", "human", { from: "not-a-date@deadbeef" })).rejects.toThrow(/start point/);
-    // a bare sha in the plans repo resolves to its committer date
-    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: plans }).toString().trim();
-    const resolved = await ops.cutRelease("r-sha", "human", { from: head, dryRun: true });
-    expect(Date.parse(resolved.from!)).toBeGreaterThan(0);
-  });
-
-  it("'- commit <repo>@<sha>' evidence splits into resource+sha; legacy 'repo@sha' in sha splits on read", async () => {
-    const { WorkspaceOps } = await import("./ops.js");
-    const wsr = ctx.workspaces.get("ws")!;
-    const ops = new WorkspaceOps(wsr, ctx.sessions);
-    const human = { kind: "human" as const, session: "human", machine: "test" };
-
-    const { ids } = await ops.propose([{ type: "task", title: "split item", domains: ["teamengage"] }], human);
-    const s = ctx.sessions.hello("coder-s");
-    await ops.approve(ids[0]);
-    await ops.claim(ids[0], s);
-    await ops.submit(ids[0], s, { walkthrough: "w", commits: ["andruav_android_app@4ff5203"], what: "done", how: "steps" });
-    await ops.accept(ids[0], human);
-
-    const rel = await ops.cutRelease("r-split", "human");
-    const row = rel.items.find((i) => i.item === ids[0])!;
-    expect(row.commits).toEqual([{ resource: "andruav_android_app", sha: "4ff5203" }]);
-
-    // a legacy file that stored 'repo@sha' inside sha still reads back split
-    const { loadRelease } = await import("../../core/files/releases.js");
-    writeFileSync(
-      join(plans, "releases", "r-legacy.release.yaml"),
-      "id: r-legacy\ncut: { ts: '2026-01-01T00:00:00Z', by: t }\nitems:\n  - item: WS-0001\n    title: t\n    commits:\n      - { resource: unknown, sha: 'andruav_android_app@4ff5203' }\ndeploys: []\n",
-    );
-    const legacy = await loadRelease(plans, "r-legacy");
-    expect(legacy!.items[0].commits).toEqual([{ resource: "andruav_android_app", sha: "4ff5203" }]);
-  });
-
-  it("delete removes the file through a plan commit; an agent is refused; the job view param marks missing via the list", async () => {
-    const { WorkspaceOps } = await import("./ops.js");
-    const wsr = ctx.workspaces.get("ws")!;
-    const ops = new WorkspaceOps(wsr, ctx.sessions);
-    const relPath = join(plans, "releases", "r-del.release.yaml");
-    writeFileSync(relPath, "id: r-del\ncut: { ts: '2026-01-01T00:00:00Z', by: t }\nitems: []\ndeploys: []\n");
-    expect(await ops.getRelease("r-del")).toBeTruthy();
-
-    const s = ctx.sessions.hello("coder-d");
-    await expect(ops.deleteRelease("r-del", s)).rejects.toThrow(/human-only/);
-    await ops.deleteRelease("r-del", "human");
-    expect(existsSync(relPath)).toBe(false);
-    expect(await ops.getRelease("r-del")).toBeUndefined();
-    expect((await ops.releases()).some((r) => r.id === "r-del")).toBe(false);
-
-    // the DELETE route exists and a missing release is a 404
-    const gone = await api("/api/releases/r-del", { method: "DELETE" });
-    expect(gone.status).toBe(404);
-    // agent sessions get 403 on the route
-    const agent = ctx.sessions.hello("coder-r");
-    const forbidden = await api("/api/releases/r-split", {
-      method: "DELETE",
-      headers: { "x-te-session": agent.id },
-    });
-    expect(forbidden.status).toBe(403);
   });
 });
 

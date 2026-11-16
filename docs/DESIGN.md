@@ -727,8 +727,7 @@ Content is never copied: `brief` reads the task file live.
 | 10  | Existing task folders        | Tracked in place (overlay, §9.1): the folder is the workspace, files keep their content, one `te:` frontmatter line each.                       |
 | 11  | Human gates for a solo human | `autonomy: solo` (opt-in): agent follow-ups land ready, `ok`-reviewed submissions auto-accept after a delay; `strict` stays the default (§5).   |
 | 12  | Feature model                | `type: feature` item — never claimed, derived status; plans name it with `feature:` (§15, D-0046).                                                                        |
-| 13  | Release model                | File kind under `releases/`; the human cuts it and the item/commit list freezes at cut; jobs link via `params.release` (§15, D-0046).                                     |
-| 14  | CAPABILITIES.md              | Generated export (`te capabilities`) — never hand-edited (§15, D-0046).                                                                                                  |
+| 13  | CAPABILITIES.md              | Generated export (`te capabilities`) — never hand-edited (§15, D-0046).                                                                                                  |
 
 ## 13. Open questions
 
@@ -991,19 +990,16 @@ check+actor). `auto_accept_rules` entries take `require_verified:
 true` — a matched item without the badge is never auto-accepted,
 whatever its review verdict.
 
-## 15. Features and releases (GL-0330)
+## 15. Features (GL-0330)
 
-The work chain today is idea → plan → task → found problem. Two more
-objects close the loop for the human: a **feature** sits above the
-plans and says what the customer gets; a **release** sits below the
-tasks and says what shipped where.
+The work chain today is idea → plan → task → found problem. One more
+object closes the loop for the human: a **feature** sits above the
+plans and says what the customer gets.
 
 ```text
 idea ──relates──> feature ──named by──> plan (epic) ──parent──> task
                                                      │
                                                      └──> found problem (found_by)
-
-accepted tasks ──cut──> release ──named by──> ops jobs ──deployed on──> machines
 ```
 
 ### 15.1 The feature
@@ -1036,8 +1032,7 @@ Rules:
 - **A feature is never claimed.** `claim` refuses `type: feature` the
   same way it refuses `idea` — there is no turn and no work to hold.
 - **No stored status.** The daemon derives it: `planned` (no done
-  parts), `in_progress` (some parts done), `shipped` (a release
-  contains all its plans' accepted parts). The stored `status` field
+  parts), `in_progress` (some parts done). The stored `status` field
   is absent; the index computes it.
 - **Progress is derived:** the plans that name it, their parts, and
   done/total per plan — same roll-up the Metrics page already does.
@@ -1058,65 +1053,21 @@ A plan names at most one feature; a feature collects many plans. Tasks
 never name a feature directly — they reach it through their parent
 plan, so the mapping stays single-hop.
 
-### 15.3 The release
-
-A release is a **file kind**, not an item — like `machines/` and
-`envs/` records: no status, no claim, no turn. The human cuts it with
-`te releases cut <name>` (or the UI's Ops → releases tab); agents get FORBIDDEN. The job side records `params.release` via `te ops start <playbook> --release <id>` — a succeeded job appends itself to `deploys`.
-
-```
-.teamengage/releases/2026-11-field.release.yaml
-```
-
-```yaml
-id: 2026-11-field            # human-chosen name; unique
-cut: { ts: "2026-11-14T09:00Z", by: "human@mhefnyDT" }
-since: 2026-10-first         # previous release the window opened after
-items:                       # frozen at cut — never recomputed later
-  - item: GL-0318
-    title: Record cost on submit
-    feature: FE-0003         # via the item's plan, or null
-    commits: [{ resource: teamengage, sha: 66adb66 }]
-deploys: []                  # filled by ops jobs naming this release (15.4)
-```
-
-`deploys` lists job ids (`laptop-0007`) — a small stored back-reference
-so the release page need not scan every job file; the job itself also
-records the release in `params.release` (§15.4).
-
-### 15.4 How a release links to its deploys
-
-An ops job started for the release records it:
-
-```yaml
-# .teamengage/ops/jobs/laptop/laptop-0007.yaml
-params: { ref: master, release: 2026-11-field }
-```
-
-`te ops exec <playbook> --release <id>` sets it; the UI offers a
-release picker on deploy playbooks. The release page then shows, per
-succeeded job naming it: playbook, target, machine, deployed version —
-"which machine has it" is a join over job records, never stored in the
-release beyond the `deploys` id list.
-
-### 15.5 CAPABILITIES.md
+### 15.3 CAPABILITIES.md
 
 `te capabilities` regenerates `CAPABILITIES.md` at the workspace root
-from features + releases: one section per feature (its `## Simple`
-text, derived state, the releases that shipped it), generated — the
-file is never hand-edited. Features and releases are the single source
-of truth; the file is a derived export for customers.
+from features: one section per feature (its `## Simple` text, derived
+state), generated — the file is never hand-edited. Features are the
+single source of truth; the file is a derived export for customers.
 
-### 15.6 What is stored and what is derived
+### 15.4 What is stored and what is derived
 
-| Stored                                                              | Derived                                                                                          |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| feature item (id, title, summary, simple, `relates` to ideas)       | feature status (`planned`/`in_progress`/`shipped`), progress (done/total parts per plan)           |
-| `feature:` field on a plan                                          | a feature's open found problems (`found_by` under its plans)                                       |
-| release file (name, cut time, window, items + commits + feature)    | "which machine has it" — join over succeeded ops jobs naming the release                           |
-| `release:` in a job's `params` + job id in the release's `deploys`  | `CAPABILITIES.md`, `te releases notes`, board features filter                                       |
+| Stored                                                        | Derived                                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| feature item (id, title, summary, simple, `relates` to ideas) | feature status (`planned`/`in_progress`), progress (done/total parts per plan)         |
+| `feature:` field on a plan                                    | a feature's open found problems (`found_by` under its plans), `CAPABILITIES.md`        |
 
-### 15.7 Questions — decided (D-0046: all four recommendations stand)
+### 15.5 Questions — decided (D-0046)
 
 **Q1 — Feature: new item type or new file kind?**
 
@@ -1143,25 +1094,10 @@ of truth; the file is a derived export for customers.
 - **Decided: A.** One field, one meaning; the derived roll-ups
   stay unambiguous.
 
-**Q3 — How does a release find its commits?**
-
-- **A: frozen at cut time** — `te release cut` enumerates items
-  accepted since the previous release (accept events after its `cut`
-  timestamp), reads each item's `## Evidence` commit lines per
-  resource, and writes the list into the release file. Immutable:
-  release notes read the file, never recompute.
-- **B: derived at read time** — the release stores only the window and
-  each read replays events. Cheaper files, but later edits, archives
-  or rebased evidence change history silently; release notes must not
-  drift.
-- **Decided: A.** A release is a record; freezing the list is
-  what makes it auditable. The window is automatic (`since` = previous
-  release) with `--since <id>`/`--items` overrides for a partial cut.
-
-**Q4 — How does CAPABILITIES.md read the result?**
+**Q3 — How does CAPABILITIES.md read the result?**
 
 - **A: generated export** — `te capabilities` rewrites the file from
-  features + releases; CI or the human runs it and commits. One source
+  features; CI or the human runs it and commits. One source
   of truth; the doc can never disagree with the task bank.
 - **B: hand-maintained doc** — features link to CAPABILITIES.md
   sections. Reads naturally but two sources drift; every rename or
