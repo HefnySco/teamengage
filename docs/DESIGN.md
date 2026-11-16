@@ -594,7 +594,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |
 | `flag_drop(id, reason)`         | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status.                                                                          |
 | `lesson(domain, text)`          | Share a lesson for a domain — one `- date session — text` line in `lessons/<domain>.md`; unknown domains refused (INVALID_TRANSITION).                            |
-| `query(filter)`                 | Search by status/type/resource/project/text; `q` = board search (all words in id/title/file/#domains).                                                          |
+| `query(filter)`                 | Search by status/type/state/project/domain/resource/text/claimed/starred; `q` = board search (all words in id/title/file/#domains). Archived items never match. |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph.                                                                                                                              |
 
 **Shared lessons** — one markdown list per domain at

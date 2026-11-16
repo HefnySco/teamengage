@@ -293,7 +293,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "query",
     {
       description:
-        "Search items by status/type/state/project/domain/resource/text; state = idea state (unplanned|planned|in_progress|done) for type idea; q = board search (all words in id/title/file/#domains).",
+        "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (unplanned|planned|in_progress|done) for type idea; q = board search (all words in id/title/file/#domains). Archived items never match.",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),
@@ -303,6 +303,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         resource: z.string().optional(),
         text: z.string().optional(),
         q: z.string().optional(),
+        claimed: z.boolean().optional(),
+        starred: z.boolean().optional(),
       },
     },
     (args) => {
@@ -318,6 +320,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           resource: args.resource,
           text: args.text,
           q: args.q,
+          claimed: args.claimed,
+          starred: args.starred,
         });
         if (!items.length) return okText("no matches");
         return okText(items.slice(0, 50).map(itemLine).join("\n"));
