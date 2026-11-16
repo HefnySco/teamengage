@@ -134,7 +134,9 @@ const USAGE_ALL = `te — every command
   ops list|targets|jobs|start|exec|status|approve|abort|resume|probe [--ws w] [--json]
                    playbook jobs — exec runs the steps, posts results (exit 0/1/2/3)
   ideas [--state unplanned|planned|in_progress|done] [--json]  table: id, title, state, done, total
-  ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words] [--json]
+  ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words]
+                   [--claimed|--unclaimed] [--held-by name] [--ready|--blocked] [--starred]
+                   [--resource name] [--archived[=all]] [--json]
   show <ID> [--json]
   graph [--root <ID>] [--depth n]
   history <path> [--repo <name>] [--limit N] [--json]   the finished items that changed a path

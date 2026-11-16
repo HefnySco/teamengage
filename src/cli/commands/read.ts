@@ -63,6 +63,25 @@ export async function ideasCmd(args: string[], home?: string): Promise<number> {
 }
 
 export async function lsCmd(args: string[], home?: string): Promise<number> {
+  const claimed = flag(args, "--claimed") ? "true" : flag(args, "--unclaimed") ? "false" : "";
+  if (flag(args, "--claimed") && flag(args, "--unclaimed")) {
+    process.stderr.write("usage: --claimed and --unclaimed exclude each other\n");
+    return 2;
+  }
+  // --archived, `--archived all` or `--archived=all` → only / all archived
+  const archivedEq = args.find((a) => a.startsWith("--archived="));
+  const archivedNext = opt(args, "--archived");
+  const archived = archivedEq
+    ? archivedEq.slice("--archived=".length)
+    : flag(args, "--archived")
+      ? archivedNext && !archivedNext.startsWith("-")
+        ? archivedNext
+        : "true"
+      : "";
+  if (archived && !["true", "false", "all"].includes(archived)) {
+    process.stderr.write(`usage: --archived [true|false|all], got "${archived}"\n`);
+    return 2;
+  }
   const q = [
     wsQ(args),
     opt(args, "--status") ? `status=${opt(args, "--status")}` : "",
@@ -72,10 +91,26 @@ export async function lsCmd(args: string[], home?: string): Promise<number> {
     opt(args, "--domain") ? `domain=${opt(args, "--domain")}` : "",
     opt(args, "--text") ? `text=${encodeURIComponent(opt(args, "--text")!)}` : "",
     opt(args, "--q") ? `q=${encodeURIComponent(opt(args, "--q")!)}` : "",
+    opt(args, "--resource") ? `resource=${encodeURIComponent(opt(args, "--resource")!)}` : "",
+    claimed ? `claimed=${claimed}` : "",
+    archived ? `archived=${archived}` : "",
+    flag(args, "--starred") ? "starred=true" : "",
   ]
     .filter(Boolean)
     .join("&");
-  const items = (await daemonApi("GET", `/api/items${q ? `?${q}` : ""}`, undefined, home)) as ItemRow[];
+  const rows = (await daemonApi("GET", `/api/items${q ? `?${q}` : ""}`, undefined, home)) as ItemRow[];
+  // row-level filters the daemon already returns on every item
+  const heldBy = opt(args, "--held-by");
+  if (flag(args, "--held-by") && (!heldBy || heldBy.startsWith("-"))) {
+    process.stderr.write("usage: --held-by <name>\n");
+    return 2;
+  }
+  const items = rows.filter(
+    (i) =>
+      (!flag(args, "--ready") || i.ready) &&
+      (!flag(args, "--blocked") || i.blocked) &&
+      (!heldBy || Boolean(i.claim?.holder?.includes(heldBy))),
+  );
   if (flag(args, "--json")) {
     process.stdout.write(JSON.stringify(items, null, 2) + "\n");
     return 0;
