@@ -267,6 +267,21 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planState("AD-0020")).toBe("done");
   });
 
+  it("a childless, non-dropped sub-epic is not finished (DE-0170)", async () => {
+    writeItem("PL-0040", { type: "epic" });
+    writeItem("PL-0041", { type: "epic", parent: "PL-0040" }); // empty sub-epic
+    writeItem("PL-0042", { parent: "PL-0040", status: "done" });
+    let idx = await Index.load(plans);
+    // the empty sub-plan is draft, and the parent must not auto-complete over it
+    expect(idx.planState("PL-0041")).toBe("draft");
+    expect(idx.planState("PL-0040")).toBe("decomposing");
+
+    // a dropped empty sub-epic still counts as finished
+    writeItem("PL-0041", { type: "epic", parent: "PL-0040", status: "dropped" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0040")).toBe("done");
+  });
+
   it("a parent cycle reports not done instead of hanging", async () => {
     writeItem("PL-0030", { type: "epic", plan_closed: "true", parent: "PL-0031" });
     writeItem("PL-0031", { type: "epic", plan_closed: "true", parent: "PL-0030" });

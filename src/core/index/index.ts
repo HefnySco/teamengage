@@ -532,7 +532,11 @@ export class Index {
    * A revisited id means a parent cycle → not done.
    */
   private planFinished(id: string, visited: Set<string>): boolean {
-    for (const cid of this.items.get(id)?.children ?? []) {
+    const children = this.items.get(id)?.children ?? [];
+    // a childless, non-dropped epic is not finished - the empty loop
+    // would let a parent auto-complete over an empty sub-plan
+    if (children.length === 0) return false;
+    for (const cid of children) {
       if (visited.has(cid)) return false;
       visited.add(cid);
       const c = this.items.get(cid);
