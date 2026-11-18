@@ -3,7 +3,7 @@ import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
-import { useState, useEffect, useRef, useMemo } from "preact/hooks";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "preact/hooks";
 import htm from "htm";
 
 const html = htm.bind(h);
@@ -2252,12 +2252,24 @@ const Graph = ({ onOpen, id }) => {
     const ox = e.clientX - r.left - (parseFloat(st.paddingLeft) || 0);
     const oy = e.clientY - r.top - (parseFloat(st.paddingTop) || 0);
     const z1 = zoomRef.current;
-    const z2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +(z1 * (e.deltaY < 0 ? 1.25 : 1 / 1.25)).toFixed(2)));
+    // continuous zoom: a wheel notch (~100px, ~3 lines where deltaMode is
+    // lines) steps ×1.25 — trackpad/momentum deltas are small and take
+    // proportional steps instead of a full step per event
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    const z2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +(z1 * Math.pow(1.25, -dy / 100)).toFixed(3)));
     if (z2 === z1) return;
-    zoomAnchor.current = { ox, oy, cx: (v.scrollLeft + ox) / z1, cy: (v.scrollTop + oy) / z1 };
+    // a pending anchor means the last tick has not re-rendered yet — the view
+    // still shows the old scroll at the old zoom, so predict where its scroll
+    // restore will land instead of reading the stale scroll position
+    const p = zoomAnchor.current;
+    const sl = p ? p.cx * z1 - p.ox : v.scrollLeft;
+    const sTop = p ? p.cy * z1 - p.oy : v.scrollTop;
+    zoomAnchor.current = { ox, oy, cx: (sl + ox) / z1, cy: (sTop + oy) / z1 };
     applyZoom(z2);
   };
-  useEffect(() => {
+  // layout effect: the scroll correction lands in the same paint as the scale
+  // change — an after-paint effect shows zoom-then-snap as two visible steps
+  useLayoutEffect(() => {
     const a = zoomAnchor.current;
     const v = viewRef.current;
     zoomRef.current = zoom;
