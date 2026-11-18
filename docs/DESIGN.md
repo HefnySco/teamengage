@@ -128,6 +128,9 @@ notify: # unset = off: alert the human on decision events (§5)
 agent_kinds: # scorecard grouping (§8 metrics): kind → globs on the agent
   devin: ["devin*"] # name, lowercase, first match wins; no match → the
   forge: ["forge*", "devin-forge-*"] # name's text before its first - or _
+agent_models: # model scorecard fallback (§8 metrics): model → globs on the
+  swe-2-high: ["devin*"] # agent name, same rules; used only when the event
+  haiku: ["lens-quick*"] # carries no declared model (pre-GL-0360 history)
 projects:
   mission_planner: { prefix: MP }
   global: { prefix: GL }

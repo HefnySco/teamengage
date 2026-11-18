@@ -1729,7 +1729,7 @@ export class WorkspaceOps {
     const { readAllEvents } = await import("../../core/events/log.js");
     const { deriveMetrics, rollUp, agentKind, deriveReviewers } = await import("../../core/metrics/metrics.js");
     const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
-    const stats = deriveMetrics(r.events);
+    const stats = deriveMetrics(r.events, this.wsr.ws.config.agent_models);
 
     if (plan) {
       const ids = new Set([plan, ...this.index.descendants(plan)]);
@@ -1805,11 +1805,13 @@ export class WorkspaceOps {
           .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
       })(),
       tiers: by((id) => this.index.items.get(id)?.meta.tier ?? "unset"),
-      // GL-0365: one row per submit model ("unknown" for submits without one)
+      // GL-0365: one row per submit model ("unknown" for submits without
+      // one). An item with no submits credits no model — it is skipped,
+      // not counted as unknown.
       models: (() => {
         const buckets = new Map<string, ItemMetrics[]>();
         for (const m of stats.values()) {
-          for (const model of m.models.size ? m.models : ["unknown"]) {
+          for (const model of m.models) {
             const list = buckets.get(model) ?? [];
             list.push(m);
             buckets.set(model, list);
@@ -1819,7 +1821,7 @@ export class WorkspaceOps {
           .map(([key, list]) => ({ key, ...rollUp(list) }))
           .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
       })(),
-      reviewers: deriveReviewers(r.events),
+      reviewers: deriveReviewers(r.events, this.wsr.ws.config.agent_models),
       domains: by((id) => {
         const d = this.index.items.get(id)?.meta.domains;
         return d && d.length ? d : "untagged";

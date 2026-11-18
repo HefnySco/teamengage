@@ -38,6 +38,29 @@ export function agentKind(name: string, kinds?: Record<string, string[]>): strin
   return cut > 0 ? lower.slice(0, cut) : lower;
 }
 
+/**
+ * Model id for a session name — `agent_models` in workspace.yaml maps
+ * model → globs on the agent name, same rules as agent_kinds (lowercase,
+ * first match wins). Fallback for events with no declared model —
+ * everything from before GL-0360 and sessions that never declare one.
+ * No match → undefined, the caller keeps "unknown".
+ */
+export function agentModel(name: string, models?: Record<string, string[]>): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [model, patterns] of Object.entries(models ?? {})) {
+    if (patterns.some((p) => globRe(p.toLowerCase()).test(lower))) return model;
+  }
+  return undefined;
+}
+
+/** Declared model on the event, else the actor-name fallback, else "unknown". */
+function eventModel(e: Event, models?: Record<string, string[]>): string {
+  const declared = e.data?.model as string | undefined;
+  if (declared) return declared;
+  const name = agentName(e.actor);
+  return (name && agentModel(name, models)) || "unknown";
+}
+
 export interface ItemMetrics {
   id: string;
   claims: number;
@@ -64,7 +87,7 @@ export interface ItemMetrics {
   usd: number;
 }
 
-export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
+export function deriveMetrics(events: Event[], agentModels?: Record<string, string[]>): Map<string, ItemMetrics> {
   const per = new Map<string, ItemMetrics>();
   const lastClaimTs = new Map<string, number>();
   const lastSubmitTs = new Map<string, number>();
@@ -107,7 +130,7 @@ export function deriveMetrics(events: Event[]): Map<string, ItemMetrics> {
         lastSubmitTs.set(e.item, ms(e.ts));
         const w = agentName(e.actor);
         if (w) m.worker = w;
-        m.models.add((e.data?.model as string | undefined) ?? "unknown");
+        m.models.add(eventModel(e, agentModels));
         const cost = e.data?.cost as { tokens_in?: number; tokens_out?: number; usd?: number } | undefined;
         if (cost) {
           if (typeof cost.tokens_in === "number") m.tokens_in += cost.tokens_in;
@@ -216,10 +239,10 @@ export interface ReviewerRow {
  * Per-reviewer-model verdict counts (GL-0365). `review` events carry the
  * verdict in the note ("ok", "issues", optionally ": note"); a `bounce`
  * counts as an issues verdict. An `ok` verdict the human later rejects —
- * before any resubmit — is a wrong ok. Events with no model land in
- * "unknown".
+ * before any resubmit — is a wrong ok. Events with no declared model fall
+ * back to `agent_models` on the actor name, then land in "unknown".
  */
-export function deriveReviewers(events: Event[]): ReviewerRow[] {
+export function deriveReviewers(events: Event[], agentModels?: Record<string, string[]>): ReviewerRow[] {
   const rows = new Map<string, ReviewerRow>();
   const lastReview = new Map<string, { ok: boolean; model: string }>();
   const row = (model: string): ReviewerRow => {
@@ -232,7 +255,7 @@ export function deriveReviewers(events: Event[]): ReviewerRow[] {
   };
   for (const e of events) {
     if (!e.item || !e.ts) continue;
-    const model = (e.data?.model as string | undefined) ?? "unknown";
+    const model = eventModel(e, agentModels);
     switch (e.action) {
       case "review": {
         const ok = (e.note ?? "").split(":")[0].trim() === "ok";

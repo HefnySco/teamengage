@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveMetrics, rollUp, median, agentName, agentKind, deriveReviewers } from "./metrics.js";
+import { deriveMetrics, rollUp, median, agentName, agentKind, agentModel, deriveReviewers } from "./metrics.js";
 import type { Event } from "../model/event.js";
 
 const ev = (
@@ -136,7 +136,43 @@ describe("agentKind (GL-0364)", () => {
   });
 });
 
+describe("agentModel (metrics fallback)", () => {
+  const models = {
+    haiku: ["lens-quick*"],
+    opus: ["*opus*", "lens-deep*"],
+    "claude-sonnet-5-5": ["forge*", "claude*", "lens*"],
+    "swe-2-high": ["devin*"],
+  };
+
+  it("maps a name to its model, first match wins, lowercase", () => {
+    expect(agentModel("lens-quick-review", models)).toBe("haiku");
+    expect(agentModel("Lens-Deep-Review", models)).toBe("opus");
+    expect(agentModel("claude-an-opus", models)).toBe("opus"); // *opus* beats claude*
+    expect(agentModel("forge", models)).toBe("claude-sonnet-5-5");
+    expect(agentModel("devin-sl0005", models)).toBe("swe-2-high");
+    expect(agentModel("atlas", models)).toBeUndefined();
+    expect(agentModel("devin")).toBeUndefined(); // no map configured
+  });
+});
+
 describe("model scorecard + reviewer table (GL-0365)", () => {
+  it("falls back to agent_models on the actor name when the event has no model", () => {
+    const models = { "swe-2-high": ["devin*"], haiku: ["lens-quick*"] };
+    const events = [
+      ev("2026-11-01T00:00:00Z", "submit", "GL-1", "devin@dt#aa"), // no data.model → swe-2-high
+      ev("2026-11-01T01:00:00Z", "submit", "GL-2", "atlas@dt#bb"), // unmapped → unknown
+      ev("2026-11-01T02:00:00Z", "submit", "GL-3", "devin@dt#cc", { data: { model: "glm-5.3-max" } }), // declared wins
+      ev("2026-11-01T03:00:00Z", "review", "GL-1", "lens-quick-review@dt#dd", { note: "ok" }),
+    ];
+    const per = deriveMetrics(events, models);
+    expect([...per.get("GL-1")!.models]).toEqual(["swe-2-high"]);
+    expect([...per.get("GL-2")!.models]).toEqual(["unknown"]);
+    expect([...per.get("GL-3")!.models]).toEqual(["glm-5.3-max"]);
+    const rows = deriveReviewers(events, models);
+    expect(rows.find((r) => r.model === "haiku")).toMatchObject({ ok: 1 });
+    expect(rows.find((r) => r.model === "unknown")).toBeUndefined();
+  });
+
   it("buckets items by submit model; a submit with no model lands in unknown", () => {
     const events = [
       ev("2026-11-01T00:00:00Z", "claim", "GL-1"),

@@ -234,6 +234,14 @@ export const WorkspaceConfig = z
      * Metrics groups the scorecard by kind.
      */
     agent_kinds: z.record(z.string(), z.array(z.string())).optional(),
+    /**
+     * Agent models (metrics fallback): model id → glob patterns on the
+     * agent name, matched like agent_kinds, first match wins. Used only
+     * when a submit/review/bounce event carries no declared model —
+     * events from before GL-0360 and sessions that never declare one.
+     * A name with no match keeps the "unknown" row.
+     */
+    agent_models: z.record(z.string(), z.array(z.string())).optional(),
     /** Commit each plans mutation. `false` leaves committing to the human. */
     commit: z.boolean().default(true),
     /** domain vocabulary: name → { description, color, keywords } (see core/domains) */
