@@ -487,7 +487,7 @@ describe("plain-HTTP agent API", () => {
     expect(rNext).toContain("WS-0005");
     expect(rNext).not.toContain("WS-0006");
 
-    // planner: the fixture has no unplanned ideas or light drafts — empty pool
+    // planner: the fixture has no unreferenced ideas or light drafts — empty pool
     const planText = (
       await call("POST", "/agent/hello", { body: { agent: "pm", role: "planner" } })
     ).text;

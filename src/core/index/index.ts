@@ -42,17 +42,23 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
 }
 
 /** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
-export type PlanState = "draft" | "decomposing" | "active" | "done";
+export type PlanState = "draft" | "decomposing" | "ready" | "in_progress" | "done" | "dropped";
 
-/** Idea state — derived from the items that name the idea in relates, never stored. */
-export type IdeaState = "unplanned" | "planned" | "in_progress" | "done";
+/** Idea state — derived from the idea's own status plus the items that name it in relates, never stored. */
+export type IdeaState = "draft" | "ready" | "done" | "dropped";
 
-/** Pure rule: statuses of every item that names the idea. */
-export function ideaStateOf(statuses: Status[]): IdeaState {
-  if (statuses.length === 0) return "unplanned";
-  if (statuses.every((s) => s === "done" || s === "dropped")) return "done";
-  if (statuses.some((s) => s === "in_progress" || s === "in_review" || s === "waiting" || s === "done")) return "in_progress";
-  return "planned";
+/**
+ * Pure rule: the idea's own status decides draft/dropped/done outright; a
+ * triaged idea turns done when every live referrer is done (≥1 referrer),
+ * otherwise it is ready — ideas never track in_progress, they are sources.
+ */
+export function ideaStateOf(status: Status, referrerStatuses: Status[]): IdeaState {
+  if (status === "dropped") return "dropped";
+  if (status === "draft") return "draft";
+  if (status === "done") return "done";
+  const live = referrerStatuses.filter((s) => s !== "dropped");
+  if (live.length > 0 && live.every((s) => s === "done")) return "done";
+  return "ready";
 }
 
 /** A problem item: type bug, or any item carrying the bug domain. */
@@ -75,6 +81,10 @@ export interface IndexedItem {
   paused: boolean;
   /** the nearest held ancestor's id, when paused */
   paused_by?: string;
+  /** derived: an ancestor plan is not ready (still decomposing) — parts can't start until the human closes it */
+  unready: boolean;
+  /** the nearest not-ready ancestor plan's id, when gated */
+  unready_by?: string;
   /** derived: reverse of depends_on */
   blocks: string[];
   /** derived: items whose parent is this id */
@@ -90,6 +100,8 @@ export interface IndexedItem {
   idea_state?: IdeaState;
   /** ideas only: done/total over the items that name the idea (dropped not counted) */
   idea_progress?: { done: number; total: number };
+  /** ideas only: ids of the items that name this idea in relates */
+  idea_refs?: string[];
   /** derived: problem items (bug type or bug domain) whose found_by names this item */
   found_here: { id: string; status: Status }[];
   /** epics only: problem items found in this plan or its parts, open vs done */
@@ -177,6 +189,7 @@ export class Index {
               path: relative(plansDir, file),
               blocked: false,
               paused: false,
+              unready: false,
               blocks: [],
               children: [],
               found_here: [],
@@ -246,6 +259,7 @@ export class Index {
       path: rel,
       blocked: false,
       paused: false,
+      unready: false,
       blocks: [],
       children: [],
       found_here: [],
@@ -333,9 +347,14 @@ export class Index {
         return status !== undefined && !depSatisfied(status, this.reviewUnblocks, unblocksOn);
       });
       // held-plan cascade: an ancestor epic on hold pauses the whole subtree —
-      // parts keep their status but are never ready for an agent to claim
+      // parts keep their status but are never ready for an agent to claim.
+      // Same walk: an ancestor plan the human has not closed yet is not ready —
+      // its parts can't start until close_plan (a dropped plan's leftovers are
+      // exempt: the plan is dead, not decomposing)
       it.paused = false;
       it.paused_by = undefined;
+      it.unready = false;
+      it.unready_by = undefined;
       for (let p = it.meta.parent, seen = new Set([it.meta.id]); p; ) {
         try {
           const ref = parseItemRef(p);
@@ -343,18 +362,23 @@ export class Index {
           seen.add(ref.id);
           const anc = this.items.get(ref.id);
           if (!anc) break;
-          if (anc.meta.status === "hold") {
+          if (!it.paused && anc.meta.status === "hold") {
             it.paused = true;
             it.paused_by = anc.meta.id;
-            break;
           }
+          if (!it.unready && anc.meta.type === "epic" && anc.meta.plan_closed !== true && anc.meta.status !== "dropped") {
+            it.unready = true;
+            it.unready_by = anc.meta.id;
+          }
+          if (it.paused && it.unready) break;
           p = anc.meta.parent;
         } catch {
           break; // unparseable ref → validator finding, not a pause
         }
       }
       it.turn = turnOf(it.meta.status);
-      it.ready = it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim && !it.paused;
+      it.ready =
+        it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim && !it.paused && !it.unready;
     }
     // plan lifecycle for epics (children are already built above)
     for (const it of this.items.values()) {
@@ -399,15 +423,17 @@ export class Index {
         total: plans.reduce((n, p) => n + (p.plan_progress?.total ?? 0), 0),
       };
     }
-    // idea state: reverse of relates, ideas only
-    const named = new Map<string, Status[]>();
+    // idea state: reverse of relates, ideas only — archived referrers
+    // count as hidden, the same way they drop out of every list
+    const named = new Map<string, { id: string; status: Status }[]>();
     for (const it of this.items.values()) {
+      if (it.meta.archived) continue;
       for (const ref of it.meta.relates ?? []) {
         try {
           const p = parseItemRef(ref);
           if (p.workspace || p.id === it.meta.id) continue;
           const l = named.get(p.id) ?? [];
-          l.push(it.meta.status);
+          l.push({ id: it.meta.id, status: it.meta.status });
           named.set(p.id, l);
         } catch {
           /* bad ref → validator finding */
@@ -418,12 +444,14 @@ export class Index {
       if (it.meta.type !== "idea") {
         it.idea_state = undefined;
         it.idea_progress = undefined;
+        it.idea_refs = undefined;
         continue;
       }
-      const sts = named.get(it.meta.id) ?? [];
-      it.idea_state = ideaStateOf(sts);
-      const live = sts.filter((s) => s !== "dropped");
-      it.idea_progress = { done: live.filter((s) => s === "done").length, total: live.length };
+      const refs = named.get(it.meta.id) ?? [];
+      it.idea_state = ideaStateOf(it.meta.status, refs.map((r) => r.status));
+      const live = refs.filter((r) => r.status !== "dropped");
+      it.idea_progress = { done: live.filter((r) => r.status === "done").length, total: live.length };
+      it.idea_refs = refs.map((r) => r.id).sort(compareIds);
     }
   }
 
@@ -438,21 +466,40 @@ export class Index {
   }
 
   /**
-   * An epic's derived plan lifecycle: `draft` while it has no children,
-   * `done` when every part is finished — non-epics done/dropped, sub-plans
-   * themselves finished or dropped — and no problem under it is open.
-   * Otherwise `decomposing` until the human sets `plan_closed`, then
-   * `active`. A sub-plan's own status never substitutes: one marked done by
-   * hand with unfinished parts still blocks. Parent cycles count as not
-   * done. Archived descendants still count. Undefined for non-epics.
+   * An epic's derived plan lifecycle: `dropped` when the human drops it;
+   * `draft` while it has no children; `in_progress` while any part is in
+   * flight (the plan belongs to no machine: its parts may run on different
+   * ones); `done` when its stored status is done — a hand or auto-done
+   * verdict — or when every part is finished and no problem under it is
+   * open. Otherwise `decomposing` until the human sets `plan_closed`, then
+   * `ready`. In-flight parts beat a stored done: reopening a part drags the
+   * plan back to in_progress. Parent cycles count as not done. Archived
+   * descendants still count. Undefined for non-epics.
    */
   planState(id: string): PlanState | undefined {
     const it = this.items.get(id);
     if (!it || it.meta.type !== "epic") return undefined;
+    // dropped is the human's kill verdict — it wins over whatever the parts say
+    if (it.meta.status === "dropped") return "dropped";
     if (it.children.length === 0) return "draft";
-    if (this.planFinished(id, new Set([id])) && (this.planProblems(id)?.open ?? 0) === 0)
+    // live work in flight beats a stored done — a reopened part drags the
+    // plan back to in_progress
+    if (this.planInFlight(id)) return "in_progress";
+    if (
+      it.meta.status === "done" ||
+      (this.planFinished(id, new Set([id])) && (this.planProblems(id)?.open ?? 0) === 0)
+    )
       return "done";
-    return it.meta.plan_closed === true ? "active" : "decomposing";
+    return it.meta.plan_closed === true ? "ready" : "decomposing";
+  }
+
+  /** Any non-epic descendant in flight — claimed, waiting or under review. */
+  private planInFlight(id: string): boolean {
+    for (const cid of this.nonEpicDescendants(id)) {
+      const st = this.items.get(cid)?.meta.status;
+      if (st === "in_progress" || st === "waiting" || st === "in_review") return true;
+    }
+    return false;
   }
 
   /** `{done, total}` over all non-epic descendants; done counts done+dropped. */
@@ -489,11 +536,11 @@ export class Index {
   }
 
   /**
-   * Epics only: problem items found in the plan or any of its parts
-   * (found_here), plus problem items that are themselves parts. Each counted
-   * once. `open` is any status except done/dropped; dropped counts in neither.
+   * Epics only: the plan's problem set — problem items found in the plan or
+   * any of its parts (found_here), plus problem items that are themselves
+   * parts. id → status, each once. Undefined for non-epics.
    */
-  planProblems(id: string): { open: number; done: number } | undefined {
+  private planProblemSet(id: string): Map<string, Status> | undefined {
     const it = this.items.get(id);
     if (!it || it.meta.type !== "epic") return undefined;
     const seen = new Map<string, Status>();
@@ -503,6 +550,17 @@ export class Index {
       for (const f of n.found_here) seen.set(f.id, this.items.get(f.id)?.meta.status ?? f.status);
       if (nid !== id && isProblemItem(n.meta)) seen.set(nid, n.meta.status);
     }
+    return seen;
+  }
+
+  /**
+   * Epics only: problem items found in the plan or any of its parts
+   * (found_here), plus problem items that are themselves parts. Each counted
+   * once. `open` is any status except done/dropped; dropped counts in neither.
+   */
+  planProblems(id: string): { open: number; done: number } | undefined {
+    const seen = this.planProblemSet(id);
+    if (!seen) return undefined;
     let open = 0;
     let done = 0;
     for (const st of seen.values()) {
@@ -510,6 +568,19 @@ export class Index {
       else if (st !== "dropped") open += 1;
     }
     return { open, done };
+  }
+
+  /**
+   * Epics only: the problems planProblems counts, as {id, title, status} rows
+   * for the UI's expandable list — open first, dropped left out.
+   */
+  planProblemItems(id: string): { id: string; title: string; status: Status }[] {
+    const seen = this.planProblemSet(id);
+    if (!seen) return [];
+    return [...seen.entries()]
+      .filter(([, st]) => st !== "dropped")
+      .map(([pid, st]) => ({ id: pid, title: this.items.get(pid)?.meta.title ?? pid, status: st }))
+      .sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || compareIds(a.id, b.id));
   }
 
   /** All descendant ids — children recursively; a parent cycle just stops, never loops. */
@@ -527,8 +598,9 @@ export class Index {
   }
 
   /**
-   * Every descendant finished — non-epics done, epics recursively finished;
-   * a dropped part or sub-plan always counts (its subtree is skipped).
+   * Every descendant finished — non-epics done, epics recursively finished
+   * or themselves marked done (a hand or auto-done verdict counts); a
+   * dropped part or sub-plan always counts (its subtree is skipped).
    * A revisited id means a parent cycle → not done.
    */
   private planFinished(id: string, visited: Set<string>): boolean {
@@ -543,7 +615,9 @@ export class Index {
       if (!c) continue;
       if (c.meta.status === "dropped") continue;
       const finished =
-        c.meta.type === "epic" ? this.planFinished(cid, visited) : c.meta.status === "done";
+        c.meta.type === "epic"
+          ? c.meta.status === "done" || this.planFinished(cid, visited)
+          : c.meta.status === "done";
       if (!finished) return false;
     }
     return true;

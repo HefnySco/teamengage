@@ -102,6 +102,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         blocked: i.blocked,
         paused: i.paused,
         paused_by: i.paused_by,
+        unready: i.unready,
+        unready_by: i.unready_by,
         ready: i.ready,
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),
@@ -115,7 +117,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             }
           : {}),
         ...(i.meta.type === "idea"
-          ? { idea_state: i.idea_state, idea_progress: i.idea_progress }
+          ? { idea_state: i.idea_state, idea_progress: i.idea_progress, idea_refs: i.idea_refs }
           : {}),
         ...(i.meta.type === "feature"
           ? {
@@ -161,6 +163,17 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       const { id } = IdParam.parse(req.params);
       const ops = opsFor(ctx, wsOf(req.query));
       return ops.brief(id.toUpperCase());
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // the problems chip's expandable list — every surface fetches the same set
+  app.get("/api/items/:id/problems", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const ops = opsFor(ctx, wsOf(req.query));
+      return ops.planProblemList(id.toUpperCase());
     } catch (e) {
       return sendErr(reply, e);
     }
@@ -375,7 +388,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         .filter((i) => !i.meta.archived)
         .sort((a, b) => compareIds(a.meta.id, b.meta.id));
       return {
-        drafts: items.filter((i) => i.meta.status === "draft").map((i) => i.meta.id),
+        // idea drafts are triaged on the ideas page, not here
+        drafts: items.filter((i) => i.meta.status === "draft" && i.meta.type !== "idea").map((i) => i.meta.id),
         questions: items
           .filter((i) => i.meta.status === "waiting" && i.meta.question)
           .map((i) => ({ id: i.meta.id, question: i.meta.question })),

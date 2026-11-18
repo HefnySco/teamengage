@@ -14,7 +14,7 @@ import {
 } from "../../core/domains/domains.js";
 import { parseItemRef, parseTargetRef, allocateId, normPath, compareIds } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
-import { depSatisfied, isProblemItem, type IndexedItem } from "../../core/index/index.js";
+import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
 import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
 import {
   evidenceCommits,
@@ -216,8 +216,9 @@ export class WorkspaceOps {
   /**
    * `session`: the asking session — its tier hides items above it (its own
    * tier first) and its role picks the pool: a reviewer gets in_review items
-   * it did not submit, a planner gets unplanned ideas and light-authored
-   * drafts to vet, a coder (or no role) gets ready items as usual (GL-0323).
+   * it did not submit, a planner gets ideas nothing references yet and
+   * light-authored drafts to vet, a coder (or no role) gets ready items as
+   * usual (GL-0323).
    */
   next(limit = 3, domain?: string, session?: Session): IndexedItem[] {
     const d = domain ? normalizeDomain(domain) : undefined;
@@ -251,7 +252,7 @@ export class WorkspaceOps {
         .filter((i) => !i.meta.archived)
         .filter(
           (i) =>
-            (i.meta.type === "idea" && i.idea_state === "unplanned") ||
+            (i.meta.type === "idea" && (i.idea_progress?.total ?? 0) === 0) ||
             (i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by),
         )
         .filter((i) => !d || i.meta.domains.includes(d))
@@ -654,19 +655,7 @@ export class WorkspaceOps {
     // same set planProblems counts, kept as a list for the page
     const problems = new Map<string, { id: string; title: string; status: string }>();
     for (const pid of it.feature_plans ?? []) {
-      for (const nid of [pid, ...this.index.descendants(pid)]) {
-        const n = this.index.items.get(nid);
-        if (!n) continue;
-        for (const f of n.found_here) {
-          const fi = this.index.items.get(f.id);
-          if (fi && fi.meta.status !== "dropped") {
-            problems.set(f.id, { id: f.id, title: fi.meta.title, status: fi.meta.status });
-          }
-        }
-        if (nid !== pid && isProblemItem(n.meta) && n.meta.status !== "dropped") {
-          problems.set(nid, { id: nid, title: n.meta.title, status: n.meta.status });
-        }
-      }
+      for (const p of this.index.planProblemItems(pid)) problems.set(p.id, p);
     }
     const ideas = it.meta.relates
       .map((ref) => {
@@ -1116,6 +1105,12 @@ export class WorkspaceOps {
     return this.index.descendants(id);
   }
 
+  /** The problems chip's expandable list — the same set plan_problems counts. */
+  planProblemList(id: string) {
+    const it = this.item(id);
+    return { problems: this.index.planProblemItems(it.meta.id) };
+  }
+
   async findings(): Promise<Finding[]> {
     // claims whose holder session ended on this machine strand their item
     // (in_progress forever, invisible to next) — a day-late stale_claim is
@@ -1322,6 +1317,7 @@ export class WorkspaceOps {
         guard: this.overlapGuard(it.meta.targets, roots, id),
         holderAway: () => this.holderAway(this.item(id)),
         planHold: () => this.index.get(id)?.paused_by,
+        planNotReady: () => this.index.get(id)?.unready_by,
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release
@@ -2964,7 +2960,7 @@ export class WorkspaceOps {
   }
 
   /**
-   * Close a plan (epic): no more parts are coming. plan_state turns `active`,
+   * Close a plan (epic): no more parts are coming. plan_state turns `ready`,
    * then `done` when every descendant and problem finishes — though a plan
    * finishes without it too (autoCompletePlans marks the epic done on the
    * sweep). Human-only — an agent actor is refused by the state machine.

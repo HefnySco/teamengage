@@ -663,7 +663,7 @@ describe("change_answer", () => {
 });
 
 describe("plan tracking (epics)", () => {
-  it("next skips epics, claim refuses them; close_plan → active → done; reopen goes back", async () => {
+  it("next skips epics, claim refuses them; close_plan → ready → done; reopen goes back", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const store = wsr.store;
@@ -690,7 +690,7 @@ describe("plan tracking (epics)", () => {
     const r = await api(`/api/items/${epic}/close_plan`, { method: "POST" });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { meta: { plan_closed?: boolean } }).meta.plan_closed).toBe(true);
-    expect(store.idx.planState(epic)).toBe("active");
+    expect(store.idx.planState(epic)).toBe("ready");
     // the board JSON carries plan fields on epics
     const list = (await (await api("/api/items?type=epic")).json()) as Array<{
       id: string;
@@ -698,7 +698,7 @@ describe("plan tracking (epics)", () => {
       plan_progress?: { done: number; total: number };
     }>;
     const row = list.find((i) => i.id === epic)!;
-    expect(row.plan_state).toBe("active");
+    expect(row.plan_state).toBe("ready");
     expect(row.plan_progress).toEqual({ done: 0, total: 1 });
     // the part finishes → the plan is done
     await ops.complete(t1);
@@ -738,10 +738,14 @@ describe("plan auto-done sweep", () => {
     await ops.complete(t1);
     await ops.complete(sub); // done by hand — its part is still open
     await ops.approve(subT);
+    // parts of a not-ready plan can't start — both plans must be closed first
+    await expect(ops.claim(subT, ctx.sessions.hello("pad-agent-early"))).rejects.toThrow(/not ready/);
+    await ops.closePlan(sub);
+    await ops.closePlan(plan);
     const agent = ctx.sessions.hello("pad-agent");
     await ops.claim(subT, agent);
     await ops.submit(subT, agent, { what: "part done", how: "ran the steps" }); // in_review — can bounce back
-    expect(store.idx.planState(plan)).toBe("decomposing");
+    expect(store.idx.planState(plan)).toBe("in_progress");
     expect(ops.autoCompletePlansDue()).not.toContain(plan);
 
     // problem resolved, review accepted → the whole tree is finished
@@ -755,10 +759,16 @@ describe("plan auto-done sweep", () => {
     expect(store.idx.get(plan)!.meta.status).toBe("done");
     expect(store.idx.get(plan)!.meta.finished_at).toBeTruthy();
 
-    // forward-only: new work under it shows active again, the status stays done
+    // a stored done is a verdict — new idle work under it keeps the plan done
     const { ids: more } = await store.createItems([{ type: "task", title: "late part", parent: plan }], human);
-    expect(store.idx.planState(plan)).toBe("decomposing");
+    expect(store.idx.planState(plan)).toBe("done");
     expect(store.idx.get(plan)!.meta.status).toBe("done");
+
+    // but a part in flight beats the verdict — the plan shows in_progress
+    const late = await ctx.sessions.hello("pad-agent-late");
+    await ops.approve(more[0]);
+    await ops.claim(more[0], late);
+    expect(store.idx.planState(plan)).toBe("in_progress");
 
     // plan_auto_done is daemon-only — an agent actor is refused
     await expect(
@@ -766,6 +776,33 @@ describe("plan auto-done sweep", () => {
         type: "plan_auto_done",
       }),
     ).rejects.toThrow(/daemon-only/);
+  });
+});
+
+describe("plan problems list", () => {
+  it("GET /api/items/:id/problems returns the chip's set — open first; non-epics get none", async () => {
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "epic", title: "plan with problems" }, // 0
+        { type: "task", title: "part one", parent: "#0" }, // 1
+        { type: "bug", title: "found on the part", found_by: ["#1"] }, // 2
+        { type: "bug", title: "a bug part", parent: "#0" }, // 3
+      ],
+      human,
+    );
+    const [plan, part, found, bugPart] = ids;
+    const res = await api(`/api/items/${plan}/problems`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.problems.map((p: { id: string }) => p.id)).toEqual([found, bugPart].sort());
+    expect(body.problems.find((p: { id: string }) => p.id === found).title).toBe("found on the part");
+    // non-epic → empty list; unknown id → 404
+    const notPlan = await api(`/api/items/${part}/problems`);
+    expect((await notPlan.json()).problems).toEqual([]);
+    expect((await api(`/api/items/WS-9999/problems`)).status).toBe(404);
   });
 });
 
@@ -1586,49 +1623,70 @@ describe("propose domain tags", () => {
 });
 
 describe("idea fields in the item API (DE-0133)", () => {
-  it("ideas return idea_state and idea_progress in list and item; other types do not", async () => {
+  it("ideas return idea_state, idea_progress and idea_refs in list and item; other types do not", async () => {
     const store = ctx.workspaces.get("ws")!.store;
     const human = { kind: "human" as const, session: "human", machine: "test" };
     const { ids } = await store.createItems(
       [
-        { type: "idea", title: "unplanned thought" },
-        { type: "idea", title: "planned thought" },
-        { type: "task", title: "works on the planned thought", relates: ["#1"] },
+        { type: "idea", title: "solo thought" },
+        { type: "idea", title: "referenced thought" },
+        { type: "task", title: "works on the referenced thought", relates: ["#1"] },
         { type: "task", title: "plain task" },
       ],
       human,
     );
-    const [ideaSolo, ideaPlanned, , plain] = ids;
+    const [ideaSolo, ideaRefed, task, plain] = ids;
+    const post = (path: string, body: unknown = {}) =>
+      api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
     // GET /api/items — each idea row carries the derived fields
     const list = (await (await api("/api/items?type=idea")).json()) as Array<{
       id: string;
       idea_state?: string;
       idea_progress?: { done: number; total: number };
+      idea_refs?: string[];
     }>;
     expect(list.find((i) => i.id === ideaSolo)).toMatchObject({
-      idea_state: "unplanned",
+      idea_state: "draft",
       idea_progress: { done: 0, total: 0 },
+      idea_refs: [],
     });
-    expect(list.find((i) => i.id === ideaPlanned)).toMatchObject({
-      idea_state: "planned",
+    // still a draft — its own status wins over the referrer
+    expect(list.find((i) => i.id === ideaRefed)).toMatchObject({
+      idea_state: "draft",
       idea_progress: { done: 0, total: 1 },
+      idea_refs: [task],
     });
 
-    // GET /api/items/:id — the item object carries them too
-    const brief = (await (await api(`/api/items/${ideaPlanned}`)).json()) as {
-      item: { idea_state?: string; idea_progress?: { done: number; total: number } };
+    // approve → ready; the referrer finishing flips it to done
+    expect((await post(`/api/items/${ideaRefed}/approve`)).status).toBe(200);
+    let row = (await (await api(`/api/items/${ideaRefed}`)).json()) as {
+      item: { idea_state?: string; idea_progress?: { done: number; total: number }; idea_refs?: string[] };
     };
-    expect(brief.item.idea_state).toBe("planned");
-    expect(brief.item.idea_progress).toEqual({ done: 0, total: 1 });
+    expect(row.item.idea_state).toBe("ready");
+    expect(row.item.idea_progress).toEqual({ done: 0, total: 1 });
+    expect(row.item.idea_refs).toEqual([task]);
+    expect((await post(`/api/items/${task}/complete`)).status).toBe(200);
+    row = (await (await api(`/api/items/${ideaRefed}`)).json()) as typeof row;
+    expect(row.item.idea_state).toBe("done");
+    expect(row.item.idea_progress).toEqual({ done: 1, total: 1 });
 
     // items that are not ideas never carry the fields
     const tasks = (await (await api("/api/items?type=task")).json()) as Array<Record<string, unknown>>;
     expect(tasks.length).toBeGreaterThan(0);
-    expect(tasks.some((i) => "idea_state" in i || "idea_progress" in i)).toBe(false);
+    expect(tasks.some((i) => "idea_state" in i || "idea_progress" in i || "idea_refs" in i)).toBe(false);
     const plainBrief = (await (await api(`/api/items/${plain}`)).json()) as { item: Record<string, unknown> };
     expect("idea_state" in plainBrief.item).toBe(false);
     expect("idea_progress" in plainBrief.item).toBe(false);
+    expect("idea_refs" in plainBrief.item).toBe(false);
+  });
+
+  it("idea drafts stay out of the inbox", async () => {
+    const store = ctx.workspaces.get("ws")!.store;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "idea", title: "inbox-free thought" }], human);
+    const data = (await (await api("/api/inbox")).json()) as { drafts: string[] };
+    expect(data.drafts).not.toContain(ids[0]);
   });
 });
 describe("session role at hello (GL-0323)", () => {
@@ -1914,6 +1972,7 @@ describe("feature item and feature page (GL-0331)", () => {
 
     // finish one part → in_progress; the plan's progress lands on the view
     await ops.approve(p1);
+    await ops.closePlan(plan); // parts claim only once the plan is ready
     await ops.claim(p1, s);
     await ops.submit(p1, s, { walkthrough: "did it", what: "task done", how: "ran the steps" });
     await ops.accept(p1, human);

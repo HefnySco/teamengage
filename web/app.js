@@ -142,47 +142,37 @@ const DomainChips = ({ ds, onClick, active }) =>
   (ds ?? []).length ? html`<span class="d-inline-flex flex-wrap gap-1">${ds.map((d) => html`<${DomainChip} key=${d} d=${d} onClick=${onClick} active=${active === d} />`)}</span>` : null;
 
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
-// an epic's derived plan lifecycle (plan_state) — draft → decomposing → active → done
+// an epic's derived plan lifecycle (plan_state) — draft → decomposing → ready → in_progress → done
 const PLAN_CHIP = {
   draft: "ps-draft",
   decomposing: "ps-decomposing",
-  active: "ps-active",
+  ready: "ps-ready",
+  in_progress: "ps-in-progress",
   done: "ps-done",
+  dropped: "ps-dropped",
 };
 // ghost micro-chip: graph glyph + n/m fraction — the colour carries the state, the title the words;
 // clicking opens the plan's dependency graph
 // ---- idea state — the API serves idea_state/idea_progress on idea rows (the canonical index
 // rule); the local copy below only fills in for daemons too old to serve them
-const IDEA_STATES = ["unplanned", "planned", "in_progress", "done"];
-const IDEA_STATE_CLS = { unplanned: "ps-draft", planned: "ps-decomposing", in_progress: "ps-active", done: "ps-done" };
+const IDEA_STATES = ["draft", "ready", "done", "dropped"];
+const IDEA_STATE_CLS = { draft: "ps-draft", ready: "ps-decomposing", done: "ps-done", dropped: "ps-dropped" };
 const servedIdea = (i) => (i.idea_state ? { state: i.idea_state, done: i.idea_progress?.done ?? 0, total: i.idea_progress?.total ?? 0 } : undefined);
-// statuses: the status of every item that references the idea (dropped ones do not count)
-const ideaStateOf = (statuses) => {
+// statuses: the idea's own status plus the status of every item that
+// references it (dropped referrers do not count)
+const ideaStateOf = (status, statuses) => {
   const live = statuses.filter((st) => st !== "dropped");
   const done = live.filter((st) => st === "done").length;
   const total = live.length;
-  let state = "planned";
-  if (total === 0) state = "unplanned";
-  else if (done === total) state = "done";
-  else if (live.some((st) => ["in_progress", "waiting", "in_review", "done"].includes(st))) state = "in_progress";
+  let state = "ready";
+  if (status === "dropped") state = "dropped";
+  else if (status === "draft") state = "draft";
+  else if (status === "done" || (total > 0 && done === total)) state = "done";
   return { state, done, total };
-};
-// id → { state, done, total } for every idea in a list of board rows
-const ideaStates = (rows) => {
-  const by = new Map();
-  for (const r of rows) {
-    for (const ref of r.relates ?? []) {
-      if (!by.has(ref)) by.set(ref, []);
-      by.get(ref).push(r.status);
-    }
-  }
-  const out = new Map();
-  for (const r of rows) if (r.type === "idea") out.set(r.id, servedIdea(r) ?? ideaStateOf(by.get(r.id) ?? []));
-  return out;
 };
 const IdeaChip = ({ st }) => {
   if (!st) return null;
-  return html`<span class="plan-chip ${IDEA_STATE_CLS[st.state]}" title="idea ${st.state.replace("_", " ")} — ${st.done} of ${st.total} items that name it are done">${st.state.replace("_", " ")} ${st.done}/${st.total}</span>`;
+  return html`<span class="plan-chip ${IDEA_STATE_CLS[st.state]}" title="idea ${st.state.replace("_", " ")} — ${st.done} of ${st.total} items that name it are done">${st.state.replace("_", " ")}${st.total ? ` ${st.done}/${st.total}` : ""}</span>`;
 };
 
 // ---- found problems — open/done problem counts on a plan (from the index), shown as a chip
@@ -191,6 +181,47 @@ const ProblemChip = ({ p, on, onToggle }) => {
   return html`<span class="plan-chip ${p.open > 0 ? "ps-problem" : "ps-done"}${onToggle ? " clickable" : ""}${on ? " on" : ""}"
     title="problems found in this plan: ${p.open} open, ${p.done} done${onToggle ? (on ? " — click to fold the list" : " — click to list them") : ""}"
     onClick=${onToggle ? (e) => { e.stopPropagation(); onToggle(); } : null}>problems ${p.open} open / ${p.done} done</span>`;
+};
+// one problem inside the expandable list — id, status, title; opens the item
+const ProblemRow = ({ i, onOpen }) => html`
+  <div class="d-flex align-items-center gap-2 py-1 plan-li prob-li" style=${{ cursor: "pointer" }}
+    onClick=${(e) => {
+      e.stopPropagation(); // don't also trigger the host row/card's own open
+      onOpen(i.id);
+    }}>
+    <span style=${{ width: "1rem", textAlign: "center" }} title="problem found in this plan">!</span>
+    <span class="id text-nowrap">${i.id}</span>
+    <${Badge} s=${i.status} />
+    <span class="text-truncate" title=${i.title}>${i.title}</span>
+  </div>`;
+// the shared plan-problems control: the chip plus its expandable list — the
+// same on every surface (plans tree, board card, item page). The list drops
+// to a full-width line under the chip (the host row needs flex-wrap); the
+// first expand fetches the same set plan_problems counts
+const PlanProblems = ({ id, p, onOpen }) => {
+  const [on, setOn] = useState(false);
+  const [rows, setRows] = useState(undefined);
+  if (!p || p.open + p.done === 0) return null;
+  const toggle = () => {
+    setOn(!on);
+    if (!on && rows === undefined)
+      api(`/api/items/${id}/problems`).then(
+        (r) => setRows(r.problems ?? []),
+        (e) => {
+          toast(`${id}: ${e.message}`);
+          setRows([]);
+        },
+      );
+  };
+  return html`
+    <${ProblemChip} p=${p} on=${on} onToggle=${toggle} />
+    ${on && html`<div class="prob-list" onClick=${(e) => e.stopPropagation()}>
+      ${rows === undefined
+        ? html`<div class="prob-li text-secondary">…</div>`
+        : rows.length === 0
+          ? html`<div class="prob-li text-secondary">none left</div>`
+          : rows.map((r) => html`<${ProblemRow} key=${r.id} i=${r} onOpen=${onOpen} />`)}
+    </div>`}`;
 };
 const hasFound = (i) => (i.found_by ?? []).length > 0 || (i.found_here ?? []).length > 0;
 
@@ -1025,9 +1056,11 @@ const searchSug = (q, pool) => {
 const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
 const byCreated = (a, b) => (a.created ?? "").localeCompare(b.created ?? "") || byId(a, b);
 const byUpdated = (a, b) => (b.updated ?? b.created ?? "").localeCompare(a.updated ?? a.created ?? "") || byId(a, b);
+// plans carry plan_progress, ideas carry idea_progress — same done/total shape
+const progressOf = (i) => i.plan_progress ?? i.idea_progress;
 const pctDone = (i) => {
-  const t = i.plan_progress?.total ?? 0;
-  return t ? (i.plan_progress?.done ?? 0) / t : 0;
+  const t = progressOf(i)?.total ?? 0;
+  return t ? (progressOf(i)?.done ?? 0) / t : 0;
 };
 const SORTS = {
   "created-asc": byCreated,
@@ -1038,8 +1071,8 @@ const SORTS = {
   "name-desc": (a, b) => (b.title ?? "").localeCompare(a.title ?? "") || byId(a, b),
   "completion-desc": (a, b) => pctDone(b) - pctDone(a) || byId(a, b),
   "completion-asc": (a, b) => pctDone(a) - pctDone(b) || byId(a, b),
-  "size-desc": (a, b) => (b.plan_progress?.total ?? 0) - (a.plan_progress?.total ?? 0) || byId(a, b),
-  "size-asc": (a, b) => (a.plan_progress?.total ?? 0) - (b.plan_progress?.total ?? 0) || byId(a, b),
+  "size-desc": (a, b) => (progressOf(b)?.total ?? 0) - (progressOf(a)?.total ?? 0) || byId(a, b),
+  "size-asc": (a, b) => (progressOf(a)?.total ?? 0) - (progressOf(b)?.total ?? 0) || byId(a, b),
 };
 // fields that read most naturally biggest-first — the first click gives desc
 const DESC_FIRST = new Set(["updated", "completion", "size"]);
@@ -1136,7 +1169,6 @@ const Board = ({ onOpen }) => {
   const [starredOnly, setStarredOnlyState] = useState(() => loadSearch("te.board.starred") === "1");
   // AI-review filter: "" = all, "ok" = only approved, "issues" = only flagged
   const [aiFilter, setAiFilterState] = useState(() => (["ok", "issues"].includes(loadSearch("te.board.ai")) ? loadSearch("te.board.ai") : ""));
-  const [hidePlans, setHidePlansState] = useState(() => loadSearch("te.board.noplans") === "1");
   const [domShowAll, setDomShowAll] = useState(false);
   const [foundOnly, setFoundOnlyState] = useState(() => loadSearch("te.board.found") === "1");
   const setFoundOnly = (v) => {
@@ -1163,12 +1195,6 @@ const Board = ({ onOpen }) => {
     }, 250);
     return () => clearTimeout(t);
   }, [deep, q, domain]);
-  const [ideaFilter, setIdeaFilterState] = useState(() => (IDEA_STATES.includes(loadSearch("te.board.idea")) ? loadSearch("te.board.idea") : ""));
-  const setIdeaFilter = (v) => {
-    const nv = v === ideaFilter ? "" : v; // clicking the active state clears it
-    setIdeaFilterState(nv);
-    saveSearch("te.board.idea", nv);
-  };
   const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
   const [sugOff, setSugOff] = useState(false); // Esc dismisses until the query changes
   const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
@@ -1193,9 +1219,8 @@ const Board = ({ onOpen }) => {
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
   const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
-  const inPlans = hidePlans ? inAi.filter((i) => !(i.type === "epic" && i.plan_state)) : inAi;
-  const ideaSt = ideaStates(data);
-  const inIdea = ideaFilter ? inPlans.filter((i) => i.type === "idea" && ideaSt.get(i.id)?.state === ideaFilter) : inPlans;
+  // plans live on the plans page, ideas on the ideas page — the board is work cards only
+  const noIdeas = inAi.filter((i) => i.type !== "idea" && i.type !== "epic");
   // "found problems" mirrors the plans chip: found_by/found_here links AND
   // bug items (type bug or #bug) sitting inside a plan's subtree
   const byIdMap = new Map(data.map((i) => [i.id, i]));
@@ -1213,12 +1238,12 @@ const Board = ({ onOpen }) => {
   };
   const isPlanProblem = (i) => (i.type === "bug" || (i.domains ?? []).includes("bug")) && hasEpicAbove(i);
   const foundMatch = (i) => hasFound(i) || isPlanProblem(i);
-  const inFound = foundOnly ? inIdea.filter(foundMatch) : inIdea;
+  const inFound = foundOnly ? noIdeas.filter(foundMatch) : noIdeas;
   const mctx = { byId: byIdMap, maxAttempts: ws?.max_attempts, staleMs: parseDurMs(ws?.stale_after) ?? STALE_MS };
   const hits = words.length ? inFound.filter((i) => matches(i, words, mctx)) : inFound;
   const foundCount = data.filter(foundMatch).length;
-  const ideaCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
-  for (const v of ideaSt.values()) ideaCounts[v.state] += 1;
+  const ideaCount = data.filter((i) => i.type === "idea").length;
+  const planCount = data.filter((i) => i.type === "epic").length;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -1246,10 +1271,6 @@ const Board = ({ onOpen }) => {
     const v = { "": "ok", ok: "issues", issues: "" }[aiFilter];
     setAiFilterState(v);
     saveSearch("te.board.ai", v);
-  };
-  const setHidePlans = (v) => {
-    setHidePlansState(v);
-    saveSearch("te.board.noplans", v ? "1" : "");
   };
   const eff = SORTS[sort] ? sort : "created-asc";
   const sessRole = new Map((sessions ?? []).map((s) => [s.id, s.role]));
@@ -1300,13 +1321,12 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
         onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
-      <button class="btn btn-sm ${hidePlans ? "btn-outline-secondary" : "btn-plans"}"
-        title=${hidePlans ? "plan cards hidden — click to show plans (epics) again" : "hide plan cards — epics with a plan leave the board"}
-        onClick=${() => setHidePlans(!hidePlans)}><${GraphIcon} /> plans</button>
+      <button class="btn btn-sm btn-outline-secondary" title="plans page — epics and their parts" onClick=${() => nav("plans")}><${GraphIcon} /> plans <span class="n">${planCount}</span></button>
+      <button class="btn btn-sm btn-outline-secondary" title="ideas page — source documents and the work they spawned" onClick=${() => nav("ideas")}>ideas <span class="n">${ideaCount}</span></button>
       <button class="btn btn-sm ${foundOnly ? "btn-warning" : "btn-outline-secondary"}"
         title=${foundOnly ? "showing only found problems — click to clear" : "show only found problems: items linked by found_by/found_here and bug tasks inside plans"}
         onClick=${() => setFoundOnly(!foundOnly)}>Found problems <span class="n">${foundCount}</span></button>
-      ${(words.length > 0 || domain || starredOnly || aiFilter || hidePlans || ideaFilter || foundOnly) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
+      ${(words.length > 0 || domain || starredOnly || aiFilter || foundOnly) && html`<span class="text-secondary small ms-auto">${hits.length} of ${data.length}${hits.length === 1 ? " — Enter opens it" : ""}</span>`}
       ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
         onClose=${() => setIdeaOpen(false)}
         onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
@@ -1317,12 +1337,6 @@ const Board = ({ onOpen }) => {
       ${!domShowAll && domEntries.length > 12 && html`<span class="triage-tag clickable" onClick=${() => setDomShowAll(true)}>+${domEntries.length - 12} more</span>`}
       <span class="small text-body-tertiary">${untagged} untagged</span>
       ${domain && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setDomain(domain)}>clear</button>`}
-    </div>`}
-    ${ideaSt.size > 0 && html`<div class="d-flex align-items-center gap-1 flex-wrap mb-3">
-      <span class="small text-body-tertiary me-1">Ideas</span>
-      ${IDEA_STATES.map((k) => html`<span key=${k} class="plan-chip clickable ${IDEA_STATE_CLS[k]} ${ideaFilter === k ? "on" : ""}" role="button"
-        title="show only ${k.replace("_", " ")} ideas (click again to clear)" onClick=${() => setIdeaFilter(k)}>${k.replace("_", " ")} <span class="n">${ideaCounts[k]}</span></span>`)}
-      ${ideaFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setIdeaFilter(ideaFilter)}>clear</button>`}
     </div>`}
     ${deep && words.length > 0 ? html`
       <div class="triage"><div>
@@ -1364,15 +1378,11 @@ const Board = ({ onOpen }) => {
             <div class="col-body">
               ${items.map(
                 (i) => html`
-                  <div class=${`card bcard p-2${i.type === "epic" && i.plan_state ? ` plan ps-${i.plan_state}` : ""}`} key=${i.id} onClick=${() => onOpen(i.id)}>
-                    ${i.type === "epic" && i.plan_state && html`<div class="plan-over">plan · ${i.plan_state}</div>`}
-                    <div class="d-flex align-items-center gap-1">
+                  <div class="card bcard p-2" key=${i.id} onClick=${() => onOpen(i.id)}>
+                    <div class="d-flex align-items-center gap-1 flex-wrap">
                       <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
-                      ${i.type === "epic" && html`<${PlanBadge} i=${i} />`}
-                      ${i.type === "idea" && html`<${IdeaChip} st=${ideaSt.get(i.id)} />`}
                       ${i.type === "feature" && html`<span class="plan-chip ps-active" title=${`feature ${i.feature_status ?? "planned"} — ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0} parts done across ${(i.feature_plans ?? []).length} plan(s)`}>feat ${i.feature_status ?? ""} ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0}</span>`}
                       <span class="ms-auto d-flex align-items-center gap-1">
-                        ${i.type === "idea" && html`<span class="te-idea" title="idea — a source document; agents plan from it, it is never claimed"><${BulbIcon} /></span>`}
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
                           onClick=${(e) => {
                             e.stopPropagation(); // don't open the item
@@ -1388,6 +1398,7 @@ const Board = ({ onOpen }) => {
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
+                        ${i.unready && html`<span title=${`plan ${i.unready_by} is not ready yet — its parts start once the plan is closed`}>plan not ready</span>`}
                         ${(i.overlap ?? []).length > 0 && html`<span class="badge text-bg-warning"
                           title=${`Touches overlap — warning only:\n${i.overlap.map((o) => `${o.id}: ${o.paths.join(", ")}`).join("\n")}`}
                           onClick=${(e) => { e.stopPropagation(); onOpen(i.overlap[0].id); }}>overlap</span>`}
@@ -1429,37 +1440,9 @@ const PlanBar = ({ p }) => {
   return html`<div class="progress flex-shrink-0" style=${{ width: "6rem", height: "0.45rem" }} title="${p?.done ?? 0}/${total} parts finished">
     <div class="progress-bar bg-success" style=${{ width: `${pct}%` }}></div></div>`;
 };
-// a plan's problem issues — mirrors core planProblems: descendants that are
-// problem items (type bug or the bug domain), plus the found_here entries of
-// the plan and its descendants — each once, dropped items left out
-const isProblemItem = (i) => i.type === "bug" || (i.domains ?? []).includes("bug");
-const planProblemRows = (tree, plan) => {
-  const ids = new Set();
-  const seen = new Set();
-  const walk = (id) => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    const n = tree.items.get(id);
-    if (!n) return;
-    for (const f of n.found_here ?? []) ids.add(f.id);
-    if (id !== plan.id && isProblemItem(n)) ids.add(id);
-    for (const c of tree.kids.get(id) ?? []) walk(c.id);
-  };
-  walk(plan.id);
-  return [...ids].map((id) => tree.items.get(id)).filter((n) => n && n.status !== "dropped");
-};
-const ProblemRow = ({ i, depth, onOpen }) => html`
-  <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
-    onClick=${() => onOpen(i.id)}>
-    <span style=${{ width: "1rem", textAlign: "center" }} title="problem found in this plan">!</span>
-    <span class="id text-nowrap">${i.id}</span>
-    <${Badge} s=${i.status} />
-    <span class="text-truncate">${i.title}</span>
-  </div>`;
 const PlanNode = ({ i, depth, tree }) => {
   const isPlan = i.type === "epic";
   const isOpen = isPlan && tree.isOpenOf(i, depth);
-  const probMode = isPlan && tree.probOpen?.[i.id];
   const children = tree.kids.get(i.id) ?? [];
   // approve-all-parts: the plan's draft children, one confirm for the lot
   const draftParts = children.filter((c) => c.status === "draft");
@@ -1474,7 +1457,7 @@ const PlanNode = ({ i, depth, tree }) => {
   const shown = tree.words.length ? children.filter(tree.subtreeMatches) : children;
   return html`
     <div>
-      <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li flex-wrap" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
         onClick=${() => tree.onOpen(i.id)}>
         <span style=${{ width: "1rem", textAlign: "center" }} title=${isPlan ? (isOpen ? "collapse" : "expand") : ""}
           onClick=${(e) => {
@@ -1484,13 +1467,14 @@ const PlanNode = ({ i, depth, tree }) => {
           }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
         <span class="id text-nowrap">${i.id}</span>
         <${StarBtn} i=${i} reload=${tree.reload} />
-        ${isPlan ? html`<${PlanBadge} i=${i} /><${ProblemChip} p=${i.plan_problems} on=${probMode} onToggle=${() => tree.toggleProb(i.id)} />` : html`<${Badge} s=${i.status} />`}
+        ${isPlan ? html`<${PlanBadge} i=${i} /><${PlanProblems} id=${i.id} p=${i.plan_problems} onOpen=${tree.onOpen} />` : html`<${Badge} s=${i.status} />`}
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.paused && html`<span class="small text-warning-emphasis" title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
+        ${i.unready && html`<span class="small text-warning-emphasis" title=${`plan ${i.unready_by} is not ready yet — its parts start once the plan is closed`}>plan not ready</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
-        ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} /><${Badge} s=${i.status} /><${PlanBar} p=${i.plan_progress} /></span>`}
+        ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} />${i.plan_state && html`<span class="plan-chip ${PLAN_CHIP[i.plan_state] ?? "ps-draft"}" title=${`plan ${i.plan_state} — derived from its parts`}>${i.plan_state.replace("_", " ")}</span>`}<${PlanBar} p=${i.plan_progress} /></span>`}
         ${isPlan && html`<span class="acts">
           ${draftParts.length > 0 && html`<${ActBtn} variant="primary" title=${`approve the ${draftParts.length} draft part(s) of this plan — they become ready for agents`}
             onClick=${approveParts}><${CheckIcon} /></${ActBtn}>`}
@@ -1508,8 +1492,7 @@ const PlanNode = ({ i, depth, tree }) => {
             }}><${CheckIcon} /></${ActBtn}></span>`}
         </span>`}
       </div>
-      ${isOpen && probMode && planProblemRows(tree, i).map((r) => html`<${ProblemRow} key=${r.id} i=${r} depth=${depth + 1} onOpen=${tree.onOpen} />`)}
-      ${isOpen && !probMode && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
+      ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
     </div>`;
 };
 // a plan counts fully completed when its own status is done/dropped AND every
@@ -1534,7 +1517,6 @@ const Plans = ({ onOpen }) => {
       return {};
     }
   });
-  const [probOpen, setProbOpen] = useState({});
   if (!data) return html`<p class="text-secondary">loading…</p>`;
   const setOpen = (next) => {
     setOpenState(next);
@@ -1593,12 +1575,7 @@ const Plans = ({ onOpen }) => {
     toast(r.skipped?.length ? `skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}` : `archived ${r.done.length}`, r.skipped?.length ? "danger" : "success");
     reload();
   };
-  const toggleProb = (id) => {
-    const on = !probOpen[id];
-    setProbOpen({ ...probOpen, [id]: on });
-    if (on && !open[id]) setOpen({ ...open, [id]: true });
-  };
-  const tree = { kids, items, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload, probOpen, toggleProb };
+  const tree = { kids, items, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload };
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Plans</h2>
@@ -1619,6 +1596,167 @@ const Plans = ({ onOpen }) => {
     <div class="card card-body py-1 dense">
       ${visible.map((r) => html`<${PlanNode} key=${r.id} i=${r} depth=${0} tree=${tree} />`)}
       ${!visible.length && html`<div class="text-secondary py-2">no plans${words.length ? " match the search" : ""}</div>`}
+    </div>
+  `;
+};
+
+// ---- Ideas -------------------------------------------------------------------
+// source documents and the work they spawned: each idea row folds open to the
+// items that name it in relates — plan referrers keep their subtrees because
+// IdeaNode reuses PlanNode for its children
+const IdeaNode = ({ i, depth, tree }) => {
+  const isOpen = tree.isOpenOf(i, depth);
+  const children = tree.kids.get(i.id) ?? [];
+  const shown = tree.words.length ? children.filter(tree.subtreeMatches) : children;
+  return html`
+    <div>
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom plan-li flex-wrap" style=${{ paddingLeft: `${depth * 1.25}rem`, cursor: "pointer" }}
+        onClick=${() => tree.onOpen(i.id)}>
+        <span style=${{ width: "1rem", textAlign: "center" }} title=${children.length ? (isOpen ? "collapse" : "expand") : ""}
+          onClick=${(e) => {
+            if (!children.length) return;
+            e.stopPropagation(); // fold, don't open the item
+            tree.setOpen({ ...tree.open, [i.id]: !isOpen });
+          }}>${children.length ? (isOpen ? "▾" : "▸") : "·"}</span>
+        <span class="id text-nowrap">${i.id}</span>
+        <${StarBtn} i=${i} reload=${tree.reload} />
+        <${IdeaChip} st=${tree.stateOf(i)} />
+        <span class="fw-semibold">${i.title}</span>
+        <span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} /><${Badge} s=${i.status} /><${PlanBar} p=${i.idea_progress} /></span>
+        <span class="acts">
+          ${i.status === "draft" && html`<${ActBtn} variant="primary" title="approve this idea — it is triaged, agents may plan from it"
+            onClick=${(e) => {
+              e.stopPropagation(); // the row itself opens the item
+              tree.act(i.id, "approve");
+            }}><${CheckIcon} /></${ActBtn}>`}
+        </span>
+      </div>
+      ${isOpen && shown.map((c) => html`<${PlanNode} key=${c.id} i=${c} depth=${depth + 1} tree=${tree} />`)}
+    </div>`;
+};
+const Ideas = ({ onOpen }) => {
+  const { data, reload } = useApi("/api/items");
+  const { data: ws } = useApi("/api/workspace");
+  const [ideaOpen, setIdeaOpen] = useState(false);
+  const [q, setQ] = useState(() => loadSearch("te.ideas.q"));
+  const [showDone, setShowDoneState] = useState(() => loadSearch("te.ideas.done") === "1");
+  const [stateFilter, setStateFilterState] = useState(() => (IDEA_STATES.includes(loadSearch("te.ideas.state")) ? loadSearch("te.ideas.state") : ""));
+  const [sort, setSortState] = useState(() => loadSearch("te.ideas.sort"));
+  const [open, setOpenState] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("te.ideas.open") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  if (!data) return html`<p class="text-secondary">loading…</p>`;
+  const setOpen = (next) => {
+    setOpenState(next);
+    try {
+      localStorage.setItem("te.ideas.open", JSON.stringify(next));
+    } catch {
+      /* storage blocked — fold state just isn't remembered */
+    }
+  };
+  const items = new Map(data.map((i) => [i.id, i]));
+  const kids = new Map();
+  for (const i of data) {
+    if (!i.parent || !items.has(i.parent)) continue;
+    if (!kids.has(i.parent)) kids.set(i.parent, []);
+    kids.get(i.parent).push(i);
+  }
+  // an idea's children are its referrers — idea_refs when the daemon serves
+  // them, else the reverse-lookup of relates the board used to compute
+  const refsFor = (i) =>
+    (i.idea_refs ?? data.filter((r) => (r.relates ?? []).some((ref) => ref.split(":").pop() === i.id)).map((r) => r.id))
+      .map((id) => items.get(id))
+      .filter(Boolean);
+  const ideas = data.filter((i) => i.type === "idea");
+  for (const i of ideas) kids.set(i.id, refsFor(i));
+  const stateOf = (i) => servedIdea(i) ?? ideaStateOf(i.status, (kids.get(i.id) ?? []).map((c) => c.status));
+  const effSort = SORTS[sort] ? sort : "created-desc";
+  // referrers first-order like plan parts: tasks in id order, plans in the
+  // chosen order — the sort is shared with the plans page via progressOf
+  for (const list of kids.values()) list.sort((a, b) => (a.type === "epic") - (b.type === "epic") || (a.type === "epic" ? SORTS[effSort](a, b) : byId(a, b)));
+  const roots = ideas.filter((i) => !(i.parent && items.has(i.parent))).sort(SORTS[effSort]);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // an idea matches when it or any descendant (referrer or plan part) matches
+  const subtreeMatches = (i) => matches(i, words, { byId: items }) || (kids.get(i.id) ?? []).some(subtreeMatches);
+  const finished = (i) => ["done", "dropped"].includes(stateOf(i).state);
+  const stateCounts = Object.fromEntries(IDEA_STATES.map((k) => [k, 0]));
+  for (const i of ideas) stateCounts[stateOf(i).state] += 1;
+  const visible = roots.filter(
+    (r) => (showDone || !finished(r)) && (!stateFilter || stateOf(r).state === stateFilter) && (!words.length || subtreeMatches(r)),
+  );
+  const setSearch = (v) => {
+    setQ(v);
+    saveSearch("te.ideas.q", v);
+  };
+  const setShowDone = (v) => {
+    setShowDoneState(v);
+    saveSearch("te.ideas.done", v ? "1" : "");
+  };
+  const setSort = (v) => {
+    setSortState(v);
+    saveSearch("te.ideas.sort", v);
+  };
+  const setStateFilter = (v) => {
+    const nv = v === stateFilter ? "" : v; // clicking the active state clears it
+    setStateFilterState(nv);
+    saveSearch("te.ideas.state", nv);
+  };
+  const isOpenOf = (i, depth) => open[i.id] ?? (depth === 0 || words.length > 0);
+  const setAll = (v) => setOpen(Object.fromEntries(ideas.map((i) => [i.id, v])));
+  const act = async (id, action, body) => {
+    await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
+    reload();
+  };
+  // archive-finished: the done/dropped items the page renders right now
+  const inView = new Set();
+  const collect = (i) => {
+    inView.add(i.id);
+    const children = kids.get(i.id) ?? [];
+    (words.length ? children.filter(subtreeMatches) : children).forEach(collect);
+  };
+  visible.forEach(collect);
+  const finishedIds = data.filter((i) => inView.has(i.id) && doneish(i.status) && !i.archived).map((i) => i.id);
+  const archiveFinished = async () => {
+    if (!(await confirmDialog(`archive ${finishedIds.length} finished item(s) in view?`, finishedIds.map((id) => `${id} — ${items.get(id)?.title ?? ""}`).join("\n"), { ok: `archive ${finishedIds.length}` }))) return;
+    const r = await post("/api/batch", { op: "archive", ids: finishedIds }).catch((e) => (toast(e.message), null));
+    if (!r) return;
+    toast(r.skipped?.length ? `skipped ${r.skipped.length} — ${r.skipped.map((s) => `${s.id} (${s.reason})`).join(", ")}` : `archived ${r.done.length}`, r.skipped?.length ? "danger" : "success");
+    reload();
+  };
+  const tree = { kids, items, words, subtreeMatches, isOpenOf, open, setOpen, onOpen, act, reload, stateOf };
+  return html`
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <h2 class="h4 mb-0">Ideas</h2>
+      <${RefreshBtn} refresh=${() => Promise.all([reload(), refreshDomains()])} />
+      <button class="btn btn-sm btn-outline-warning" title="capture a thought as an idea — a source document an agent can plan from; lands as a draft" onClick=${() => setIdeaOpen(true)}><${BulbIcon} /> new idea</button>
+      ${finishedIds.length > 0 && html`<button class="btn btn-sm btn-outline-secondary" title="archive every done or dropped item in view" onClick=${archiveFinished}>archive finished ${finishedIds.length}</button>`}
+      <${SearchBox}
+        style=${{ maxWidth: "24rem" }}
+        placeholder="search ideas and their items…"
+        value=${q}
+        onChange=${setSearch}
+        autofocus
+      />
+      <button class="btn btn-sm ${showDone ? "btn-primary" : "btn-outline-secondary"}" title="also show finished ideas" onClick=${() => setShowDone(!showDone)}>done ideas</button>
+      <${SortSeg} eff=${effSort} onSort=${setSort} title="order ideas" fields=${[["created", "created"], ["completion", "done %"], ["size", "size"]]} />
+      <span class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" onClick=${() => setAll(true)}>expand all</button><button class="btn btn-outline-secondary" onClick=${() => setAll(false)}>collapse all</button></span>
+      <span class="text-secondary small">${visible.length} of ${roots.length} idea(s)</span>
+      ${ideaOpen && html`<${NewIdea} projects=${ws?.projects ?? []}
+        onClose=${() => setIdeaOpen(false)}
+        onCreated=${(id) => { setIdeaOpen(false); reload(); onOpen(id); }} />`}
+    </div>
+    <div class="d-flex align-items-center gap-1 flex-wrap mb-2">
+      ${IDEA_STATES.map((k) => html`<span key=${k} class="plan-chip clickable ${IDEA_STATE_CLS[k]} ${stateFilter === k ? "on" : ""}" role="button"
+        title="show only ${k} ideas (click again to clear)" onClick=${() => setStateFilter(k)}>${k} <span class="n">${stateCounts[k]}</span></span>`)}
+      ${stateFilter && html`<button class="btn btn-sm btn-link py-0" onClick=${() => setStateFilter(stateFilter)}>clear</button>`}
+    </div>
+    <div class="card card-body py-1 dense">
+      ${visible.map((r) => html`<${IdeaNode} key=${r.id} i=${r} depth=${0} tree=${tree} />`)}
+      ${!visible.length && html`<div class="text-secondary py-2">no ideas${words.length ? " match the search" : ""}</div>`}
     </div>
   `;
 };
@@ -2679,11 +2817,7 @@ const ItemView = ({ id }) => {
           </div>`)}
         ${b.feature.problems.length > 0 && html`
           <div class="mt-1 small"><b>open problems</b>
-            ${b.feature.problems.map((p) => html`<div key=${p.id} class="d-flex align-items-center gap-2 py-0">
-              <a class="item id" onClick=${() => nav(`item/${p.id}`)}>${p.id}</a>
-              <span class="text-truncate" title=${p.title}>${p.title}</span>
-              <${Badge} s=${p.status} />
-            </div>`)}
+            ${b.feature.problems.map((p) => html`<${ProblemRow} key=${p.id} i=${p} onOpen=${(pid) => nav(`item/${pid}`)} />`)}
           </div>`}
         ${b.feature.ideas.length > 0 && html`
           <div class="mt-1 small text-secondary">from ideas:
@@ -2727,7 +2861,7 @@ const ItemView = ({ id }) => {
       ${(b.referenced_by ?? []).length === 0 ? html`<span class="text-secondary">nothing yet</span>` : b.referenced_by.map(depLink)}
     </div>`}
     ${it.meta.type === "idea" && (() => {
-      const ist = servedIdea(it) ?? ideaStateOf((b.referenced_by ?? []).map((r) => r.status));
+      const ist = servedIdea(it) ?? ideaStateOf(it.meta.status, (b.referenced_by ?? []).map((r) => r.status));
       const pct = ist.total ? Math.round((100 * ist.done) / ist.total) : 0;
       return html`<div class="idea-progress d-flex align-items-center gap-2 mb-2 small">
         <span class="text-secondary">idea</span>
@@ -2833,10 +2967,12 @@ ${b.deps.length > 0 && html`
   const agentDetail = html`${preQ} ${postQ} ${tail}`;
   return html`
 
-    <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2" style=${{ top: "2.75rem", zIndex: 1010 }}>
+    <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2 flex-wrap" style=${{ top: "2.75rem", zIndex: 1010 }}>
       <span class="id flex-shrink-0">${it.meta.id}</span>
-      <${Badge} s=${st} />
-      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${ProblemChip} p=${it.plan_problems} />`}
+      ${it.meta.type === "epic"
+        ? html`<span class="plan-chip ${PLAN_CHIP[it.plan_state] ?? "ps-draft"}" title=${`plan ${it.plan_state} — derived from its parts`}>${(it.plan_state ?? "").replace("_", " ")}</span>`
+        : html`<${Badge} s=${st} />`}
+      ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${PlanProblems} id=${it.meta.id} p=${it.plan_problems} onOpen=${(pid) => nav(`item/${pid}`)} />`}
       ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
@@ -2853,7 +2989,7 @@ ${b.deps.length > 0 && html`
         ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
         ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
         ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
-        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes active, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
+        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes ready, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
         ${it.meta.type === "epic" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
         ${st !== "done" && html`<${ActBtn} variant="outline-success" title="mark done — complete it now, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
         ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
@@ -4505,7 +4641,7 @@ const Diagrams = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, graph: Graph, diagrams: Diagrams, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
+const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, ideas: Ideas, graph: Graph, diagrams: Diagrams, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

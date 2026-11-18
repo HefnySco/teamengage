@@ -42,7 +42,7 @@ describe("Index", () => {
     writeItem("GL-0002", { depends_on: "[GL-0001]", parent: "TE-0001" }); // dep done → ready
     writeItem("GL-0003", { depends_on: "[GL-0002]" }); // dep ready → blocked
     writeItem("GL-0004", { status: "in_progress" });
-    writeItem("TE-0001", { type: "epic", status: "draft" }, "## Children\n- GL-0002\n");
+    writeItem("TE-0001", { type: "epic", status: "draft", plan_closed: "true" }, "## Children\n- GL-0002\n");
     const idx = await Index.load(plans);
     expect(idx.get("GL-0002")!.blocked).toBe(false);
     expect(idx.get("GL-0002")!.ready).toBe(true);
@@ -82,8 +82,8 @@ describe("Index", () => {
   });
 
   it("a plan on hold pauses its whole subtree — parts keep their status but are never ready", async () => {
-    writeItem("HLD-0001", { type: "epic", status: "hold" }); // held root plan
-    writeItem("HLD-0002", { type: "epic", parent: "HLD-0001" }); // sub-plan
+    writeItem("HLD-0001", { type: "epic", status: "hold", plan_closed: "true" }); // held root plan
+    writeItem("HLD-0002", { type: "epic", parent: "HLD-0001", plan_closed: "true" }); // sub-plan
     writeItem("HLD-0003", { parent: "HLD-0002" }); // nested task
     writeItem("HLD-0004", {}); // unrelated
     let idx = await Index.load(plans);
@@ -95,10 +95,38 @@ describe("Index", () => {
     expect(idx.get("HLD-0004")!.paused).toBe(false);
 
     // unhold → the subtree becomes claimable again
-    writeItem("HLD-0001", { type: "epic", status: "ready" });
+    writeItem("HLD-0001", { type: "epic", status: "ready", plan_closed: "true" });
     idx = await Index.load(plans);
     expect(idx.get("HLD-0003")!.paused).toBe(false);
     expect(idx.get("HLD-0003")!.ready).toBe(true);
+  });
+
+  it("a plan that is not ready gates its whole subtree — parts are never claimable until it closes", async () => {
+    writeItem("UNR-0001", { type: "epic" }); // decomposing root plan
+    writeItem("UNR-0002", { type: "epic", parent: "UNR-0001", plan_closed: "true" }); // closed sub-plan
+    writeItem("UNR-0003", { parent: "UNR-0002" }); // nested task
+    writeItem("UNR-0004", { type: "epic", plan_closed: "true" }); // ready root plan
+    writeItem("UNR-0005", { parent: "UNR-0004" }); // its part
+    writeItem("UNR-0006", { type: "epic", status: "dropped" }); // a dropped plan's leftovers are exempt
+    writeItem("UNR-0007", { parent: "UNR-0006" });
+    let idx = await Index.load(plans);
+    // the root plan is decomposing → the sub-plan's parts can't start either
+    expect(idx.get("UNR-0003")!.unready).toBe(true);
+    expect(idx.get("UNR-0003")!.unready_by).toBe("UNR-0001");
+    expect(idx.get("UNR-0003")!.ready).toBe(false);
+    expect(idx.get("UNR-0002")!.unready).toBe(true);
+    expect(idx.get("UNR-0002")!.unready_by).toBe("UNR-0001");
+    // a closed plan's parts claim as usual
+    expect(idx.get("UNR-0005")!.unready).toBe(false);
+    expect(idx.get("UNR-0005")!.ready).toBe(true);
+    // dropped plans gate nothing
+    expect(idx.get("UNR-0007")!.unready).toBe(false);
+
+    // closing the root plan frees the subtree
+    writeItem("UNR-0001", { type: "epic", plan_closed: "true" });
+    idx = await Index.load(plans);
+    expect(idx.get("UNR-0003")!.unready).toBe(false);
+    expect(idx.get("UNR-0003")!.ready).toBe(true);
   });
 
   it("incremental upsertFile equals full reload", async () => {
@@ -167,7 +195,7 @@ describe("Index", () => {
 });
 
 describe("plan_state and plan_progress (epics)", () => {
-  it("draft → decomposing → active → done as children appear, close, and finish", async () => {
+  it("draft → decomposing → ready → in_progress → done as children appear, close, run and finish", async () => {
     writeItem("PL-0001", { type: "epic" });
     let idx = await Index.load(plans);
     expect(idx.planState("PL-0001")).toBe("draft");
@@ -181,12 +209,28 @@ describe("plan_state and plan_progress (epics)", () => {
 
     writeItem("PL-0001", { type: "epic", plan_closed: "true" });
     idx = await Index.load(plans);
-    expect(idx.planState("PL-0001")).toBe("active");
+    expect(idx.planState("PL-0001")).toBe("ready");
+
+    writeItem("PL-0002", { parent: "PL-0001", status: "in_progress" });
+    idx = await Index.load(plans);
+    expect(idx.planState("PL-0001")).toBe("in_progress");
 
     writeItem("PL-0002", { parent: "PL-0001", status: "done" });
     idx = await Index.load(plans);
     expect(idx.planState("PL-0001")).toBe("done");
     expect(idx.planProgress("PL-0001")).toEqual({ done: 1, total: 1 });
+  });
+
+  it("waiting and in_review parts count as in flight too; a part in flight shows in_progress even unclosed", async () => {
+    writeItem("IP-0001", { type: "epic", plan_closed: "true" });
+    writeItem("IP-0002", { parent: "IP-0001", status: "done" });
+    writeItem("IP-0003", { parent: "IP-0001", status: "waiting" });
+    writeItem("IP-0004", { parent: "IP-0001", status: "in_review" });
+    writeItem("IP-0005", { type: "epic" }); // never closed — in-flight parts still show
+    writeItem("IP-0006", { parent: "IP-0005", status: "in_progress" });
+    const idx = await Index.load(plans);
+    expect(idx.planState("IP-0001")).toBe("in_progress");
+    expect(idx.planState("IP-0005")).toBe("in_progress");
   });
 
   it("non-epics have no plan fields; old epics without plan_closed still load", async () => {
@@ -201,12 +245,12 @@ describe("plan_state and plan_progress (epics)", () => {
     writeItem("PL-0011", { type: "epic", parent: "PL-0010" }); // sub-plan B
     writeItem("PL-0012", { parent: "PL-0011" }); // task T
     let idx = await Index.load(plans);
-    expect(idx.planState("PL-0010")).toBe("active"); // B not finished yet
+    expect(idx.planState("PL-0010")).toBe("ready"); // B not finished yet
     expect(idx.planState("PL-0011")).toBe("decomposing");
 
     writeItem("PL-0011", { type: "epic", parent: "PL-0010", plan_closed: "true" });
     idx = await Index.load(plans);
-    expect(idx.planState("PL-0010")).toBe("active"); // T not done yet
+    expect(idx.planState("PL-0010")).toBe("ready"); // T not done yet
 
     writeItem("PL-0012", { parent: "PL-0011", status: "done" });
     idx = await Index.load(plans);
@@ -244,18 +288,28 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planState("AD-0001")).toBe("done");
   });
 
-  it("a manually completed sub-plan with unfinished parts still blocks the parent", async () => {
+  it("a hand-done plan shows done, but a part back in flight reopens it", async () => {
     writeItem("AD-0010", { type: "epic" });
     writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done" }); // done by hand
     writeItem("AD-0012", { parent: "AD-0011", status: "in_review" }); // can bounce back
     writeItem("AD-0013", { parent: "AD-0010", status: "done" });
     let idx = await Index.load(plans);
-    expect(idx.planState("AD-0010")).toBe("decomposing");
+    // a part in flight beats the hand-set done — both levels show in_progress
+    expect(idx.planState("AD-0011")).toBe("in_progress");
+    expect(idx.planState("AD-0010")).toBe("in_progress");
 
-    // the review resolving finishes both levels — the hand-set status never counted
-    writeItem("AD-0012", { parent: "AD-0011", status: "done" });
+    // the review resolving settles both levels — the hand-set done stands
+    writeItem("AD-0012", { parent: "AD-0011", status: "ready" }); // idle leftover
     idx = await Index.load(plans);
-    expect(idx.planState("AD-0010")).toBe("done");
+    expect(idx.planState("AD-0011")).toBe("done"); // the verdict is honored
+    expect(idx.planState("AD-0010")).toBe("done"); // and counts for the parent
+  });
+
+  it("a dropped plan derives dropped", async () => {
+    writeItem("AD-0030", { type: "epic", status: "dropped" });
+    writeItem("AD-0031", { parent: "AD-0030", status: "ready" });
+    const idx = await Index.load(plans);
+    expect(idx.planState("AD-0030")).toBe("dropped");
   });
 
   it("a dropped sub-plan counts as finished whatever its subtree holds", async () => {
@@ -286,8 +340,8 @@ describe("plan_state and plan_progress (epics)", () => {
     writeItem("PL-0030", { type: "epic", plan_closed: "true", parent: "PL-0031" });
     writeItem("PL-0031", { type: "epic", plan_closed: "true", parent: "PL-0030" });
     const idx = await Index.load(plans);
-    expect(idx.planState("PL-0030")).toBe("active");
-    expect(idx.planState("PL-0031")).toBe("active");
+    expect(idx.planState("PL-0030")).toBe("ready");
+    expect(idx.planState("PL-0031")).toBe("ready");
     expect(idx.planProgress("PL-0030")).toEqual({ done: 0, total: 0 });
     // descendants() is cycle-safe too — each id appears once, the cycle just stops
     expect(idx.descendants("PL-0030").sort()).toEqual(["PL-0031"]);
@@ -320,27 +374,44 @@ describe("found_here and plan_problems", () => {
     expect(idx.get("FH-0005")!.found_here).toEqual([]);
     expect(idx.get("FH-0001")!.plan_problems).toEqual({ open: 1, done: 1 });
     expect(idx.get("FH-0002")!.plan_problems).toBeUndefined();
+    // the chip's expandable list — the same set, open first, dropped left out
+    expect(idx.planProblemItems("FH-0001")).toEqual([
+      { id: "FH-0003", title: "FH-0003 title", status: "ready" },
+      { id: "FH-0004", title: "FH-0004 title", status: "done" },
+    ]);
+    expect(idx.planProblemItems("FH-0002")).toEqual([]);
   });
 });
 
 describe("idea state", () => {
-  it("derives unplanned / planned / in_progress / done from relates", async () => {
+  it("derives draft / ready / done / dropped from the idea's status and relates", async () => {
     writeItem("ID-0001", { type: "idea", status: "ready" });
     writeItem("ID-0002", { type: "idea", status: "ready" });
     writeItem("ID-0003", { type: "idea", status: "ready" });
-    writeItem("ID-0004", { type: "idea", status: "ready" });
+    writeItem("ID-0004", { type: "idea", status: "draft" });
+    writeItem("ID-0005", { type: "idea", status: "dropped" });
+    writeItem("ID-0006", { type: "idea", status: "ready" });
     writeItem("ID-0010", { status: "done", relates: "[ID-0002]" });
     writeItem("ID-0011", { status: "ready", relates: "[ID-0002, ID-0004]" });
     writeItem("ID-0012", { status: "done", relates: "[ID-0003]" });
-    writeItem("ID-0013", { status: "dropped", relates: "[ID-0003]" });
+    writeItem("ID-0013", { status: "dropped", relates: "[ID-0003, ID-0006]" });
+    writeItem("ID-0014", { status: "done", relates: "[ID-0006]", archived: "true" });
     const idx = await Index.load(plans);
-    expect(idx.get("ID-0001")!.idea_state).toBe("unplanned");
-    expect(idx.get("ID-0002")!.idea_state).toBe("in_progress");
-    expect(idx.get("ID-0003")!.idea_state).toBe("done");
-    expect(idx.get("ID-0004")!.idea_state).toBe("planned");
+    expect(idx.get("ID-0001")!.idea_state).toBe("ready"); // nothing names it yet
+    expect(idx.get("ID-0002")!.idea_state).toBe("ready"); // a referrer is still open
+    expect(idx.get("ID-0003")!.idea_state).toBe("done"); // every live referrer is done
+    expect(idx.get("ID-0004")!.idea_state).toBe("draft"); // its own status wins
+    expect(idx.get("ID-0005")!.idea_state).toBe("dropped");
+    // ID-0006: only dropped and archived referrers — nothing live counts
+    expect(idx.get("ID-0006")!.idea_state).toBe("ready");
     expect(idx.get("ID-0010")!.idea_state).toBeUndefined();
-    expect(idx.query({ type: "idea", idea_state: "unplanned" }).map((i) => i.meta.id)).toEqual(["ID-0001"]);
-    expect(idx.query({ type: "idea", idea_state: "in_progress" }).map((i) => i.meta.id)).toEqual(["ID-0002"]);
+    expect(idx.get("ID-0002")!.idea_refs).toEqual(["ID-0010", "ID-0011"]);
+    expect(idx.get("ID-0003")!.idea_refs).toEqual(["ID-0012", "ID-0013"]);
+    expect(idx.get("ID-0001")!.idea_refs).toEqual([]);
+    expect(idx.get("ID-0010")!.idea_refs).toBeUndefined();
+    expect(idx.query({ type: "idea", idea_state: "ready" }).map((i) => i.meta.id)).toEqual(["ID-0001", "ID-0002", "ID-0006"]);
+    expect(idx.query({ type: "idea", idea_state: "done" }).map((i) => i.meta.id)).toEqual(["ID-0003"]);
+    expect(idx.query({ type: "idea", idea_state: "draft" }).map((i) => i.meta.id)).toEqual(["ID-0004"]);
   });
 });
 

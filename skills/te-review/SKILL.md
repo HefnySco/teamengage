@@ -17,10 +17,23 @@ holder of the claim and **not** the decider. What you produce is a verdict + not
 the human reads, or a bounce reason the submitter reads. Final accept stays with
 the human.
 
-The submitting agent already ran its tests and got its syntax right — that
-passes almost always. Your job is the part it cannot grade itself: **whether
-the logic actually does what the task asked**. Read the diff and reason about
-it. Re-running the submitter's test suite is not a review.
+**Review the request, not the build.** The build stage already did the
+mechanical checks: compile, lint, syntax, and the test run. The submit gate
+refuses an item whose `## Checks` have no passing `te verify` result at the
+claim HEAD. Do not do that work again. Your job is the part the submitter
+cannot grade itself, because the same agent wrote the code and the tests
+from the same idea of the task:
+
+- **In scope:** missed requirements, a wrong interpretation of the task,
+  wrong logic, scope outside **Touches:**, and tests that prove the wrong
+  thing.
+- **Out of scope:** lint, formatting, style, compile errors, and running the
+  test suite again. These are not findings and not review work.
+
+Rule of thumb: **if a compiler, a linter or a test run can catch it, skip
+it. If only a reader who knows the task can catch it, report it.** A logic
+bug that breaks a requirement is in scope — it is the main thing you look
+for.
 
 ## 1. Start a session
 
@@ -92,11 +105,44 @@ git -C <repo> show <sha>                 # the commit
 git -C <repo> log --oneline -8           # context around it
 ```
 
-Judge the **logic**:
+### 4a. Make the requirement list
 
-- **Acceptance, item by item.** For each `## Acceptance` bullet, find the
-  code path that makes it true — not the submitter's note saying it is.
-  A checked-off item the code doesn't deliver is the most valuable finding.
+Before you read the code, write down what the task asks. Use two sources:
+
+1. Each `## Acceptance` bullet — one requirement each.
+2. The task's title and summary. Find the requirements they state or imply
+   that no acceptance bullet covers (for example "the counter survives a
+   restart" implies "the counter is saved somewhere"). Mark these as
+   *implied*.
+
+### 4b. Trace each requirement
+
+For each requirement, find three things:
+
+| Requirement | Code that makes it true | Proof |
+|---|---|---|
+| acceptance 1 | `src/x.ts:42` | test `restart keeps count` asserts the saved value |
+
+- **Code.** The code path that makes it true — not the submitter's note
+  or Walkthrough saying it is. A checked-off item the code does not deliver
+  is the most valuable finding.
+- **Proof.** A test, a `## Checks` result or an Evidence item that really
+  exercises this requirement. Read the test — do not run it. A requirement
+  with no proof is a finding (`should`), unless it is `unverifiable:`
+  (below).
+- **Missing.** A requirement with no code is `must`. An implied
+  requirement with no code is a finding too; say that it is implied, so the
+  human can decide whether the task meant it.
+
+Put the trace (short form) in `note`.
+
+### 4c. Judge the interpretation and the logic
+
+- **Interpretation.** Does the code do what the task *meant*, or a
+  different thing that also passes its own tests? Read the task as the
+  human wrote it, then read the Walkthrough. When they describe two
+  different features, that is a finding — and if the task text is
+  ambiguous, it is the human's call (`needs_human`).
 - **Semantics.** Inverted conditions, off-by-one, wrong default, a flag read
   before it is set, a cache that never invalidates, a value in the wrong
   units. The compiler and tests don't catch these — you do.
@@ -114,22 +160,45 @@ Judge the **logic**:
   in review gets its own task with `found_by` = this task (reference only),
   not `depends_on`.
 - **Tests as claims.** Green tests can still assert the wrong thing. When an
-  acceptance item says "verify X", check the test exercises X, not that a
-  test exists. Spot-check a test run only when the diff gives you a reason
-  to doubt it — never as a substitute for reading.
-- **`## Checks` items.** The item page shows the stored `te verify`
-  results (passed, at which commit). When the diff is risky — new logic,
-  migration, security-relevant — run `te verify <id>` again from your own
-  session; your result is stored next to the submitter's. A result that
-  passed at an older commit than the worktree HEAD is stale — that is a
-  finding.
+  acceptance item says "verify X", read the test and check that it
+  exercises X, not only that a test exists. A test that asserts what the
+  code does instead of what the task asks is a finding. You read tests;
+  you do not run them.
+- **Test evidence — read, do not run.** For an item with `## Checks`, the
+  submit gate already refused anything without a passing result at HEAD —
+  trust it. For an item with no `## Checks`, read `## Evidence`: it must
+  cite a test run or a manual check at a named commit. Do not run the tests
+  to fill the gap. Two cases, and both go to the human — never `issues`,
+  because the fix loop cannot add evidence or hardware:
+  - **No evidence, but a test is available or needed** (a test exists for
+    this code, or an acceptance item asks for one). First check whether the
+    target is reachable (for example `ping -c1 rpi5.local`). If it is
+    reachable, or the test runs locally, the holder skipped it. Record `ok`
+    with `needs_human: true`, the summary "The task needs a test, but
+    Evidence shows no test run.", and `ask_human` options
+    `["accept", "create follow-up task", "send back"]`.
+  - **A test exists, but no machine here can run it** (Pi hardware, a
+    camera, SITL, a second host — and the target is not reachable). This is
+    a flag, not a pass. Record `ok` with `needs_human: true`, start the
+    summary with "Not verified on hardware:", put the exact manual check in
+    `unverifiable: …` (for example `unverifiable: acceptance 3, run
+    tracker_rss.sh on rpi5.local — host offline`), and give `ask_human`
+    options `["accept", "run it on the Pi first", "send back"]`.
+  `needs_human` is never auto-accepted, so the human always decides and
+  can always accept.
+- **Risk exception (deep reviewers only).** On a `tier: heavy` item, or a
+  diff in a risky area (auth, flight control, mission upload, data
+  migration), a deep reviewer may run **one targeted** check when the diff
+  gives a concrete reason to doubt a requirement — `te verify <id>` or one
+  test. Never the full suite. Say in `note` what you ran and why.
 - **What you cannot verify is a finding, not a skip** — if a check needs
   hardware or a deploy you don't have, say so in the note rather than passing
   it silently. For missing hardware, SITL, a live browser or a human-only
   manual step, write the note as `unverifiable: <acceptance item>, <why it
   cannot be checked here>` — it goes straight to the human, no fix round —
   and when the rest is otherwise ok, record `ok` with `needs_human` (below)
-  so it is never auto-accepted.
+  so it is never auto-accepted. Use the "Not verified on hardware:" summary
+  and options from **Test evidence** above.
   A cited commit that isn't in the repo (`git cat-file -e <sha>` fails) is
   **not** unverifiable: record `issues` naming the machine where the commit
   should exist and stop.
@@ -140,7 +209,7 @@ Judge the **logic**:
 
 ```bash
 curl -s -X POST $B/review/GL-0019 -H "$H" \
-  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — the acceptance items check out.","report":"Verdict: OK.\n\nWhat the reviewer checked:\n1. The counter keeps its value after 2 restarts.\n2. The 4 ctest cases pass on the claim branch.\n\nBottom line: The work meets every acceptance item. You can accept it.","note":"I restarted the daemon twice with --debug and the counter kept its value both times, and the 4 ctest cases pass on the claim branch — acceptance items 1–3 check out and the diff stays inside **Touches:**."}'
+  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — every acceptance item has code and a test that proves it.","report":"Verdict: OK.\n\nWhat the reviewer checked:\n1. Acceptance 1 (count restarts): the counter goes up in the start path, and a test asserts the new value.\n2. Acceptance 2 (survive a restart): the counter is saved to the state file and read back at start. A test restarts the daemon and asserts the value.\n3. The diff stays inside the task scope.\n\nBottom line: The work meets every acceptance item. You can accept it.","note":"I traced each acceptance item to code and proof. 1. acceptance 1 → src/counter.ts:40, proved by test \"increments on start\". 2. acceptance 2 → src/counter.ts:72 (save) and :88 (load), proved by test \"keeps count over restart\". 3. The summary implies no further requirement. The diff stays inside **Touches:**. The verify result is at the claim HEAD; I did not run tests again."}'
 ```
 
 - `report` is the **default output for the human** — always give it. It is
@@ -152,9 +221,9 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   Verdict: OK — but the human must decide.
 
   What the reviewer checked:
-  1. The removed code is really gone. The search finds no V1 names in `src`.
-  2. The unit tests pass. All 24 pass.
-  3. The build passed. The reviewer did not run it again.
+  1. Acceptance 1: the removed code is really gone. The search finds no V1 names in `src`.
+  2. Acceptance 2: the new path handles an empty list. A test asserts it.
+  3. The tests and the build passed in the build stage. The reviewer did not run them again.
 
   What the reviewer could not check:
   4. One acceptance item stays open, because <why>. <What this means>.
@@ -193,8 +262,8 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
 - **Write `summary` and `note` in STE** (ASD-STE100 Simplified Technical
   English) — prose a human who did not watch the work can follow. Open
   the note with a sentence or two on what you actually did and the
-  outcome ("I rebuilt the image and ran it — the drone flew the
-  mission and all 10 checks passed"), then numbered findings, each one or
+  outcome ("I traced all 4 acceptance items to code — 3 have a test that
+  proves them, and the mission-resume item has no code"), then numbered findings, each one or
   two sentences saying what it *means*, not only what it *is*. Put a
   file:line or commit sha only where it pins a finding down. Never a
   compressed log dump (`mt-1075 -> OnMissionACK 0`, `src ai`, `cache-hit`)
@@ -204,8 +273,9 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
 - `ok` — verified, ready for the human to accept. Under `autonomy: solo`
   (the `hello` rules line says so) an `ok` is **not** advisory only: the
   daemon accepts and merges the submission after `auto_accept_after`
-  unless the human steps in. Give `ok` only when you actually ran the
-  acceptance checks; when in doubt, `issues`.
+  unless the human steps in. Give `ok` only when you traced every
+  acceptance item (and every implied requirement) to code and proof; when
+  in doubt, `issues`.
 - `ok` **with `needs_human: true`** — "ok, but…". The work looks right, yet
   the call is not yours: a risky area, an acceptance item you could not
   fully verify, or a judgement the human should make. Such a review is
@@ -236,12 +306,14 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
 - "The code is right but the task was wrong" → say exactly that — it is the
   human's call, not yours to fix silently.
 
-A clearly broken submission — acceptance not met, tests never run, spec
-ignored — goes back to the holder rather than leaving the human to reject it:
+A clearly broken submission — acceptance not met, task misread, spec
+ignored — goes back to the holder rather than leaving the human to reject
+it. (Missing test evidence alone is not a bounce: it goes to the human, see
+**Test evidence**.)
 
 ```bash
 curl -s -X POST $B/bounce/GL-0019 -H "$H" \
-  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored; Evidence lists no test run","summary":"The submission ignores the restart flag — it goes back for fixes.","findings":[{"text":"restart flag ignored on AUTO start","where":"src/main.ts:114","severity":"must"},{"text":"no test run cited in Evidence","severity":"must"}],"ask_human":{"problem":"the submission ignores the restart flag and ran no tests — it goes back to the holder","recommendation":"let the holder fix it and submit again"}}'
+  -d '{"reason":"acceptance 2 unimplemented — restart flag ignored on AUTO start","summary":"The submission ignores the restart flag — it goes back for fixes.","findings":[{"text":"restart flag ignored on AUTO start","where":"src/main.ts:114","severity":"must"}],"ask_human":{"problem":"the submission ignores the restart flag — it goes back to the holder","recommendation":"let the holder fix it and submit again"}}'
 ```
 
 `summary` is required on bounce too — the human reads it in `## Review`.
@@ -249,8 +321,10 @@ Give `findings` on a bounce when you can name the exact fix points — the
 holder cannot resubmit until every `must` is marked done or skipped.
 
 **A bounce must name the acceptance item it fails** ("acceptance 2: …") or
-a concrete break (test red, crash, Touches violated). Style, naming or "I'd
-have done it differently" is not a bounce — put it in a `review ok` note.
+a concrete break (a red result in Evidence, a crash the logic causes,
+Touches violated). Style, naming, lint or "I'd have done it differently" is
+not a bounce and not an `issues` finding — at most one line in a `review ok`
+note.
 
 **Light-tier reviewers (Haiku-class).** You check the logic against the
 acceptance criteria. Don't approve what you can't judge: when the change
@@ -305,4 +379,6 @@ acceptance 2 unimplemented"_.
 - `git reset --hard` / `git reset HEAD^` or dropping commits — even to fix
   a colliding branch; revert, cherry-pick, or file-level restore instead,
   and let the human repair history;
-- rubber-stamp — a verdict without verification degrades the marker for everyone.
+- rubber-stamp — a verdict without verification degrades the marker for everyone;
+- spend the review on lint, formatting or a full test re-run — the build
+  stage owns those; your time goes to the requirement trace.

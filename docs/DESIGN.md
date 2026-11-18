@@ -339,22 +339,36 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   items generated from the idea name it in `relates` (reference only — no
   ordering, no gate), and the idea's page lists its referrers under
   "referenced by". `te relate <ID> [refs|--off]` edits the edge, like `te deps`.
+  Ideas live on their own page (`#/ideas`), never in the inbox or on the
+  board: each row folds open to the plans and tasks that name it.
+  `idea_state` is **derived, never stored**: `draft`/`dropped`/`done` from
+  the idea's own status, otherwise `done` when every live referrer is done
+  (≥1 referrer), otherwise `ready` — ideas never track `in_progress`, they
+  are sources. `idea_refs` holds the referrer ids and `idea_progress` the
+  done/total over live referrers (dropped ones do not count); archived
+  referrers count as hidden.
 - A **plan** is an epic; its parts are the items whose `parent` points at
   it (sub-plans are epics too, so it nests). `plan_closed` is the only
   stored flag — the human sets it (close plan / reopen plan on the item
   page) when no more parts are coming. `plan_state` is **derived, never
-  stored**: `draft` with no children, `decomposing` until closed, `active`
-  while any descendant is unfinished, `done` when every descendant is
-  done/dropped, every sub-plan is itself finished or dropped, and no
-  problem under the plan is still open (parent cycles count as not done; a
-  sub-plan's own status never substitutes — one marked done by hand with
-  unfinished parts still blocks). `plan_progress` is finished/total over
+  stored**: `dropped` when the human drops it, `draft` with no children,
+  `decomposing` until closed, `ready` once closed, `in_progress` while any
+  part is in flight (claimed, waiting or in review — the plan itself
+  belongs to no machine, its parts may run on different ones), `done` when
+  the stored status says so — a hand or auto-done verdict — or when every
+  descendant is done/dropped and no problem under the plan is still open
+  (a sub-plan marked done counts as done for its parent; parent cycles
+  count as not done). In-flight parts beat a stored done: a reopened part
+  drags the plan back to `in_progress`. A plan that is not ready gates its
+  whole subtree: a part under a
+  `draft`/`decomposing` plan is never `ready` and `claim` is refused until
+  the human closes the plan. `plan_progress` is finished/total over
   non-epic descendants; archived parts still count. Epics are plans, not
   work — `next` skips them and `claim` answers "epics are plans — claim
   their tasks". A plan in `done` state whose status is not yet `done` gets
   `plan_auto_done` on the daemon sweep — stored status catches up with the
   derived state and moves forward only, so parts added later show the plan
-  `active` again until the human re-drafts the epic.
+  `ready` again until the human re-drafts the epic.
 - **Delete** (`te delete <ID> --yes`, delete in the UI) removes an item from
   TeamEngage, not from disk: the tracking file goes, the event log keeps a
   `delete` record, and in overlay mode the task file stays as plain Markdown
@@ -438,7 +452,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
 - `dispatch` (workspace.yaml, unset = off) makes the daemon the foreman:
   while `enabled`, each sweep starts an agent's command when `next` sees
   work for its role (a reviewer probe sees `in_review`, a planner probe
-  sees unplanned ideas and unvetted light drafts, a coder or ops probe
+  sees ideas nothing references yet and unvetted light drafts, a coder or ops probe
   sees ready items) and the live-session count is under `max_sessions` —
   sessions it started count toward the cap. It stops no session; each
   start writes a `dispatch_start` event, a role's command that fails three
@@ -580,7 +594,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | Tool                            | Purpose                                                                                                                                                         |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hello(agent, workspace?, tier?, role?, model?)` | Register session; returns session id, machine, workspace summary, any claims this agent should resume. Optional `role` — planner, coder, reviewer, ops — is stored on the session and picked by `next`. Optional `model` — the model id, stored lowercased on the session and copied to `submitted_model` on the item and the submit event, and to `reviewer_model` on `ai_review` — is shown on the team panel and the item page. |
-| `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first. With a session role the pool changes: a reviewer gets `in_review` items it did not submit, a planner gets unplanned ideas and light-authored drafts to vet, a coder/ops gets ready items as usual. |
+| `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first. With a session role the pool changes: a reviewer gets `in_review` items it did not submit, a planner gets ideas nothing references yet and light-authored drafts to vet, a coder/ops gets ready items as usual. |
 | `brief(id)`                     | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path).                               |
 | `claim(id)`                     | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only.             |
 | `release(id, note)`             | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |

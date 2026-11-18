@@ -52,7 +52,7 @@ export const SOLO_RULES =
 
 /** Session roles: what a session declares at hello, and what `next` picks. */
 export const ROLE_RULES =
-  "role: declare yours at hello (planner|coder|reviewer|ops) — next then picks for it: reviewer → in_review items you did not submit, planner → unplanned ideas + light-authored drafts to vet, coder/ops → ready items; no role → next as usual";
+  "role: declare yours at hello (planner|coder|reviewer|ops) — next then picks for it: reviewer → in_review items you did not submit, planner → ideas nothing references yet + light-authored drafts to vet, coder/ops → ready items; no role → next as usual";
 
 /** Model tiers: what a session declares at hello, and what it may then do. */
 export const TIER_RULES =
@@ -293,7 +293,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "query",
     {
       description:
-        "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (unplanned|planned|in_progress|done) for type idea; q = board search (all words in id/title/file/#domains). Archived items never match.",
+        "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (draft|ready|done|dropped) for type idea; q = board search (all words in id/title/file/#domains). Archived items never match.",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),

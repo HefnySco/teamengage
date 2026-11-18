@@ -132,7 +132,7 @@ const USAGE_ALL = `te — every command
   sync [--leave] [--dry-run] [-m msg] [--status]   plans + code to/from your other machines
   ops list|targets|jobs|start|exec|status|approve|abort|resume|probe [--ws w] [--json]
                    playbook jobs — exec runs the steps, posts results (exit 0/1/2/3)
-  ideas [--state unplanned|planned|in_progress|done] [--json]  table: id, title, state, done, total
+  ideas [--state draft|ready|done|dropped] [--json]  table: id, title, state, done, total
   ls [--status s] [--state s] [--type t] [--project p] [--domain d] [--text t] [--q words]
                    [--claimed|--unclaimed] [--held-by name] [--ready|--blocked] [--starred]
                    [--resource name] [--archived[=all]] [--json]
@@ -280,7 +280,7 @@ async function main(argv: string[]): Promise<number> {
       return metricsCmd(rest, home);
     case "digest":
       return digestCmd(rest, home);
-    case "dispatch":    case "dispatch":
+    case "dispatch":
       return dispatchCmd(rest, home);
     case "sync":
       return syncCmd(rest, home);

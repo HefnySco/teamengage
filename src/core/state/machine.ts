@@ -157,8 +157,9 @@ export type Action =
   | { type: "unstar" }
   /**
    * Human closes a plan (epic): no more parts are coming — plan_state turns
-   * active, then done when every part and problem finishes. Status is
-   * untouched — a plan also finishes without it (plan_auto_done below).
+   * ready, then in_progress while parts run and done when every part and
+   * problem finishes. Status is untouched — a plan also finishes without it
+   * (plan_auto_done below).
    */
   | { type: "close_plan" }
   /** Human reopens a closed plan (epic) — more parts may still be added. */
@@ -166,7 +167,7 @@ export type Action =
   /**
    * Internal (daemon only): the sweep found every part and problem of this
    * plan finished — the stored status catches up with the derived
-   * plan_state. Forward only: work added later shows `active` again until
+   * plan_state. Forward only: work added later shows `ready` again until
    * the human re-drafts the epic.
    */
   | { type: "plan_auto_done" }
@@ -182,6 +183,8 @@ export interface TransitionCtx {
   depsDone?: boolean;
   /** Id of an ancestor plan on hold — a held plan pauses its subtree, claim refused. */
   planHold?: string;
+  /** Id of an ancestor plan not ready for work (still decomposing) — parts claim only after close_plan. */
+  planNotReady?: string;
   /** AI bounces this item already took since the last human action (bounce cap). */
   priorBounces?: number;
   /** workspace escalate_after / max_attempts (defaults 2 / 5) */
@@ -438,6 +441,13 @@ export function transition(
       if (ctx.planHold) {
         throw new InvalidTransitionError(
           `cannot claim: plan ${ctx.planHold} is on hold — everything under it is paused`,
+          from,
+          "claim",
+        );
+      }
+      if (ctx.planNotReady) {
+        throw new InvalidTransitionError(
+          `cannot claim: plan ${ctx.planNotReady} is not ready yet — its parts start once the human closes it`,
           from,
           "claim",
         );
