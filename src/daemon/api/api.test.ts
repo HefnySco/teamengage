@@ -739,7 +739,7 @@ describe("plan auto-done sweep", () => {
     await ops.complete(sub); // done by hand — its part is still open
     await ops.approve(subT);
     // parts of a not-ready plan can't start — both plans must be closed first
-    await expect(ops.claim(subT, ctx.sessions.hello("pad-agent-early"))).rejects.toThrow(/not ready/);
+    await expect(ops.claim(subT, ctx.sessions.hello("pad-agent-early"))).rejects.toThrow(/not closed/);
     await ops.closePlan(sub);
     await ops.closePlan(plan);
     const agent = ctx.sessions.hello("pad-agent");

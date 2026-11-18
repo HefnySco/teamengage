@@ -1398,7 +1398,7 @@ const Board = ({ onOpen }) => {
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
-                        ${i.unready && html`<span title=${`plan ${i.unready_by} is not ready yet — its parts start once the plan is closed`}>plan not ready</span>`}
+                        ${i.unready && html`<span title=${`plan ${i.unready_by} is not closed — new parts can be claimed once the human closes it`}>plan not closed</span>`}
                         ${(i.overlap ?? []).length > 0 && html`<span class="badge text-bg-warning"
                           title=${`Touches overlap — warning only:\n${i.overlap.map((o) => `${o.id}: ${o.paths.join(", ")}`).join("\n")}`}
                           onClick=${(e) => { e.stopPropagation(); onOpen(i.overlap[0].id); }}>overlap</span>`}
@@ -1472,7 +1472,7 @@ const PlanNode = ({ i, depth, tree }) => {
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.paused && html`<span class="small text-warning-emphasis" title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
-        ${i.unready && html`<span class="small text-warning-emphasis" title=${`plan ${i.unready_by} is not ready yet — its parts start once the plan is closed`}>plan not ready</span>`}
+        ${i.unready && html`<span class="small text-warning-emphasis" title=${`plan ${i.unready_by} is not closed — new parts can be claimed once the human closes it`}>plan not closed</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} />${i.plan_state && html`<span class="plan-chip ${PLAN_CHIP[i.plan_state] ?? "ps-draft"}" title=${`plan ${i.plan_state} — derived from its parts`}>${i.plan_state.replace("_", " ")}</span>`}<${PlanBar} p=${i.plan_progress} /></span>`}
         ${isPlan && html`<span class="acts">

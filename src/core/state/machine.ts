@@ -447,7 +447,7 @@ export function transition(
       }
       if (ctx.planNotReady) {
         throw new InvalidTransitionError(
-          `cannot claim: plan ${ctx.planNotReady} is not ready yet — its parts start once the human closes it`,
+          `cannot claim: plan ${ctx.planNotReady} is not closed — its parts start once the human closes it`,
           from,
           "claim",
         );
