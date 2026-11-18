@@ -361,8 +361,10 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   the stored status says so — a hand or auto-done verdict — or when every
   descendant is done/dropped and no problem under the plan is still open
   (a sub-plan marked done counts as done for its parent; parent cycles
-  count as not done). In-flight parts beat a stored done: a reopened part
-  drags the plan back to `in_progress`. A plan that is not ready gates its
+  count as not done). `in_progress` needs `plan_closed`: closing the plan
+  is the human's approval to run, so an unclosed plan with parts in
+  flight stays `decomposing`. In-flight parts beat a stored done: a
+  reopened part drags a closed plan back to `in_progress`. A plan that is not ready gates its
   whole subtree: a part under a
   `draft`/`decomposing` plan is never `ready` and `claim` is refused until
   the human closes the plan. `plan_progress` is finished/total over

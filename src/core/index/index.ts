@@ -483,8 +483,10 @@ export class Index {
     if (it.meta.status === "dropped") return "dropped";
     if (it.children.length === 0) return "draft";
     // live work in flight beats a stored done — a reopened part drags the
-    // plan back to in_progress
-    if (this.planInFlight(id)) return "in_progress";
+    // plan back off done. Only a closed plan can be in progress: an unclosed
+    // plan with parts in flight shows decomposing (the gate keeps its
+    // remaining parts from claiming until the human closes it)
+    if (this.planInFlight(id)) return it.meta.plan_closed === true ? "in_progress" : "decomposing";
     if (
       it.meta.status === "done" ||
       (this.planFinished(id, new Set([id])) && (this.planProblems(id)?.open ?? 0) === 0)

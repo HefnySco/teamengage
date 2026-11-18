@@ -221,16 +221,16 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planProgress("PL-0001")).toEqual({ done: 1, total: 1 });
   });
 
-  it("waiting and in_review parts count as in flight too; a part in flight shows in_progress even unclosed", async () => {
+  it("waiting and in_review parts count as in flight too; an unclosed plan with parts in flight shows decomposing", async () => {
     writeItem("IP-0001", { type: "epic", plan_closed: "true" });
     writeItem("IP-0002", { parent: "IP-0001", status: "done" });
     writeItem("IP-0003", { parent: "IP-0001", status: "waiting" });
     writeItem("IP-0004", { parent: "IP-0001", status: "in_review" });
-    writeItem("IP-0005", { type: "epic" }); // never closed — in-flight parts still show
+    writeItem("IP-0005", { type: "epic" }); // never closed — busy parts, still decomposing
     writeItem("IP-0006", { parent: "IP-0005", status: "in_progress" });
     const idx = await Index.load(plans);
     expect(idx.planState("IP-0001")).toBe("in_progress");
-    expect(idx.planState("IP-0005")).toBe("in_progress");
+    expect(idx.planState("IP-0005")).toBe("decomposing");
   });
 
   it("non-epics have no plan fields; old epics without plan_closed still load", async () => {
@@ -289,8 +289,8 @@ describe("plan_state and plan_progress (epics)", () => {
   });
 
   it("a hand-done plan shows done, but a part back in flight reopens it", async () => {
-    writeItem("AD-0010", { type: "epic" });
-    writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done" }); // done by hand
+    writeItem("AD-0010", { type: "epic", plan_closed: "true" });
+    writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done", plan_closed: "true" }); // done by hand
     writeItem("AD-0012", { parent: "AD-0011", status: "in_review" }); // can bounce back
     writeItem("AD-0013", { parent: "AD-0010", status: "done" });
     let idx = await Index.load(plans);
