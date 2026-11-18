@@ -657,7 +657,10 @@ rounds (one per submit), bounces and handoffs. A submit event may carry a
 reported run `cost` (`{model, tokens_in, tokens_out, usd}`) in its `data` —
 the roll-up sums the token and dollar figures. `GET /api/metrics` rolls the
 per-item stats up per agent name, per tier and per domain;
-`GET /api/metrics?plan=<ID>` rolls up a plan and its parts. `te metrics`
+`GET /api/metrics?plan=<ID>` rolls up a plan and its parts.
+`GET /api/metrics/drill?by=<section>&key=<row>&field=<column>` lists the
+items behind one number — every count on the metrics page links to it
+(a `member` narrows an agent kind to one session name). `te metrics`
 prints the same scorecards, with token/usd columns once any row reports cost.
 
 **Digest** — `te digest [--since 24h]` prints what happened since the human's

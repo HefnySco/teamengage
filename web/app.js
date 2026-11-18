@@ -1793,19 +1793,70 @@ const ShareDonut = ({ rows, unit }) => {
   </div>`;
 };
 
-const Metrics = () => {
+// number formats shared by the scorecard cells and the drill-down table
+const metTok = (n) => (!n ? "0" : n < 1000 ? String(n) : n < 1e6 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`);
+const metUsd = (n) => (!n ? "-" : `$${n < 1 ? n.toFixed(4).replace(/0+$/, "") : n.toFixed(2)}`);
+const metFmtMed = (ms) => {
+  if (ms === undefined) return "-";
+  const h = ms / 3600000;
+  return h < 1 ? `${Math.round(ms / 60000)}m` : h < 24 ? `${h < 10 ? h.toFixed(1) : Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
+};
+
+// the items behind a clicked number — one row each, id opens the item page
+const MetDrill = ({ items, onOpen }) =>
+  !items
+    ? html`<div class="met-drill text-secondary">loading…</div>`
+    : !items.length
+      ? html`<div class="met-drill text-secondary">no items</div>`
+      : html`<div class="met-drill table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>item</th><th>status</th><th>title</th><th>worker</th><th>model(s)</th><th class="text-end">claims</th><th class="text-end">rounds</th><th class="text-end">bounces</th><th class="text-end">handoffs</th><th class="text-end">done</th><th class="text-end">med claim→accept</th><th class="text-end">tok in/out</th><th class="text-end">usd</th></tr></thead>
+        <tbody>
+          ${items.map((i) => html`<tr key=${i.id}>
+            <td><a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a></td>
+            <td>${i.status && html`<${Badge} s=${i.status} />`}</td>
+            <td>${i.title}</td>
+            <td class="small">${i.worker ?? ""}</td>
+            <td class="small">${(i.models ?? []).join(", ")}</td>
+            <td class="text-end">${i.claims || ""}</td>
+            <td class="text-end">${i.review_rounds || ""}</td>
+            <td class="text-end">${i.bounces || ""}</td>
+            <td class="text-end">${i.handoffs || ""}</td>
+            <td class="text-end">${i.done || ""}</td>
+            <td class="text-end">${metFmtMed(i.median_claim_to_accept_ms)}</td>
+            <td class="text-end">${metTok(i.tokens_in)}/${metTok(i.tokens_out)}</td>
+            <td class="text-end">${metUsd(i.usd)}</td>
+          </tr>`)}
+        </tbody></table></div>`;
+
+const Metrics = ({ onOpen }) => {
   const { data: m, reload } = useApi("/api/metrics");
   const [openRow, setOpenRow] = useState(null);
+  // the number being drilled into: which section / row / field + its items
+  const [drill, setDrill] = useState(null);
   if (!m) return html`<p class="text-secondary">loading…</p>`;
-  const tok = (n) => (!n ? "0" : n < 1000 ? String(n) : n < 1e6 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`);
-  const usd = (n) => (!n ? "-" : `$${n < 1 ? n.toFixed(4).replace(/0+$/, "") : n.toFixed(2)}`);
   const pct = (x) => (x === undefined ? "-" : `${Math.round(x * 100)}%`);
-  const fmtMed = (ms) => {
-    if (ms === undefined) return "-";
-    const h = ms / 3600000;
-    return h < 1 ? `${Math.round(ms / 60000)}m` : h < 24 ? `${h < 10 ? h.toFixed(1) : Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
+  const sameDrill = (d, sec, key, field, member) =>
+    d && d.sec === sec && d.key === key && d.field === field && d.member === member;
+  const openDrill = async (sec, key, field, member) => {
+    if (sameDrill(drill, sec, key, field, member)) {
+      setDrill(null);
+      return;
+    }
+    setDrill({ sec, key, field, member, items: null });
+    const qs = `by=${sec}&key=${encodeURIComponent(key ?? "")}&field=${field}${member ? `&member=${encodeURIComponent(member)}` : ""}`;
+    const res = await api(`/api/metrics/drill?${qs}`).catch((e) => (toast(e.message), null));
+    setDrill((d) => (sameDrill(d, sec, key, field, member) ? { ...d, items: res?.items ?? [] } : d));
   };
-  const groupTable = (label, gs) => {
+  // a metric number: a link while it counts something, plain text at zero
+  const num = (n, sec, key, field, show, member) =>
+    n
+      ? html`<a class="met-num" title="the items behind this number" onClick=${() => openDrill(sec, key, field, member)}>${show ?? n}</a>`
+      : html`${show ?? n}`;
+  const drillRow = (sec, key, cols) =>
+    drill && drill.sec === sec && drill.key === key && !drill.member
+      ? html`<tr key=${`${key}-drill`}><td colspan=${cols} class="met-drill-cell"><${MetDrill} items=${drill.items} onOpen=${onOpen} /></td></tr>`
+      : null;
+  const groupTable = (sec, label, gs) => {
     const cost = gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
     const cols = cost ? 8 : 6;
     return html`<div class="table-responsive"><table class="table table-sm align-middle">
@@ -1816,14 +1867,20 @@ const Metrics = () => {
             <td>${(g.members ?? []).length > 1
               ? html`<a title="the session names inside this kind — click to fold" onClick=${() => setOpenRow(openRow === g.key ? null : g.key)}>${openRow === g.key ? "▾ " : "▸ "}${g.key}</a>`
               : g.key}</td>
-            <td class="text-end">${g.items}</td><td class="text-end">${g.done}</td>
-            <td class="text-end">${pct(g.bounce_rate)}</td><td class="text-end">${g.handoffs}</td>
-            <td class="text-end">${fmtMed(g.median_claim_to_accept_ms)}</td>
-            ${cost && html`<td class="text-end">${tok(g.tokens_in)}/${tok(g.tokens_out)}</td><td class="text-end">${usd(g.usd)}</td>`}
+            <td class="text-end">${num(g.items, sec, g.key, "items")}</td>
+            <td class="text-end">${num(g.done, sec, g.key, "done")}</td>
+            <td class="text-end">${num(g.bounces, sec, g.key, "bounces", pct(g.bounce_rate))}</td>
+            <td class="text-end">${num(g.handoffs, sec, g.key, "handoffs")}</td>
+            <td class="text-end">${num(g.median_claim_to_accept_ms, sec, g.key, "durations", metFmtMed(g.median_claim_to_accept_ms))}</td>
+            ${cost && html`<td class="text-end">${num((g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0), sec, g.key, "cost", `${metTok(g.tokens_in)}/${metTok(g.tokens_out)}`)}</td><td class="text-end">${num(g.usd, sec, g.key, "cost", metUsd(g.usd))}</td>`}
           </tr>
           ${openRow === g.key && html`<tr key=${`${g.key}-members`}><td colspan=${cols} class="small text-secondary">
-            ${(g.members ?? []).map((mm) => html`<div>${mm.name} — ${mm.items} item(s), ${mm.done} done</div>`)}
-          </td></tr>`}`)}
+            ${(g.members ?? []).map((mm) => html`<div>
+              ${num(mm.items, sec, g.key, "items", mm.name, mm.name)} — ${num(mm.items, sec, g.key, "items", undefined, mm.name)} item(s), ${num(mm.done, sec, g.key, "done", undefined, mm.name)} done
+              ${drill && drill.sec === sec && drill.key === g.key && drill.member === mm.name && html`<${MetDrill} items=${drill.items} onOpen=${onOpen} />`}
+            </div>`)}
+          </td></tr>`}
+          ${drillRow(sec, g.key, cols)}`)}
       </tbody></table></div>`;
   };
   const chip = (cls, k, v, title) => html`<span class="met-chip ${cls}" title=${title}>
@@ -1834,23 +1891,24 @@ const Metrics = () => {
       <h2 class="h4 mb-0">Metrics</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reload()])} />
       <span class="d-inline-flex gap-2">
-        ${chip("met-chip-items", "total items", m.totals.items, "items with events")}
-        ${chip("met-chip-done", "total done", m.totals.done, "accepted items")}
-        ${chip("met-chip-bounce", "bounce", pct(bouncePerItem), `${m.totals.bounces} bounces over ${m.totals.items} items (weighted per item)`)}
+        ${chip("met-chip-items", "total items", num(m.totals.items, "all", "all", "items"), "items with events")}
+        ${chip("met-chip-done", "total done", num(m.totals.done, "all", "all", "done"), "accepted items")}
+        ${chip("met-chip-bounce", "bounce", num(m.totals.bounces, "all", "all", "bounces", pct(bouncePerItem)), `${m.totals.bounces} bounces over ${m.totals.items} items (weighted per item)`)}
       </span>
-      <span class="text-secondary small">${m.totals.review_rounds} review rounds</span>
+      <span class="text-secondary small">${num(m.totals.review_rounds, "all", "all", "rounds", `${m.totals.review_rounds} review rounds`)}</span>
     </div>
+    ${drill && drill.sec === "all" && html`<div class="card card-body py-1 px-2 mb-3"><${MetDrill} items=${drill.items} onOpen=${onOpen} /></div>`}
     <h3 class="h6 text-secondary">scorecard — per agent</h3>
     ${(m.agents ?? []).length
-      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("agent", m.agents)}</div><${ShareDonut} rows=${m.agents} /></div>`
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("agents", "agent", m.agents)}</div><${ShareDonut} rows=${m.agents} /></div>`
       : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">scorecard — per tier</h3>
     ${(m.tiers ?? []).length
-      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("tier", m.tiers)}</div><${ShareDonut} rows=${m.tiers} /></div>`
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("tiers", "tier", m.tiers)}</div><${ShareDonut} rows=${m.tiers} /></div>`
       : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">scorecard — per model</h3>
     ${(m.models ?? []).length
-      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("model", m.models)}</div><${ShareDonut} rows=${m.models} /></div>`
+      ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("models", "model", m.models)}</div><${ShareDonut} rows=${m.models} /></div>`
       : html`<p class="text-secondary small">no submissions yet</p>`}
     <h3 class="h6 text-secondary mt-3">reviewers — per model</h3>
     ${(m.reviewers ?? []).length ? html`<div class="met-split"><div class="met-split-tbl"><div class="table-responsive"><table class="table table-sm align-middle">
@@ -1858,10 +1916,10 @@ const Metrics = () => {
       <tbody>
         ${m.reviewers.map((r) => html`<tr key=${r.model}>
           <td>${r.model}</td>
-          <td class="text-end">${r.ok}</td>
-          <td class="text-end">${r.issues}</td>
-          <td class="text-end" title="ok verdicts the human later rejected">${r.wrong_ok}</td>
-        </tr>`)}
+          <td class="text-end">${num(r.ok, "reviewers", r.model, "ok")}</td>
+          <td class="text-end">${num(r.issues, "reviewers", r.model, "issues")}</td>
+          <td class="text-end" title="ok verdicts the human later rejected">${num(r.wrong_ok, "reviewers", r.model, "wrong_ok")}</td>
+        </tr>${drillRow("reviewers", r.model, 4)}`)}
       </tbody></table></div></div>
       <${ShareDonut} rows=${m.reviewers.map((r) => ({ key: r.model, items: r.ok + r.issues, done: r.ok }))} unit=${{ items: "reviews", done: "ok" }} /></div>`
       : html`<p class="text-secondary small">no reviews yet</p>`}

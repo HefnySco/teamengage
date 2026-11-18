@@ -1831,6 +1831,104 @@ export class WorkspaceOps {
   }
 
   /**
+   * Drill-down behind one metrics number — the items inside a bucket.
+   * `by` is the scorecard section (agents / tiers / models / domains /
+   * reviewers / all), `key` the row inside it; `member` narrows an agent
+   * kind to one session name. `field` is the clicked column: scorecards
+   * filter on it (done, bounces, handoffs, rounds, claims, rejects, cost,
+   * durations; "items" keeps the whole bucket), reviewers pick the
+   * verdict list (ok / issues / wrong_ok).
+   */
+  async metricsDrill(q: { by?: string; key?: string; field?: string; member?: string }) {
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const { deriveMetrics, agentKind, deriveReviewers, median } = await import("../../core/metrics/metrics.js");
+    const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
+    const stats = deriveMetrics(r.events, this.wsr.ws.config.agent_models);
+    const by = q.by ?? "all";
+
+    let list: ItemMetrics[];
+    if (by === "reviewers") {
+      const row = deriveReviewers(r.events, this.wsr.ws.config.agent_models).find((x) => x.model === q.key);
+      const ids =
+        q.field === "ok" ? row?.ok_items : q.field === "wrong_ok" ? row?.wrong_ok_items : (row?.issues_items ?? []);
+      list = (ids ?? []).flatMap((id) => {
+        const m = stats.get(id);
+        return m ? [m] : [];
+      });
+    } else {
+      list = [...stats.values()].filter((m) => {
+        switch (by) {
+          case "all":
+            return true;
+          case "agents": {
+            if (!m.worker) return false;
+            if (q.member && m.worker !== q.member) return false;
+            return agentKind(m.worker, this.wsr.ws.config.agent_kinds) === q.key;
+          }
+          case "tiers":
+            return (this.index.items.get(m.id)?.meta.tier ?? "unset") === q.key;
+          case "models":
+            return m.models.has(q.key ?? "");
+          case "domains": {
+            const d = this.index.items.get(m.id)?.meta.domains;
+            return (d && d.length ? d : ["untagged"]).includes(q.key ?? "");
+          }
+          default:
+            return false;
+        }
+      });
+    }
+
+    const keep = (m: ItemMetrics): boolean => {
+      switch (q.field) {
+        case "done":
+          return m.done > 0;
+        case "bounces":
+          return m.bounces > 0;
+        case "handoffs":
+          return m.handoffs > 0;
+        case "rounds":
+          return m.review_rounds > 0;
+        case "claims":
+          return m.claims > 0;
+        case "rejects":
+          return m.rejects > 0;
+        case "cost":
+          return m.tokens_in + m.tokens_out > 0 || m.usd > 0;
+        case "durations":
+          return m.claim_to_accept_ms.length > 0;
+        default:
+          return true; // "items", reviewer fields, unknown fields
+      }
+    };
+
+    const items = list
+      .filter(keep)
+      .map((m) => {
+        const it = this.index.items.get(m.id);
+        return {
+          id: m.id,
+          title: it?.meta.title ?? "",
+          status: it?.meta.status ?? "",
+          worker: m.worker,
+          models: [...m.models].sort(),
+          claims: m.claims,
+          review_rounds: m.review_rounds,
+          bounces: m.bounces,
+          handoffs: m.handoffs,
+          rejects: m.rejects,
+          done: m.done,
+          median_claim_to_accept_ms: median(m.claim_to_accept_ms),
+          tokens_in: m.tokens_in,
+          tokens_out: m.tokens_out,
+          usd: m.usd,
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return { by, key: q.key, field: q.field, member: q.member, items };
+  }
+
+  /**
    * Daily digest (GL-0320): finished / stuck / waits-for-you since the last
    * human action — or since an ISO ts the caller passes. Read-only.
    */

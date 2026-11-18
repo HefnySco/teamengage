@@ -233,6 +233,10 @@ export interface ReviewerRow {
   issues: number;
   /** ok verdicts the human later rejected — the wrong calls (GL-0365) */
   wrong_ok: number;
+  /** the item ids behind each count — the UI's drill-down lists */
+  ok_items: string[];
+  issues_items: string[];
+  wrong_ok_items: string[];
 }
 
 /**
@@ -243,12 +247,15 @@ export interface ReviewerRow {
  * back to `agent_models` on the actor name, then land in "unknown".
  */
 export function deriveReviewers(events: Event[], agentModels?: Record<string, string[]>): ReviewerRow[] {
-  const rows = new Map<string, ReviewerRow>();
+  const rows = new Map<
+    string,
+    { ok: number; issues: number; wrong_ok: number; ok_items: Set<string>; issues_items: Set<string>; wrong_ok_items: Set<string> }
+  >();
   const lastReview = new Map<string, { ok: boolean; model: string }>();
-  const row = (model: string): ReviewerRow => {
+  const row = (model: string) => {
     let r = rows.get(model);
     if (!r) {
-      r = { model, ok: 0, issues: 0, wrong_ok: 0 };
+      r = { ok: 0, issues: 0, wrong_ok: 0, ok_items: new Set<string>(), issues_items: new Set<string>(), wrong_ok_items: new Set<string>() };
       rows.set(model, r);
     }
     return r;
@@ -260,20 +267,33 @@ export function deriveReviewers(events: Event[], agentModels?: Record<string, st
       case "review": {
         const ok = (e.note ?? "").split(":")[0].trim() === "ok";
         lastReview.set(e.item, { ok, model });
-        if (ok) row(model).ok++;
-        else row(model).issues++;
+        const r = row(model);
+        if (ok) {
+          r.ok++;
+          r.ok_items.add(e.item);
+        } else {
+          r.issues++;
+          r.issues_items.add(e.item);
+        }
         break;
       }
-      case "bounce":
+      case "bounce": {
         lastReview.set(e.item, { ok: false, model });
-        row(model).issues++;
+        const r = row(model);
+        r.issues++;
+        r.issues_items.add(e.item);
         break;
+      }
       case "submit":
         lastReview.delete(e.item);
         break;
       case "reject": {
-        const r = lastReview.get(e.item);
-        if (r?.ok && e.actor === "human") row(r.model).wrong_ok++;
+        const lr = lastReview.get(e.item);
+        if (lr?.ok && e.actor === "human") {
+          const r = row(lr.model);
+          r.wrong_ok++;
+          r.wrong_ok_items.add(e.item);
+        }
         lastReview.delete(e.item);
         break;
       }
@@ -283,5 +303,15 @@ export function deriveReviewers(events: Event[], agentModels?: Record<string, st
         break;
     }
   }
-  return [...rows.values()].sort((a, b) => b.ok + b.issues - (a.ok + a.issues) || a.model.localeCompare(b.model));
+  return [...rows.entries()]
+    .map(([model, r]) => ({
+      model,
+      ok: r.ok,
+      issues: r.issues,
+      wrong_ok: r.wrong_ok,
+      ok_items: [...r.ok_items].sort(),
+      issues_items: [...r.issues_items].sort(),
+      wrong_ok_items: [...r.wrong_ok_items].sort(),
+    }))
+    .sort((a, b) => b.ok + b.issues - (a.ok + a.issues) || a.model.localeCompare(b.model));
 }

@@ -203,4 +203,23 @@ describe("model scorecard + reviewer table (GL-0365)", () => {
     const unknown = rows.find((r) => r.model === "unknown")!;
     expect(unknown).toMatchObject({ ok: 1, issues: 0, wrong_ok: 0 });
   });
+
+  it("keeps the item ids behind each count for drill-down", () => {
+    const events = [
+      ev("2026-11-01T00:00:00Z", "submit", "GL-1"),
+      ev("2026-11-01T01:00:00Z", "review", "GL-1", "rev@dt#bb", { note: "ok", data: { model: "sonnet" } }),
+      ev("2026-11-01T02:00:00Z", "reject", "GL-1", "human"),
+      ev("2026-11-01T00:00:00Z", "submit", "GL-2"),
+      ev("2026-11-01T01:00:00Z", "bounce", "GL-2", "rev@dt#bb", { data: { model: "sonnet" } }),
+      // two ok verdicts on the same item count once in the item list
+      ev("2026-11-01T00:00:00Z", "submit", "GL-3"),
+      ev("2026-11-01T01:00:00Z", "review", "GL-3", "rev@dt#bb", { note: "ok", data: { model: "sonnet" } }),
+      ev("2026-11-01T02:00:00Z", "review", "GL-3", "rev@dt#bb", { note: "ok", data: { model: "sonnet" } }),
+    ];
+    const sonnet = deriveReviewers(events).find((r) => r.model === "sonnet")!;
+    expect(sonnet).toMatchObject({ ok: 3, issues: 1, wrong_ok: 1 });
+    expect(sonnet.ok_items).toEqual(["GL-1", "GL-3"]);
+    expect(sonnet.issues_items).toEqual(["GL-2"]);
+    expect(sonnet.wrong_ok_items).toEqual(["GL-1"]);
+  });
 });

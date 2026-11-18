@@ -1026,6 +1026,11 @@ details.sec > .sec-bd {
 .met-donut-row { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
 .met-dot { flex: none; width: .6rem; height: .6rem; border-radius: 50%; align-self: center; }
 .met-key { font-weight: 600; }
+/* drill-down: a metric number that lists the items behind it */
+a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-offset: .18em; }
+.met-drill-cell { padding: 0 !important; }
+.met-drill { border-left: 3px solid var(--bs-border-color); background: var(--bs-tertiary-bg); padding: .3rem .6rem; }
+.met-drill.table-responsive { padding: 0 .6rem 0 0; }
 
 /* ops compact type (GL-0278): a dense ledger, not a document — the matrix
    and the jobs/playbooks lists all use it so a long grid fits on screen */
