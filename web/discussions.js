@@ -70,6 +70,7 @@ const transcriptBlocks = (text) => {
 const TranscriptReader = ({ id }) => {
   const [page, setPage] = useState(1);
   const [pending, setPending] = useState(null); // file line to scroll to once its page loads
+  const [active, setActive] = useState(null); // the selected turn's file line
   const { data: t, err } = useApi(`/api/discussions/${id}/transcript?page=${page}`, [id, page]);
   useEffect(() => {
     if (pending === null || !t) return;
@@ -86,6 +87,7 @@ const TranscriptReader = ({ id }) => {
   // page loads that page, then scrolls
   const turns = t.turns ?? [];
   const jumpTo = (u) => {
+    setActive(u.line);
     if (u.page === t.page) {
       document.getElementById(`disc-t-${u.line}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
@@ -109,7 +111,7 @@ const TranscriptReader = ({ id }) => {
           ${turns.map(
             (u, j) => html`<a
               key=${j}
-              class=${`disc-jump ${/^assistant/i.test(u.head) ? "disc-assistant" : "disc-user"}${u.page === t.page ? " disc-here" : ""}`}
+              class=${`disc-jump${u.line === active ? " disc-active" : ""}${u.page === t.page ? " disc-here" : ""}`}
               title=${`turn ${j + 1} (page ${u.page}): ${u.head}`}
               onClick=${() => jumpTo(u)}
             >${j + 1}</a>`,
