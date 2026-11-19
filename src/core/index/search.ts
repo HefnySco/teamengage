@@ -5,7 +5,7 @@
  */
 
 export interface SearchDoc {
-  kind: "item" | "decision" | "lesson";
+  kind: "item" | "decision" | "lesson" | "discussion" | "transcript";
   id: string;
   title: string;
   domains: string[];

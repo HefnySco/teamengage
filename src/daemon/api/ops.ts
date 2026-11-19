@@ -2,7 +2,7 @@ import YAML from "yaml";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
-import { join, resolve, basename, dirname, sep } from "node:path";
+import { join, resolve, basename, dirname, sep, isAbsolute, relative } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import { scanSecrets, redactSecrets } from "../../core/files/secrets.js";
@@ -17,6 +17,9 @@ import {
 import { parseItemRef, parseTargetRef, allocateId, normPath, compareIds } from "../../core/address/refs.js";
 import { targetsOverlap } from "../../core/claims/claims.js";
 import { depSatisfied, type IndexedItem } from "../../core/index/index.js";
+
+/** `brief <id> more=transcript` page size, in lines (TE-0158). */
+export const TRANSCRIPT_PAGE_LINES = 200;
 import { parseTouches, touchesOverlap, type Touch } from "../../core/index/overlap.js";
 import {
   evidenceCommits,
@@ -814,9 +817,87 @@ export class WorkspaceOps {
    * notes), decisions and lessons — every query word must hit, ranked by
    * match count, one ≤30-word snippet per hit. In memory, no database.
    */
-  async search(q: { text: string; domain?: string; limit?: number }): Promise<SearchHit[]> {
+  /** A discussion's raw transcript on disk (TE-0158): the overlay sidecar
+   *  `<source>.transcript.md` or the `.artifacts/` file capture wrote. */
+  private transcriptFileOf(it: IndexedItem): string | undefined {
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      const p = join(this.wsr.ws.root, it.meta.source.replace(/\.md$/i, ".transcript.md"));
+      if (existsSync(p)) return p;
+    }
+    const art = it.artifacts.find((a) => a.path.endsWith(".transcript.md"));
+    if (art) {
+      const p = isAbsolute(art.path)
+        ? art.path
+        : join(this.wsr.ws.root, ".artifacts", art.path);
+      if (existsSync(p)) return p;
+    }
+    return undefined;
+  }
+
+  /**
+   * `brief <id> more=transcript page=N` (TE-0158): the discussion's raw
+   * transcript in pages of ~200 lines. Pages clamp to [1, pages].
+   */
+  discussionTranscript(id: string, page = 1) {
+    const it = this.item(id.toUpperCase());
+    if (it.meta.type !== "discussion") {
+      throw new ValidationError(
+        `brief more=transcript: ${id} is a ${it.meta.type}, not a discussion`,
+      );
+    }
+    const file = this.transcriptFileOf(it);
+    if (!file) throw new NotFoundError(`${id}: no transcript saved yet`);
+    const lines = readFileSync(file, "utf8").split("\n");
+    const pages = Math.max(1, Math.ceil(lines.length / TRANSCRIPT_PAGE_LINES));
+    const p = Math.min(Math.max(1, page), pages);
+    return {
+      path: relative(this.wsr.ws.root, file).split(sep).join("/"),
+      page: p,
+      pages,
+      total: lines.length,
+      text: lines.slice((p - 1) * TRANSCRIPT_PAGE_LINES, p * TRANSCRIPT_PAGE_LINES).join("\n"),
+    };
+  }
+
+  async search(q: {
+    text: string;
+    domain?: string;
+    limit?: number;
+    in?: string;
+  }): Promise<SearchHit[]> {
     const docs: SearchDoc[] = [];
+    if (q.in === "transcript") {
+      // TE-0158: `in: transcript` searches only the raw transcripts —
+      // a word that lives only there is found here, not in the default corpus
+      for (const it of this.index.items.values()) {
+        if (it.meta.type !== "discussion") continue;
+        const file = this.transcriptFileOf(it);
+        if (!file) continue;
+        docs.push({
+          kind: "transcript",
+          id: it.meta.id,
+          title: it.meta.title,
+          domains: it.meta.domains,
+          date: it.meta.updated ?? "",
+          text: readFileSync(file, "utf8"),
+        });
+      }
+      return searchDocs(docs, q.text, { domain: q.domain, limit: q.limit ?? 10 });
+    }
     for (const it of this.index.items.values()) {
+      // discussions enter the corpus at any status — the distilled layer is
+      // what makes a saved chat findable again (TE-0158)
+      if (it.meta.type === "discussion") {
+        docs.push({
+          kind: "discussion",
+          id: it.meta.id,
+          title: it.meta.title,
+          domains: it.meta.domains,
+          date: historyRow(it).date,
+          text: this.searchTextOf(it),
+        });
+        continue;
+      }
       if (it.meta.status !== "done" && it.meta.status !== "dropped") continue;
       docs.push({
         kind: "item",

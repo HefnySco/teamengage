@@ -717,6 +717,97 @@ describe("discussions", () => {
     );
     expect(stored).toContain("## user\n\nships or gates?");
   });
+
+  describe("find and read (TE-0158)", () => {
+    let token: string;
+    const call = (tool: string, body: Record<string, unknown> = {}) =>
+      fetch(`${daemon.url}/agent/${tool}`, {
+        method: "POST",
+        headers: { [SESSION_HEADER]: token },
+        body: JSON.stringify(body),
+      }).then(async (r) => ({ status: r.status, text: await r.text() }));
+
+    it("query type=discussion lists only discussions; search finds key points, transcripts only with in:transcript; brief pages the chat", async () => {
+      const hello = await fetch(`${daemon.url}/agent/hello`, {
+        method: "POST",
+        body: JSON.stringify({ agent: "reader" }),
+      });
+      token = /^token (\S+)/.exec(await hello.text())![1];
+
+      // a discussion with a distinctive key point and a transcript-only word
+      const cap = await post("/api/discussions", {
+        title: "Throttle chat",
+        project: "global",
+        sections: { "Key points": "- the gate must hold zeppelin-speed bursts" },
+        transcript_text:
+          "## user\n\nhow fast?\n\n## assistant\n\nfast enough for zeppelin-bursts, and the codeword is plumcake\n",
+      });
+      const discId = String(cap.id);
+
+      // query type=discussion returns only discussions
+      const q = await call("query", { type: "discussion" });
+      expect(q.status).toBe(200);
+      const rows = q.text.trim().split("\n");
+      expect(rows.length).toBeGreaterThan(0);
+      const qIds = rows.map((l) => /^(\S+)/.exec(l)![1]);
+      expect(qIds.every((x) => store().idx.get(x)!.meta.type === "discussion")).toBe(true);
+      expect(rows.some((l) => l.includes(discId))).toBe(true);
+      expect(q.text).toContain("idea_state:");
+
+      // a word in a key point is found by the default search
+      const s1 = await call("search", { text: "zeppelin" });
+      expect(s1.status).toBe(200);
+      expect(s1.text).toContain(`discussion ${discId}`);
+
+      // a transcript-only word is NOT in the default corpus
+      const s2 = await call("search", { text: "plumcake" });
+      expect(s2.text).not.toContain(`discussion ${discId}`);
+      expect(s2.text).not.toContain(`transcript ${discId}`);
+      // ... but in: transcript finds it
+      const s3 = await call("search", { text: "plumcake", in: "transcript" });
+      expect(s3.status).toBe(200);
+      expect(s3.text).toContain(`transcript ${discId}`);
+
+      // a task that relates to it shows up in brief
+      const { ids: tids } = await store().createItems(
+        [
+          {
+            type: "task",
+            title: "Use the throttle chat",
+            project: "global",
+            relates: [discId],
+            domains: ["teamengage"],
+          },
+        ],
+        human,
+      );
+      const b = await call(`brief/${discId}`);
+      expect(b.status).toBe(200);
+      expect(b.text.split("\n").length).toBeLessThanOrEqual(120);
+      expect(b.text).toContain(`referenced by ${tids[0]}`);
+      expect(b.text).toContain("transcript:");
+      expect(b.text).toContain("more=transcript page=N");
+
+      // a >200-line transcript pages: page 2 holds lines 201+
+      const longChat = Array.from({ length: 250 }, (_, i) => `question number ${i + 1}`).join(
+        "\n",
+      );
+      const cap2 = await post("/api/discussions", {
+        title: "Long chat",
+        project: "global",
+        transcript_text: longChat,
+      });
+      const id2 = String(cap2.id);
+      const p1 = await call(`brief/${id2}`, { more: "transcript", page: 1 });
+      expect(p1.text).toContain("page 1/2");
+      expect(p1.text).toContain("question number 1");
+      expect(p1.text).not.toContain("question number 250");
+      const p2 = await call(`brief/${id2}`, { more: "transcript", page: 2 });
+      expect(p2.text).toContain("page 2/2");
+      expect(p2.text).toContain("lines 201–");
+      expect(p2.text).toContain("question number 250");
+    });
+  });
 });
 
 describe("overlay import honours ignore globs", () => {

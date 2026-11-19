@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DaemonCtx } from "../../daemon/server/context.js";
 import type { AgentBinding } from "../server/mcp.js";
 import { pickWorkspace } from "../server/mcp.js";
-import { WorkspaceOps } from "../../daemon/api/ops.js";
+import { WorkspaceOps, TRANSCRIPT_PAGE_LINES } from "../../daemon/api/ops.js";
 import type { Session } from "../../core/model/session.js";
 import {
   okText,
@@ -147,13 +147,22 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         "What an agent needs to work an item: summary, acceptance, dep outcomes, decisions, resolved targets. " +
         "The default brief stays under 120 lines — a block that does not fit shows its count and " +
         "the call for more: `brief <id> more=<block>` (blocks: lessons, decisions, " +
-        "domain_decisions, history, repo_context).",
-      inputSchema: { id: z.string(), more: z.string().optional() },
+        "domain_decisions, history, repo_context). A discussion's brief also names its transcript; " +
+        "`brief <id> more=transcript page=N` pages the raw chat ~200 lines at a time.",
+      inputSchema: { id: z.string(), more: z.string().optional(), page: z.number().int().min(1).optional() },
     },
-    async ({ id, more }) => {
+    async ({ id, more, page }) => {
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
+        if (more === "transcript") {
+          const t = ops.discussionTranscript(id, page ?? 1);
+          const from = (t.page - 1) * TRANSCRIPT_PAGE_LINES + 1;
+          const to = Math.min(t.page * TRANSCRIPT_PAGE_LINES, t.total);
+          return okText(
+            `transcript ${t.path} — page ${t.page}/${t.pages} (lines ${from}–${to} of ${t.total})\n\n${t.text}`,
+          );
+        }
         const b = await ops.brief(id);
         const it = b.item;
         const sec = (n: string) =>
@@ -204,6 +213,14 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           lines.push(
             `discussion: a saved chat — a source document; plan from it (propose items with relates: ["${it.meta.id}"]); discussions are never claimed`,
           );
+          try {
+            const t = ops.discussionTranscript(it.meta.id, 1);
+            lines.push(
+              `transcript: ${t.path} — ${t.total} lines, ${t.pages} page(s) (brief ${it.meta.id} more=transcript page=N)`,
+            );
+          } catch {
+            lines.push("transcript: none saved yet");
+          }
         }
         if (it.meta.tier || it.meta.attempts) {
           lines.push(`tier: ${it.meta.tier ?? "any"}${it.meta.attempts ? ` · ${it.meta.attempts} failed attempt(s) — read ## Handoff / ## Review first` : ""}`);
@@ -341,20 +358,22 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "search",
     {
       description:
-        "Deep search over finished items (summary, what, how, walkthrough, notes), decisions and " +
-        "lessons. Every word must hit; one snippet per result, ranked by match count. " +
-        "domain: restrict to a #domain; limit: rows (default 10).",
+        "Deep search over finished items (summary, what, how, walkthrough, notes), decisions, " +
+        "lessons and the distilled sections of discussions. Every word must hit; one snippet per " +
+        "result, ranked by match count. domain: restrict to a #domain; limit: rows (default 10); " +
+        "in: 'transcript' searches only the raw transcripts of saved chats.",
       inputSchema: {
         text: z.string(),
         domain: z.string().optional(),
         limit: z.number().int().min(1).max(50).optional(),
+        in: z.enum(["transcript"]).optional(),
       },
     },
-    async ({ text, domain, limit }) => {
+    async ({ text, domain, limit, in: scope }) => {
       try {
         const ops = opsFor(binding, ctx);
         if ("content" in ops) return ops;
-        const hits = await ops.search({ text, domain, limit });
+        const hits = await ops.search({ text, domain, limit, in: scope });
         if (!hits.length) return okText(`no hits for "${text}"`);
         return okText(
           hits.map((h) => `${h.kind} ${h.id} "${h.title}" — ${h.snippet}`).join("\n"),
