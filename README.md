@@ -121,7 +121,8 @@ src/resources   git / ssh / folder / url resource drivers
 src/daemon/sync te sync: plans repo + code repos between machines, claim reconciliation
 src/import      importer for existing Markdown task folders
 web/            human web UI, served by the daemon
-skills/         agent skills: te-work (execute), te-review (peer review), te-plan (plan), te-tag (tag domains), te-analysis (triage)
+skills/         agent skills: te-work (execute), te-review (peer review), te-plan (plan),
+                te-tag (tag domains), te-analysis (triage), te-discuss (save chats)
 team/           te run setup: coder + reviewer agent CLIs
 ```
 

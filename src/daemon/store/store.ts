@@ -42,6 +42,7 @@ const normalizeKeywords = (k: string[]) => [...new Set(k.map((w) => w.trim().toL
 /** File types `attach` allows under `.artifacts/` (documents and mockups only). */
 const ARTIFACT_TYPES = new Set(["png", "jpg", "webp", "gif", "svg", "pdf", "html", "md", "txt", "json", "csv"]);
 import {
+  DISCUSSION_SECTIONS,
   filePrefix,
   nextTaskNumber,
   renderSimpleFile,
@@ -455,6 +456,11 @@ export class PlansStore {
         let body = "";
         if (!overlay) {
           body = `\n## Summary\n${d.summary ?? d.title}\n`;
+          // a discussion's distilled layer lives in the item file here —
+          // the overlay writes it to the DISC-*.md source instead
+          if (d.type === "discussion") {
+            for (const h of DISCUSSION_SECTIONS) body += `\n## ${h}\n${d.sections?.[h]?.trim() ?? ""}\n`;
+          }
           if (d.acceptance?.length) {
             body += `\n## Acceptance\n${d.acceptance.map((a) => `- [ ] ${a}`).join("\n")}\n`;
           }
@@ -1444,7 +1450,7 @@ export class PlansStore {
   settlePromotion(
     id: string,
     n: number,
-    a: { state: "approved" | "rejected"; action_line: string },
+    a: { state: "approved" | "rejected"; action_line: string; commit_extra?: string[] },
     actor: Actor,
   ): Promise<ItemMeta> {
     return this.enqueue(async () => {
@@ -1481,7 +1487,11 @@ export class PlansStore {
           { heading: "Actions", text: `${a.action_line}\n` },
         ]);
       }
-      await this.commitPaths([it.path], `te: ${id} promotion #${n} ${a.state} by ${who}`);
+      // plansDir-relative extras (an approved lesson's file) commit with the item
+      await this.commitPaths(
+        [it.path, ...(a.commit_extra ?? [])],
+        `te: ${id} promotion #${n} ${a.state} by ${who}`,
+      );
       if (path) await this.stageTaskFiles([path]);
       await this.index.upsertFile(absItem);
       return meta;

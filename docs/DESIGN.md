@@ -58,7 +58,7 @@ same plan concurrently. That is TeamEngage's reason to exist.
 | **Machine**             | A host running a daemon (`desktop`, `laptop`). Every claim, session and event records its machine.                                                                                                                                |
 | **Resource**            | Anything work touches, declared in `workspace.yaml`, **inside or outside** the workspace root: a local git repo, a remote git URL, an SSH folder on another machine (e.g. a Raspberry Pi), a plain local folder, a URL. See §6.3. |
 | **Project**             | Optional grouping inside a workspace (`mission_planner`, `andruav`) with its own ID prefix.                                                                                                                                       |
-| **Item**                | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`, `idea`. Lives at workspace level (cross-cutting) or project level (detail).                                                                      |
+| **Item**                | Unit of plannable work. Types: `epic`, `task`, `bug`, `wish`, `spike`, `review`, `idea`, `discussion`. Lives at workspace level (cross-cutting) or project level (detail).                                                          |
 | **Edge**                | `depends_on`, `parent`, `relates`. `blocks` is derived. Edges may cross projects and workspaces (§4.1).                                                                                                                           |
 | **Turn**                | Whose move it is on an item: `human` or `agent`. Drives both inboxes.                                                                                                                                                             |
 | **Claim**               | A session (agent **or human**) holding an item + its targets. Stored as a file in the plans repo so every machine sees it. No auto-expiry: inactive claims become **stale** and wait for the human.                               |
@@ -207,6 +207,52 @@ updated: 2026-10-08
 
 `turn` and `blocked` are derived, not stored. The claim itself lives in
 `claims/GL-0013.yaml`, so claiming never edits the item file.
+
+### Discussions (TE-0155)
+
+A **discussion** is a saved chat — a source document like an idea. It is
+never claimed and never worked; tasks plan from it through `relates`
+(reference only — no ordering, no gate). It has two layers:
+
+- `DISC-NN-<slug>.md` — the **distilled** layer: fixed sections
+  (`## Summary`, `## Participants`, `## Context`, `## Key points`,
+  `## Decisions reached`, `## Open questions`, `## Guidelines`,
+  `## Actions`, `## Artifacts`, `## Notes`). This is what `search` and
+  `brief` read.
+- `DISC-NN-<slug>.transcript.md` — the **raw** layer: the whole chat,
+  linked under `## Artifacts` and committed with the plans repo. Import
+  skips it; the default search skips it; `search in=transcript` reads
+  it, and `brief <id> more=transcript page=N` pages it ~200 lines at a
+  time.
+
+A discussion's state is **derived**, not stored: `unplanned` until a task
+names it in `relates`, then `planned`, `in_progress` while a referrer is
+worked, `done` when every live referrer is. Its own `draft`/`dropped`/
+`done` status wins outright.
+
+**Capture** (`capture`, `POST /api/discussions`, `te discuss save`) takes
+the distilled sections plus the transcript as text or a file; a Claude
+Code JSONL export converts to Markdown turns (user / assistant / tool
+calls in short form). Before the write the transcript is **secret-scanned**
+(API keys, tokens, passwords, private keys, JWTs): a hit refuses the call
+and names the lines, unless `redact: true` masks each with `[REDACTED]` or
+`sensitive: true` keeps it and tags the artifact `!sensitive`.
+`discussions.transcript_max_mb` (default 20) caps the size, and the reply
+always warns that the transcript enters the plans git repo.
+
+**Retrieval:** `query type=discussion` lists them; `search` covers the
+distilled sections (add `in:transcript` for the raw layer); `brief <id>`
+shows the distilled sections, participants, related items and the
+transcript size in under ~120 lines.
+
+**Promote** turns a `## Guidelines` or `## Decisions reached` line into a
+project record — with a human gate. `promote {id, section, line, to:
+lesson|decision, domain?}` records a pending candidate on the discussion
+(the inbox and the web board list it) and links it in `## Actions`. Only
+when the human approves does anything land: a lesson line in
+`lessons/<domain>.md` that names the discussion, or a `D-NNNN` record
+whose `item:` is the discussion. A rejection writes nothing; either way
+`## Actions` links the result, so the provenance stays visible.
 
 ## 5. State machine
 

@@ -82,8 +82,8 @@ From a shell, the same thing is `te discuss save <file> --title <t>
 
 ```bash
 curl -s "$B/query?type=discussion" -H "$H"                    # list them
-curl -s "$B/search?q=<words>" -H "$H"                         # distilled sections (default)
-curl -s "$B/search?q=<words>&in=transcript" -H "$H"           # the raw transcripts
+curl -s "$B/search?text=<words>" -H "$H"                      # distilled sections (default)
+curl -s "$B/search?text=<words>&in=transcript" -H "$H"        # the raw transcripts
 curl -s $B/brief/DISC-0003 -H "$H"                            # distilled + related + transcript size
 curl -s "$B/brief/DISC-0003?more=transcript&page=2" -H "$H"   # a ~200-line transcript page
 ```

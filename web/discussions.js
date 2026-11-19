@@ -205,7 +205,7 @@ const CaptureForm = ({ projects, onSaved }) => {
 
 // ---- the list ----------------------------------------------------------------
 const DiscussionsList = ({ onSaved }) => {
-  const { data, reload } = useApi("/api/items?type=discussion");
+  const { data } = useApi("/api/items?type=discussion");
   const { data: ws } = useApi("/api/workspace");
   const [q, setQ] = useState("");
   const [capturing, setCapturing] = useState(false);

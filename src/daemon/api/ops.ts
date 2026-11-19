@@ -783,13 +783,17 @@ export class WorkspaceOps {
   /** mtime-cached source text per file — deep search re-reads only what changed (GL-0354). */
   private searchFileCache = new Map<string, { mtimeMs: number; text: string }>();
 
-  /** An item's searchable text: managed sections plus the overlay task file. */
+  /** An item's searchable text: managed sections plus the overlay task file.
+   *  A discussion gives its whole distilled layer — that is what makes a
+   *  saved chat findable again (TE-0158). */
   private searchTextOf(it: IndexedItem): string {
     const parts = [
       it.meta.title,
       ...it.sections
         .filter((s) =>
-          /^(summary|notes|for the human|walkthrough|evidence|review|simple)$/i.test(s.heading),
+          it.meta.type === "discussion"
+            ? true
+            : /^(summary|notes|for the human|walkthrough|evidence|review|simple)$/i.test(s.heading),
         )
         .map((s) => s.body),
     ];
@@ -3024,6 +3028,9 @@ export class WorkspaceOps {
       {
         state: verdict,
         action_line: `- promotion #${n} ${verdict === "approved" ? `approved → ${result}` : "rejected"} (human, ${now.slice(0, 16).replace("T", " ")})`,
+        ...(verdict === "approved" && promo.to === "lesson"
+          ? { commit_extra: [`lessons/${normalizeDomain(String(promo.domain))}.md`] }
+          : {}),
       },
       this.actorFor("human"),
     );

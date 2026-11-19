@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -160,6 +160,91 @@ describe("e2e daemon + watcher + MCP", () => {
     expect(dirty()).toBe("");
     await w1.client.close();
     await w2.client.close();
+  });
+
+  it("discussions end to end: capture → search → plan with relates → promote → approve (TE-0162)", async () => {
+    const c = await mcpClient("discuss");
+    await c.client.callTool({ name: "hello", arguments: { agent: "devin" } });
+    const call = async (tool: string, args: Record<string, unknown>) =>
+      text((await c.client.callTool({ name: tool, arguments: args })) as never);
+
+    // save two chats — distilled sections plus the raw transcript
+    const cap1 = await call("capture", {
+      title: "Latch design chat",
+      summary: "We chose the latch.",
+      sections: {
+        "Key points": "- the flimflam latch survives a replay",
+        Guidelines: "- always clear latched events on restart",
+      },
+      transcript_text: "user: latch or counter?\nassistant: the flimflam latch\n",
+    });
+    const cap2 = await call("capture", {
+      title: "Paging chat",
+      summary: "Transcripts come in pages.",
+      sections: { "Key points": "- page the transcript, not the summary" },
+      transcript_text: "user: how big?\nassistant: 200-line pages\n",
+    });
+    const d1 = /captured (\S+)/.exec(cap1)![1];
+    const d2 = /captured (\S+)/.exec(cap2)![1];
+    await settle();
+
+    // a key-point word finds the discussion; a transcript-only word does
+    // not — unless the transcript search is asked for
+    const found = await call("search", { text: "flimflam" });
+    expect(found).toContain(d1);
+    expect(found).not.toContain(d2);
+    const miss = await call("search", { text: "counter" });
+    expect(miss).not.toContain(d1);
+    const tHit = await call("search", { text: "counter", in: "transcript" });
+    expect(tHit).toContain(d1);
+
+    // plan from both — relates is a reference, no gate
+    const prop = await call("propose", {
+      items: [
+        {
+          type: "task",
+          title: "Clear latched events on restart",
+          summary: "Implement the latch design the saved chats settled on.",
+          relates: [d1, d2],
+          domains: ["test"],
+        },
+      ],
+    });
+    expect(prop).toContain("proposed");
+    await settle();
+    const store = ctx.workspaces.get("ws")!.store;
+    expect(store.idx.get(d1)!.idea_state).toBe("planned");
+    expect(store.idx.get(d2)!.idea_state).toBe("planned");
+
+    // a guideline line → a pending lesson candidate; nothing is written
+    const promo = await call("promote", {
+      id: d1,
+      section: "guidelines",
+      line: "always clear latched events on restart",
+      to: "lesson",
+      domain: "test",
+    });
+    expect(promo).toContain("promotion #1 pending");
+    const lessonsFile = join(plans, "lessons", "test.md");
+    expect(existsSync(lessonsFile)).toBe(false);
+
+    // the human approves — the lesson line names the discussion
+    const res = await fetch(`${daemon.url}/api/items/${d1}/promotions/1`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${daemon.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ verdict: "approved" }),
+    });
+    const settled = (await res.json()) as { verdict?: string; result?: string };
+    expect(settled.verdict).toBe("approved");
+    expect(settled.result).toBe("lesson for #test");
+    expect(readFileSync(lessonsFile, "utf8")).toContain(
+      `always clear latched events on restart (from ${d1})`,
+    );
+    await settle();
+    await c.client.close();
   });
 
   it("daemon writes produce no human_edit version bumps or duplicate findings", async () => {
