@@ -178,6 +178,11 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
 - Ideas are IDEA-*.md — source documents (thoughts, specs, brainstorms) an
   agent can be asked to plan from. They are never claimed; tasks generated
   from one name it in "relates".
+- Discussions are DISC-*.md — saved chats: a distilled summary plus the
+  raw transcript in DISC-*.transcript.md. They are sources like ideas —
+  never claimed; tasks name them in "relates". Save a chat with capture,
+  read one with brief, and promote a guideline or decision line with
+  promote — the human settles the result in the inbox.
 - Every task file has: a "# Title", a "**Depends on:**" line (ids, or
   "nothing"), a "**Touches:**" line (repos/paths), and a "## Acceptance"
   checklist an agent can verify. Format: \`te template\`.

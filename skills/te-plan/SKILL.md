@@ -88,20 +88,30 @@ Inside one propose call, refer to earlier items as `#0`, `#1`, … (0-based):
 `"parent": "#0", "depends_on": ["#1"]`. Put prerequisites before the items
 that need them.
 
-## 3b. Planning from idea sources
+## 3b. Planning from source documents
 
 Ideas (`type: "idea"`, `IDEA-*.md` files) are **source documents** — a
 thought, brainstorm or spec the human captured. They are never claimed or
 executed; an agent turns them into a plan when the human asks.
 
+Discussions (`DISC-*.md` files) are sources the same way — a saved chat:
+a distilled layer (summary, key points, decisions, guidelines) plus its
+raw transcript in `DISC-*.transcript.md`. `brief <id>` shows the
+distilled sections and the transcript size; page the transcript only
+when the distilled layer is not enough
+(`curl -s "$B/brief/<id>?more=transcript&page=2" -H "$H"`). Find them
+with `query?type=discussion` or `search` (add `in=transcript` to search
+the raw text). See the te-discuss skill for capture and promote.
+
 When the human points you at one or more ("plan from GL-0044 and GL-0047"):
 
 1. Read each with `curl -s $B/brief/<id> -H "$H"` — the idea's whole task
-   file is the spec.
+   file, or the discussion's distilled sections, is the spec.
 2. Propose the plan as usual (epic + tasks).
-3. Set `"relates": ["GL-0044", "GL-0047"]` on every item it grows from —
+3. Set `"relates": ["GL-0044", "DISC-0007"]` on every item it grows from —
    the epic at minimum. The edge is **reference only**: no ordering, no
-   gate. The idea's page then lists the plan under "referenced by".
+   gate. The source's page then lists the plan under "referenced by" /
+   "related items".
 
 Capturing a thought as an idea works the same way — an agent may
 `propose { "type": "idea", "title": "…", "summary": "…" }` to save a

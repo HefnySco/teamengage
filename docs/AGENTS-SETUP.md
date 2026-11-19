@@ -86,6 +86,8 @@ curl-only, no MCP needed:
 - `skills/te-tag/` — tag untagged tasks with domains by reading them
   (`te domains untagged`, plan for the human's OK, `te tag`).
 - `skills/te-analysis/` — read-only analysis of the task bank.
+- `skills/te-discuss/` — save a chat as a discussion, plan from saved
+  discussions with `relates`, promote their guidelines with `promote`.
 
 Install by linking them into the agent's skills folder — never copy
 (a copied skill teaches agents a stale protocol):
