@@ -43,10 +43,23 @@ const participantsOf = (text) =>
     .filter(Boolean);
 
 // ---- transcript reader: ## user/assistant turn headers, ### tool blocks folded
+// a ## inside a fenced code block is code, not a turn header
 const transcriptBlocks = (text) => {
   const blocks = [];
+  let fence = null;
   for (const line of (text ?? "").split("\n")) {
     let m;
+    const f = /^(```|~~~)/.exec(line.trim());
+    if (f) {
+      if (fence === null) fence = f[1];
+      else if (line.trim().startsWith(fence)) fence = null;
+      blocks.at(-1)?.body.push(line);
+      continue;
+    }
+    if (fence) {
+      blocks.at(-1)?.body.push(line);
+      continue;
+    }
     if ((m = /^##\s+(.+)$/.exec(line))) blocks.push({ kind: "turn", head: m[1], body: [] });
     else if ((m = /^###\s+(.+)$/.exec(line))) blocks.push({ kind: "tool", head: m[1], body: [] });
     else if (blocks.length) blocks.at(-1).body.push(line);
@@ -76,14 +89,14 @@ const TranscriptReader = ({ id }) => {
           b.kind === "turn"
             ? html`<div key=${i} class="disc-turn mb-3">
                 <div class=${`disc-turn-head ${/^assistant/i.test(b.head) ? "disc-assistant" : "disc-user"}`}>${b.head}</div>
-                ${b.body && html`<div class="mt-1" style=${{ whiteSpace: "pre-wrap" }}>${b.body}</div>`}
+                ${b.body && html`<div class="mt-1 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.body) }} />`}
               </div>`
             : html`<details key=${i} class="disc-tool ms-3 mb-2">
                 <summary class="text-secondary">${b.head}</summary>
                 <pre class="small mt-1 mb-0 disc-tool-body">${b.body}</pre>
               </details>`,
         )}
-        ${!blocks.length && html`<pre class="small mb-0">${t.text}</pre>`}
+        ${!blocks.length && html`<div class="small md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(t.text) }} />`}
       </div>
     </div>`;
 };

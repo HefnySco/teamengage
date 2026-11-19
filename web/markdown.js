@@ -105,8 +105,10 @@ export function markdownToHtml(md) {
       flushAll();
       const body = [];
       for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) body.push(lines[i]);
-      const lang = fence[2] ? ` class="lang-${escapeHtml(fence[2])}"` : "";
-      html.push(`<pre><code${lang}>${escapeHtml(body.join("\n"))}</code></pre>`);
+      const lang = fence[2] ? escapeHtml(fence[2]) : "";
+      html.push(
+        `<pre${lang ? ` data-lang="${lang}"` : ""}><code${lang ? ` class="lang-${lang}"` : ""}>${escapeHtml(body.join("\n"))}</code></pre>`,
+      );
       continue;
     }
 

@@ -91,6 +91,20 @@
   padding: 0.6rem 0.8rem;
   border-radius: 0.35rem;
   font-size: 0.8rem;
+  position: relative;
+}
+.md-view pre[data-lang] {
+  padding-top: 1.5rem;
+}
+.md-view pre[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0.2rem;
+  right: 0.55rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bs-secondary-color);
 }
 .md-view code {
   font-size: 0.85em;
