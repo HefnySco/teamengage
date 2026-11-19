@@ -1202,6 +1202,11 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .disc-row:hover { background: var(--bs-tertiary-bg); }
 .disc-section p:last-child { margin-bottom: 0; }
 .disc-transcript { max-height: 70vh; overflow-y: auto; }
+.disc-turn { scroll-margin-top: 0.5rem; }
+.disc-jump { width: 0.55rem; height: 0.55rem; border-radius: 50%; display: inline-block; opacity: 0.55; cursor: pointer; }
+.disc-jump:hover { opacity: 1; box-shadow: 0 0 0 1px var(--bs-border-color); }
+.disc-jump.disc-user { background: var(--bs-primary); }
+.disc-jump.disc-assistant { background: var(--bs-secondary); }
 .disc-turn-head { font-weight: 600; text-transform: capitalize; padding: .15rem .5rem; border-radius: .25rem; display: inline-block; }
 .disc-user { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
 .disc-assistant { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }

@@ -73,6 +73,8 @@ const TranscriptReader = ({ id }) => {
   if (err) return html`<p class="small text-secondary">no transcript saved yet</p>`;
   if (!t) return html`<p class="text-secondary">loading…</p>`;
   const blocks = transcriptBlocks(t.text);
+  // one clickable dot per turn — a mini table of contents for the page
+  const turns = blocks.flatMap((b, i) => (b.kind === "turn" ? [{ i, head: b.head }] : []));
   return html`
     <div class="card mt-3">
       <div class="card-header d-flex align-items-center gap-2 py-2">
@@ -84,10 +86,21 @@ const TranscriptReader = ({ id }) => {
           <button class="btn btn-outline-secondary" disabled=${t.page >= t.pages} onClick=${() => setPage(t.page + 1)}>›</button>
         </div>
       </div>
+      ${turns.length > 1 && html`
+        <div class="disc-jumps d-flex flex-wrap align-items-center gap-1 px-3 py-1 border-bottom">
+          ${turns.map(
+            (u, j) => html`<a
+              key=${j}
+              class=${`disc-jump ${/^assistant/i.test(u.head) ? "disc-assistant" : "disc-user"}`}
+              title=${`${j + 1}. ${u.head}`}
+              onClick=${() => document.getElementById(`disc-t-${u.i}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            ></a>`,
+          )}
+        </div>`}
       <div class="card-body small disc-transcript">
         ${blocks.map((b, i) =>
           b.kind === "turn"
-            ? html`<div key=${i} class="disc-turn mb-3">
+            ? html`<div key=${i} id=${`disc-t-${i}`} class="disc-turn mb-3">
                 <div class=${`disc-turn-head ${/^assistant/i.test(b.head) ? "disc-assistant" : "disc-user"}`}>${b.head}</div>
                 ${b.body && html`<div class="mt-1 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.body) }} />`}
               </div>`
