@@ -568,6 +568,155 @@ describe("discussions", () => {
     const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
     expect(next.map((i) => i.meta.id)).not.toContain(id);
   });
+
+  it("capture writes the DISC file and the .transcript.md sidecar, linked in ## Artifacts", async () => {
+    const r = (await post("/api/discussions", {
+      title: "Gate design chat",
+      project: "global",
+      summary: "we talked about the wait gate",
+      participants: ["the human", "claude"],
+      transcript_text: "## user\n\nhow does the gate work?\n\n## assistant\n\nit holds the mission\n",
+    })) as Record<string, unknown>;
+    expect(r.error).toBeUndefined();
+    const id = String(r.id);
+    const file = String(r.file);
+    const tpath = String(r.transcript);
+    expect(file).toMatch(/^global\/DISC-\d+-.*\.md$/);
+    expect(tpath).toBe(file.replace(/\.md$/, ".transcript.md"));
+    expect(String(r.warning)).toMatch(/plans git repo/);
+    // discussion lands ready (a saved record, not a draft to approve)
+    const it0 = store().idx.get(id)!;
+    expect(it0.meta.type).toBe("discussion");
+    expect(it0.idea_state).toBe("unplanned");
+    const text = readFileSync(join(root, file), "utf8");
+    expect(text).toContain("## Artifacts");
+    expect(text).toContain(tpath);
+    expect(text).toContain("- claude");
+    expect(readFileSync(join(root, tpath), "utf8")).toContain("## user");
+    // the sidecar is a transcript file, not an item
+    expect(store().idx.get(tpath)).toBeUndefined();
+  });
+
+  it("capture converts a Claude Code JSONL export to Markdown turns", async () => {
+    const jsonl = [
+      JSON.stringify({ type: "summary", summary: "Gate talk" }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "explain the gate" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: "it waits" } }),
+    ].join("\n");
+    const r = (await post("/api/discussions", {
+      title: "JSONL chat",
+      project: "global",
+      transcript_text: jsonl,
+    })) as Record<string, unknown>;
+    expect(r.error).toBeUndefined();
+    expect(r.format).toBe("jsonl");
+    const stored = readFileSync(join(root, String(r.transcript)), "utf8");
+    expect(stored).toContain("## user\n\nexplain the gate");
+    expect(stored).toContain("## assistant\n\nit waits");
+  });
+
+  it("capture refuses a secret and names the line; redact masks it", async () => {
+    const bad = await post("/api/discussions", {
+      title: "Leaky chat",
+      project: "global",
+      transcript_text: "all fine\nuser: my key is sk-ant-api03-AbCdEfGhIjKlMnOpQr\n",
+    });
+    expect(bad.error).toBe("VALIDATION");
+    expect(String(bad.message)).toMatch(/line 2/);
+    const ok = (await post("/api/discussions", {
+      title: "Scrubbed chat",
+      project: "global",
+      transcript_text: "user: my key is sk-ant-api03-AbCdEfGhIjKlMnOpQr\n",
+      redact: true,
+    })) as Record<string, unknown>;
+    expect(ok.error).toBeUndefined();
+    expect(ok.redacted).toBe(1);
+    const stored = readFileSync(join(root, String(ok.transcript)), "utf8");
+    expect(stored).toContain("[REDACTED]");
+    expect(stored).not.toContain("sk-ant-api03");
+    // sensitive keeps the secret but tags the artifact
+    const keep = (await post("/api/discussions", {
+      title: "Kept chat",
+      project: "global",
+      transcript_text: "user: my key is sk-ant-api03-AbCdEfGhIjKlMnOpQr\n",
+      sensitive: true,
+    })) as Record<string, unknown>;
+    expect(keep.error).toBeUndefined();
+    const kept = readFileSync(join(root, String(keep.file)), "utf8");
+    expect(kept).toContain("!sensitive");
+  });
+
+  it("capture refuses a transcript over discussions.transcript_max_mb", async () => {
+    const ws = ctx.workspaces.get("tasks")!.ws;
+    ws.config.discussions.transcript_max_mb = 0.000001;
+    try {
+      const r = await post("/api/discussions", {
+        title: "Huge chat",
+        project: "global",
+        transcript_text: "x".repeat(100),
+      });
+      expect(r.error).toBe("VALIDATION");
+      expect(String(r.message)).toMatch(/transcript_max_mb/);
+    } finally {
+      ws.config.discussions.transcript_max_mb = 20;
+    }
+  });
+
+  it("the agent capture tool runs the same pipeline over /agent/capture", async () => {
+    const hello = await fetch(`${daemon.url}/agent/hello`, {
+      method: "POST",
+      body: JSON.stringify({ agent: "capturer" }),
+    });
+    const token = /^token (\S+)/.exec(await hello.text())![1];
+    const r = await fetch(`${daemon.url}/agent/capture`, {
+      method: "POST",
+      headers: { [SESSION_HEADER]: token },
+      body: JSON.stringify({
+        title: "Agent-side chat",
+        project: "global",
+        transcript_text: "user: hello\nassistant: hi\n",
+        relates: [],
+      }),
+    });
+    expect(r.status).toBe(200);
+    const text = await r.text();
+    const id = /captured (GL-\d+)/.exec(text)![1];
+    expect(text).toContain(".transcript.md");
+    expect(text).toMatch(/warning:.*plans git repo/);
+    expect(store().idx.get(id)!.meta.type).toBe("discussion");
+  });
+
+  it("te discuss save reads a JSONL file and captures it as Markdown turns", async () => {
+    const chat = join(home, "chat.jsonl");
+    writeFileSync(
+      chat,
+      [
+        JSON.stringify({ type: "user", message: { role: "user", content: "ships or gates?" } }),
+        JSON.stringify({ type: "assistant", message: { role: "assistant", content: "gates" } }),
+      ].join("\n"),
+    );
+    const out: string[] = [];
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((s: string) => (out.push(String(s)), true)) as typeof process.stdout.write;
+    let code: number;
+    try {
+      const { discussCmd } = await import("../../cli/commands/discuss.js");
+      code = await discussCmd(["save", chat, "--title", "CLI chat", "--project", "global"], home);
+    } finally {
+      process.stdout.write = origOut;
+    }
+    expect(code!).toBe(0);
+    const text = out.join("");
+    expect(text).toMatch(/captured GL-\d+/);
+    expect(text).toContain("(JSONL → Markdown)");
+    const id = /captured (GL-\d+)/.exec(text)![1];
+    const it0 = store().idx.get(id)!;
+    const stored = readFileSync(
+      join(root, String(it0.meta.source).replace(/\.md$/, ".transcript.md")),
+      "utf8",
+    );
+    expect(stored).toContain("## user\n\nships or gates?");
+  });
 });
 
 describe("overlay import honours ignore globs", () => {

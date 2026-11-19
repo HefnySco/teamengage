@@ -290,6 +290,10 @@ export const WorkspaceConfig = z
     targets: z.record(z.string(), TargetConfig).default({}),
     /** attached files (`## Artifacts`): max_mb caps one file's size (attach refuses bigger) */
     artifacts: z.object({ max_mb: z.number().positive().default(5) }).default({}),
+    /** saved chats: transcript_max_mb caps one transcript's size (capture refuses bigger) */
+    discussions: z
+      .object({ transcript_max_mb: z.number().positive().default(20) })
+      .default({}),
     /** linked workspaces: name → workspace root path. */
     links: z.record(z.string(), z.string()).default({}),
   })

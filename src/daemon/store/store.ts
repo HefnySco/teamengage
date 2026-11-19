@@ -1323,6 +1323,70 @@ export class PlansStore {
   }
 
   /**
+   * Write a discussion's raw transcript (TE-0157). Overlay: next to the
+   * DISC file as `<same name>.transcript.md`; non-overlay: under
+   * `.artifacts/<project>/<id>.transcript.md`. The discussion's
+   * `## Artifacts` gets a line that points at it (`!sensitive` when set).
+   * The size cap and the secret scan run in ops before this write.
+   */
+  captureTranscript(
+    id: string,
+    a: { content: string; caption: string; sensitive?: boolean },
+    actor: Actor,
+  ): Promise<{ path: string }> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      if (it.meta.type !== "discussion") {
+        throw new ValidationError(`captureTranscript: ${id} is a ${it.meta.type}, not a discussion`);
+      }
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
+      const log = [`- ${now} ${who} saved the raw transcript`];
+
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const rel = found.path.replace(/\.md$/i, ".transcript.md");
+        const tAbs = join(this.ws.root, rel);
+        await writeFileAtomic(tAbs, a.content);
+        this.onFileWrite?.(tAbs, a.content);
+        const line = `- ${rel} — ${a.caption}${a.sensitive ? " !sensitive" : ""}`;
+        const out = appendSection(found.text, "Artifacts", line);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log);
+        await this.commitPaths([it.path], `te: ${id} capture transcript by ${who}`);
+        await this.stageTaskFiles([found.path, rel]);
+        await this.index.upsertFile(absItem);
+        return { path: rel };
+      }
+
+      // non-overlay: the transcript lives under .artifacts/ like other files
+      const project = it.meta.project ?? "_root";
+      const rel = `${project}/${id.toLowerCase()}.transcript.md`;
+      const tAbs = join(this.ws.root, ".artifacts", rel);
+      await mkdir(dirname(tAbs), { recursive: true });
+      await writeFileAtomic(tAbs, a.content);
+      this.onFileWrite?.(tAbs, a.content);
+      const line = `- ${rel} — ${a.caption}${a.sensitive ? " !sensitive" : ""}`;
+      await this.writeItemDoc(absItem, doc.raw.text, meta, log, [
+        { heading: "Artifacts", text: `${line}\n` },
+      ]);
+      await this.commitPaths([it.path], `te: ${id} capture transcript by ${who}`);
+      await this.stageTaskFiles([`.artifacts/${rel}`]);
+      await this.index.upsertFile(absItem);
+      return { path: rel };
+    });
+  }
+
+  /**
    * Change a draft's scope in its task file (overlay): replace the
    * `**Touches:**` line and/or append `## Acceptance` items. The status gate
    * (draft only) and who may do it live in ops; this is the write.

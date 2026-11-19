@@ -733,6 +733,36 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  /** Save a chat as a discussion (TE-0157) — same pipeline as the agent `capture` call. */
+  app.post("/api/discussions", async (req, reply) => {
+    try {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const list = (k: string) =>
+        Array.isArray(b[k]) ? (b[k] as unknown[]).map(String) : undefined;
+      const sections =
+        b.sections && typeof b.sections === "object" && !Array.isArray(b.sections)
+          ? Object.fromEntries(
+              Object.entries(b.sections as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+            )
+          : undefined;
+      return await opsFor(ctx, wsOf(req.query)).capture("human", {
+        title: b.title === undefined ? "" : String(b.title),
+        project: b.project === undefined ? undefined : String(b.project),
+        summary: b.summary === undefined ? undefined : String(b.summary),
+        sections,
+        participants: list("participants"),
+        relates: list("relates"),
+        transcript_text: b.transcript_text === undefined ? undefined : String(b.transcript_text),
+        transcript_path: b.transcript_path === undefined ? undefined : String(b.transcript_path),
+        domains: list("domains"),
+        redact: b.redact === true,
+        sensitive: b.sensitive === true,
+      });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   /** Markdown-folder import (IM-0001): dry-run preview or apply. */
   app.post("/api/import", async (req, reply) => {
     try {

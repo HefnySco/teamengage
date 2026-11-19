@@ -96,6 +96,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "attach",
         "bounce",
         "brief",
+        "capture",
         "claim",
         "close_plan",
         "detach",

@@ -21,6 +21,7 @@ import {
 import { originBackfillCmd } from "./commands/backfill.js";
 import { importCmd } from "./commands/import.js";
 import { artifactsCmd } from "./commands/artifacts.js";
+import { discussCmd } from "./commands/discuss.js";
 import { runCmd, waitCmd } from "./commands/run.js";
 import { restartCmd } from "./commands/restart.js";
 import { opsCmd } from "./commands/ops.js";
@@ -173,6 +174,8 @@ const USAGE_ALL = `te — every command
   detach <ID> <path>   remove an artifact line — the file stays
   artifacts import [--apply]   attach loose .artifacts/ files by name prefix
              (<prefix><digits>-<name> → <PREFIX>-<digits>; dry run without --apply)
+  discuss save <file> --title <t> [--project p] [--summary s] [--redact|--sensitive]
+             save a chat as a discussion (JSONL → Markdown; secret-scanned)
   mcp        stdio MCP shim (auto-starts the daemon)
   agents-md  print the agent protocol snippet
   template   print the standard task-file template
@@ -354,6 +357,8 @@ async function main(argv: string[]): Promise<number> {
       return importCmd(rest, home);
     case "artifacts":
       return artifactsCmd(rest, home);
+    case "discuss":
+      return discussCmd(rest, home);
     case "run":
       return runCmd(rest, home);
     case "wait":

@@ -5,6 +5,8 @@ import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve, basename, dirname, sep } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
+import { scanSecrets, redactSecrets } from "../../core/files/secrets.js";
+import { transcriptToMarkdown } from "../../core/files/transcript.js";
 import {
   normalizeDomain,
   normalizeDomains,
@@ -2698,6 +2700,111 @@ export class WorkspaceOps {
   async detach(id: string, actor: Session | "human", path: string) {
     this.item(id);
     return this.store.detachArtifact(id, path, this.actorFor(actor));
+  }
+
+  /**
+   * Save a chat as a discussion (TE-0157): create the DISC item with its
+   * distilled sections, write the transcript as
+   * `<project>/DISC-NN-<slug>.transcript.md` and link it in ## Artifacts.
+   * Claude Code JSONL converts to Markdown turns first. The secret scan
+   * refuses hits unless `redact` ([REDACTED] each) or `sensitive` (kept,
+   * `!sensitive` tag) is set. The reply always warns that the transcript
+   * goes into the plans git repo.
+   */
+  async capture(
+    actor: Session | "human",
+    a: {
+      title: string;
+      project?: string;
+      summary?: string;
+      sections?: Record<string, string>;
+      participants?: string[];
+      relates?: string[];
+      transcript_text?: string;
+      transcript_path?: string;
+      domains?: string[];
+      redact?: boolean;
+      sensitive?: boolean;
+    },
+  ) {
+    if (!a.title?.trim()) throw new ValidationError("capture needs {title}");
+    if (a.transcript_text === undefined && a.transcript_path === undefined) {
+      throw new ValidationError("capture needs transcript_text or transcript_path");
+    }
+    let raw = a.transcript_text ?? "";
+    if (a.transcript_path !== undefined) {
+      const given = a.transcript_path.replace(/\\/g, "/");
+      const abs = given.startsWith("/") ? resolve(given) : resolve(this.wsr.ws.root, given);
+      const st = existsSync(abs) ? statSync(abs) : undefined;
+      if (!st?.isFile()) throw new NotFoundError(`capture: transcript not found: ${a.transcript_path}`);
+      raw = readFileSync(abs, "utf8");
+    }
+    // Claude Code JSONL → Markdown turns; plain text / Markdown pass through
+    const conv = transcriptToMarkdown(raw);
+    let text = conv.text;
+    const maxMb = this.wsr.ws.config.discussions.transcript_max_mb;
+    const mb = Buffer.byteLength(text, "utf8") / 1048576;
+    if (mb > maxMb) {
+      throw new ValidationError(
+        `transcript is ${mb.toFixed(1)} MB — over discussions.transcript_max_mb (${maxMb} MB)`,
+      );
+    }
+    // secret scan — the transcript lands in the plans git repo
+    let hits = scanSecrets(text);
+    let redacted = false;
+    if (hits.length && a.redact) {
+      const r = redactSecrets(text);
+      text = r.text;
+      hits = r.hits;
+      redacted = true;
+    } else if (hits.length && !a.sensitive) {
+      throw new ValidationError(
+        `transcript holds ${hits.length} secret-looking string(s): ` +
+          hits.map((h) => `line ${h.line} (${h.kind} ${h.preview})`).join("; ") +
+          ` — pass redact: true to mask them or sensitive: true to keep them`,
+      );
+    }
+    const sections: Record<string, string> = { ...(a.sections ?? {}) };
+    if (a.participants?.length && !sections["Participants"]) {
+      sections["Participants"] = a.participants.map((p) => `- ${p}`).join("\n");
+    }
+    const { ids, files } = await this.propose(
+      [
+        {
+          type: "discussion",
+          title: a.title.trim(),
+          project: a.project,
+          summary: a.summary,
+          sections,
+          relates: a.relates,
+          domains: a.domains,
+        },
+      ],
+      actor,
+    );
+    const id = ids[0];
+    // a saved chat is a record, not a proposal — it lands ready, the human drops it if unwanted
+    await this.approve(id);
+    const { path } = await this.store.captureTranscript(
+      id,
+      {
+        content: text.endsWith("\n") ? text : `${text}\n`,
+        caption: "raw transcript of the saved chat",
+        sensitive: a.sensitive,
+      },
+      this.actorFor(actor),
+    );
+    return {
+      id,
+      file: files[0],
+      transcript: path,
+      format: conv.format,
+      ...(redacted ? { redacted: hits.length } : {}),
+      ...(hits.length ? { secret_hits: hits.map((h) => `line ${h.line} (${h.kind})`) } : {}),
+      warning:
+        "the transcript goes into the plans git repo — every machine that pulls it can read it" +
+        (a.sensitive ? " (tagged !sensitive)" : ""),
+    };
   }
 
   /**

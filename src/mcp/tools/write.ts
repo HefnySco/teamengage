@@ -758,4 +758,52 @@ export function registerWriteTools(
       }
     },
   );
+
+  server.registerTool(
+    "capture",
+    {
+      description:
+        "Save a chat as a discussion: {title, project?, summary?, sections?, participants?, relates?, " +
+        "transcript_text | transcript_path, domains?, redact?, sensitive?}. Writes " +
+        "<project>/DISC-NN-<slug>.md with the distilled sections (Summary plus Participants, Context, " +
+        "Key points, Decisions reached, Open questions, Guidelines, Actions — pass their bodies in " +
+        "sections, or participants as a string list) and the raw transcript as " +
+        "DISC-NN-<slug>.transcript.md, linked in ## Artifacts. A Claude Code JSONL transcript converts " +
+        "to Markdown turns first. The transcript is secret-scanned: hits refuse the call and name the " +
+        "lines, unless redact: true ([REDACTED] each) or sensitive: true (kept, tagged !sensitive). " +
+        "The transcript goes into the plans git repo — the reply warns. Discussions are sources: " +
+        "never claimed; tasks name them in relates to plan from them.",
+      inputSchema: {
+        title: z.string(),
+        project: z.string().optional(),
+        summary: z.string().optional(),
+        /** bodies of the fixed sections, keyed by heading (e.g. "Key points") */
+        sections: z.record(z.string(), z.string()).optional(),
+        participants: z.array(z.string()).optional(),
+        relates: z.array(z.string()).optional(),
+        transcript_text: z.string().optional(),
+        transcript_path: z.string().optional(),
+        domains: z.array(z.string()).optional(),
+        redact: z.boolean().optional(),
+        sensitive: z.boolean().optional(),
+      },
+    },
+    async (args) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.capture(s, args);
+        return okText(
+          `captured ${r.id} → ${r.file}\ntranscript → ${r.transcript}` +
+            (r.redacted ? `\nredacted ${r.redacted} secret-looking string(s)` : "") +
+            (r.secret_hits?.length ? `\nsecret hits kept (!sensitive): ${r.secret_hits.join(", ")}` : "") +
+            `\nwarning: ${r.warning}`,
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
 }
