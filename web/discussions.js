@@ -111,7 +111,7 @@ const TranscriptReader = ({ id }) => {
           ${turns.map(
             (u, j) => html`<a
               key=${j}
-              class=${`disc-jump${u.line === active ? " disc-active" : ""}${u.page === t.page ? " disc-here" : ""}`}
+              class=${`disc-jump ${/^assistant/i.test(u.head) ? "disc-assistant" : "disc-user"}${u.line === active ? " disc-active" : ""}${u.page === t.page ? " disc-here" : ""}`}
               title=${`turn ${j + 1} (page ${u.page}): ${u.head}`}
               onClick=${() => jumpTo(u)}
             >${j + 1}</a>`,

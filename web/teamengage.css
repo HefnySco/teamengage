@@ -1203,13 +1203,17 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .disc-section p:last-child { margin-bottom: 0; }
 .disc-transcript { max-height: 70vh; overflow-y: auto; }
 .disc-turn { scroll-margin-top: 0.5rem; }
-.disc-jump { min-width: 1.1rem; height: 1.1rem; line-height: 1.05rem; padding: 0 0.28rem; border-radius: 0.55rem; font-size: 0.66rem; text-align: center; color: var(--bs-primary); background: var(--bs-body-bg); border: 1px solid var(--bs-primary); opacity: 0.7; cursor: pointer; text-decoration: none; }
-.disc-jump:hover { opacity: 1; color: var(--bs-primary); }
+.disc-jump { min-width: 1.1rem; height: 1.1rem; line-height: 1.05rem; padding: 0 0.28rem; border-radius: 0.55rem; font-size: 0.66rem; text-align: center; background: var(--bs-body-bg); border: 1px solid; opacity: 0.7; cursor: pointer; text-decoration: none; }
+.disc-jump.disc-user { color: var(--bs-success); border-color: var(--bs-success); }
+.disc-jump.disc-assistant { color: var(--bs-primary); border-color: var(--bs-primary); }
+.disc-jump:hover { opacity: 1; }
 .disc-jump.disc-here { opacity: 0.95; box-shadow: 0 0 0 1px var(--bs-border-color); }
-.disc-jump.disc-active { background: var(--bs-primary); color: #fff; opacity: 1; }
+.disc-jump.disc-active { color: #fff; opacity: 1; }
+.disc-jump.disc-active.disc-user { background: var(--bs-success); }
+.disc-jump.disc-active.disc-assistant { background: var(--bs-primary); }
 .disc-jump.disc-active:hover { color: #fff; }
 .disc-turn-head { font-weight: 600; text-transform: capitalize; padding: .15rem .5rem; border-radius: .25rem; display: inline-block; }
-.disc-user { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
-.disc-assistant { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+.disc-user { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.disc-assistant { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
 .disc-tool summary { cursor: pointer; font-family: var(--bs-font-monospace); font-size: .8rem; }
 .disc-tool-body { background: var(--bs-tertiary-bg); border-radius: .3rem; padding: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
