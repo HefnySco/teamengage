@@ -252,7 +252,8 @@ export class WorkspaceOps {
         .filter((i) => !i.meta.archived)
         .filter(
           (i) =>
-            (i.meta.type === "idea" && (i.idea_progress?.total ?? 0) === 0) ||
+            ((i.meta.type === "idea" || i.meta.type === "discussion") &&
+              (i.idea_progress?.total ?? 0) === 0) ||
             (i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by),
         )
         .filter((i) => !d || i.meta.domains.includes(d))
@@ -264,7 +265,7 @@ export class WorkspaceOps {
       .flatMap((c) => c.targets);
     return this.index
       .readyItems()
-      .filter((i) => i.meta.type !== "epic" && i.meta.type !== "idea") // plans and sources — agents claim tasks
+      .filter((i) => i.meta.type !== "epic" && i.meta.type !== "idea" && i.meta.type !== "discussion") // plans and sources — agents claim tasks
       .filter((i) => !d || i.meta.domains.includes(d))
       .filter(
         (i) => !targetsOverlap(i.meta.targets, claimedTargets, resourceRoots(this.wsr.ws)).overlap,
@@ -665,7 +666,7 @@ export class WorkspaceOps {
           return undefined;
         }
       })
-      .filter((d): d is IndexedItem => d?.meta.type === "idea")
+      .filter((d): d is IndexedItem => d?.meta.type === "idea" || d?.meta.type === "discussion")
       .map((d) => ({ id: d.meta.id, title: d.meta.title, idea_state: d.idea_state }));
     return {
       status: await this.featureStatus(it),
@@ -1032,7 +1033,8 @@ export class WorkspaceOps {
     const out: { id: string; paths: string[] }[] = [];
     for (const other of this.index.items.values()) {
       if (other.meta.id === id || other.meta.archived) continue;
-      if (other.meta.type === "epic" || other.meta.type === "idea") continue;
+      if (other.meta.type === "epic" || other.meta.type === "idea" || other.meta.type === "discussion")
+        continue;
       if (other.meta.status !== "ready" && other.meta.status !== "in_progress") continue;
       const paths = touchesOverlap(mine, await this.touchesOf(other));
       if (paths.length) out.push({ id: other.meta.id, paths });
@@ -1047,6 +1049,7 @@ export class WorkspaceOps {
         !i.meta.archived &&
         i.meta.type !== "epic" &&
         i.meta.type !== "idea" &&
+        i.meta.type !== "discussion" &&
         (i.meta.status === "ready" || i.meta.status === "in_progress"),
     );
     const touches = new Map<string, Touch[]>();
@@ -1266,6 +1269,11 @@ export class WorkspaceOps {
     }
     if (it.meta.type === "idea") {
       throw new ClaimRefusedError("ideas are sources — plan from them");
+    }
+    if (it.meta.type === "discussion") {
+      throw new ClaimRefusedError(
+        "discussions are never claimed — a saved chat is a source; plan from it",
+      );
     }
     const mine = it.claim;
     if (mine) {
@@ -1983,6 +1991,8 @@ export class WorkspaceOps {
       acceptance?: string[];
       touches?: string[];
       checks?: Check[];
+      /** discussion items: body text of the fixed ## sections, keyed by heading */
+      sections?: Record<string, string>;
       simple?: string;
       domains?: string[];
       tier?: "light" | "standard" | "heavy";
@@ -1997,7 +2007,7 @@ export class WorkspaceOps {
     const defs = await this.store.currentDomains();
     const enriched = drafts.map((d, i) => {
       let domains = normalizeDomains(d.domains ?? []);
-      if (!domains.length && d.type !== "idea") {
+      if (!domains.length && d.type !== "idea" && d.type !== "discussion") {
         domains = rankDomains(
           { strong: [d.title, ...(d.touches ?? [])].join("\n"), lead: d.summary ?? "", body: "" },
           defs,
@@ -2005,7 +2015,7 @@ export class WorkspaceOps {
       }
       const isFix = d.type === "bug" || FIX_WORDS.test(`${d.title}\n${d.summary ?? ""}`);
       if (isFix && !domains.includes("bug")) domains = [...domains, "bug"];
-      if (!domains.length && d.type !== "idea") {
+      if (!domains.length && d.type !== "idea" && d.type !== "discussion") {
         throw new ValidationError(
           `propose item ${i} '${d.title}': no domain given and none inferred — a task needs at least one domain`,
         );
@@ -2030,7 +2040,13 @@ export class WorkspaceOps {
     if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
       for (const id of r.ids) {
         const it = this.index.items.get(id);
-        if (!it || it.meta.type === "epic" || it.meta.type === "idea" || !it.meta.depends_on.length)
+        if (
+          !it ||
+          it.meta.type === "epic" ||
+          it.meta.type === "idea" ||
+          it.meta.type === "discussion" ||
+          !it.meta.depends_on.length
+        )
           continue;
         if (it.meta.authored_tier === "light") continue; // a stronger session vets it first
         const known = it.meta.depends_on.every((ref) => {

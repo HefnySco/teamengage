@@ -415,6 +415,35 @@ describe("idea state", () => {
   });
 });
 
+describe("discussion state", () => {
+  it("derives unplanned / planned / in_progress / done from relates", async () => {
+    writeItem("DC-0001", { type: "discussion", status: "ready" });
+    writeItem("DC-0002", { type: "discussion", status: "ready" });
+    writeItem("DC-0003", { type: "discussion", status: "ready" });
+    writeItem("DC-0004", { type: "discussion", status: "ready" });
+    writeItem("DC-0005", { type: "discussion", status: "draft" });
+    writeItem("DC-0006", { type: "discussion", status: "dropped" });
+    writeItem("DC-0007", { type: "discussion", status: "ready" });
+    writeItem("DC-0010", { status: "ready", relates: "[DC-0002]" });
+    writeItem("DC-0011", { status: "in_progress", relates: "[DC-0003]" });
+    writeItem("DC-0012", { status: "done", relates: "[DC-0004]" });
+    writeItem("DC-0013", { status: "in_review", relates: "[DC-0007]" });
+    const idx = await Index.load(plans);
+    expect(idx.get("DC-0001")!.idea_state).toBe("unplanned"); // nothing names it yet
+    expect(idx.get("DC-0002")!.idea_state).toBe("planned"); // a ready referrer
+    expect(idx.get("DC-0003")!.idea_state).toBe("in_progress"); // a referrer being worked
+    expect(idx.get("DC-0004")!.idea_state).toBe("done"); // every live referrer is done
+    expect(idx.get("DC-0005")!.idea_state).toBe("draft"); // its own status wins
+    expect(idx.get("DC-0006")!.idea_state).toBe("dropped");
+    expect(idx.get("DC-0007")!.idea_state).toBe("in_progress"); // in_review counts as in flight
+    expect(idx.get("DC-0002")!.idea_refs).toEqual(["DC-0010"]);
+    expect(idx.query({ type: "discussion", idea_state: "planned" }).map((i) => i.meta.id)).toEqual([
+      "DC-0002",
+    ]);
+    expect(idx.get("DC-0010")!.idea_state).toBeUndefined();
+  });
+});
+
 describe("500-item fixture", () => {
   it("loads in < 300ms", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-big-"));

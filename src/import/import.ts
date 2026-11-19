@@ -1,6 +1,6 @@
 import type { Status, ItemType } from "../core/model/item.js";
 import { allocateId } from "../core/address/refs.js";
-import { SIMPLE_SUFFIX } from "../core/files/source.js";
+import { SIMPLE_SUFFIX, TRANSCRIPT_SUFFIX } from "../core/files/source.js";
 
 /**
  * Markdown-folder importer (DESIGN §9, IM-0001). Pure planning: takes file
@@ -72,6 +72,7 @@ const PREFIX_TYPE: Record<string, ItemType> = {
   WISH: "wish",
   SPIKE: "spike",
   IDEA: "idea",
+  DISC: "discussion",
 };
 
 function typeFor(basename: string): ItemType {
@@ -163,6 +164,8 @@ export function planImport(
   for (const f of files) {
     const parts = f.path.split("/");
     const base = parts.at(-1)!;
+    // DISC-NN-<slug>.transcript.md is a discussion's sidecar, not an item
+    if (TRANSCRIPT_SUFFIX.test(base)) continue;
     const dirSegments = parts.slice(0, -1);
     const key = base.replace(SIMPLE_SUFFIX, "").replace(/\.md$/i, "");
     const groupKey = [...dirSegments, key].join("/");

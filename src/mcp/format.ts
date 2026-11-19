@@ -34,6 +34,7 @@ export function itemLine(it: {
   blocked?: boolean;
   plan_state?: string;
   plan_progress?: { done: number; total: number };
+  idea_state?: string;
 }): string {
   const flags: string[] = [];
   if (it.meta.tier) flags.push(`tier:${it.meta.tier}`);
@@ -46,6 +47,7 @@ export function itemLine(it: {
       `plan:${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0}`,
     );
   }
+  if (it.idea_state) flags.push(`idea_state:${it.idea_state}`);
   const suffix = flags.length ? `  ${flags.join(" ")}` : "";
   const tags = it.meta.domains?.length ? `  ${it.meta.domains.map((d) => `#${d}`).join(" ")}` : "";
   return `${it.meta.id} ${it.meta.status} "${it.meta.title}"${tags}${suffix}`;

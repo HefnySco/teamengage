@@ -13,6 +13,9 @@ import YAML from "yaml";
 /** Plain-English companion of a task file: `X.simple.md` or `X-simplified.md`. */
 export const SIMPLE_SUFFIX = /(?:\.simple|-simplified)\.md$/i;
 
+/** Raw chat transcript kept next to its discussion file: `DISC-NN-<slug>.transcript.md`. */
+export const TRANSCRIPT_SUFFIX = /\.transcript\.md$/i;
+
 const LEADING_FM = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /** Leading frontmatter, only when it is a YAML map (a leading `---` rule is not). */
@@ -535,6 +538,9 @@ export async function scanTaskTree(root: string, ignore: string[] = []): Promise
         // documents (DESIGN §14.6), not task files — never tagged, never
         // "untracked"
         if (/\.(machine|env)\.md$/i.test(e.name) || /\.machine\.trans\.md$/i.test(e.name)) continue;
+        // DISC-NN-<slug>.transcript.md — a discussion's raw transcript,
+        // part of the item, never a task file of its own
+        if (TRANSCRIPT_SUFFIX.test(e.name)) continue;
         const rel = toSourcePath(root, p);
         if (/^ops\/[^/]+\.notes\.md$/i.test(rel)) continue;
         // repos/<repo>.context.md — per-repo context cards (GL-0355),

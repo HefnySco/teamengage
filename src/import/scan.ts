@@ -3,6 +3,7 @@ import { join, relative, resolve, isAbsolute, sep, basename, dirname } from "nod
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { NotFoundError } from "../core/model/errors.js";
+import { TRANSCRIPT_SUFFIX } from "../core/files/source.js";
 import type { ImportSource } from "./import.js";
 
 /**
@@ -20,6 +21,8 @@ export async function scanFolder(dir: string): Promise<ImportSource[]> {
         if (e.name.startsWith(".")) continue;
         await walk(p);
       } else if (e.name.toLowerCase().endsWith(".md")) {
+        // DISC-NN-<slug>.transcript.md is a discussion's sidecar, not an item
+        if (TRANSCRIPT_SUFFIX.test(e.name)) continue;
         out.push({ path: relative(dir, p), content: await readFile(p, "utf8") });
       }
     }

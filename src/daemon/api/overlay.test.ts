@@ -498,6 +498,78 @@ describe("ideas and relates", () => {
   });
 });
 
+describe("discussions", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+
+  it("a discussion lands as DISC-NN-… with the ten sections, never claimable, derived state", async () => {
+    const { ids, files } = await store().createItems(
+      [
+        {
+          type: "discussion",
+          title: "DISC-1 — Strategy review",
+          project: "global",
+          summary: "we reviewed the phases",
+          sections: { Participants: "- the human\n- devin" },
+        },
+      ],
+      human,
+    );
+    const [id] = ids;
+    expect(store().idx.get(id)!.meta.type).toBe("discussion");
+    expect(store().idx.get(id)!.meta.status).toBe("draft");
+    expect(files[0]).toMatch(/^global\/DISC-\d+-.*\.md$/);
+    const text = readFileSync(join(root, files[0]), "utf8");
+    for (const h of [
+      "Summary",
+      "Participants",
+      "Context",
+      "Key points",
+      "Decisions reached",
+      "Open questions",
+      "Guidelines",
+      "Actions",
+      "Artifacts",
+      "Notes",
+    ]) {
+      expect(text).toContain(`## ${h}`);
+    }
+    expect(text).toContain("- devin");
+    expect(text).not.toContain("**Depends on:**");
+    expect(text).not.toContain("## Acceptance");
+
+    // unplanned while nothing relates; approved, still never claimable
+    expect(store().idx.get(id)!.idea_state).toBe("draft");
+    const r = await post(`/api/items/${id}/approve`, {});
+    expect(r.error).toBeUndefined();
+    expect(store().idx.get(id)!.idea_state).toBe("unplanned");
+    const claim = await post(`/api/items/${id}/claim`, {});
+    expect(claim.error).toBe("CLAIM_REFUSED");
+    expect(String(claim.message)).toMatch(/discussions are never claimed/);
+
+    // a ready task that names it in relates turns it planned
+    const { ids: tids } = await store().createItems(
+      [{ type: "task", title: "Plan from the chat", project: "global", relates: [id] }],
+      human,
+    );
+    await post(`/api/items/${tids[0]}/approve`, {});
+    const d = store().idx.get(id)!;
+    expect(d.idea_state).toBe("planned");
+    expect(d.idea_refs).toEqual(tids);
+    const q = (await (await api("/api/items?type=discussion")).json()) as Array<{
+      id: string;
+      type: string;
+      idea_state?: string;
+    }>;
+    expect(q.length).toBeGreaterThan(0);
+    expect(q.every((i) => i.type === "discussion")).toBe(true);
+    expect(q.find((i) => i.id === id)!.idea_state).toBe("planned");
+
+    // next never offers a discussion
+    const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
+    expect(next.map((i) => i.meta.id)).not.toContain(id);
+  });
+});
+
 describe("overlay import honours ignore globs", () => {
   it("skips root-relative ignored files, imports the rest", async () => {
     const ws = ctx.workspaces.get("tasks")!.ws;

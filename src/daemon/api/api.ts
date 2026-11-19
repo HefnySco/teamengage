@@ -116,7 +116,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
               plan_problems: i.plan_problems,
             }
           : {}),
-        ...(i.meta.type === "idea"
+        ...(i.meta.type === "idea" || i.meta.type === "discussion"
           ? { idea_state: i.idea_state, idea_progress: i.idea_progress, idea_refs: i.idea_refs }
           : {}),
         ...(i.meta.type === "feature"
@@ -388,8 +388,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         .filter((i) => !i.meta.archived)
         .sort((a, b) => compareIds(a.meta.id, b.meta.id));
       return {
-        // idea drafts are triaged on the ideas page, not here
-        drafts: items.filter((i) => i.meta.status === "draft" && i.meta.type !== "idea").map((i) => i.meta.id),
+        // idea and discussion drafts are triaged on their own pages, not here
+        drafts: items
+          .filter(
+            (i) =>
+              i.meta.status === "draft" && i.meta.type !== "idea" && i.meta.type !== "discussion",
+          )
+          .map((i) => i.meta.id),
         questions: items
           .filter((i) => i.meta.status === "waiting" && i.meta.question)
           .map((i) => ({ id: i.meta.id, question: i.meta.question })),

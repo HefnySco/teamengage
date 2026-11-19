@@ -28,20 +28,40 @@ export interface TaskDraft {
   acceptance?: string[];
   /** machine checks — `te verify` runs them in their repo (GL-0348) */
   checks?: Check[];
+  /** discussion files only: body text for the fixed ## sections, keyed by heading */
+  sections?: Record<string, string>;
 }
+
+/**
+ * A discussion file's distilled layer — fixed sections in this order
+ * (TE-0156). `## Summary`, `## Artifacts` and `## Notes` join them in
+ * renderTaskBody; the rest can be filled through TaskDraft.sections.
+ */
+export const DISCUSSION_SECTIONS = [
+  "Participants",
+  "Context",
+  "Key points",
+  "Decisions reached",
+  "Open questions",
+  "Guidelines",
+  "Actions",
+] as const;
 
 /** Body of a task file (without the `te:` frontmatter). */
 export function renderTaskBody(d: TaskDraft): string {
   const idea = d.type === "idea";
+  const discussion = d.type === "discussion";
+  // ideas and discussions are source documents — no deps/touches/acceptance
+  const source = idea || discussion;
   const block: string[] = [];
-  if (!idea) {
+  if (!source) {
     const deps = d.depends_on?.length ? d.depends_on.join(", ") : "nothing";
     block.push(`**Depends on:** ${deps}`);
     if (d.parent) block.push(`**Parent:** ${d.parent}`);
   }
   if (d.relates?.length) block.push(`**Relates:** ${d.relates.join(", ")}`);
   if (d.found_by?.length) block.push(`**Found by:** ${d.found_by.join(", ")}`);
-  if (!idea) block.push(`**Touches:** ${d.touches?.length ? d.touches.join("; ") : "TBD"}`);
+  if (!source) block.push(`**Touches:** ${d.touches?.length ? d.touches.join("; ") : "TBD"}`);
   const acceptance = d.acceptance?.length
     ? d.acceptance.map((a) => `- [ ] ${a.replace(/^-\s*(\[[ x]\]\s*)?/i, "")}`)
     : ["- [ ] TBD — the human or the planner fills this in before approval"];
@@ -53,9 +73,12 @@ export function renderTaskBody(d: TaskDraft): string {
     "## Summary",
     (d.summary ?? d.title).trim(),
     "",
+    ...(discussion
+      ? DISCUSSION_SECTIONS.flatMap((h) => [`## ${h}`, (d.sections?.[h] ?? "").trim(), ""])
+      : []),
     // an idea is a source document — no acceptance checklist
-    ...(idea ? [] : ["## Acceptance", ...acceptance, ""]),
-    ...(idea || !checks ? [] : ["## Checks", checks]),
+    ...(source ? [] : ["## Acceptance", ...acceptance, ""]),
+    ...(source || !checks ? [] : ["## Checks", checks]),
     "## Artifacts",
     "",
     "## Notes",
@@ -88,9 +111,17 @@ export function slugify(title: string): string {
   return cut.replace(/-[^-]*$/, "") || cut;
 }
 
-/** `TASK` for work items, `PHASE` for epics, `IDEA` for source documents. */
-export function filePrefix(type: string): "TASK" | "PHASE" | "IDEA" | "FE" {
-  return type === "epic" ? "PHASE" : type === "idea" ? "IDEA" : type === "feature" ? "FE" : "TASK";
+/** `TASK` for work items, `PHASE` for epics, `IDEA`/`DISC` for source documents. */
+export function filePrefix(type: string): "TASK" | "PHASE" | "IDEA" | "FE" | "DISC" {
+  return type === "epic"
+    ? "PHASE"
+    : type === "idea"
+      ? "IDEA"
+      : type === "feature"
+        ? "FE"
+        : type === "discussion"
+          ? "DISC"
+          : "TASK";
 }
 
 /**
@@ -120,7 +151,7 @@ export function nextTaskNumber(dir: string, prefix: string, taken: Iterable<numb
  * x`, `PHASE-2: Y`) is slugged without it — the file gets the allocated one.
  */
 export function taskFileName(prefix: string, n: number, title: string): string {
-  const bare = title.replace(/^\s*(?:task|phase|idea)[-\s]*[\d.]+[a-z]?\s*[—–:-]*\s*/i, "") || title;
+  const bare = title.replace(/^\s*(?:task|phase|idea|disc)[-\s]*[\d.]+[a-z]?\s*[—–:-]*\s*/i, "") || title;
   return `${prefix}-${String(n).padStart(2, "0")}-${slugify(bare)}.md`;
 }
 

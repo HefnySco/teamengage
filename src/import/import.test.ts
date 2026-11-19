@@ -159,6 +159,25 @@ describe("import planning (IM-0001)", () => {
     expect(forced.items[0].type).toBe("idea");
   });
 
+  it("DISC prefix → discussion; a .transcript.md sidecar is never an item", async () => {
+    const plan = planImport(
+      [
+        {
+          path: "todo/DISC-01 strategy review.md",
+          content: "# Strategy review\n\n## Summary\nWe reviewed the phases.\n",
+        },
+        {
+          path: "todo/DISC-01 strategy review.transcript.md",
+          content: "human: hi\nassistant: hello\n",
+        },
+      ],
+      { prefix: "WS", existingIds: [] },
+    );
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0].type).toBe("discussion");
+    expect(plan.items[0].legacy_id).toBe("DISC-01 strategy review");
+  });
+
   it("a second import dedups by source path — same-name files elsewhere still import", async () => {
     // 'seed/TASK-02 add scopes.md' was already imported; a different file
     // that happens to share the basename must NOT be silently dropped

@@ -200,6 +200,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
             `idea: a source document — plan from it (propose items with relates: ["${it.meta.id}"]); it is never claimed`,
           );
         }
+        if (it.meta.type === "discussion") {
+          lines.push(
+            `discussion: a saved chat — a source document; plan from it (propose items with relates: ["${it.meta.id}"]); discussions are never claimed`,
+          );
+        }
         if (it.meta.tier || it.meta.attempts) {
           lines.push(`tier: ${it.meta.tier ?? "any"}${it.meta.attempts ? ` · ${it.meta.attempts} failed attempt(s) — read ## Handoff / ## Review first` : ""}`);
         }
@@ -293,7 +298,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "query",
     {
       description:
-        "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (draft|ready|done|dropped) for type idea; q = board search (all words in id/title/file/#domains). Archived items never match.",
+        "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (draft|ready|done|dropped) for type idea, " +
+        "discussion state (draft|unplanned|planned|in_progress|done|dropped) for type discussion; q = board search (all words in id/title/file/#domains). Archived items never match.",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),

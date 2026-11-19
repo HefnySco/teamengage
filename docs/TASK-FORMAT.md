@@ -13,6 +13,8 @@ this page and that code must agree.
 | Task (also bug, spike, review, wish) | `TASK-<NN>-<slug>.md` | the project folder (`projects.<p>.path`, default the project name) |
 | Epic | `PHASE-<NN>-<slug>.md` (existing `*-MEGAPLAN.md` files stay valid) | same |
 | Idea | `IDEA-<NN>-<slug>.md` | same |
+| Discussion | `DISC-<NN>-<slug>.md` | same |
+| Discussion transcript | `<same name>.transcript.md` | next to its discussion |
 | Plain-English (STE) companion | `<same name>.simple.md` | next to its task |
 
 - `NN` is one above the highest number used anywhere under the project
@@ -79,6 +81,23 @@ words used consistently. See the WRITING rules in `te agents-md`.
 An **idea** file is lighter: `# Title`, an optional `**Relates:**` line,
 `## Summary`, `## Notes` — no `**Depends on:**`, `**Parent:**`,
 `**Touches:**` or `## Acceptance`. It is a source document, not work.
+
+A **discussion** file saves a chat between the human and an agent (a
+planning or review chat). It is a source document like an idea: it is never
+claimed, and its derived state (`unplanned`, `planned`, `in_progress`,
+`done`) comes from the items that name it in `**Relates:**`. It has two
+layers:
+
+1. The distilled layer — the `DISC-<NN>-<slug>.md` file itself, written by
+   the agent in STE. `# Title`, an optional `**Relates:**` line, then these
+   fixed `##` sections in order: `## Summary`, `## Participants`,
+   `## Context`, `## Key points`, `## Decisions reached`,
+   `## Open questions`, `## Guidelines`, `## Actions`, `## Artifacts`,
+   `## Notes`.
+2. The raw transcript — `<same name>.transcript.md` next to it, written by
+   `capture`. It is part of the item (the discussion links it in
+   `## Artifacts`), never a task file of its own: import and the
+   untracked-file check skip it.
 
 ## Who changes what
 

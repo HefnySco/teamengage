@@ -336,6 +336,8 @@ export class PlansStore {
       acceptance?: string[];
       touches?: string[];
       checks?: Check[];
+      /** discussion items: body text of the fixed ## sections, keyed by heading */
+      sections?: Record<string, string>;
       simple?: string;
       domains?: string[];
       tier?: "light" | "standard" | "heavy";

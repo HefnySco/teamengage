@@ -44,8 +44,19 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
 /** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
 export type PlanState = "draft" | "decomposing" | "ready" | "in_progress" | "done" | "dropped";
 
-/** Idea state — derived from the idea's own status plus the items that name it in relates, never stored. */
-export type IdeaState = "draft" | "ready" | "done" | "dropped";
+/**
+ * Derived state of a source document (idea or discussion) — never stored.
+ * Ideas use draft/ready/done/dropped; discussions use
+ * draft/unplanned/planned/in_progress/done/dropped (TE-0156).
+ */
+export type IdeaState =
+  | "draft"
+  | "ready"
+  | "unplanned"
+  | "planned"
+  | "in_progress"
+  | "done"
+  | "dropped";
 
 /**
  * Pure rule: the idea's own status decides draft/dropped/done outright; a
@@ -59,6 +70,24 @@ export function ideaStateOf(status: Status, referrerStatuses: Status[]): IdeaSta
   const live = referrerStatuses.filter((s) => s !== "dropped");
   if (live.length > 0 && live.every((s) => s === "done")) return "done";
   return "ready";
+}
+
+/**
+ * The discussion's own status decides draft/dropped/done outright. Live
+ * referrers (items that name it in `relates`) set the rest: none →
+ * unplanned; all done → done; one being worked (in_progress, in_review or
+ * waiting) → in_progress; otherwise planned.
+ */
+export function discussionStateOf(status: Status, referrerStatuses: Status[]): IdeaState {
+  if (status === "dropped") return "dropped";
+  if (status === "draft") return "draft";
+  if (status === "done") return "done";
+  const live = referrerStatuses.filter((s) => s !== "dropped");
+  if (!live.length) return "unplanned";
+  if (live.every((s) => s === "done")) return "done";
+  if (live.some((s) => s === "in_progress" || s === "in_review" || s === "waiting"))
+    return "in_progress";
+  return "planned";
 }
 
 /** A problem item: type bug, or any item carrying the bug domain. */
@@ -96,11 +125,11 @@ export interface IndexedItem {
   plan_state?: PlanState;
   /** epics only: finished/total over all non-epic descendants */
   plan_progress?: { done: number; total: number };
-  /** ideas only: derived state from the items that name the idea in relates */
+  /** ideas and discussions only: derived state from the items that name it in relates */
   idea_state?: IdeaState;
-  /** ideas only: done/total over the items that name the idea (dropped not counted) */
+  /** ideas and discussions only: done/total over the items that name it in relates (dropped not counted) */
   idea_progress?: { done: number; total: number };
-  /** ideas only: ids of the items that name this idea in relates */
+  /** ideas and discussions only: ids of the items that name it in relates */
   idea_refs?: string[];
   /** derived: problem items (bug type or bug domain) whose found_by names this item */
   found_here: { id: string; status: Status }[];
@@ -119,7 +148,7 @@ export interface IndexedItem {
 export interface QueryFilter {
   status?: Status | Status[];
   type?: string;
-  /** ideas only: derived idea state; items that are not ideas never match */
+  /** source documents only: derived state; other items never match */
   idea_state?: IdeaState;
   project?: string;
   /** items touching this resource name */
@@ -423,8 +452,9 @@ export class Index {
         total: plans.reduce((n, p) => n + (p.plan_progress?.total ?? 0), 0),
       };
     }
-    // idea state: reverse of relates, ideas only — archived referrers
-    // count as hidden, the same way they drop out of every list
+    // idea/discussion state: reverse of relates, source documents only —
+    // archived referrers count as hidden, the same way they drop out of
+    // every list
     const named = new Map<string, { id: string; status: Status }[]>();
     for (const it of this.items.values()) {
       if (it.meta.archived) continue;
@@ -441,14 +471,18 @@ export class Index {
       }
     }
     for (const it of this.items.values()) {
-      if (it.meta.type !== "idea") {
+      if (it.meta.type !== "idea" && it.meta.type !== "discussion") {
         it.idea_state = undefined;
         it.idea_progress = undefined;
         it.idea_refs = undefined;
         continue;
       }
       const refs = named.get(it.meta.id) ?? [];
-      it.idea_state = ideaStateOf(it.meta.status, refs.map((r) => r.status));
+      const statuses = refs.map((r) => r.status);
+      it.idea_state =
+        it.meta.type === "idea"
+          ? ideaStateOf(it.meta.status, statuses)
+          : discussionStateOf(it.meta.status, statuses);
       const live = refs.filter((r) => r.status !== "dropped");
       it.idea_progress = { done: live.filter((r) => r.status === "done").length, total: live.length };
       it.idea_refs = refs.map((r) => r.id).sort(compareIds);

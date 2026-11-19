@@ -433,6 +433,11 @@ export function transition(
       if (meta.type === "idea") {
         throw new ClaimRefusedError("ideas are sources — plan from them");
       }
+      if (meta.type === "discussion") {
+        throw new ClaimRefusedError(
+          "discussions are never claimed — a saved chat is a source; plan from it",
+        );
+      }
       if (meta.type === "feature") {
         throw new ClaimRefusedError("features are deliveries — claim their plans' tasks");
       }

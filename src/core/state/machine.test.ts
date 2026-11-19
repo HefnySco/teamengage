@@ -131,6 +131,24 @@ describe("ideas are sources, never work", () => {
   });
 });
 
+describe("discussions are sources, never work", () => {
+  const disc = (status: Status) =>
+    ItemMeta.parse({ id: "GL-0045", type: "discussion", title: "d", status });
+  const discClaim = { ...claimOf(), item: "GL-0045" };
+
+  it("claim is refused — they are saved chats, plan from them", () => {
+    expect(() =>
+      transition(disc("ready"), { type: "claim", claim: discClaim }, agent, ctx({ depsDone: true })),
+    ).toThrow(/discussions are never claimed/);
+  });
+
+  it("the normal lifecycle minus execution still applies", () => {
+    expect(transition(disc("draft"), { type: "approve_plan" }, human, ctx()).meta.status).toBe("ready");
+    expect(transition(disc("draft"), { type: "complete" }, human, ctx()).meta.status).toBe("done");
+    expect(transition(disc("ready"), { type: "drop" }, human, ctx()).meta.status).toBe("dropped");
+  });
+});
+
 describe("claim takeover of an AI-flagged submission", () => {
   const flagged = (): ItemMeta => ({
     ...item("in_review"),

@@ -84,6 +84,58 @@ describe("task template", () => {
     expect(task).toContain("**Depends on:** nothing\n**Relates:** GL-0003, GL-0004\n**Touches:** TBD\n");
   });
 
+  it("discussions carry the distilled layer's ten sections, no work fields", () => {
+    const body = renderTaskBody({
+      id: "GL-0006",
+      type: "discussion",
+      title: "Strategy review",
+      summary: "we reviewed the phase plans",
+      relates: ["GL-0001"],
+      depends_on: ["GL-0001"],
+      sections: { Participants: "- the human\n- devin", "Key points": "- keep the kernel thin" },
+    });
+    expect(body).toBe(
+      [
+        "# Strategy review",
+        "",
+        "**Relates:** GL-0001",
+        "",
+        "## Summary",
+        "we reviewed the phase plans",
+        "",
+        "## Participants",
+        "- the human\n- devin",
+        "",
+        "## Context",
+        "",
+        "",
+        "## Key points",
+        "- keep the kernel thin",
+        "",
+        "## Decisions reached",
+        "",
+        "",
+        "## Open questions",
+        "",
+        "",
+        "## Guidelines",
+        "",
+        "",
+        "## Actions",
+        "",
+        "",
+        "## Artifacts",
+        "",
+        "## Notes",
+        "",
+      ].join("\n"),
+    );
+    const bare = renderTaskBody({ id: "GL-0007", type: "discussion", title: "Bare" });
+    expect(bare).not.toContain("**Depends on:**");
+    expect(bare).not.toContain("**Touches:**");
+    expect(bare).not.toContain("## Acceptance");
+  });
+
   it("tags the file and round-trips through the importer (title, deps, parent)", () => {
     const text = renderTaskFile({
       id: "GL-0002",
@@ -164,9 +216,10 @@ describe("file naming", () => {
     expect(long).toBe("a-very-long-title-that-keeps-going-well-past-the");
   });
 
-  it("epics are PHASE, ideas are IDEA, everything else TASK", () => {
+  it("epics are PHASE, ideas are IDEA, discussions are DISC, everything else TASK", () => {
     expect(filePrefix("epic")).toBe("PHASE");
     expect(filePrefix("idea")).toBe("IDEA");
+    expect(filePrefix("discussion")).toBe("DISC");
     expect(filePrefix("bug")).toBe("TASK");
     expect(taskFileName("TASK", 7, "Fix it")).toBe("TASK-07-fix-it.md");
     expect(taskFileName("TASK", 123, "Fix it")).toBe("TASK-123-fix-it.md");
