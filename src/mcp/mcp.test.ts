@@ -110,6 +110,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "log",
         "next",
         "note",
+        "promote",
         "propose",
         "query",
         "release",

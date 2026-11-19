@@ -806,4 +806,38 @@ export function registerWriteTools(
       }
     },
   );
+
+  server.registerTool(
+    "promote",
+    {
+      description:
+        "Promote a line out of a discussion (TE-0160): {id: DISC-id, section: guidelines|decisions, " +
+        "line, to: lesson|decision, domain?}. The line becomes a pending candidate — nothing enters " +
+        "lessons/<domain>.md or decisions/ until the human settles it in the inbox or the web UI. " +
+        "An approved lesson names the discussion; an approved decision becomes a D-record on it. " +
+        "The discussion's ## Actions links the result either way.",
+      inputSchema: {
+        id: z.string(),
+        section: z.enum(["guidelines", "decisions"]),
+        line: z.string(),
+        to: z.enum(["lesson", "decision"]),
+        domain: z.string().optional(),
+      },
+    },
+    async (args) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        const r = await o.promote(s, args);
+        return okText(
+          `promoted ${r.id} line → ${r.pending}\n` +
+            `promotion #${r.promotion.n} pending — the human approves or rejects in the inbox`,
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
 }

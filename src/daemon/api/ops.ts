@@ -2888,6 +2888,148 @@ export class WorkspaceOps {
     };
   }
 
+  /** A discussion's section body (TE-0160): the DISC file in overlay, the
+   *  item file otherwise. */
+  private async discussionSectionOf(it: IndexedItem, heading: string): Promise<string> {
+    if (this.wsr.ws.config.mode === "overlay" && it.meta.source) {
+      const found = await resolveSource(this.wsr.ws.root, it.meta.id, it.meta.source);
+      if (found) return sectionBody(found.text, heading) ?? "";
+    }
+    return it.sections.find((s) => s.heading.toLowerCase() === heading.toLowerCase())?.body ?? "";
+  }
+
+  /**
+   * `promote` (TE-0160): a guideline or decision line out of a discussion,
+   * as a pending candidate — nothing is written to lessons/ or decisions/
+   * until the human settles it (the inbox lists it; /api/items/:id/promotions
+   * /:n approves or rejects). The discussion's `## Actions` links the result.
+   */
+  async promote(
+    actor: Session | "human",
+    a: { id: string; section: string; line: string; to: string; domain?: string },
+  ) {
+    const it = this.item(a.id.toUpperCase());
+    if (it.meta.type !== "discussion") {
+      throw new ValidationError(`promote: ${a.id} is a ${it.meta.type}, not a discussion`);
+    }
+    const section = a.section?.trim().toLowerCase();
+    const heading =
+      section === "guidelines" ? "Guidelines" : section === "decisions" ? "Decisions reached" : "";
+    if (!heading) {
+      throw new ValidationError("promote: section must be 'guidelines' or 'decisions'");
+    }
+    const to = a.to?.trim().toLowerCase();
+    if (to !== "lesson" && to !== "decision") {
+      throw new ValidationError("promote: 'to' must be lesson or decision");
+    }
+    const want = a.line.trim().replace(/^[-*]\s*/, "");
+    if (!want) throw new ValidationError("promote needs {id, section, line, to}");
+    const bullets = (await this.discussionSectionOf(it, heading))
+      .split("\n")
+      .map((l) => l.trim().replace(/^[-*]\s*/, ""))
+      .filter(Boolean);
+    const exact = bullets.filter((b) => b === want);
+    const contained = bullets.filter((b) => want.length >= 8 && b.includes(want));
+    const matches = exact.length ? exact : contained;
+    if (matches.length !== 1) {
+      throw new ValidationError(
+        matches.length > 1
+          ? `promote: '${want}' matches ${matches.length} lines in ## ${heading} — give the whole line`
+          : `promote: no such line in ## ${heading} — the section holds: ${bullets
+              .map((b) => `"${b.slice(0, 60)}"`)
+              .join(", ") || "(empty)"}`,
+      );
+    }
+    const line = matches[0];
+    const domain = a.domain?.trim()
+      ? normalizeDomain(a.domain)
+      : (it.meta.domains[0] ?? "");
+    if (to === "lesson" && !domain) {
+      throw new ValidationError("promote to lesson needs a domain — pass domain or tag the discussion");
+    }
+    const who = actor === "human" ? "human" : actor.id;
+    const now = new Date().toISOString();
+    const promos = (it.meta.promotions as Array<Record<string, unknown>> | undefined) ?? [];
+    const n = promos.length + 1;
+    const promo = {
+      n,
+      section,
+      line,
+      to,
+      ...(domain ? { domain } : {}),
+      by: who,
+      at: now,
+      state: "pending",
+    };
+    const short = line.length > 60 ? `${line.slice(0, 60)}…` : line;
+    const target =
+      to === "lesson" ? `lesson candidate for #${domain}` : "decision draft";
+    await this.store.recordPromotion(
+      it.meta.id,
+      {
+        promo,
+        action_line: `- promoted "${short}" → ${target} — pending the human's OK (${who}, ${now.slice(0, 16).replace("T", " ")})`,
+      },
+      this.actorFor(actor),
+    );
+    return {
+      id: it.meta.id,
+      promotion: promo,
+      pending: `${target} — it waits in the inbox for the human`,
+    };
+  }
+
+  /**
+   * The human settles a promotion (TE-0160): approve materializes the
+   * result — a lesson line that names the discussion, or a decision record
+   * whose item is the discussion — then `## Actions` gets the result line.
+   * Reject only marks the candidate.
+   */
+  async settlePromotion(id: string, n: number, verdict: "approved" | "rejected") {
+    const it = this.item(id.toUpperCase());
+    const promos = (it.meta.promotions as Array<Record<string, unknown>> | undefined) ?? [];
+    const promo = promos.find((p) => p.n === n);
+    if (!promo) throw new NotFoundError(`${id}: no promotion #${n}`);
+    if (promo.state !== "pending") {
+      throw new InvalidError(`${id}: promotion #${n} is ${String(promo.state)} — already settled`);
+    }
+    const now = new Date().toISOString();
+    const line = String(promo.line);
+    let result: string;
+    if (verdict === "approved") {
+      if (promo.to === "lesson") {
+        await appendLesson(
+          this.wsr.ws.plansDir,
+          String(promo.domain),
+          "human",
+          `${line} (from ${it.meta.id})`,
+          now,
+        );
+        result = `lesson for #${String(promo.domain)}`;
+      } else {
+        const decisionId = allocateId("D", this.index.decisions.keys());
+        await this.store.perform(it.meta.id, it.meta.version, this.actorFor("human"), {
+          type: "record_decision",
+          decisionId,
+          decisionTitle: line.length > 80 ? `${line.slice(0, 80)}…` : line,
+        });
+        result = `decision ${decisionId}`;
+      }
+    } else {
+      result = "rejected";
+    }
+    const meta = await this.store.settlePromotion(
+      it.meta.id,
+      n,
+      {
+        state: verdict,
+        action_line: `- promotion #${n} ${verdict === "approved" ? `approved → ${result}` : "rejected"} (human, ${now.slice(0, 16).replace("T", " ")})`,
+      },
+      this.actorFor("human"),
+    );
+    return { id: it.meta.id, promotion: n, verdict, result, meta };
+  }
+
   /**
    * `## Artifacts` of one item, each tagged with its item id. Overlay reads
    * the task file (item files hold no body there); standard uses the parsed

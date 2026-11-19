@@ -822,6 +822,110 @@ describe("discussions", () => {
       const tWrong = await api(`/api/discussions/${tids[0]}/transcript`);
       expect(tWrong.status).toBe(400); // not a discussion
     });
+
+    it("promote moves a guideline to an approved lesson and a decision line to a D-record (TE-0160)", async () => {
+      const hello = await fetch(`${daemon.url}/agent/hello`, {
+        method: "POST",
+        body: JSON.stringify({ agent: "promoter" }),
+      });
+      token = /^token (\S+)/.exec(await hello.text())![1];
+
+      const cap = await post("/api/discussions", {
+        title: "Promotion chat",
+        project: "global",
+        domains: ["teamengage"],
+        sections: {
+          Guidelines: "- always page long transcripts\n- keep chats distilled",
+          "Decisions reached": "- the gate waits for a human nod",
+        },
+        transcript_text: "user: rules?\nassistant: page the transcript\n",
+      });
+      const discId = String(cap.id);
+      const discFile = String(cap.file);
+
+      // a guideline → a pending lesson candidate, nothing in the lessons file
+      const p1 = await call("promote", {
+        id: discId,
+        section: "guidelines",
+        line: "always page long transcripts",
+        to: "lesson",
+      });
+      expect(p1.status).toBe(200);
+      expect(p1.text).toContain("promotion #1");
+      const inbox = (await (await api("/api/inbox")).json()) as {
+        promotions?: Array<{ id: string; n: number; to: string; domain?: string }>;
+      };
+      expect(inbox.promotions?.some((x) => x.id === discId && x.n === 1 && x.to === "lesson")).toBe(
+        true,
+      );
+      const lessonsFile = join(plans, "lessons", "teamengage.md");
+      expect(existsSync(lessonsFile) ? readFileSync(lessonsFile, "utf8") : "").not.toContain(
+        "always page long transcripts",
+      );
+      expect(readFileSync(join(root, discFile), "utf8")).toContain("pending the human's OK");
+
+      // the human approves → the lesson line names the discussion
+      const ok = (await post(`/api/items/${discId}/promotions/1`, { verdict: "approved" })) as {
+        verdict?: string;
+        result?: string;
+        error?: string;
+      };
+      expect(ok.error).toBeUndefined();
+      expect(ok.result).toBe("lesson for #teamengage");
+      const lessons = readFileSync(lessonsFile, "utf8");
+      expect(lessons).toContain(`always page long transcripts (from ${discId})`);
+      const actions = readFileSync(join(root, discFile), "utf8");
+      expect(actions).toContain("promotion #1 approved → lesson for #teamengage");
+
+      // a decision line → a decision draft; approving writes the D-record
+      const p2 = await call("promote", {
+        id: discId,
+        section: "decisions",
+        line: "the gate waits for a human nod",
+        to: "decision",
+      });
+      expect(p2.status).toBe(200);
+      const ok2 = (await post(`/api/items/${discId}/promotions/2`, {
+        verdict: "approved",
+      })) as { result?: string; error?: string };
+      expect(ok2.error).toBeUndefined();
+      const dId = /^decision (D-\d+)$/.exec(ok2.result ?? "")![1];
+      const dFile = readFileSync(join(plans, "decisions", `${dId}.md`), "utf8");
+      expect(dFile).toContain(`item: ${discId}`);
+      expect(readFileSync(join(root, discFile), "utf8")).toContain(
+        `promotion #2 approved → decision ${dId}`,
+      );
+
+      // reject path: a pending promotion settles without writing anything
+      await call("promote", {
+        id: discId,
+        section: "guidelines",
+        line: "keep chats distilled",
+        to: "lesson",
+      });
+      const rej = await post(`/api/items/${discId}/promotions/3`, { verdict: "rejected" });
+      expect(rej.error).toBeUndefined();
+      const promo3 = (
+        (store().idx.get(discId)!.meta.promotions as Array<Record<string, unknown>>) ?? []
+      ).find((p) => p.n === 3);
+      expect(promo3?.state).toBe("rejected");
+
+      // refusal cases: not a discussion, and a line that isn't in the section
+      const wrong = await call("promote", {
+        id: byLegacy("TASK-12-gate").meta.id,
+        section: "guidelines",
+        line: "x",
+        to: "lesson",
+      });
+      expect(wrong.text).toMatch(/not a discussion/);
+      const miss = await call("promote", {
+        id: discId,
+        section: "guidelines",
+        line: "a line nobody said",
+        to: "lesson",
+      });
+      expect(miss.text).toMatch(/no such line/);
+    });
   });
 });
 

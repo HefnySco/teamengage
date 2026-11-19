@@ -613,6 +613,7 @@ const Inbox = ({ onOpen }) => {
     drafts: (id) => byId[id] ?? { id },
     reviews: (id) => byId[id] ?? { id },
     drop_flags: (x) => byId[x.id] ?? { id: x.id },
+    promotions: (x) => byId[x.id] ?? { id: x.id },
     claims: (c) => byId[c.item] ?? { id: c.item },
     findings: (f) => byId[f.item] ?? { id: f.item ?? "", title: f.message ?? f.path ?? "" },
     digest_finished: (x) => byId[x.id] ?? { id: x.id, title: x.title },
@@ -633,13 +634,14 @@ const Inbox = ({ onOpen }) => {
     drafts: sortRows("drafts", data.drafts.filter((id) => hit(id))),
     reviews: sortRows("reviews", data.reviews.filter((id) => hit(id))),
     drop_flags: sortRows("drop_flags", (data.drop_flags ?? []).filter((x) => hit(x.id, x.by, x.reason))),
+    promotions: sortRows("promotions", (data.promotions ?? []).filter((x) => hit(x.id, x.line, x.to, x.domain))),
     claims: sortRows("claims", data.claims.filter((c) => hit(c.item, c.holder, c.machine))),
     findings: sortRows("findings", data.findings.filter((f) => hit(f.item, f.path, f.message, f.kind))),
     digest_finished: sortRows("digest_finished", digestFinished.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_stuck: sortRows("digest_stuck", digestStuck.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_waits: sortRows("digest_waits", digestWaits.filter((x) => hit(x.id, x.title, x.what, x.why))),
   };
-  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0);
+  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0) + (data.promotions?.length ?? 0);
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
   // every item the inbox lists, deduped — the pool the search filters and the
   // suggestion dropdown's @agent / #domain counts draw from
@@ -650,6 +652,7 @@ const Inbox = ({ onOpen }) => {
       ...data.drafts,
       ...data.reviews,
       ...(data.drop_flags ?? []).map((f) => f.id),
+      ...(data.promotions ?? []).map((x) => x.id),
       ...data.claims.map((c) => c.item),
       ...data.findings.map((f) => f.item).filter(Boolean),
       ...digestFinished.map((x) => x.id),
@@ -779,6 +782,29 @@ const Inbox = ({ onOpen }) => {
             if (await confirmDialog(`drop ${x.id}?`, `flagged by ${x.by}${x.reason ? `: ${x.reason}` : ""} — dependents treat a dropped task as done and the flag's claim (if any) is released.`, { ok: "drop", danger: true })) act(x.id, "drop", { reason: x.reason });
           }}>drop</button>
             <button class="btn btn-sm py-0 text-secondary" title="keep it — dismiss the flag" onClick=${() => act(x.id, "unflag")}>keep</button>`,
+        ),
+      ),
+    },
+    {
+      key: "promotions",
+      label: "Promotions",
+      rows: (view.promotions ?? []).map((x) =>
+        itemRow(
+          x.id,
+          html`<${InboxStatus} s="ready" />`,
+          html` <span class="text-secondary">· ${x.to === "lesson" ? `lesson for #${x.domain}` : "decision"} — "${x.line.length > 80 ? `${x.line.slice(0, 80)}…` : x.line}" — promoted by <b class=${whoCls(x.by)}>${x.by}</b> ${ago(x.at)} ago</span>`,
+          html`<button class="btn btn-sm py-0 btn-primary" title=${x.to === "lesson" ? `write it into lessons/${x.domain}.md — the line names the discussion` : "create the decision record — it names the discussion"} onClick=${async () => {
+            if (await confirmDialog(`approve promotion #${x.n} on ${x.id}?`, `"${x.line}" → ${x.to === "lesson" ? `a lesson for #${x.domain}` : "a decision record"}`, { ok: "approve" })) {
+              await post(`/api/items/${x.id}/promotions/${x.n}`, { verdict: "approved" }).catch((e) => toast(e.message));
+              reload();
+            }
+          }}>approve</button>
+            <button class="btn btn-sm py-0 text-danger" title="reject — nothing is written" onClick=${async () => {
+              if (await confirmDialog(`reject promotion #${x.n} on ${x.id}?`, `"${x.line}" — nothing is written to lessons or decisions.`, { ok: "reject", danger: true })) {
+                await post(`/api/items/${x.id}/promotions/${x.n}`, { verdict: "rejected" }).catch((e) => toast(e.message));
+                reload();
+              }
+            }}>reject</button>`,
         ),
       ),
     },
@@ -3471,7 +3497,7 @@ function refreshSyncBadge(g) {
 function refreshInboxBadge(d) {
   const a = document.querySelector('#nav a[data-r="inbox"]');
   if (!a) return;
-  const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
+  const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings", "promotions"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
   a.dataset.count = n || "";
 }
 // nav badge on "ops": live jobs (running, waiting, failed) — warning like sync

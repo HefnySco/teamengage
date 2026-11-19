@@ -412,6 +412,12 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             reason: i.meta.drop_request!.reason,
             at: i.meta.drop_request!.at,
           })),
+        // TE-0160: promoted discussion lines waiting for the human's OK
+        promotions: items.flatMap((i) =>
+          ((i.meta.promotions as Array<Record<string, unknown>> | undefined) ?? [])
+            .filter((p) => p.state === "pending")
+            .map((p) => ({ id: i.meta.id, ...p })),
+        ),
         findings: await ops.findings(),
         // GL-0367: a workspace that failed to load is named here so
         // `te status` can show the real error instead of a silent gap
@@ -728,6 +734,21 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         };
       });
       return await opsFor(ctx, wsOf(req.query)).propose(items, "human");
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  /** Settle a promotion candidate (TE-0160): {verdict: approved|rejected}. */
+  app.post("/api/items/:id/promotions/:n", async (req, reply) => {
+    try {
+      const { id, n } = z
+        .object({ id: z.string(), n: z.coerce.number().int().min(1) })
+        .parse(req.params);
+      const { verdict } = z
+        .object({ verdict: z.enum(["approved", "rejected"]) })
+        .parse(req.body ?? {});
+      return await opsFor(ctx, wsOf(req.query)).settlePromotion(id.toUpperCase(), n, verdict);
     } catch (e) {
       return sendErr(reply, e);
     }

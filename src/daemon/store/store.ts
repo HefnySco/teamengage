@@ -1387,6 +1387,108 @@ export class PlansStore {
   }
 
   /**
+   * Record a promotion candidate on a discussion (TE-0160): the pending
+   * entry lands in `meta.promotions` (a passthrough field) and the
+   * `## Actions` line that names it goes into the DISC file in overlay
+   * mode, the item file otherwise.
+   */
+  recordPromotion(
+    id: string,
+    a: { promo: Record<string, unknown>; action_line: string },
+    actor: Actor,
+  ): Promise<ItemMeta> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const promotions = [...((doc.meta.promotions as unknown[] | undefined) ?? []), a.promo];
+      const meta = {
+        ...doc.meta,
+        promotions,
+        version: doc.meta.version + 1,
+        updated: now,
+      } as ItemMeta;
+      const log = [`- ${now} ${who} promoted a line → ${(a.promo as { to?: string }).to ?? "?"}`];
+      let path: string | undefined;
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const out = appendSection(found.text, "Actions", a.action_line);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        path = found.path;
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log);
+      } else {
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log, [
+          { heading: "Actions", text: `${a.action_line}\n` },
+        ]);
+      }
+      await this.commitPaths([it.path], `te: ${id} promote by ${who}`);
+      if (path) await this.stageTaskFiles([path]);
+      await this.index.upsertFile(absItem);
+      return meta;
+    });
+  }
+
+  /**
+   * Settle a pending promotion (TE-0160): mark it approved/rejected in
+   * `meta.promotions` and append the result line to `## Actions`. The
+   * materialization (lesson line, decision file) is the caller's.
+   */
+  settlePromotion(
+    id: string,
+    n: number,
+    a: { state: "approved" | "rejected"; action_line: string },
+    actor: Actor,
+  ): Promise<ItemMeta> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      await this.plansRepoHealthy();
+      const it = this.index.get(id);
+      if (!it) throw new NotFoundError(`item ${id} not found`);
+      const now = new Date().toISOString();
+      const who = actor.kind === "human" ? "human" : actor.session;
+      const absItem = join(this.ws.plansDir, it.path);
+      const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      const promotions = ((doc.meta.promotions as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (p) => (p.n === n ? { ...p, state: a.state } : p),
+      );
+      const meta = {
+        ...doc.meta,
+        promotions,
+        version: doc.meta.version + 1,
+        updated: now,
+      } as ItemMeta;
+      const log = [`- ${now} ${who} ${a.state} promotion #${n}`];
+      let path: string | undefined;
+      if (this.ws.config.mode === "overlay" && doc.meta.source) {
+        const found = await resolveSource(this.ws.root, id, doc.meta.source);
+        if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+        const out = appendSection(found.text, "Actions", a.action_line);
+        const abs = join(this.ws.root, found.path);
+        await writeFileAtomic(abs, out);
+        this.onFileWrite?.(abs, out);
+        path = found.path;
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log);
+      } else {
+        await this.writeItemDoc(absItem, doc.raw.text, meta, log, [
+          { heading: "Actions", text: `${a.action_line}\n` },
+        ]);
+      }
+      await this.commitPaths([it.path], `te: ${id} promotion #${n} ${a.state} by ${who}`);
+      if (path) await this.stageTaskFiles([path]);
+      await this.index.upsertFile(absItem);
+      return meta;
+    });
+  }
+
+  /**
    * Change a draft's scope in its task file (overlay): replace the
    * `**Touches:**` line and/or append `## Acceptance` items. The status gate
    * (draft only) and who may do it live in ops; this is the write.
