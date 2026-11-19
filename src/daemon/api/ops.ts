@@ -854,11 +854,28 @@ export class WorkspaceOps {
     const lines = readFileSync(file, "utf8").split("\n");
     const pages = Math.max(1, Math.ceil(lines.length / TRANSCRIPT_PAGE_LINES));
     const p = Math.min(Math.max(1, page), pages);
+    // every `## ` turn header over the whole file — the reader's jump dots
+    // cover all pages, not only the one shown (a ## inside a fence is code)
+    const turns: Array<{ line: number; page: number; head: string }> = [];
+    let fence: string | null = null;
+    lines.forEach((l, i) => {
+      const f = /^(```|~~~)/.exec(l.trim());
+      if (f) {
+        if (fence === null) fence = f[1];
+        else if (l.trim().startsWith(fence)) fence = null;
+        return;
+      }
+      if (fence) return;
+      const m = /^##\s+(.+)$/.exec(l);
+      if (m) turns.push({ line: i, page: Math.floor(i / TRANSCRIPT_PAGE_LINES) + 1, head: m[1] });
+    });
     return {
       path: relative(this.wsr.ws.root, file).split(sep).join("/"),
       page: p,
       pages,
       total: lines.length,
+      start: (p - 1) * TRANSCRIPT_PAGE_LINES,
+      turns,
       text: lines.slice((p - 1) * TRANSCRIPT_PAGE_LINES, p * TRANSCRIPT_PAGE_LINES).join("\n"),
     };
   }

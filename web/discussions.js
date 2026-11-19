@@ -47,34 +47,52 @@ const participantsOf = (text) =>
 const transcriptBlocks = (text) => {
   const blocks = [];
   let fence = null;
-  for (const line of (text ?? "").split("\n")) {
+  (text ?? "").split("\n").forEach((line, at) => {
     let m;
     const f = /^(```|~~~)/.exec(line.trim());
     if (f) {
       if (fence === null) fence = f[1];
       else if (line.trim().startsWith(fence)) fence = null;
       blocks.at(-1)?.body.push(line);
-      continue;
+      return;
     }
     if (fence) {
       blocks.at(-1)?.body.push(line);
-      continue;
+      return;
     }
-    if ((m = /^##\s+(.+)$/.exec(line))) blocks.push({ kind: "turn", head: m[1], body: [] });
-    else if ((m = /^###\s+(.+)$/.exec(line))) blocks.push({ kind: "tool", head: m[1], body: [] });
+    if ((m = /^##\s+(.+)$/.exec(line))) blocks.push({ kind: "turn", head: m[1], body: [], start: at });
+    else if ((m = /^###\s+(.+)$/.exec(line))) blocks.push({ kind: "tool", head: m[1], body: [], start: at });
     else if (blocks.length) blocks.at(-1).body.push(line);
-  }
+  });
   return blocks.map((b) => ({ ...b, body: b.body.join("\n").trim() }));
 };
 
 const TranscriptReader = ({ id }) => {
   const [page, setPage] = useState(1);
+  const [pending, setPending] = useState(null); // file line to scroll to once its page loads
   const { data: t, err } = useApi(`/api/discussions/${id}/transcript?page=${page}`, [id, page]);
+  useEffect(() => {
+    if (pending === null || !t) return;
+    const el = document.getElementById(`disc-t-${pending}`);
+    if (el) {
+      el.scrollIntoView({ block: "start" });
+      setPending(null);
+    }
+  }, [t, pending]);
   if (err) return html`<p class="small text-secondary">no transcript saved yet</p>`;
   if (!t) return html`<p class="text-secondary">loading…</p>`;
   const blocks = transcriptBlocks(t.text);
-  // one clickable dot per turn — a mini table of contents for the page
-  const turns = blocks.flatMap((b, i) => (b.kind === "turn" ? [{ i, head: b.head }] : []));
+  // every turn of the whole transcript — numbered chips; a chip on another
+  // page loads that page, then scrolls
+  const turns = t.turns ?? [];
+  const jumpTo = (u) => {
+    if (u.page === t.page) {
+      document.getElementById(`disc-t-${u.line}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      setPending(u.line);
+      setPage(u.page);
+    }
+  };
   return html`
     <div class="card mt-3">
       <div class="card-header d-flex align-items-center gap-2 py-2">
@@ -91,16 +109,16 @@ const TranscriptReader = ({ id }) => {
           ${turns.map(
             (u, j) => html`<a
               key=${j}
-              class=${`disc-jump ${/^assistant/i.test(u.head) ? "disc-assistant" : "disc-user"}`}
-              title=${`${j + 1}. ${u.head}`}
-              onClick=${() => document.getElementById(`disc-t-${u.i}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            ></a>`,
+              class=${`disc-jump ${/^assistant/i.test(u.head) ? "disc-assistant" : "disc-user"}${u.page === t.page ? " disc-here" : ""}`}
+              title=${`turn ${j + 1} (page ${u.page}): ${u.head}`}
+              onClick=${() => jumpTo(u)}
+            >${j + 1}</a>`,
           )}
         </div>`}
       <div class="card-body small disc-transcript">
         ${blocks.map((b, i) =>
           b.kind === "turn"
-            ? html`<div key=${i} id=${`disc-t-${i}`} class="disc-turn mb-3">
+            ? html`<div key=${i} id=${`disc-t-${t.start + b.start}`} class="disc-turn mb-3">
                 <div class=${`disc-turn-head ${/^assistant/i.test(b.head) ? "disc-assistant" : "disc-user"}`}>${b.head}</div>
                 ${b.body && html`<div class="mt-1 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(b.body) }} />`}
               </div>`
