@@ -733,6 +733,18 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  /** A discussion's raw transcript, paged like `brief <id> more=transcript` (TE-0159). */
+  app.get("/api/discussions/:id/transcript", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const q = req.query as { page?: string };
+      const ops = opsFor(ctx, wsOf(req.query));
+      return ops.discussionTranscript(id.toUpperCase(), q.page ? Number(q.page) : 1);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   /** Save a chat as a discussion (TE-0157) — same pipeline as the agent `capture` call. */
   app.post("/api/discussions", async (req, reply) => {
     try {

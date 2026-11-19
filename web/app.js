@@ -1,12 +1,13 @@
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
+import { Discussions } from "./discussions.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "preact/hooks";
 import htm from "htm";
 
-const html = htm.bind(h);
+export const html = htm.bind(h);
 
 // ---- auth: `?token=` / `#t=<token>` from `te ui` → cookie, then strip ------
 const qTok = new URLSearchParams(location.search).get("token") ??
@@ -26,7 +27,7 @@ const authBanner = () => {
   d.textContent = "session expired — the daemon has a different token; reopen the UI with `te ui`";
   document.getElementById("app")?.prepend(d);
 };
-const api = async (path, init) => {
+export const api = async (path, init) => {
   const res = await fetch(path, {
     ...init,
     // no content-type on a bodyless request — Fastify refuses an empty
@@ -37,7 +38,7 @@ const api = async (path, init) => {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
 };
-const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+export const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 
 // ---- SSE-driven store ------------------------------------------------------
 const listeners = new Set();
@@ -78,7 +79,7 @@ const untilText = (ts) => {
   return `in ${ago(new Date(Date.now() - s * 1000).toISOString())}`;
 };
 
-const nav = (route) => (location.hash = "#/" + route);
+export const nav = (route) => (location.hash = "#/" + route);
 const route = () => location.hash.replace(/^#\/?/, "") || "inbox";
 
 // ---- shared bits ------------------------------------------------------------
@@ -385,7 +386,7 @@ const LinkedText = ({ text, onOpen }) =>
         : p,
     )}`;
 
-function useApi(path, deps = []) {
+export function useApi(path, deps = []) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const reload = () => api(path).then(setData, setErr);
@@ -4711,7 +4712,7 @@ const Diagrams = () => {
   `;
 };
 
-const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, ideas: Ideas, graph: Graph, diagrams: Diagrams, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
+const routes = { inbox: Inbox, board: Board, team: Team, plans: Plans, ideas: Ideas, discussions: Discussions, graph: Graph, diagrams: Diagrams, activity: Activity, metrics: Metrics, sync: Sync, ops: Ops, domains: Domains, artifacts: Artifacts, archive: Archive };
 const App = () => {
   const [r, setR] = useState(route());
   useEffect(() => {

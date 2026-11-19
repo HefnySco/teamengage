@@ -1183,3 +1183,13 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .dg-cold td { opacity: .55; }
 .dg-heat-scale { display: inline-flex; align-items: center; gap: .4rem; font-size: .72rem; color: var(--bs-secondary-color); }
 .dg-grad { width: 9rem; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgb(59 130 246), rgb(245 158 11), rgb(220 38 38)); }
+
+/* discussions page (TE-0159) — saved chats: list rows, transcript turns */
+.disc-row:hover { background: var(--bs-tertiary-bg); }
+.disc-section p:last-child { margin-bottom: 0; }
+.disc-transcript { max-height: 70vh; overflow-y: auto; }
+.disc-turn-head { font-weight: 600; text-transform: capitalize; padding: .15rem .5rem; border-radius: .25rem; display: inline-block; }
+.disc-user { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
+.disc-assistant { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+.disc-tool summary { cursor: pointer; font-family: var(--bs-font-monospace); font-size: .8rem; }
+.disc-tool-body { background: var(--bs-tertiary-bg); border-radius: .3rem; padding: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }

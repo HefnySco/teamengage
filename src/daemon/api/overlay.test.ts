@@ -806,6 +806,21 @@ describe("discussions", () => {
       expect(p2.text).toContain("page 2/2");
       expect(p2.text).toContain("lines 201–");
       expect(p2.text).toContain("question number 250");
+
+      // the web UI reads the same pages through /api/discussions/<id>/transcript
+      const tp = (await (
+        await api(`/api/discussions/${id2}/transcript?page=2`)
+      ).json()) as { path: string; page: number; pages: number; total: number; text: string };
+      expect(tp.page).toBe(2);
+      expect(tp.pages).toBe(2);
+      expect(tp.total).toBe(251); // 250 lines + the trailing newline element
+      expect(tp.path).toContain(".transcript.md");
+      expect(tp.text).toContain("question number 250");
+      expect(tp.text).not.toContain("question number 1\n");
+      const t404 = await api(`/api/discussions/${id2}/transcript?page=9`);
+      expect(t404.status).toBe(200); // out-of-range clamps to the last page
+      const tWrong = await api(`/api/discussions/${tids[0]}/transcript`);
+      expect(tWrong.status).toBe(400); // not a discussion
     });
   });
 });
