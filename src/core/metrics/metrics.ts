@@ -227,6 +227,15 @@ export function rollUp(stats: ItemMetrics[]): Rollup {
   };
 }
 
+/** One verdict event behind a reviewer count — the drill-down lists these. */
+export interface ReviewRef {
+  item: string;
+  /** the verdict's ts — for wrong_ok the reject that caught it */
+  ts: string;
+  /** session that wrote the verdict */
+  actor?: string;
+}
+
 export interface ReviewerRow {
   model: string;
   ok: number;
@@ -237,6 +246,10 @@ export interface ReviewerRow {
   ok_items: string[];
   issues_items: string[];
   wrong_ok_items: string[];
+  /** the verdict events behind each count — one row per verdict, items repeat */
+  ok_events: ReviewRef[];
+  issues_events: ReviewRef[];
+  wrong_ok_events: ReviewRef[];
 }
 
 /**
@@ -249,13 +262,33 @@ export interface ReviewerRow {
 export function deriveReviewers(events: Event[], agentModels?: Record<string, string[]>): ReviewerRow[] {
   const rows = new Map<
     string,
-    { ok: number; issues: number; wrong_ok: number; ok_items: Set<string>; issues_items: Set<string>; wrong_ok_items: Set<string> }
+    {
+      ok: number;
+      issues: number;
+      wrong_ok: number;
+      ok_items: Set<string>;
+      issues_items: Set<string>;
+      wrong_ok_items: Set<string>;
+      ok_events: ReviewRef[];
+      issues_events: ReviewRef[];
+      wrong_ok_events: ReviewRef[];
+    }
   >();
-  const lastReview = new Map<string, { ok: boolean; model: string }>();
+  const lastReview = new Map<string, { ok: boolean; model: string; actor?: string }>();
   const row = (model: string) => {
     let r = rows.get(model);
     if (!r) {
-      r = { ok: 0, issues: 0, wrong_ok: 0, ok_items: new Set<string>(), issues_items: new Set<string>(), wrong_ok_items: new Set<string>() };
+      r = {
+        ok: 0,
+        issues: 0,
+        wrong_ok: 0,
+        ok_items: new Set<string>(),
+        issues_items: new Set<string>(),
+        wrong_ok_items: new Set<string>(),
+        ok_events: [],
+        issues_events: [],
+        wrong_ok_events: [],
+      };
       rows.set(model, r);
     }
     return r;
@@ -266,22 +299,26 @@ export function deriveReviewers(events: Event[], agentModels?: Record<string, st
     switch (e.action) {
       case "review": {
         const ok = (e.note ?? "").split(":")[0].trim() === "ok";
-        lastReview.set(e.item, { ok, model });
+        lastReview.set(e.item, { ok, model, actor: e.actor });
         const r = row(model);
+        const ref = { item: e.item, ts: e.ts, actor: e.actor };
         if (ok) {
           r.ok++;
           r.ok_items.add(e.item);
+          r.ok_events.push(ref);
         } else {
           r.issues++;
           r.issues_items.add(e.item);
+          r.issues_events.push(ref);
         }
         break;
       }
       case "bounce": {
-        lastReview.set(e.item, { ok: false, model });
+        lastReview.set(e.item, { ok: false, model, actor: e.actor });
         const r = row(model);
         r.issues++;
         r.issues_items.add(e.item);
+        r.issues_events.push({ item: e.item, ts: e.ts, actor: e.actor });
         break;
       }
       case "submit":
@@ -293,6 +330,7 @@ export function deriveReviewers(events: Event[], agentModels?: Record<string, st
           const r = row(lr.model);
           r.wrong_ok++;
           r.wrong_ok_items.add(e.item);
+          r.wrong_ok_events.push({ item: e.item, ts: e.ts, actor: lr.actor });
         }
         lastReview.delete(e.item);
         break;
@@ -312,6 +350,9 @@ export function deriveReviewers(events: Event[], agentModels?: Record<string, st
       ok_items: [...r.ok_items].sort(),
       issues_items: [...r.issues_items].sort(),
       wrong_ok_items: [...r.wrong_ok_items].sort(),
+      ok_events: r.ok_events,
+      issues_events: r.issues_events,
+      wrong_ok_events: r.wrong_ok_events,
     }))
     .sort((a, b) => b.ok + b.issues - (a.ok + a.issues) || a.model.localeCompare(b.model));
 }

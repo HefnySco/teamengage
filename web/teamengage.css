@@ -65,6 +65,15 @@
   background: var(--te-st-hold);
   color: #fff;
 }
+/* modal dialogs (dialogs.js) — long unbroken strings wrap, tall bodies scroll */
+.dlg-title {
+  overflow-wrap: anywhere;
+}
+.dlg-body {
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow-y: auto;
+}
 /* formatted task markdown */
 .md-view {
   line-height: 1.5;
@@ -1049,6 +1058,11 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 /* ops compact type (GL-0278): a dense ledger, not a document — the matrix
    and the jobs/playbooks lists all use it so a long grid fits on screen */
 .ops-dense, .ops-matrix { font-size: .78rem; }
+/* fixed layout gives every env column an equal share — a long version string
+   or badge in one cell must not balloon its column over the others */
+.ops-matrix { table-layout: fixed; }
+.ops-matrix thead th:first-child { width: 5rem; }
+.ops-matrix td { vertical-align: top; overflow-wrap: anywhere; }
 .ops-matrix .id { font-size: .8rem; }
 .ops-cell + .ops-cell { border-top: 1px dashed var(--bs-border-color-translucent); margin-top: .3rem; padding-top: .3rem; }
 

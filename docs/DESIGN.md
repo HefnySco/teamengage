@@ -262,7 +262,7 @@ whose `item:` is the discussion. A rejection writes nothing; either way
 draft ──approve_plan──▶ ready ──claim──▶ in_progress ──submit──▶ in_review ──accept──▶ done
   ▲                       ▲                │    │                    │
   │                       │                │    └─ask──▶ waiting ────┘ │
-  └──────── reject ───────┼──── release ◀──┘                          │
+  └──────── reject ───────┼──── release ◀──┘                           │
                           └───────────────── release ◀─────────────────┘
 hold     = human only; draft|ready ──hold──▶ hold ──unhold──▶ ready
                        ready|hold|done ──to_draft──▶ draft
@@ -707,8 +707,11 @@ the roll-up sums the token and dollar figures. `GET /api/metrics` rolls the
 per-item stats up per agent name, per tier and per domain;
 `GET /api/metrics?plan=<ID>` rolls up a plan and its parts.
 `GET /api/metrics/drill?by=<section>&key=<row>&field=<column>` lists the
-items behind one number — every count on the metrics page links to it
-(a `member` narrows an agent kind to one session name). `te metrics`
+rows behind one number — every count on the metrics page links to it:
+scorecard numbers list items with their worker/model stats, reviewer
+numbers list the verdict events (item, verdict, reviewing session, when —
+a reviewer count is verdicts, so the drill can't show worker stats). A
+`member` narrows an agent kind to one session name. `te metrics`
 prints the same scorecards, with token/usd columns once any row reports cost.
 
 **Digest** — `te digest [--since 24h]` prints what happened since the human's

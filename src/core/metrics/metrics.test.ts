@@ -221,5 +221,13 @@ describe("model scorecard + reviewer table (GL-0365)", () => {
     expect(sonnet.ok_items).toEqual(["GL-1", "GL-3"]);
     expect(sonnet.issues_items).toEqual(["GL-2"]);
     expect(sonnet.wrong_ok_items).toEqual(["GL-1"]);
+    // the verdict events behind the counts — one row per verdict, items repeat
+    expect(sonnet.ok_events).toEqual([
+      { item: "GL-1", ts: "2026-11-01T01:00:00Z", actor: "rev@dt#bb" },
+      { item: "GL-3", ts: "2026-11-01T01:00:00Z", actor: "rev@dt#bb" },
+      { item: "GL-3", ts: "2026-11-01T02:00:00Z", actor: "rev@dt#bb" },
+    ]);
+    expect(sonnet.issues_events).toEqual([{ item: "GL-2", ts: "2026-11-01T01:00:00Z", actor: "rev@dt#bb" }]);
+    expect(sonnet.wrong_ok_events).toEqual([{ item: "GL-1", ts: "2026-11-01T02:00:00Z", actor: "rev@dt#bb" }]);
   });
 });

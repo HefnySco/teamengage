@@ -200,7 +200,7 @@ const DiscussionView = ({ id }) => {
           <div key=${s.heading} class=${/^summary$/i.test(s.heading) ? "col-12" : "col-md-6 col-xl-4"}>
             <div class="card h-100">
               <div class="card-header py-2 small fw-semibold">${s.heading}</div>
-              <div class="card-body py-2 small disc-section" dangerouslySetInnerHTML=${{ __html: markdownToHtml(s.body || "—") }} />
+              <div class="card-body py-2 small disc-section md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(s.body || "—") }} />
             </div>
           </div>`)}
       </div>
@@ -324,8 +324,9 @@ const DiscussionsList = ({ onSaved }) => {
       </div>
       ${capturing && html`<${CaptureForm} projects=${projects} onSaved=${(id) => { setCapturing(false); onSaved(id); }} />`}
       ${rows.length === 0 && html`<p class="text-secondary">no discussions — save a chat above, or an agent can call <code>capture</code></p>`}
+      <div class="card card-body py-1 dense">
       ${rows.map((i) => html`
-        <div key=${i.id} class="d-flex align-items-center gap-2 py-2 border-bottom flex-wrap disc-row"
+        <div key=${i.id} class="d-flex align-items-center gap-2 py-1 border-bottom flex-wrap disc-row"
           style=${{ cursor: "pointer" }} onClick=${() => nav(`discussions/${i.id}`)}>
           <span class="id text-nowrap">${i.id}</span>
           <${StateChip} st=${i.idea_state} />
@@ -336,6 +337,7 @@ const DiscussionsList = ({ onSaved }) => {
             <span>${(i.updated ?? i.created ?? "").slice(0, 10)}</span>
           </span>
         </div>`)}
+      </div>
     </div>`;
 };
 

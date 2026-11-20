@@ -85,10 +85,10 @@ export const DialogHost = () => {
         <div class="modal-dialog modal-dialog-centered modal-sm">
           <div class="modal-content">
             <div class="modal-header py-2">
-              <b class="modal-title fs-6">${dialog.title}</b>
+              <b class="modal-title fs-6 dlg-title">${dialog.title}</b>
               <button type="button" class="btn-close" title="cancel" onClick=${() => close(cancelWith)}></button>
             </div>
-            <div class="modal-body py-2 small">
+            <div class="modal-body py-2 small dlg-body">
               ${dialog.body && html`<div style=${{ whiteSpace: "pre-line" }}>${dialog.body}</div>`}
               ${dialog.kind === "prompt" && html`
                 ${dialog.label && html`<div class="mb-1 text-secondary">${dialog.label}</div>`}
@@ -110,7 +110,7 @@ export const DialogHost = () => {
         ${toasts.map((t) => html`
           <div key=${t.seq} class="toast show text-bg-${t.kind} border-0 small" role="alert">
             <div class="d-flex align-items-center">
-              <div class="toast-body py-2" style=${{ whiteSpace: "pre-line" }}>${t.text}</div>
+              <div class="toast-body py-2" style=${{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>${t.text}</div>
               <button type="button" class="btn-close btn-close-white me-2 m-auto" title="dismiss"
                 onClick=${() => { toasts = toasts.filter((x) => x.seq !== t.seq); emitChange(); }}></button>
             </div>
