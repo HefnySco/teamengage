@@ -8,7 +8,7 @@ import { WorkspaceOps } from "./ops.js";
 import { registerOpsApiRoutes } from "./opsapi.js";
 import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
-import { compareIds, parseItemRef } from "../../core/address/refs.js";
+import { compareIds } from "../../core/address/refs.js";
 import { ItemType } from "../../core/model/item.js";
 import type { Ambiguity } from "../../import/import.js";
 
@@ -419,25 +419,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             .map((p) => ({ id: i.meta.id, ...p })),
         ),
         findings: await ops.findings(),
-        // TE-0164: D-records that still need follow-through — a pick like
-        // "create follow-up task" only records the decision; an agent or the
-        // human must still act. Listed while the item is open and the record
-        // carries no `processed` mark.
+        // TE-0164: every D-record the human has not marked processed — a pick
+        // like "create follow-up task" only records the decision; an agent or
+        // the human must still act, and accepting the item does not settle it.
+        // Newest first so fresh picks land on top.
         decisions: [...ops.index.decisions.values()]
-          .filter((d) => {
-            if (d.meta.processed) return false;
-            try {
-              const it = ops.index.get(parseItemRef(d.meta.item).id);
-              return (
-                it !== undefined &&
-                !it.meta.archived &&
-                it.meta.status !== "done" &&
-                it.meta.status !== "dropped"
-              );
-            } catch {
-              return false;
-            }
-          })
+          .filter((d) => !d.meta.processed)
+          .sort((a, b) => compareIds(b.meta.id, a.meta.id))
           .map((d) => ({
             id: d.meta.id,
             item: d.meta.item,

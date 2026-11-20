@@ -2289,7 +2289,7 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     expect(inbox2.decisions.some((x) => x.id === d!.id)).toBe(false);
   });
 
-  it("a decision on a done item is not listed", async () => {
+  it("accepting the item does not settle the decision — it lists until processed", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const ops = new WorkspaceOps(wsr, ctx.sessions);
@@ -2303,7 +2303,7 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     await api(`/api/items/${id}/decide`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "accept" }),
+      body: JSON.stringify({ text: "create follow-up task" }),
     });
     const before = (await (await api("/api/inbox")).json()) as {
       decisions: Array<{ id: string; item: string }>;
@@ -2311,9 +2311,16 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     const d = before.decisions.find((x) => x.item === id);
     expect(d).toBeTruthy();
     await api(`/api/items/${id}/accept`, { method: "POST" });
+    // item done — the unprocessed decision still lists
     const after = (await (await api("/api/inbox")).json()) as {
       decisions: Array<{ id: string; item: string }>;
     };
-    expect(after.decisions.some((x) => x.id === d!.id)).toBe(false);
+    expect(after.decisions.some((x) => x.id === d!.id)).toBe(true);
+    // only the human's mark clears it
+    await api(`/api/decisions/${d!.id}/process`, { method: "POST" });
+    const cleared = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string }>;
+    };
+    expect(cleared.decisions.some((x) => x.id === d!.id)).toBe(false);
   });
 });
