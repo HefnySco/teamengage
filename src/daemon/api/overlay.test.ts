@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, renameSync, existsSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, renameSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -925,6 +925,52 @@ describe("discussions", () => {
         to: "lesson",
       });
       expect(miss.text).toMatch(/no such line/);
+    });
+
+    it("a failed settle step leaves no D-record and the candidate stays pending (DE-0236)", async () => {
+      const hello = await fetch(`${daemon.url}/agent/hello`, {
+        method: "POST",
+        body: JSON.stringify({ agent: "promoter2" }),
+      });
+      token = /^token (\S+)/.exec(await hello.text())![1];
+      const cap = await post("/api/discussions", {
+        title: "Settle failure chat",
+        project: "global",
+        domains: ["teamengage"],
+        sections: { "Decisions reached": "- never write the record first" },
+        transcript_text: "user: order?\nassistant: settle first\n",
+      });
+      const discId = String(cap.id);
+      await call("promote", {
+        id: discId,
+        section: "decisions",
+        line: "never write the record first",
+        to: "decision",
+      });
+      const decisionsDir = join(plans, "decisions");
+      const before = existsSync(decisionsDir) ? readdirSync(decisionsDir) : [];
+      const spy = vi
+        .spyOn(store(), "settlePromotion")
+        .mockRejectedValueOnce(new Error("settle failed"));
+      try {
+        const bad = await post(`/api/items/${discId}/promotions/1`, { verdict: "approved" });
+        expect(bad.error).toBeDefined();
+      } finally {
+        spy.mockRestore();
+      }
+      const after = existsSync(decisionsDir) ? readdirSync(decisionsDir) : [];
+      expect(after).toEqual(before);
+      const promo = (
+        (store().idx.get(discId)!.meta.promotions as Array<Record<string, unknown>>) ?? []
+      ).find((p) => p.n === 1);
+      expect(promo?.state).toBe("pending");
+      // a retry works
+      const ok = (await post(`/api/items/${discId}/promotions/1`, { verdict: "approved" })) as {
+        result?: string;
+        error?: string;
+      };
+      expect(ok.error).toBeUndefined();
+      expect(ok.result).toMatch(/^decision D-\d+$/);
     });
   });
 });

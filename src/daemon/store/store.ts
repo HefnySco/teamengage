@@ -1450,7 +1450,7 @@ export class PlansStore {
   settlePromotion(
     id: string,
     n: number,
-    a: { state: "approved" | "rejected"; action_line: string; commit_extra?: string[] },
+    a: { state: "approved" | "rejected" | "pending"; action_line: string; commit_extra?: string[] },
     actor: Actor,
   ): Promise<ItemMeta> {
     return this.enqueue(async () => {

@@ -3017,6 +3017,7 @@ export class WorkspaceOps {
     const now = new Date().toISOString();
     const line = String(promo.line);
     let result: string;
+    let decisionId: string | undefined;
     if (verdict === "approved") {
       if (promo.to === "lesson") {
         await appendLesson(
@@ -3028,17 +3029,13 @@ export class WorkspaceOps {
         );
         result = `lesson for #${String(promo.domain)}`;
       } else {
-        const decisionId = allocateId("D", this.index.decisions.keys());
-        await this.store.perform(it.meta.id, it.meta.version, this.actorFor("human"), {
-          type: "record_decision",
-          decisionId,
-          decisionTitle: line.length > 80 ? `${line.slice(0, 80)}…` : line,
-        });
+        decisionId = allocateId("D", this.index.decisions.keys());
         result = `decision ${decisionId}`;
       }
     } else {
       result = "rejected";
     }
+    // DE-0236: the settle step runs first. A failure there leaves no D-record.
     const meta = await this.store.settlePromotion(
       it.meta.id,
       n,
@@ -3051,6 +3048,28 @@ export class WorkspaceOps {
       },
       this.actorFor("human"),
     );
+    if (decisionId) {
+      try {
+        const cur = this.item(it.meta.id);
+        await this.store.perform(cur.meta.id, cur.meta.version, this.actorFor("human"), {
+          type: "record_decision",
+          decisionId,
+          decisionTitle: line.length > 80 ? `${line.slice(0, 80)}…` : line,
+        });
+      } catch (err) {
+        // put the candidate back to pending so the human can try again
+        await this.store.settlePromotion(
+          it.meta.id,
+          n,
+          {
+            state: "pending",
+            action_line: `- promotion #${n} approval failed, back to pending (${now.slice(0, 16).replace("T", " ")})`,
+          },
+          this.actorFor("human"),
+        );
+        throw err;
+      }
+    }
     return { id: it.meta.id, promotion: n, verdict, result, meta };
   }
 
