@@ -2323,4 +2323,54 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     };
     expect(cleared.decisions.some((x) => x.id === d!.id)).toBe(false);
   });
+
+  it("orphans: an outside-work pick clears when an item references it; a work pick clears on later action", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "Ext pick" },
+        { type: "task", title: "Work pick" },
+      ],
+      human,
+    );
+    const [extId, workId] = ids;
+    await ops.approve(extId);
+    await ops.approve(workId);
+    const h1 = ctx.sessions.hello(`h-${extId}`);
+    const h2 = ctx.sessions.hello(`h-${workId}`);
+    await ops.claim(extId, h1);
+    await ops.claim(workId, h2);
+    for (const [id, text] of [
+      [extId, "create follow-up task"],
+      [workId, "widen Touches, fix now"],
+    ] as const) {
+      const r = await api(`/api/items/${id}/decide`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      expect(r.status).toBe(200);
+    }
+    const inbox1 = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string; item: string }>;
+    };
+    expect(inbox1.decisions.some((x) => x.item === extId)).toBe(true);
+    expect(inbox1.decisions.some((x) => x.item === workId)).toBe(true);
+
+    // inside-work pick: the holder submits → executed
+    await ops.submit(workId, h2, { notes: "x", what: "did it", how: "steps" });
+    // outside-work pick: a new item references the decision's item → executed
+    await wsr.store.createItems(
+      [{ type: "task", title: "the follow-up", relates: [extId] }],
+      human,
+    );
+    const inbox2 = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string; item: string }>;
+    };
+    expect(inbox2.decisions.some((x) => x.item === extId)).toBe(false);
+    expect(inbox2.decisions.some((x) => x.item === workId)).toBe(false);
+  });
 });
