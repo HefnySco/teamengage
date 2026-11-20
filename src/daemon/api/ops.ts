@@ -2583,7 +2583,8 @@ export class WorkspaceOps {
     const EXTERNAL_PICK = /\b(follow-?up|separate task|new task|bug task|propose|spawn)\b/i;
     const ACTION =
       /\b(claimed|took over|submitted|bounced|handed off|released|answered|resumed|accepted|rejected|dropped|archived|completed|approved)\b/i;
-    // item id → earliest creation date of an item that references it
+    // item id → latest creation date of an item that references it — a pick
+    // settles when a referencing item exists from the decision's day or later
     const referencing = new Map<string, string>();
     for (const it of this.index.items.values()) {
       const m = it.meta;
@@ -2597,7 +2598,7 @@ export class WorkspaceOps {
         try {
           const pid = parseItemRef(ref).id;
           const cur = referencing.get(pid);
-          if (cur === undefined || (m.created ?? "") < cur) {
+          if (cur === undefined || (m.created ?? "") > cur) {
             referencing.set(pid, m.created ?? "");
           }
         } catch {
