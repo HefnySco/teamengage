@@ -51,6 +51,8 @@ export type Action =
   | { type: "peer_timeout" }
   /** Human revises the answer already given (the item's latest decision). */
   | { type: "change_answer"; decisionId: string; decisionTitle: string; previous: string }
+  /** TE-0164: human marks a decision record processed — it leaves the inbox. */
+  | { type: "process_decision"; decisionId: string }
   | {
       type: "submit";
       note?: string;
@@ -207,7 +209,8 @@ export type Effect =
   | { type: "cleanup_work"; keepBranches?: boolean }
   | { type: "merge_required" }
   | { type: "create_decision"; decisionId: string; title: string; question?: Question }
-  | { type: "update_decision"; decisionId: string; title: string };
+  | { type: "update_decision"; decisionId: string; title: string }
+  | { type: "decision_processed"; decisionId: string };
 
 export interface TransitionResult {
   meta: ItemMeta;
@@ -632,6 +635,17 @@ export function transition(
         decisionId: action.decisionId,
         title: action.decisionTitle,
       });
+      return out;
+    }
+
+    case "process_decision": {
+      requireHuman(actor, action.type);
+      // TE-0164: a D-record outlives its item — no status gate. The decision
+      // file gets `processed:` so the inbox stops listing it; the item's
+      // status and question are untouched.
+      out.log.push(`- ${stamp} ${who} marked decision ${action.decisionId} processed`);
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from, action.decisionId));
+      out.effects.push({ type: "decision_processed", decisionId: action.decisionId });
       return out;
     }
 

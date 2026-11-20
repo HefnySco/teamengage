@@ -8,7 +8,7 @@ import { WorkspaceOps } from "./ops.js";
 import { registerOpsApiRoutes } from "./opsapi.js";
 import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
-import { compareIds } from "../../core/address/refs.js";
+import { compareIds, parseItemRef } from "../../core/address/refs.js";
 import { ItemType } from "../../core/model/item.js";
 import type { Ambiguity } from "../../import/import.js";
 
@@ -419,6 +419,31 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             .map((p) => ({ id: i.meta.id, ...p })),
         ),
         findings: await ops.findings(),
+        // TE-0164: D-records that still need follow-through — a pick like
+        // "create follow-up task" only records the decision; an agent or the
+        // human must still act. Listed while the item is open and the record
+        // carries no `processed` mark.
+        decisions: [...ops.index.decisions.values()]
+          .filter((d) => {
+            if (d.meta.processed) return false;
+            try {
+              const it = ops.index.get(parseItemRef(d.meta.item).id);
+              return (
+                it !== undefined &&
+                !it.meta.archived &&
+                it.meta.status !== "done" &&
+                it.meta.status !== "dropped"
+              );
+            } catch {
+              return false;
+            }
+          })
+          .map((d) => ({
+            id: d.meta.id,
+            item: d.meta.item,
+            title: d.meta.title,
+            created: d.meta.created,
+          })),
         // GL-0367: a workspace that failed to load is named here so
         // `te status` can show the real error instead of a silent gap
         ...(ctx.loadErrors?.size
@@ -924,6 +949,19 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ids: Array.isArray(b.ids) ? b.ids.map(String) : [],
         plan: typeof b.plan === "string" ? b.plan : undefined,
       });
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // TE-0164: a decision's follow-through is done — it leaves the inbox list
+  app.post("/api/decisions/:id/process", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("processing decisions is human-only");
+      }
+      const { id } = req.params as { id: string };
+      return await opsFor(ctx, wsOf(req.query)).processDecision(id.toUpperCase());
     } catch (e) {
       return sendErr(reply, e);
     }

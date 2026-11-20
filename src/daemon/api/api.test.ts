@@ -2230,3 +2230,71 @@ describe("decide — option pick records a decision (GL-0345)", () => {
     expect(rows.find((r) => r.id === id)?.what).toBe("added the thing");
   });
 });
+
+describe("unprocessed decisions in the inbox (TE-0164)", () => {
+  it("a pick lists under decisions; an agent cannot process; a human's process removes it", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Needs follow-up" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { notes: "done", what: "fixed it", how: "ran the steps" });
+    const res = await api(`/api/items/${id}/decide`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "create follow-up task", question: { text: "two checks open" } }),
+    });
+    expect(res.status).toBe(200);
+
+    const inbox = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string; item: string; title: string }>;
+    };
+    const d = inbox.decisions.find((x) => x.item === id && x.title === "create follow-up task");
+    expect(d).toBeTruthy();
+
+    const refused = await api(`/api/decisions/${d!.id}/process`, {
+      method: "POST",
+      headers: { "x-te-session": "some-agent" },
+    });
+    expect(refused.status).toBe(403);
+
+    const ok = await api(`/api/decisions/${d!.id}/process`, { method: "POST" });
+    expect(ok.status).toBe(200);
+    const inbox2 = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string }>;
+    };
+    expect(inbox2.decisions.some((x) => x.id === d!.id)).toBe(false);
+  });
+
+  it("a decision on a done item is not listed", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Close me" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { notes: "done", what: "fixed it", how: "ran the steps" });
+    await api(`/api/items/${id}/decide`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "accept" }),
+    });
+    const before = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string; item: string }>;
+    };
+    const d = before.decisions.find((x) => x.item === id);
+    expect(d).toBeTruthy();
+    await api(`/api/items/${id}/accept`, { method: "POST" });
+    const after = (await (await api("/api/inbox")).json()) as {
+      decisions: Array<{ id: string; item: string }>;
+    };
+    expect(after.decisions.some((x) => x.id === d!.id)).toBe(false);
+  });
+});

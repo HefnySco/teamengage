@@ -249,6 +249,24 @@ export class PlansStore {
             });
             break;
           }
+          case "decision_processed": {
+            const prev = this.index.decisions.get(e.decisionId);
+            if (!prev) break;
+            writes.push({
+              rel: join("decisions", `${e.decisionId}.md`),
+              content: decisionFile(
+                e.decisionId,
+                prev.meta.title,
+                id,
+                actor,
+                now,
+                prev.meta,
+                undefined,
+                now,
+              ),
+            });
+            break;
+          }
           default:
             external.push(e);
         }
@@ -297,7 +315,11 @@ export class PlansStore {
       for (const e of tr.effects) {
         if (e.type === "write_claim") this.index.setClaim(e.claim);
         if (e.type === "delete_claim") this.index.setClaim(null, id);
-        if (e.type === "create_decision" || e.type === "update_decision") {
+        if (
+          e.type === "create_decision" ||
+          e.type === "update_decision" ||
+          e.type === "decision_processed"
+        ) {
           const dpath = join(this.ws.plansDir, "decisions", `${e.decisionId}.md`);
           const d = parseMarkdown(await readFile(dpath, "utf8"), DecisionMeta, dpath);
           this.index.decisions.set(e.decisionId, {
@@ -1940,10 +1962,12 @@ function decisionFile(
   now: string,
   prev?: DecisionMeta,
   q?: Question,
+  processed?: string,
 ): string {
   // a changed answer keeps its id, creation date and question; version +1
   const question = q?.text ?? (prev?.question as string | undefined);
   const options = q?.options ?? (prev?.options as string[] | undefined);
+  const done = processed ?? (prev?.processed as string | undefined);
   const meta = {
     id,
     title,
@@ -1953,6 +1977,7 @@ function decisionFile(
     version: (prev?.version ?? 0) + 1,
     ...(question ? { question } : {}),
     ...(options?.length ? { options } : {}),
+    ...(done ? { processed: done } : {}),
   };
   const asked = question
     ? question + (options?.length ? "\n\nOptions:\n" + options.map((o, i) => `${i + 1}. ${o}`).join("\n") : "")

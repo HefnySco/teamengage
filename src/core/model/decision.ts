@@ -14,6 +14,8 @@ export const DecisionMeta = z
     item: ItemRef,
     decided_by: z.string().default("human"),
     created: DateStr.optional(),
+    /** TE-0164: ISO time the human marked the decision processed — it leaves the inbox list. */
+    processed: z.string().optional(),
     version: z.number().int().min(1).default(1),
   })
   .passthrough();
