@@ -1960,18 +1960,13 @@ export class WorkspaceOps {
 
     let list: ItemMetrics[];
     if (by === "reviewers") {
-      // a reviewer number counts verdicts, not item stats — the drill lists
-      // the verdict events (one row per review round, items may repeat)
       const row = deriveReviewers(r.events, this.wsr.ws.config.agent_models).find((x) => x.model === q.key);
-      const refs =
-        q.field === "ok" ? row?.ok_events : q.field === "wrong_ok" ? row?.wrong_ok_events : (row?.issues_events ?? []);
-      const items = (refs ?? [])
-        .map((ref) => {
-          const it = this.index.items.get(ref.item);
-          return { id: ref.item, title: it?.meta.title ?? "", status: it?.meta.status ?? "", verdict: q.field, actor: ref.actor, ts: ref.ts };
-        })
-        .sort((a, b) => b.ts.localeCompare(a.ts));
-      return { by, key: q.key, field: q.field, member: q.member, items };
+      const ids =
+        q.field === "ok" ? row?.ok_items : q.field === "wrong_ok" ? row?.wrong_ok_items : (row?.issues_items ?? []);
+      list = (ids ?? []).flatMap((id) => {
+        const m = stats.get(id);
+        return m ? [m] : [];
+      });
     } else {
       list = [...stats.values()].filter((m) => {
         switch (by) {

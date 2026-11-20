@@ -1849,30 +1849,13 @@ const metFmtMed = (ms) => {
   return h < 1 ? `${Math.round(ms / 60000)}m` : h < 24 ? `${h < 10 ? h.toFixed(1) : Math.round(h)}h` : `${(h / 24).toFixed(1)}d`;
 };
 
-// reviewer drill rows carry a verdict badge, not the worker-stats columns
-const VERDICT_BADGE = { ok: "text-bg-success", issues: "text-bg-danger", wrong_ok: "text-bg-warning" };
-// the items behind a clicked number — one row each, id opens the item page;
-// a reviewers drill lists the verdict events themselves (worker/model columns
-// would name the coder, not the reviewer)
-const MetDrill = ({ items, onOpen, sec }) =>
+// the items behind a clicked number — one row each, id opens the item page
+const MetDrill = ({ items, onOpen }) =>
   !items
     ? html`<div class="met-drill text-secondary">loading…</div>`
     : !items.length
       ? html`<div class="met-drill text-secondary">no items</div>`
-      : sec === "reviewers"
-        ? html`<div class="met-drill table-responsive"><table class="table table-sm align-middle mb-0">
-        <thead><tr><th>item</th><th>status</th><th>title</th><th>verdict</th><th>reviewed by</th><th class="text-end">when</th></tr></thead>
-        <tbody>
-          ${items.map((i) => html`<tr key=${`${i.id}-${i.ts}`}>
-            <td><a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a></td>
-            <td>${i.status && html`<${Badge} s=${i.status} />`}</td>
-            <td>${i.title}</td>
-            <td><span class="badge ${VERDICT_BADGE[i.verdict] ?? "text-bg-secondary"}">${(i.verdict ?? "").replace("_", " ")}</span></td>
-            <td class="small">${i.actor ?? ""}</td>
-            <td class="text-end small text-secondary">${i.ts ? `${ago(i.ts)} ago` : ""}</td>
-          </tr>`)}
-        </tbody></table></div>`
-        : html`<div class="met-drill table-responsive"><table class="table table-sm align-middle mb-0">
+      : html`<div class="met-drill table-responsive"><table class="table table-sm align-middle mb-0">
         <thead><tr><th>item</th><th>status</th><th>title</th><th>worker</th><th>model(s)</th><th class="text-end">claims</th><th class="text-end">rounds</th><th class="text-end">bounces</th><th class="text-end">handoffs</th><th class="text-end">done</th><th class="text-end">med claim→accept</th><th class="text-end">tok in/out</th><th class="text-end">usd</th></tr></thead>
         <tbody>
           ${items.map((i) => html`<tr key=${i.id}>
@@ -1918,7 +1901,7 @@ const Metrics = ({ onOpen }) => {
       : html`${show ?? n}`;
   const drillRow = (sec, key, cols) =>
     drill && drill.sec === sec && drill.key === key && !drill.member
-      ? html`<tr key=${`${key}-drill`}><td colspan=${cols} class="met-drill-cell"><${MetDrill} items=${drill.items} onOpen=${onOpen} sec=${sec} /></td></tr>`
+      ? html`<tr key=${`${key}-drill`}><td colspan=${cols} class="met-drill-cell"><${MetDrill} items=${drill.items} onOpen=${onOpen} /></td></tr>`
       : null;
   const groupTable = (sec, label, gs) => {
     const cost = gs.some((g) => (g.tokens_in ?? 0) + (g.tokens_out ?? 0) + (g.usd ?? 0) > 0);
@@ -1941,7 +1924,7 @@ const Metrics = ({ onOpen }) => {
           ${openRow === g.key && html`<tr key=${`${g.key}-members`}><td colspan=${cols} class="small text-secondary">
             ${(g.members ?? []).map((mm) => html`<div>
               ${num(mm.items, sec, g.key, "items", mm.name, mm.name)} — ${num(mm.items, sec, g.key, "items", undefined, mm.name)} item(s), ${num(mm.done, sec, g.key, "done", undefined, mm.name)} done
-              ${drill && drill.sec === sec && drill.key === g.key && drill.member === mm.name && html`<${MetDrill} items=${drill.items} onOpen=${onOpen} sec=${sec} />`}
+              ${drill && drill.sec === sec && drill.key === g.key && drill.member === mm.name && html`<${MetDrill} items=${drill.items} onOpen=${onOpen} />`}
             </div>`)}
           </td></tr>`}
           ${drillRow(sec, g.key, cols)}`)}
@@ -1961,7 +1944,7 @@ const Metrics = ({ onOpen }) => {
       </span>
       <span class="text-secondary small">${num(m.totals.review_rounds, "all", "all", "rounds", `${m.totals.review_rounds} review rounds`)}</span>
     </div>
-    ${drill && drill.sec === "all" && html`<div class="card card-body py-1 px-2 mb-3"><${MetDrill} items=${drill.items} onOpen=${onOpen} sec="all" /></div>`}
+    ${drill && drill.sec === "all" && html`<div class="card card-body py-1 px-2 mb-3"><${MetDrill} items=${drill.items} onOpen=${onOpen} /></div>`}
     <h3 class="h6 text-secondary">scorecard — per agent</h3>
     ${(m.agents ?? []).length
       ? html`<div class="met-split"><div class="met-split-tbl">${groupTable("agents", "agent", m.agents)}</div><${ShareDonut} rows=${m.agents} /></div>`
@@ -2839,17 +2822,8 @@ const ItemView = ({ id }) => {
     saveMdView(v);
   };
   useEffect(() => { setTab(null); setViewing(null); }, [id]);
-  // a discussion opens in its own view — #/item/<id> links (relates chips,
-  // markdown ids, lists) land there; replace the hash so Back still works
-  useEffect(() => {
-    if (b?.item?.meta?.type === "discussion") {
-      window.history.replaceState(null, "", `#/discussions/${id}`);
-      dispatchEvent(new HashChangeEvent("hashchange"));
-    }
-  }, [b, id]);
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
-  if (it.meta.type === "discussion") return html`<p class="text-secondary">loading…</p>`;
   const st = it.meta.status;
   const sec = (n) => it.sections.find((s) => s.heading.toLowerCase() === n.toLowerCase())?.body.trim() ?? "";
   // open on the plain-English tab only when the item has one
@@ -3665,7 +3639,7 @@ const OpsMatrix = () => {
                   const p = probes[t];
                   const drift = p?.version && j?.version && p.version !== j.version;
                   return html`<div class="ops-cell" key=${t}>
-                    <div class="d-flex align-items-center gap-1 flex-wrap">
+                    <div class="d-flex align-items-center gap-1">
                       <b class="id" title=${targets[t].title ?? t}>${t}</b>
                       ${j ? html`<a href=${`#/ops/${encodeURIComponent(j.id)}`} class="text-decoration-none">${j.version ?? "—"}</a>` : html`<span class="text-secondary">—</span>`}
                       ${drift ? html`<span class="badge text-bg-warning" title=${`probe says ${p.version}, ledger says ${j.version}`}>drift: ${p.version}</span>` : ""}
