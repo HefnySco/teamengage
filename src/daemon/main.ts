@@ -145,6 +145,7 @@ async function main(): Promise<number | undefined> {
       role: s.role,
       tier: s.tier,
     });
+  let seenIdle = false;
   for (const [name, entry] of Object.entries(registry.workspaces)) {
     try {
       const ws = resolveWorkspace(entry.root, { home });
@@ -190,6 +191,10 @@ async function main(): Promise<number | undefined> {
       }
       const wsr: WorkspaceRuntime = { ws, store, watcher, overlay, links };
       ctx.workspaces.set(name, wsr);
+      // TE-0165: the registry is shared; the shortest workspace limit wins
+      const idle = parseDuration(ws.config.session_idle_after);
+      ctx.sessions.idleAfterMs = seenIdle ? Math.min(ctx.sessions.idleAfterMs, idle) : idle;
+      seenIdle = true;
       ctx.dispatchers!.set(
         name,
         new Dispatcher(wsr, ctx.sessions, ctx.home, (kind, data) =>

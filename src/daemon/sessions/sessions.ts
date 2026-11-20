@@ -11,6 +11,11 @@ import type { Claim } from "../../core/model/claim.js";
 export class SessionRegistry {
   private sessions = new Map<string, Session>();
   private lastClaimWrite = new Map<string, number>();
+  /**
+   * Idle limit (TE-0165): a session with no pid whose last_seen is older than
+   * this many ms is not live. A session with a pid keeps the pid rule only.
+   */
+  idleAfterMs = 2 * 60 * 60_000;
   /** live-UI hook (GL-0329): fires on session start ("start") and end ("end"). */
   onChange?: (kind: "start" | "end", session: Session) => void;
 
@@ -65,11 +70,17 @@ export class SessionRegistry {
    * A daemon restart empties the registry, so claims held by anything not in
    * the map are dead and rebindable on `hello`.
    */
-  isLive(id: string): boolean {
+  isLive(id: string, now = Date.now()): boolean {
     const s = this.sessions.get(id);
     if (!s) return false;
     if (s.pid !== undefined && !pidAlive(s.pid)) {
       this.sessions.delete(id);
+      return false;
+    }
+    if (s.pid === undefined && now - Date.parse(s.last_seen) > this.idleAfterMs) {
+      // TE-0165: a curl session that never said bye is gone after the idle limit
+      this.sessions.delete(id);
+      this.onChange?.("end", s);
       return false;
     }
     return true;

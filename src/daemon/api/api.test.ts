@@ -1452,6 +1452,25 @@ describe("reject --release and dead-holder takeover", () => {
   });
 });
 
+describe("idle-expired holder (TE-0165)", () => {
+  it("an expired no-pid session's claim is takeable like a dead claim", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "idle holder work" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const s1 = ctx.sessions.hello("idle-agent");
+    await ops.claim(id, s1);
+    const s2 = ctx.sessions.hello("taker-agent");
+    await expect(ops.claim(id, s2)).rejects.toThrow(/already claimed/);
+    s1.last_seen = new Date(Date.now() - ctx.sessions.idleAfterMs - 1000).toISOString();
+    const c = await ops.claim(id, s2);
+    expect(c.claim.holder).toBe(s2.id);
+  });
+});
+
 describe("attach/detach artifacts", () => {
   it("attach copies the file, writes the line and logs; detach removes only the line", async () => {
     const { WorkspaceOps } = await import("./ops.js");

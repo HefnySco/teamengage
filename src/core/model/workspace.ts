@@ -262,6 +262,11 @@ export const WorkspaceConfig = z
     ignore: z.array(z.string()).default([]),
     /** Duration string like `24h`, `30m`, `7d`. */
     stale_after: z.string().default("24h"),
+    /**
+     * A session with no pid (curl hello) whose last call is older than this
+     * duration is not live; its claims become dead claims. Default 2h.
+     */
+    session_idle_after: z.string().default("2h"),
     projects: z.record(z.string(), ProjectConfig).default({}),
     resources: z.record(z.string(), ResourceConfig).default({}),
     /**

@@ -86,6 +86,18 @@ describe("Dispatcher (GL-0328)", () => {
     for (const s of sessions.list()) sessions.disconnect(s.id);
   });
 
+  it("live_sessions counts only sessions inside the idle limit (TE-0165)", async () => {
+    for (const s of sessions.list()) sessions.disconnect(s.id);
+    const wsr = await makeWs(`dispatch:\n  enabled: true\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`);
+    sessions.idleAfterMs = 60_000;
+    const old = sessions.hello("curl-old");
+    old.last_seen = new Date(Date.now() - 120_000).toISOString();
+    sessions.hello("curl-fresh");
+    expect(dispatcher(wsr).status().live_sessions).toBe(1);
+    for (const s of sessions.list()) sessions.disconnect(s.id);
+    sessions.idleAfterMs = 2 * 60 * 60_000;
+  });
+
   it("a command that fails 3 times in a row turns dispatch off and writes an event", async () => {
     events.length = 0;
     const wsr = await makeWs(

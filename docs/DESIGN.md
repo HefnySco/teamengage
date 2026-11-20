@@ -107,6 +107,7 @@ prefix: DE # workspace-level items: DE-0001…
 plans: Tasks # plans repo path (default: .teamengage)
 sync: manual # manual | auto  (§6.5)
 stale_after: 24h # inactive agent claim → flagged stale
+session_idle_after: 2h # session with no pid, silent this long → not live (its claims go dead)
 autonomy: strict # strict | solo  (§5 — solo: fewer human gates)
 auto_accept_after: 30m # solo: ok peer review → daemon accepts after this
 auto_accept_rules: # solo: ordered rules; first match sets the item's delay

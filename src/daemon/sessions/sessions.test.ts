@@ -51,3 +51,35 @@ describe("SessionRegistry", () => {
     expect(r.shouldTouchClaim("GL-2", t0 + 60_000)).toBe(true); // different claim
   });
 });
+
+describe("idle limit (TE-0165)", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  it("a session with no pid and an old last_seen is not live and leaves list()", () => {
+    const r = new SessionRegistry("desktop");
+    r.idleAfterMs = 60_000;
+    const s = r.hello("curl-agent");
+    s.last_seen = ago(61_000);
+    expect(r.isLive(s.id)).toBe(false);
+    expect(r.list().map((x) => x.id)).not.toContain(s.id);
+    expect(r.get(s.id)).toBeUndefined();
+  });
+
+  it("a session with no pid that called inside the limit stays live", () => {
+    const r = new SessionRegistry("desktop");
+    r.idleAfterMs = 60_000;
+    const s = r.hello("curl-agent");
+    s.last_seen = ago(61_000);
+    r.touch(s.id);
+    expect(r.isLive(s.id)).toBe(true);
+    expect(r.list().map((x) => x.id)).toContain(s.id);
+  });
+
+  it("a session with a live pid keeps the pid rule only", () => {
+    const r = new SessionRegistry("desktop");
+    r.idleAfterMs = 60_000;
+    const s = r.hello("mcp-agent", { pid: process.pid });
+    s.last_seen = ago(10 * 60_000);
+    expect(r.isLive(s.id)).toBe(true);
+  });
+});
