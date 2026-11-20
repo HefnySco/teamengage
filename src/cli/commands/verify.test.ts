@@ -25,6 +25,7 @@ let home: string;
 let root: string;
 let plans: string;
 let repo: string;
+let globRepo: string;
 let ctx: DaemonCtx;
 let daemon: DaemonHandle;
 let watcher: PlansWatcher;
@@ -56,11 +57,13 @@ beforeAll(async () => {
   root = join(home, "ws");
   plans = join(root, ".teamengage");
   repo = join(home, "repo");
+  globRepo = join(home, "codebank", "myrepo");
   mkdirSync(join(plans, "items", "WS"), { recursive: true });
   mkdirSync(repo, { recursive: true });
+  mkdirSync(globRepo, { recursive: true });
   writeFileSync(
     join(plans, "workspace.yaml"),
-    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\n`,
+    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\nrepos: ["../repo", "../codebank/*"]\n`,
   );
   for (const [cwd, a] of [
     [plans, ["init", "-b", "main"]],
@@ -69,12 +72,18 @@ beforeAll(async () => {
     [repo, ["init", "-b", "main"]],
     [repo, ["config", "user.email", "t@t"]],
     [repo, ["config", "user.name", "t"]],
+    [globRepo, ["init", "-b", "main"]],
+    [globRepo, ["config", "user.email", "t@t"]],
+    [globRepo, ["config", "user.name", "t"]],
   ] as const) {
     execFileSync("git", [...a], { cwd });
   }
   writeFileSync(join(repo, "a.txt"), "one\n");
   execFileSync("git", ["add", "-A"], { cwd: repo });
   execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
+  writeFileSync(join(globRepo, "b.txt"), "two\n");
+  execFileSync("git", ["add", "-A"], { cwd: globRepo });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: globRepo });
 
   writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001"));
   writeFileSync(
@@ -91,6 +100,16 @@ beforeAll(async () => {
   writeFileSync(
     join(plans, "items", "WS", "WS-0004.md"),
     checksItem("WS-0004", [{ name: "leak", repo: "code", run: "echo $TE_TEST_SECRET" }]),
+  );
+  // DE-0244: repo names may come from `repos:` entries, not only resources —
+  // WS-0005 uses a path entry (../repo → basename repo), WS-0006 a glob dir
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0005.md"),
+    checksItem("WS-0005", [{ name: "viapath", repo: "repo", run: "cat a.txt" }]),
+  );
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0006.md"),
+    checksItem("WS-0006", [{ name: "viaglob", repo: "myrepo", run: "cat b.txt" }]),
   );
   execFileSync("git", ["add", "-A"], { cwd: plans });
   execFileSync("git", ["commit", "-m", "init"], { cwd: plans });
@@ -139,6 +158,17 @@ describe("te verify", () => {
     expect(text).toContain("slow: timeout");
     expect(text).toContain("0/2 checks passed");
   }, 15_000);
+
+  it("a check repo resolves through a repos: path entry and a repos: glob (DE-0244)", async () => {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const globHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: globRepo }).toString().trim();
+    const viaPath = await capture(() => verifyCmd(["WS-0005"], home));
+    expect(viaPath.code).toBe(0);
+    expect(viaPath.text).toContain(`viapath: passed (exit 0) @${head.slice(0, 10)}`);
+    const viaGlob = await capture(() => verifyCmd(["WS-0006"], home));
+    expect(viaGlob.code).toBe(0);
+    expect(viaGlob.text).toContain(`viaglob: passed (exit 0) @${globHead.slice(0, 10)}`);
+  });
 
   it("secret-looking env values are masked in check output", async () => {
     process.env.TE_TEST_SECRET = "s3cr3t-value-99";

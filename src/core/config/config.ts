@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, resolve, isAbsolute, basename, dirname, sep } from "node:path";
 import YAML from "yaml";
 import {
   MachineConfig,
@@ -129,6 +129,53 @@ export function resolveWorkspace(
   }
 
   return { name: config.name, root: absRoot, plansDir, config, resources, prefixToProject };
+}
+
+/**
+ * Repo name → local checkout dir: git resources, the workspace root's own
+ * basename, then every directory a `repos:` entry names — a path maps its
+ * basename, a `dir/*` glob maps each directory under it (DE-0244). One
+ * resolver shared by the daemon and `te verify` so a Checks `repo:` name
+ * resolves the same way everywhere.
+ */
+export function resolveRepoDirs(ws: LoadedWorkspace): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [n, r] of ws.resources) {
+    if (r.config.kind === "git" && r.path) map.set(n, r.path);
+  }
+  map.set(basename(ws.root), ws.root);
+  for (const pat of ws.config.repos ?? []) {
+    const abs = resolve(ws.root, pat);
+    try {
+      if (abs.endsWith(`${sep}*`) || abs.endsWith("*")) {
+        for (const d of readdirSync(dirname(abs), { withFileTypes: true })) {
+          if (d.isDirectory() && !map.has(d.name)) map.set(d.name, join(dirname(abs), d.name));
+        }
+      } else if (existsSync(abs) && !map.has(basename(abs))) map.set(basename(abs), abs);
+    } catch {
+      /* a repos glob whose parent is missing */
+    }
+  }
+  return map;
+}
+
+/**
+ * One repo name through resolveRepoDirs. A `databus/client`-style name is
+ * a dir inside one of the glob parents, counted only when it is a repo.
+ */
+export function resolveRepoDir(
+  ws: LoadedWorkspace,
+  name: string,
+  dirs?: Map<string, string>,
+): string | undefined {
+  const map = dirs ?? resolveRepoDirs(ws);
+  const direct = map.get(name);
+  if (direct || !name.includes("/")) return direct;
+  for (const dir of map.values()) {
+    const candidate = join(dir, "..", name);
+    if (existsSync(join(candidate, ".git"))) return resolve(candidate);
+  }
+  return undefined;
 }
 
 /**

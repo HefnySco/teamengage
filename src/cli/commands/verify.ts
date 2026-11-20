@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { daemonApi } from "../client.js";
-import { resolveWorkspace, teHome } from "../../core/config/config.js";
+import { resolveRepoDirs, resolveWorkspace, teHome } from "../../core/config/config.js";
 import { runChecks, type CheckRun } from "../../core/verify/verify.js";
 import type { Check } from "../../core/model/item.js";
 
@@ -58,11 +58,13 @@ export async function verifyCmd(args: string[], home?: string): Promise<number> 
       "GET", `/api/workspace${ws}`, undefined, home,
     );
     const lw = resolveWorkspace(wsc.root, { home });
-    // resource → run dir: resource base, overridden by the claim worktree
-    // only when the claim is live and on THIS machine — a foreign claim's
-    // paths do not exist here
+    // repo name → run dir: resources, then the repos: globs and the root —
+    // the same names history and evidence resolve (DE-0244) — overridden by
+    // the claim worktree only when the claim is live and on THIS machine —
+    // a foreign claim's paths do not exist here
     const dirs: Record<string, string> = {};
     for (const [name, r] of lw.resources) if (r.path) dirs[name] = r.path;
+    for (const [n, p] of resolveRepoDirs(lw)) dirs[n] ??= p;
     const claim = brief.item.claim;
     if (claim && !claim.dead && claim.machine === wsc.machine) {
       for (const [r, p] of Object.entries(claim.paths ?? {})) if (p) dirs[r] = p;
