@@ -1267,8 +1267,9 @@ const Board = ({ onOpen }) => {
   const inDomain = domain ? data.filter((i) => (i.domains ?? []).includes(domain)) : data;
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
   const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
-  // plans live on the plans page, ideas on the ideas page — the board is work cards only
-  const noIdeas = inAi.filter((i) => i.type !== "idea" && i.type !== "epic");
+  // plans live on the plans page, ideas on the ideas page, discussions on the
+  // discussions page — the board is work cards only
+  const noIdeas = inAi.filter((i) => i.type !== "idea" && i.type !== "epic" && i.type !== "discussion");
   // "found problems" mirrors the plans chip: found_by/found_here links AND
   // bug items (type bug or #bug) sitting inside a plan's subtree
   const byIdMap = new Map(data.map((i) => [i.id, i]));
@@ -1290,8 +1291,6 @@ const Board = ({ onOpen }) => {
   const mctx = { byId: byIdMap, maxAttempts: ws?.max_attempts, staleMs: parseDurMs(ws?.stale_after) ?? STALE_MS };
   const hits = words.length ? inFound.filter((i) => matches(i, words, mctx)) : inFound;
   const foundCount = data.filter(foundMatch).length;
-  const ideaCount = data.filter((i) => i.type === "idea").length;
-  const planCount = data.filter((i) => i.type === "epic").length;
   const domainCounts = {};
   for (const i of data) for (const d of i.domains ?? []) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
   const untagged = data.filter((i) => !(i.domains ?? []).length).length;
@@ -1369,8 +1368,6 @@ const Board = ({ onOpen }) => {
       <button class="btn btn-sm ${aiFilter === "ok" ? "btn-success" : aiFilter === "issues" ? "btn-danger" : "btn-outline-secondary"}"
         title=${aiFilter === "ok" ? "only AI-approved — click for AI-flagged" : aiFilter === "issues" ? "only AI-flagged — click to show all" : "AI review filter — click for approved only"}
         onClick=${setAiFilter}><${RobotIcon} /> ${aiFilter === "issues" ? "AI ✗" : aiFilter === "ok" ? "AI ✓" : "AI"}</button>
-      <button class="btn btn-sm btn-outline-secondary" title="plans page — epics and their parts" onClick=${() => nav("plans")}><${GraphIcon} /> plans <span class="n">${planCount}</span></button>
-      <button class="btn btn-sm btn-outline-secondary" title="ideas page — source documents and the work they spawned" onClick=${() => nav("ideas")}>ideas <span class="n">${ideaCount}</span></button>
       <button class="btn btn-sm ${foundOnly ? "btn-warning" : "btn-outline-secondary"}"
         title=${foundOnly ? "showing only found problems — click to clear" : "show only found problems: items linked by found_by/found_here and bug tasks inside plans"}
         onClick=${() => setFoundOnly(!foundOnly)}>Found problems <span class="n">${foundCount}</span></button>
