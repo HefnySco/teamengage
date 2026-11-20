@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "preact/hooks";
-import { html, api, post, useApi, nav } from "./app.js";
-import { toast, confirmDialog, promptDialog } from "./dialogs.js";
+import { html, api, post, useApi, nav, ItemActions } from "./app.js";
+import { toast, confirmDialog } from "./dialogs.js";
 import { markdownToHtml } from "./markdown.js";
 
 /**
@@ -138,30 +138,9 @@ const DiscussionView = ({ id }) => {
   if (err) return html`<p class="text-danger">${String(err.message ?? err)}</p>`;
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
-  const st = it.meta.status;
-  const closed = st === "done" || st === "dropped";
   const act = async (action, body) => {
     await post(`/api/items/${id}/${action}`, body).catch((e) => toast(e.message));
     reload();
-  };
-  // a cancelled prompt (null) aborts the action — only OK fires it
-  const askThen = async (action, label, extra) => {
-    const reason = await promptDialog(label);
-    if (reason !== null) act(action, { reason, ...extra });
-  };
-  const remove = async () => {
-    const msg =
-      "Its tracking and history entry go away. " +
-      (b.source && !("missing" in b.source) ? `The file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-    if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
-    const reason = await promptDialog("delete reason", { label: "reason (optional)" });
-    if (reason === null) return;
-    try {
-      await post(`/api/items/${id}/delete`, { reason });
-      nav("discussions");
-    } catch (e) {
-      toast(e.message);
-    }
   };
   const sections = sectionsOf(b.source && !("missing" in b.source) ? b.source.text : "");
   const shown = sections.filter((s) => s.body || !/^artifacts$/i.test(s.heading));
@@ -174,17 +153,9 @@ const DiscussionView = ({ id }) => {
         ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
         <h2 class="h5 mb-0">${it.meta.title}</h2>
         ${(it.meta.domains ?? []).map((d) => html`<span key=${d} class="badge text-bg-light">#${d}</span>`)}
-        <div class="d-flex gap-1 ms-auto flex-nowrap">
-          ${st === "draft" && html`<button class="btn btn-sm btn-primary" title="approve — triage this discussion" onClick=${() => act("approve")}>approve</button>`}
-          ${st === "dropped" && html`<button class="btn btn-sm btn-outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}>undrop</button>`}
-          ${st !== "done" && html`<button class="btn btn-sm btn-outline-success" title="mark done — the discussion is settled, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}>done</button>`}
-          ${!closed && html`<button class="btn btn-sm btn-outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}>drop</button>`}
-          ${it.meta.archived
-            ? html`<button class="btn btn-sm btn-outline-primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}>unarchive</button>`
-            : html`<button class="btn btn-sm btn-outline-secondary" title="archive — file away out of the lists" onClick=${() => askThen("archive", "archive note (optional)")}>archive</button>`}
-          <button class="btn btn-sm btn-outline-danger" title="delete — remove tracking, keep the DISC file"
-            onClick=${remove}>delete</button>
-        </div>
+        <${ItemActions} mode="discuss" it=${it} act=${act}
+          filePath=${b.source && !("missing" in b.source) ? b.source.path : undefined}
+          onDeleted="discussions" />
       </div>
       ${b.source && !("missing" in b.source) && html`<div class="small text-secondary mb-3">${b.source.path}</div>`}
       ${(b.referenced_by ?? []).length > 0 && html`

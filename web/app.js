@@ -2709,6 +2709,82 @@ const DomainEditor = ({ id, ds, onChanged }) => {
 const ActBtn = ({ variant = "outline-secondary", title, disabled, onClick, children }) => html`
   <button class="btn btn-sm btn-${variant} act-btn" disabled=${disabled} title=${title} onClick=${onClick}>${children}</button>`;
 
+// ---- shared item action bar ---------------------------------------------------
+// one control for every item kind so the action buttons always look and sit the
+// same. `mode` picks the workflow set:
+//   task | idea — the work lifecycle: approve/hold/draft, review verdicts, claim
+//                 release, star, graph, done/drop, archive/delete
+//   plan        — the same plus close/reopen plan
+//   discuss     — a source document: approve, undrop, done, drop, archive/delete
+//                 (never claimed — no hold, review, star or graph buttons)
+// filePath is the item's task/DISC file (worded into the delete confirm);
+// onDeleted is where to nav after delete (default: the board).
+export const ItemActions = ({ mode, it, act, filePath, onDeleted }) => {
+  const id = it.meta.id;
+  const st = it.meta.status;
+  const closed = st === "done" || st === "dropped";
+  const claimed = Boolean(it.claim);
+  const work = mode !== "discuss";
+  const fileLabel = mode === "discuss" ? "DISC file" : "task file";
+  // a cancelled prompt (null) aborts the action — only OK fires it
+  const askThen = async (action, label, extra) => {
+    const reason = await promptDialog(label);
+    if (reason !== null) act(action, { reason, ...extra });
+  };
+  // "graph" like the plans-page action: a plan opens its subtree (#/graph/<id>);
+  // a task opens the full graph searched on its id with + linked on — itself
+  // plus everything one step away
+  const openGraph = () => {
+    if (mode === "plan") return nav(`graph/${id}`);
+    try {
+      sessionStorage.setItem("te.graph.f", JSON.stringify({ q: id, status: "", domain: "", linked: true }));
+    } catch {
+      /* storage blocked — the graph still opens, just unfiltered */
+    }
+    nav("graph");
+  };
+  const remove = async () => {
+    const msg =
+      `Its tracking and history entry go away. ` +
+      (filePath ? `The ${fileLabel} ${filePath} stays as plain Markdown (te: line removed, path ignored).` : "");
+    if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
+    const reason = await promptDialog("delete reason", { label: "reason (optional)" });
+    if (reason === null) return;
+    try {
+      await post(`/api/items/${id}/delete`, { reason });
+      nav(onDeleted ?? "board");
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+  return html`<div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
+    ${st === "draft" && html`<${ActBtn} variant="primary" title=${mode === "discuss" ? "approve — triage this discussion" : "approve — promote the draft to ready"} onClick=${() => act("approve")}><${CheckIcon} /></${ActBtn}>`}
+    ${work && st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
+    ${work && (st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
+    ${work && (st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
+    ${work && st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
+    ${work && it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
+    ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
+    ${mode === "plan" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes ready, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
+    ${mode === "plan" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
+    ${st !== "done" && html`<${ActBtn} variant="outline-success" title=${mode === "discuss" ? "mark done — the discussion is settled, optional note" : "mark done — complete it now, optional note"} onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
+    ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
+    ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}
+    ${work && html`<${ActBtn} title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
+      onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}>
+      <span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>
+    </${ActBtn}>`}
+    ${work && html`<${ActBtn} title=${mode === "plan" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"}
+      onClick=${openGraph}><${GraphIcon} /></${ActBtn}>`}
+    ${!it.meta.archived && html`<${ActBtn} disabled=${claimed}
+      title=${claimed ? "archive — the claim holds it; release the claim first" : "archive — file away out of the lists"}
+      onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></${ActBtn}>`}
+    <${ActBtn} variant="outline-danger" disabled=${claimed}
+      title=${claimed ? "delete — the claim holds it; release the claim first" : `delete — remove tracking, keep the ${fileLabel}`}
+      onClick=${remove}><${TrashIcon} /></${ActBtn}>
+  </div>`;
+};
+
 // ---- artifacts: thumbnail strip + popup viewer (GL-0119/0120) ---------------
 const ART_IMG = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
 const artExt = (p) => (p.split(".").pop() ?? "").toLowerCase();
@@ -2865,37 +2941,7 @@ const ItemView = ({ id }) => {
   // a cancelled prompt (null) aborts the action — only OK fires it
   const pickedOpt = (b?.decisions ?? []).find((d) => d.meta.id === ownLast)?.meta.title;
   const ahProblem = it.meta.ai_review?.ask_human?.problem;
-  const askThen = async (action, label, extra) => {
-    const reason = await promptDialog(label);
-    if (reason !== null) act(action, { reason, ...extra });
-  };
   const TABS = ["simple", "technical", "walkthrough", "evidence"];
-  // "graph" like the plans-page action: an epic opens its plan subtree
-  // (#/graph/<id>); a task opens the full graph searched on its id with
-  // + linked on — itself plus everything one step away
-  const openGraph = () => {
-    if (it.meta.type === "epic") return nav(`graph/${id}`);
-    try {
-      sessionStorage.setItem("te.graph.f", JSON.stringify({ q: id, status: "", domain: "", linked: true }));
-    } catch {
-      /* storage blocked — the graph still opens, just unfiltered */
-    }
-    nav("graph");
-  };
-  const remove = async () => {
-    const msg =
-      `Its tracking and history entry go away. ` +
-      (b.source ? `The task file ${b.source.path} stays as plain Markdown (te: line removed, path ignored).` : "");
-    if (!(await confirmDialog(`delete ${it.meta.id}?`, msg, { ok: "delete", danger: true }))) return;
-    const reason = await promptDialog("delete reason", { label: "reason (optional)" });
-    if (reason === null) return;
-    try {
-      await post(`/api/items/${id}/delete`, { reason });
-      nav("board");
-    } catch (e) {
-      toast(e.message);
-    }
-  };
   const history = parseLog(sec("log"));
   const last = history.at(-1);
   const dependents = b.dependents ?? [];
@@ -2926,9 +2972,6 @@ const ItemView = ({ id }) => {
     ${d.key && html`<span title="key task — dependents wait for its acceptance">🔑</span>`}
     ${d.pending && html`<span class="text-secondary" title="satisfied only by review_unblocks — it may still be rejected">pending</span>`}
   </span>`;
-  // utility buttons after the workflow ones: star/graph always enabled;
-  // archive & delete are disabled while a claim holds the item — release it first
-  const claimed = Boolean(it.claim);
   const preQ = html`
     ${it.meta.drop_request && html`<div class="alert alert-warning py-2 px-2 small mb-2 d-flex align-items-center gap-2 flex-wrap">
       <span><b>flagged for drop</b> by <b class=${whoCls(it.meta.drop_request.by)}>${it.meta.drop_request.by}</b> · ${ago(it.meta.drop_request.at)} ago${it.meta.drop_request.reason ? html` — ${it.meta.drop_request.reason}` : ""}</span>
@@ -3123,32 +3166,7 @@ ${b.deps.length > 0 && html`
         <span class="text-secondary"> | </span>
         <a class=${viewMode === "full" ? "on" : ""} onClick=${() => setItemView("full")}>full</a>
       </span>
-      <div class="d-flex gap-2 ms-auto flex-nowrap flex-shrink-0">
-        ${st === "draft" && html`<${ActBtn} variant="primary" title="approve — promote the draft to ready" onClick=${() => act("approve")}><${CheckIcon} /></${ActBtn}>`}
-        ${st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
-        ${(st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
-        ${(st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
-        ${st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
-        ${it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
-        ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
-        ${it.meta.type === "epic" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes ready, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
-        ${it.meta.type === "epic" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
-        ${st !== "done" && html`<${ActBtn} variant="outline-success" title="mark done — complete it now, optional note" onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
-        ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
-        ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}
-        <${ActBtn} title=${it.meta.star_color ? `starred ${it.meta.star_color} — click to flip, ends on unstar` : "star — bookmark this task"}
-          onClick=${() => { const next = nextStarColor(it.meta.star_color); act(next ? "star" : "unstar", next ? { color: next } : undefined); }}>
-          <span class=${STAR_TEXT[it.meta.star_color] ?? ""}><${StarIcon} filled=${Boolean(it.meta.star_color)} /></span>
-        </${ActBtn}>
-        <${ActBtn} title=${it.meta.type === "epic" ? "open this plan's dependency graph" : "open the graph around this item — itself plus everything linked to it"}
-          onClick=${openGraph}><${GraphIcon} /></${ActBtn}>
-        ${!it.meta.archived && html`<${ActBtn} disabled=${claimed}
-          title=${claimed ? "archive — the claim holds it; release the claim first" : "archive — file away out of the lists"}
-          onClick=${() => askThen("archive", "archive note (optional)")}><${ArchiveIcon} /></${ActBtn}>`}
-        <${ActBtn} variant="outline-danger" disabled=${claimed}
-          title=${claimed ? "delete — the claim holds it; release the claim first" : "delete — remove tracking, keep the task file"}
-          onClick=${remove}><${TrashIcon} /></${ActBtn}>
-      </div>
+      <${ItemActions} mode=${it.meta.type === "epic" ? "plan" : it.meta.type === "idea" ? "idea" : "task"} it=${it} act=${act} filePath=${b.source?.path} />
     </div>
     <${HumanCard} it=${it} picked=${pickedOpt}
       onDecide=${(o) => act("decide", { text: o, ...(ahProblem ? { question: { text: ahProblem } } : {}) })} />
