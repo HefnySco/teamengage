@@ -2,7 +2,7 @@ import YAML from "yaml";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir, unlink } from "node:fs/promises";
 import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
-import { join, resolve, basename, dirname, sep, isAbsolute, relative } from "node:path";
+import { join, resolve, sep, isAbsolute, relative } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import { scanSecrets, redactSecrets } from "../../core/files/secrets.js";
@@ -78,7 +78,7 @@ import {
   cleanupSnapshots,
 } from "../effects/effects.js";
 import { checkRemoteClaims, fetchPlansRepo } from "../sync/sync.js";
-import { resourceRoots } from "../../core/config/config.js";
+import { resourceRoots, resolveRepoDir, resolveRepoDirs } from "../../core/config/config.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import type { SessionRegistry } from "../sessions/sessions.js";
 import type { Session } from "../../core/model/session.js";
@@ -706,37 +706,11 @@ export class WorkspaceOps {
     return parseTouches(text);
   }
 
-  /** Repo name → local checkout dir, built once (git resources, `repos:` globs, the root). */
+  /** Repo name → local checkout dir, built once — the shared resolver (git resources, `repos:` globs, the root). */
   private repoDirs?: Map<string, string>;
   private repoDir(name: string): string | undefined {
-    if (this.repoDirs === undefined) {
-      const map = new Map<string, string>();
-      for (const [n, r] of this.wsr.ws.resources) {
-        if (r.config.kind === "git" && r.path) map.set(n, r.path);
-      }
-      map.set(basename(this.wsr.ws.root), this.wsr.ws.root);
-      for (const pat of this.wsr.ws.config.repos ?? []) {
-        const abs = resolve(this.wsr.ws.root, pat);
-        try {
-          if (abs.endsWith(`${sep}*`) || abs.endsWith("*")) {
-            for (const d of readdirSync(dirname(abs), { withFileTypes: true })) {
-              if (d.isDirectory() && !map.has(d.name)) map.set(d.name, join(dirname(abs), d.name));
-            }
-          } else if (!map.has(basename(abs))) map.set(basename(abs), abs);
-        } catch {
-          /* a repos glob whose parent is missing */
-        }
-      }
-      this.repoDirs = map;
-    }
-    // `databus/client`-style names: a dir inside one of the glob parents
-    const direct = this.repoDirs.get(name);
-    if (direct || !name.includes("/")) return direct;
-    for (const dir of this.repoDirs.values()) {
-      const candidate = join(dir, "..", name);
-      if (existsSync(join(candidate, ".git"))) return resolve(candidate);
-    }
-    return undefined;
+    if (this.repoDirs === undefined) this.repoDirs = resolveRepoDirs(this.wsr.ws);
+    return resolveRepoDir(this.wsr.ws, name, this.repoDirs);
   }
 
   private commitFileCache = new Map<string, Promise<string[]>>();
@@ -1646,7 +1620,9 @@ export class WorkspaceOps {
         }
         const resource = check.repo ?? firstRes;
         const dir = resource
-          ? (it.claim?.paths?.[resource] ?? this.wsr.ws.resources.get(resource)?.path)
+          ? (it.claim?.paths?.[resource] ??
+            this.wsr.ws.resources.get(resource)?.path ??
+            this.repoDir(resource))
           : undefined;
         if (dir && (await isRepo(dir))) {
           const head = await revParse(dir, "HEAD").catch(() => "");

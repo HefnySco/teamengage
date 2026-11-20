@@ -24,6 +24,7 @@ import { WorkspaceOps } from "./ops.js";
 let home: string;
 let plans: string;
 let repo: string;
+let repo2: string;
 let ctx: DaemonCtx;
 let daemon: DaemonHandle;
 let watcher: PlansWatcher;
@@ -52,11 +53,13 @@ beforeAll(async () => {
   const root = join(home, "ws");
   plans = join(root, ".teamengage");
   repo = join(home, "repo");
+  repo2 = join(home, "repo2");
   mkdirSync(join(plans, "items", "WS"), { recursive: true });
   mkdirSync(repo, { recursive: true });
+  mkdirSync(repo2, { recursive: true });
   writeFileSync(
     join(plans, "workspace.yaml"),
-    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\ntargets:\n  down: { probe: "true" }\n  up: { probe: "true" }\n  far: { probe: "true" }\n`,
+    `name: ws\nprefix: WS\nresources:\n  code: { kind: git, path: ${JSON.stringify(repo)} }\nrepos: ["../*"]\ntargets:\n  down: { probe: "true" }\n  up: { probe: "true" }\n  far: { probe: "true" }\n`,
   );
   for (const [cwd, a] of [
     [plans, ["init", "-b", "main"]],
@@ -65,12 +68,18 @@ beforeAll(async () => {
     [repo, ["init", "-b", "main"]],
     [repo, ["config", "user.email", "t@t"]],
     [repo, ["config", "user.name", "t"]],
+    [repo2, ["init", "-b", "main"]],
+    [repo2, ["config", "user.email", "t@t"]],
+    [repo2, ["config", "user.name", "t"]],
   ] as const) {
     execFileSync("git", [...a], { cwd });
   }
   writeFileSync(join(repo, "a.txt"), "one\n");
   execFileSync("git", ["add", "-A"], { cwd: repo });
   execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
+  writeFileSync(join(repo2, "a.txt"), "one\n");
+  execFileSync("git", ["add", "-A"], { cwd: repo2 });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repo2 });
 
   const mk = (id: string, run: string) => checksItem(id, [{ name: `chk-${id}`, repo: "code", run }]);
   writeFileSync(join(plans, "items", "WS", "WS-0001.md"), item("WS-0001"));
@@ -89,6 +98,11 @@ beforeAll(async () => {
   for (const id of ["WS-0005", "WS-0006", "WS-0007", "WS-0008", "WS-0009", "WS-0011"]) {
     writeFileSync(join(plans, "items", "WS", `${id}.md`), mk(id, "true"));
   }
+  // TE-0169: a check whose repo only a `repos:` glob provides (no resource)
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0014.md"),
+    checksItem("WS-0014", [{ name: "chk-WS-0014", repo: "repo2", run: "true" }]),
+  );
   execFileSync("git", ["add", "-A"], { cwd: plans });
   execFileSync("git", ["commit", "-m", "init"], { cwd: plans });
 
@@ -146,6 +160,20 @@ describe("submit checks gate (GL-0349)", () => {
     newCommit(wt("WS-0006"));
     await expect(ops.submit("WS-0006", s, { what: "x", how: "y" })).rejects.toThrow(/chk-WS-0006.*stale/);
     expect(ops.item("WS-0006").meta.status).toBe("in_progress");
+  });
+
+  // TE-0169: the staleness check resolves a check repo that only a
+  // `repos:` glob provides — before, `dir` stayed undefined and a stale
+  // result slid through
+  it("a check repo resolvable only through repos: still gets the staleness gate", async () => {
+    const s = holder("gate-f");
+    await ops.claim("WS-0014", s);
+    await ops.verifyResult("WS-0014", { check: "chk-WS-0014", exit_code: 0, passed: true, commit: head(repo2) }, s);
+    newCommit(repo2);
+    await expect(ops.submit("WS-0014", s, { what: "x", how: "y" })).rejects.toThrow(/chk-WS-0014.*stale/);
+    await ops.verifyResult("WS-0014", { check: "chk-WS-0014", exit_code: 0, passed: true, commit: head(repo2) }, s);
+    await ops.submit("WS-0014", s, { what: "x", how: "y" });
+    expect(ops.item("WS-0014").meta.status).toBe("in_review");
   });
 
   it("a failed result refuses; unverified_reason submits, lands in Evidence, and the ok review is needs_human", async () => {
