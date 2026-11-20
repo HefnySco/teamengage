@@ -226,10 +226,11 @@ never claimed and never worked; tasks plan from it through `relates`
   it, and `brief <id> more=transcript page=N` pages it ~200 lines at a
   time.
 
-A discussion's state is **derived**, not stored: `unplanned` until a task
-names it in `relates`, then `planned`, `in_progress` while a referrer is
-worked, `done` when every live referrer is. Its own `draft`/`dropped`/
-`done` status wins outright.
+A discussion's state is **derived**, not stored — the same rule as an
+idea: its own `draft`/`dropped`/`done` status wins outright, `done` when
+every live referrer (an item that names it in `relates`) is done, `ready`
+otherwise. A source document never tracks planning or progress; the
+related count covers that signal.
 
 **Capture** (`capture`, `POST /api/discussions`, `te discuss save`) takes
 the distilled sections plus the transcript as text or a file; a Claude

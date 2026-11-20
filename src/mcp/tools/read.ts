@@ -316,7 +316,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     {
       description:
         "Search items by status/type/state/project/domain/resource/text/claimed/starred; state = idea state (draft|ready|done|dropped) for type idea, " +
-        "discussion state (draft|unplanned|planned|in_progress|done|dropped) for type discussion; q = board search (all words in id/title/file/#domains). Archived items never match.",
+        "discussion state (draft|ready|done|dropped) for type discussion; q = board search (all words in id/title/file/#domains). Archived items never match.",
       inputSchema: {
         status: z.string().optional(),
         domain: z.string().optional(),

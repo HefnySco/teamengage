@@ -213,8 +213,8 @@ describe("e2e daemon + watcher + MCP", () => {
     expect(prop).toContain("proposed");
     await settle();
     const store = ctx.workspaces.get("ws")!.store;
-    expect(store.idx.get(d1)!.idea_state).toBe("planned");
-    expect(store.idx.get(d2)!.idea_state).toBe("planned");
+    expect(store.idx.get(d1)!.idea_state).toBe("ready");
+    expect(store.idx.get(d2)!.idea_state).toBe("ready");
 
     // a guideline line → a pending lesson candidate; nothing is written
     const promo = await call("promote", {

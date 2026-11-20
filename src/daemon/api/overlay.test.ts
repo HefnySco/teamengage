@@ -537,23 +537,23 @@ describe("discussions", () => {
     expect(text).not.toContain("**Depends on:**");
     expect(text).not.toContain("## Acceptance");
 
-    // unplanned while nothing relates; approved, still never claimable
+    // ready once approved, still never claimable
     expect(store().idx.get(id)!.idea_state).toBe("draft");
     const r = await post(`/api/items/${id}/approve`, {});
     expect(r.error).toBeUndefined();
-    expect(store().idx.get(id)!.idea_state).toBe("unplanned");
+    expect(store().idx.get(id)!.idea_state).toBe("ready");
     const claim = await post(`/api/items/${id}/claim`, {});
     expect(claim.error).toBe("CLAIM_REFUSED");
     expect(String(claim.message)).toMatch(/discussions are never claimed/);
 
-    // a ready task that names it in relates turns it planned
+    // a ready task that names it in relates — still ready, sources don't track planning
     const { ids: tids } = await store().createItems(
       [{ type: "task", title: "Plan from the chat", project: "global", relates: [id] }],
       human,
     );
     await post(`/api/items/${tids[0]}/approve`, {});
     const d = store().idx.get(id)!;
-    expect(d.idea_state).toBe("planned");
+    expect(d.idea_state).toBe("ready");
     expect(d.idea_refs).toEqual(tids);
     const q = (await (await api("/api/items?type=discussion")).json()) as Array<{
       id: string;
@@ -562,7 +562,7 @@ describe("discussions", () => {
     }>;
     expect(q.length).toBeGreaterThan(0);
     expect(q.every((i) => i.type === "discussion")).toBe(true);
-    expect(q.find((i) => i.id === id)!.idea_state).toBe("planned");
+    expect(q.find((i) => i.id === id)!.idea_state).toBe("ready");
 
     // next never offers a discussion
     const next = (await (await api("/api/next?limit=50")).json()) as Array<{ meta: { id: string } }>;
@@ -587,7 +587,7 @@ describe("discussions", () => {
     // discussion lands ready (a saved record, not a draft to approve)
     const it0 = store().idx.get(id)!;
     expect(it0.meta.type).toBe("discussion");
-    expect(it0.idea_state).toBe("unplanned");
+    expect(it0.idea_state).toBe("ready");
     const text = readFileSync(join(root, file), "utf8");
     expect(text).toContain("## Artifacts");
     expect(text).toContain(tpath);

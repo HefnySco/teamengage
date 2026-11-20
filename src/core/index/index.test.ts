@@ -416,7 +416,7 @@ describe("idea state", () => {
 });
 
 describe("discussion state", () => {
-  it("derives unplanned / planned / in_progress / done from relates", async () => {
+  it("derives ready / done from relates, own status wins", async () => {
     writeItem("DC-0001", { type: "discussion", status: "ready" });
     writeItem("DC-0002", { type: "discussion", status: "ready" });
     writeItem("DC-0003", { type: "discussion", status: "ready" });
@@ -429,16 +429,19 @@ describe("discussion state", () => {
     writeItem("DC-0012", { status: "done", relates: "[DC-0004]" });
     writeItem("DC-0013", { status: "in_review", relates: "[DC-0007]" });
     const idx = await Index.load(plans);
-    expect(idx.get("DC-0001")!.idea_state).toBe("unplanned"); // nothing names it yet
-    expect(idx.get("DC-0002")!.idea_state).toBe("planned"); // a ready referrer
-    expect(idx.get("DC-0003")!.idea_state).toBe("in_progress"); // a referrer being worked
+    expect(idx.get("DC-0001")!.idea_state).toBe("ready"); // nothing names it yet
+    expect(idx.get("DC-0002")!.idea_state).toBe("ready"); // a ready referrer — still just ready
+    expect(idx.get("DC-0003")!.idea_state).toBe("ready"); // a referrer being worked — sources don't track progress
     expect(idx.get("DC-0004")!.idea_state).toBe("done"); // every live referrer is done
     expect(idx.get("DC-0005")!.idea_state).toBe("draft"); // its own status wins
     expect(idx.get("DC-0006")!.idea_state).toBe("dropped");
-    expect(idx.get("DC-0007")!.idea_state).toBe("in_progress"); // in_review counts as in flight
+    expect(idx.get("DC-0007")!.idea_state).toBe("ready"); // in_review is live work, not done
     expect(idx.get("DC-0002")!.idea_refs).toEqual(["DC-0010"]);
-    expect(idx.query({ type: "discussion", idea_state: "planned" }).map((i) => i.meta.id)).toEqual([
+    expect(idx.query({ type: "discussion", idea_state: "ready" }).map((i) => i.meta.id)).toEqual([
+      "DC-0001",
       "DC-0002",
+      "DC-0003",
+      "DC-0007",
     ]);
     expect(idx.get("DC-0010")!.idea_state).toBeUndefined();
   });

@@ -84,9 +84,9 @@ An **idea** file is lighter: `# Title`, an optional `**Relates:**` line,
 
 A **discussion** file saves a chat between the human and an agent (a
 planning or review chat). It is a source document like an idea: it is never
-claimed, and its derived state (`unplanned`, `planned`, `in_progress`,
-`done`) comes from the items that name it in `**Relates:**`. It has two
-layers:
+claimed, and its derived state (`ready`, `done`) comes from the items
+that name it in `**Relates:**` — `done` when every live referrer is,
+`ready` otherwise. It has two layers:
 
 1. The distilled layer — the `DISC-<NN>-<slug>.md` file itself, written by
    the agent in STE. `# Title`, an optional `**Relates:**` line, then these

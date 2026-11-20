@@ -46,22 +46,16 @@ export type PlanState = "draft" | "decomposing" | "ready" | "in_progress" | "don
 
 /**
  * Derived state of a source document (idea or discussion) — never stored.
- * Ideas use draft/ready/done/dropped; discussions use
- * draft/unplanned/planned/in_progress/done/dropped (TE-0156).
+ * Both use draft/ready/done/dropped: the document's own status wins, done
+ * when every live referrer is done, ready otherwise. Source documents
+ * never track planning or progress — the related count covers that.
  */
-export type IdeaState =
-  | "draft"
-  | "ready"
-  | "unplanned"
-  | "planned"
-  | "in_progress"
-  | "done"
-  | "dropped";
+export type IdeaState = "draft" | "ready" | "done" | "dropped";
 
 /**
- * Pure rule: the idea's own status decides draft/dropped/done outright; a
- * triaged idea turns done when every live referrer is done (≥1 referrer),
- * otherwise it is ready — ideas never track in_progress, they are sources.
+ * Pure rule: the item's own status decides draft/dropped/done outright; a
+ * triaged source turns done when every live referrer is done (≥1 referrer),
+ * otherwise it is ready — sources never track in_progress.
  */
 export function ideaStateOf(status: Status, referrerStatuses: Status[]): IdeaState {
   if (status === "dropped") return "dropped";
@@ -72,22 +66,9 @@ export function ideaStateOf(status: Status, referrerStatuses: Status[]): IdeaSta
   return "ready";
 }
 
-/**
- * The discussion's own status decides draft/dropped/done outright. Live
- * referrers (items that name it in `relates`) set the rest: none →
- * unplanned; all done → done; one being worked (in_progress, in_review or
- * waiting) → in_progress; otherwise planned.
- */
+/** Discussions share the idea rule — a source document, never worked. */
 export function discussionStateOf(status: Status, referrerStatuses: Status[]): IdeaState {
-  if (status === "dropped") return "dropped";
-  if (status === "draft") return "draft";
-  if (status === "done") return "done";
-  const live = referrerStatuses.filter((s) => s !== "dropped");
-  if (!live.length) return "unplanned";
-  if (live.every((s) => s === "done")) return "done";
-  if (live.some((s) => s === "in_progress" || s === "in_review" || s === "waiting"))
-    return "in_progress";
-  return "planned";
+  return ideaStateOf(status, referrerStatuses);
 }
 
 /** A problem item: type bug, or any item carrying the bug domain. */
