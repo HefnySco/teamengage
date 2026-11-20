@@ -972,6 +972,54 @@ describe("discussions", () => {
       expect(ok.error).toBeUndefined();
       expect(ok.result).toMatch(/^decision D-\d+$/);
     });
+
+    it("a failed settle step rolls back the appended lesson line (DE-0236)", async () => {
+      const hello = await fetch(`${daemon.url}/agent/hello`, {
+        method: "POST",
+        body: JSON.stringify({ agent: "promoter3" }),
+      });
+      token = /^token (\S+)/.exec(await hello.text())![1];
+      const cap = await post("/api/discussions", {
+        title: "Lesson settle failure chat",
+        project: "global",
+        domains: ["teamengage"],
+        sections: { Guidelines: "- always settle before you write" },
+        transcript_text: "user: lesson?\nassistant: rollback\n",
+      });
+      const discId = String(cap.id);
+      await call("promote", {
+        id: discId,
+        section: "guidelines",
+        line: "always settle before you write",
+        to: "lesson",
+        domain: "teamengage",
+      });
+      const lessonsFile = join(plans, "lessons", "teamengage.md");
+      const before = existsSync(lessonsFile) ? readFileSync(lessonsFile, "utf8") : "";
+      const spy = vi
+        .spyOn(store(), "settlePromotion")
+        .mockRejectedValueOnce(new Error("settle failed"));
+      try {
+        const bad = await post(`/api/items/${discId}/promotions/1`, { verdict: "approved" });
+        expect(bad.error).toBeDefined();
+      } finally {
+        spy.mockRestore();
+      }
+      // the stray line is gone and the candidate is still pending
+      const mid = existsSync(lessonsFile) ? readFileSync(lessonsFile, "utf8") : "";
+      expect(mid).toBe(before);
+      const promo = (
+        (store().idx.get(discId)!.meta.promotions as Array<Record<string, unknown>>) ?? []
+      ).find((p) => p.n === 1);
+      expect(promo?.state).toBe("pending");
+      // a retry lands exactly one line, not two
+      const ok = (await post(`/api/items/${discId}/promotions/1`, { verdict: "approved" })) as {
+        error?: string;
+      };
+      expect(ok.error).toBeUndefined();
+      const after = readFileSync(lessonsFile, "utf8");
+      expect(after.match(/always settle before you write/g)?.length).toBe(1);
+    });
   });
 });
 

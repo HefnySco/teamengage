@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import { execFileSync } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, unlink } from "node:fs/promises";
 import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve, basename, dirname, sep, isAbsolute, relative } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
@@ -39,6 +39,7 @@ import {
   StarColor,
   tierRank,
   type Check,
+  type ItemMeta,
   type ReviewFinding,
   VerifyFile,
   type VerifyResult,
@@ -3103,16 +3104,20 @@ export class WorkspaceOps {
     const line = String(promo.line);
     let result: string;
     let decisionId: string | undefined;
+    let lessonDomain: string | undefined;
+    let lessonAppended = false;
     if (verdict === "approved") {
       if (promo.to === "lesson") {
+        lessonDomain = String(promo.domain);
         await appendLesson(
           this.wsr.ws.plansDir,
-          String(promo.domain),
+          lessonDomain,
           "human",
           `${line} (from ${it.meta.id})`,
           now,
         );
-        result = `lesson for #${String(promo.domain)}`;
+        lessonAppended = true;
+        result = `lesson for #${lessonDomain}`;
       } else {
         decisionId = allocateId("D", this.index.decisions.keys());
         result = `decision ${decisionId}`;
@@ -3120,19 +3125,44 @@ export class WorkspaceOps {
     } else {
       result = "rejected";
     }
-    // DE-0236: the settle step runs first. A failure there leaves no D-record.
-    const meta = await this.store.settlePromotion(
-      it.meta.id,
-      n,
-      {
-        state: verdict,
-        action_line: `- promotion #${n} ${verdict === "approved" ? `approved → ${result}` : "rejected"} (human, ${now.slice(0, 16).replace("T", " ")})`,
-        ...(verdict === "approved" && promo.to === "lesson"
-          ? { commit_extra: [`lessons/${normalizeDomain(String(promo.domain))}.md`] }
-          : {}),
-      },
-      this.actorFor("human"),
-    );
+    // DE-0236: the settle step runs first. A failure there leaves no D-record
+    // and no stray lesson line — the appended line is rolled back so a retry
+    // cannot duplicate it.
+    let meta: ItemMeta;
+    try {
+      meta = await this.store.settlePromotion(
+        it.meta.id,
+        n,
+        {
+          state: verdict,
+          action_line: `- promotion #${n} ${verdict === "approved" ? `approved → ${result}` : "rejected"} (human, ${now.slice(0, 16).replace("T", " ")})`,
+          ...(lessonAppended
+            ? { commit_extra: [`lessons/${normalizeDomain(lessonDomain!)}.md`] }
+            : {}),
+        },
+        this.actorFor("human"),
+      );
+    } catch (err) {
+      if (lessonAppended) {
+        const lessons = await readLessons(this.wsr.ws.plansDir, lessonDomain!);
+        const suffix = `${line} (from ${it.meta.id})`;
+        let at = -1;
+        for (let i = lessons.length - 1; i >= 0; i--) {
+          if (lessons[i].endsWith(suffix)) {
+            at = i;
+            break;
+          }
+        }
+        if (at >= 0)
+          await removeLesson(this.wsr.ws.plansDir, lessonDomain!, at + 1).catch(() => {});
+        // a file our append created now holds only the header — remove it too
+        if ((await readLessons(this.wsr.ws.plansDir, lessonDomain!)).length === 0)
+          await unlink(join(this.wsr.ws.plansDir, "lessons", `${normalizeDomain(lessonDomain!)}.md`)).catch(
+            () => {},
+          );
+      }
+      throw err;
+    }
     if (decisionId) {
       try {
         const cur = this.item(it.meta.id);
