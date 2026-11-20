@@ -345,6 +345,45 @@ const BulbIcon = () => glyph([
 const FlagIcon = () => glyph([
   "M14.778.085A.5.5 0 0 1 15 .5V8a.5.5 0 0 1-.314.464L14.5 8l.186.464-.003.001-.006.003-.023.009a12 12 0 0 1-.397.15c-.264.095-.631.223-1.047.35-.816.252-1.879.523-2.71.523-.847 0-1.548-.28-2.158-.525l-.028-.01C7.68 8.71 7.14 8.5 6.5 8.5c-.7 0-1.638.23-2.437.477A20 20 0 0 0 3 9.342V15.5a.5.5 0 0 1-1 0V.5a.5.5 0 0 1 1 0v.282c.226-.079.496-.17.79-.26C4.606.272 5.67 0 6.5 0c.84 0 1.524.277 2.121.519l.043.018C9.286.788 9.828 1 10.5 1c.7 0 1.638-.23 2.437-.477a20 20 0 0 0 1.349-.476l.019-.007.004-.002h.001",
 ]);
+// ---- item-kind icons: one icon in front of every item id ---------------------
+// the kind an item is shown as: plan (epic), discussion, idea, feature,
+// bug (a task tagged #bug) or task. Works on both shapes — item pages carry
+// meta.type/meta.domains, index rows carry type/domains.
+const itemKind = (i) => {
+  const meta = i?.meta ?? i ?? {};
+  const t = meta.type;
+  if (t === "epic") return "plan";
+  if (t === "discussion") return "discuss";
+  if (t === "idea") return "idea";
+  if (t === "feature") return "feature";
+  if ((meta.domains ?? []).includes("bug")) return "bug";
+  return "task";
+};
+const BugIcon = () => glyph([
+  "M4.355.522a.5.5 0 0 1 .623.333l.291.956A4.992 4.992 0 0 1 8 1c1.007 0 1.946.298 2.731.811l.29-.956a.5.5 0 0 1 .957.29l-.41 1.352A4.985 4.985 0 0 1 13 6h.5a.5.5 0 0 0 .5-.5V5a.5.5 0 0 1 1 0v.5A1.5 1.5 0 0 1 13.5 7H13v1h1.5a.5.5 0 0 1 0 1H13v1h.5a1.5 1.5 0 0 1 1.5 1.5v.5a.5.5 0 1 1-1 0v-.5a.5.5 0 0 0-.5-.5H13a5 5 0 0 1-10 0h-.5a.5.5 0 0 0-.5.5v.5a.5.5 0 1 1-1 0v-.5A1.5 1.5 0 0 1 2.5 10H3V9H1.5a.5.5 0 0 1 0-1H3V7h-.5A1.5 1.5 0 0 1 1 5.5V5a.5.5 0 0 1 1 0v.5a.5.5 0 0 0 .5.5H3c0-1.364.547-2.601 1.432-3.503l-.41-1.352a.5.5 0 0 1 .333-.623zM4 7v4a4 4 0 0 0 3.5 3.97V7H4zm4.5 0v7.97A4 4 0 0 0 12 11V7H8.5zM12 6a3.988 3.988 0 0 0-1.334-2.982A3.983 3.983 0 0 0 8 2a3.983 3.983 0 0 0-2.667 1.018A3.988 3.988 0 0 0 4 6h8z",
+]);
+const DocIcon = () => glyph([
+  "M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5z",
+  "M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z",
+]);
+const PlanIcon = () => glyph([
+  "M6 3.5A1.5 1.5 0 0 1 7.5 2h1A1.5 1.5 0 0 1 10 3.5v1A1.5 1.5 0 0 1 8.5 6v1H14a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0V8h-5v.5a.5.5 0 0 1-1 0V8h-5v.5a.5.5 0 0 1-1 0v-1A.5.5 0 0 1 2 7h5.5V6A1.5 1.5 0 0 1 6 4.5v-1zM8.5 5a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1zM0 11.5A1.5 1.5 0 0 1 1.5 10h1A1.5 1.5 0 0 1 4 11.5v1A1.5 1.5 0 0 1 2.5 14h-1A1.5 1.5 0 0 1 0 12.5v-1zm1.5-.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1zm4.5.5A1.5 1.5 0 0 1 7.5 10h1a1.5 1.5 0 0 1 1.5 1.5v1A1.5 1.5 0 0 1 8.5 14h-1A1.5 1.5 0 0 1 6 12.5v-1zm1.5-.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1zm4.5.5a1.5 1.5 0 0 1 1.5-1.5h1a1.5 1.5 0 0 1 1.5 1.5v1a1.5 1.5 0 0 1-1.5 1.5h-1a1.5 1.5 0 0 1-1.5-1.5v-1zm1.5-.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1z",
+]);
+const ChatIcon = () => glyph([
+  "M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12.793a.5.5 0 0 0 .854.353l2.853-2.853A1 1 0 0 1 4.414 12H14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z",
+  "M3 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 6a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 6zm0 2.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z",
+]);
+const StarsIcon = () => glyph([
+  "M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828l.645-1.937zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.734 1.734 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.734 1.734 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.734 1.734 0 0 0 3.407 2.31l.387-1.162zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.156 1.156 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.156 1.156 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732L10.863.1z",
+]);
+const KIND_ICON = { bug: BugIcon, task: DocIcon, plan: PlanIcon, idea: BulbIcon, discuss: ChatIcon, feature: StarsIcon };
+const KIND_TITLE = { bug: "bug — a task tagged #bug", task: "task", plan: "plan — an epic with parts", idea: "idea — a source document", discuss: "discussion — a saved chat", feature: "feature — a delivery grouping" };
+const KIND_CLS = { bug: "text-danger", plan: "text-primary", idea: "text-warning", discuss: "text-info", feature: "text-success" };
+export const ItemKindIcon = ({ i }) => {
+  const k = itemKind(i);
+  const Ico = KIND_ICON[k] ?? DocIcon;
+  return html`<span class="kind-ico flex-shrink-0 ${KIND_CLS[k] ?? "text-secondary"}" title=${KIND_TITLE[k] ?? k}><${Ico} /></span>`;
+};
 // search field with a × clear button inside (the native type=search one is webkit-only)
 // onEscape may return true to keep the query (e.g. it dismissed a dropdown instead)
 const SearchBox = ({ value, onChange, onKeyDown, onEscape, ...props }) => html`
@@ -480,7 +519,7 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
   return html`
     <div class="triage-li">
       <span class="id-cell d-flex align-items-center gap-1">
-        <a class="item id" onClick=${() => onOpen(q.id)}>${q.id}</a>
+        ${item && html`<${ItemKindIcon} i=${item} />`}<a class="item id" onClick=${() => onOpen(q.id)}>${q.id}</a>
         ${item?.star_color && html`<span class="${STAR_TEXT[item.star_color]}" title="starred ${item.star_color}"><${StarIcon} filled /></span>`}
       </span>
       <${InboxStatus} s="waiting" />
@@ -697,7 +736,7 @@ const Inbox = ({ onOpen }) => {
   // one dense line per thing that needs you; actions reveal on hover
   const idCell = (id) => html`
     <span class="id-cell d-flex align-items-center gap-1">
-      <a class="item id" onClick=${() => onOpen(id)}>${id}</a>
+      ${byId[id] && html`<${ItemKindIcon} i=${byId[id]} />`}<a class="item id" onClick=${() => onOpen(id)}>${id}</a>
       ${byId[id]?.star_color && html`<span class="${STAR_TEXT[byId[id].star_color]}" title="starred ${byId[id].star_color}"><${StarIcon} filled /></span>`}
     </span>`;
   const itemRow = (id, st, extra, acts) => html`
@@ -1394,7 +1433,7 @@ const Board = ({ onOpen }) => {
             : deepHits.map(
                 (hit) => html`
                   <div class="triage-li" key=${hit.kind + hit.id} onClick=${() => hit.kind === "item" && onOpen(hit.id)}>
-                    <span class="item id">${hit.kind === "item" ? hit.id : `${hit.kind} ${hit.id}`}</span>
+                    ${hit.kind === "item" && byIdMap.get(hit.id) && html`<${ItemKindIcon} i=${byIdMap.get(hit.id)} />`}<span class="item id">${hit.kind === "item" ? hit.id : `${hit.kind} ${hit.id}`}</span>
                     <span class="t" title=${hit.title}>${hit.title}</span>
                     <span class="text-secondary small">${hit.snippet}</span>
                   </div>`,
@@ -1426,7 +1465,7 @@ const Board = ({ onOpen }) => {
                 (i) => html`
                   <div class="card bcard p-2" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="d-flex align-items-center gap-1 flex-wrap">
-                      <span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
+                      <${ItemKindIcon} i=${i} /><span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
                       ${i.type === "feature" && html`<span class="plan-chip ps-active" title=${`feature ${i.feature_status ?? "planned"} — ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0} parts done across ${(i.feature_plans ?? []).length} plan(s)`}>feat ${i.feature_status ?? ""} ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0}</span>`}
                       <span class="ms-auto d-flex align-items-center gap-1">
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"
@@ -1511,7 +1550,7 @@ const PlanNode = ({ i, depth, tree }) => {
             e.stopPropagation(); // fold, don't open the item
             tree.setOpen({ ...tree.open, [i.id]: !isOpen });
           }}>${isPlan ? (isOpen ? "▾" : "▸") : "·"}</span>
-        <span class="id text-nowrap">${i.id}</span>
+        <${ItemKindIcon} i=${i} /><span class="id text-nowrap">${i.id}</span>
         <${StarBtn} i=${i} reload=${tree.reload} />
         ${isPlan ? html`<${PlanBadge} i=${i} /><${PlanProblems} id=${i.id} p=${i.plan_problems} onOpen=${tree.onOpen} />` : html`<${Badge} s=${i.status} />`}
         <span class=${isPlan ? "fw-semibold" : ""}>${i.title}</span>
@@ -1664,7 +1703,7 @@ const IdeaNode = ({ i, depth, tree }) => {
             e.stopPropagation(); // fold, don't open the item
             tree.setOpen({ ...tree.open, [i.id]: !isOpen });
           }}>${children.length ? (isOpen ? "▾" : "▸") : "·"}</span>
-        <span class="id text-nowrap">${i.id}</span>
+        <${ItemKindIcon} i=${i} /><span class="id text-nowrap">${i.id}</span>
         <${StarBtn} i=${i} reload=${tree.reload} />
         <${IdeaChip} st=${tree.stateOf(i)} />
         <span class="fw-semibold">${i.title}</span>
@@ -2016,7 +2055,7 @@ const Archive = ({ onOpen }) => {
       ${hits.map(
         (i) => html`
           <div class="list-group-item d-flex align-items-center gap-2 flex-wrap" key=${i.id}>
-            <a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
+            <${ItemKindIcon} i=${i} /><a class="item id" onClick=${() => onOpen(i.id)}>${i.id}</a>
             <${StarBtn} i=${i} reload=${reload} />
             <${Badge} s=${i.status} />
             <span class="flex-grow-1">${i.title}</span>
@@ -2992,7 +3031,7 @@ const ItemView = ({ id }) => {
         ${b.feature.plans.length === 0 && html`<div class="text-secondary small">no plan names this feature yet — set <code>feature: ${id}</code> on an epic</div>`}
         ${b.feature.plans.map((p) => html`
           <div key=${p.id} class="d-flex align-items-center gap-2 small py-1">
-            <a class="item id" onClick=${() => nav(`item/${p.id}`)}>${p.id}</a>
+            <${ItemKindIcon} i=${{ type: "epic" }} /><a class="item id" onClick=${() => nav(`item/${p.id}`)}>${p.id}</a>
             <span class="text-truncate" title=${p.title}>${p.title}</span>
             ${p.plan_state && html`<span class="plan-chip ${PLAN_CHIP[p.plan_state] ?? "ps-draft"}">${p.plan_state}</span>`}
             <span class="ms-auto d-flex align-items-center gap-2 flex-shrink-0">
@@ -3153,7 +3192,7 @@ ${b.deps.length > 0 && html`
   return html`
 
     <div class="sticky-top bg-body border-bottom py-1 d-flex align-items-center gap-2 flex-wrap" style=${{ top: "2.75rem", zIndex: 1010 }}>
-      <span class="id flex-shrink-0">${it.meta.id}</span>
+      <${ItemKindIcon} i=${it} /><span class="id flex-shrink-0">${it.meta.id}</span>
       ${it.meta.type === "epic"
         ? html`<span class="plan-chip ${PLAN_CHIP[it.plan_state] ?? "ps-draft"}" title=${`plan ${it.plan_state} — derived from its parts`}>${(it.plan_state ?? "").replace("_", " ")}</span>`
         : html`<${Badge} s=${st} />`}

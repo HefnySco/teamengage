@@ -45,6 +45,11 @@
   font-family: ui-monospace, monospace;
   font-weight: 600;
 }
+/* the kind icon in front of an item id — inline mark, no chrome */
+.kind-ico {
+  display: inline-flex;
+  align-items: center;
+}
 /* disabled actions keep pointer events (the title tooltip needs them —
    clicks stay suppressed by the attribute) and go neutral grey on
    hover instead of holding the accent colour */

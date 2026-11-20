@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "preact/hooks";
-import { html, api, post, useApi, nav, ItemActions } from "./app.js";
+import { html, api, post, useApi, nav, ItemActions, ItemKindIcon } from "./app.js";
 import { toast, confirmDialog } from "./dialogs.js";
 import { markdownToHtml } from "./markdown.js";
 
@@ -148,7 +148,7 @@ const DiscussionView = ({ id }) => {
     <div>
       <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
         <a href="#/discussions" class="btn btn-sm btn-outline-secondary">‹ discussions</a>
-        <span class="id">${it.meta.id}</span>
+        <${ItemKindIcon} i=${it} /><span class="id">${it.meta.id}</span>
         <${StateChip} st=${it.idea_state} />
         ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
         <h2 class="h5 mb-0">${it.meta.title}</h2>
@@ -299,7 +299,7 @@ const DiscussionsList = ({ onSaved }) => {
       ${rows.map((i) => html`
         <div key=${i.id} class="d-flex align-items-center gap-2 py-1 border-bottom flex-wrap disc-row"
           style=${{ cursor: "pointer" }} onClick=${() => nav(`discussions/${i.id}`)}>
-          <span class="id text-nowrap">${i.id}</span>
+          <${ItemKindIcon} i=${i} /><span class="id text-nowrap">${i.id}</span>
           <${StateChip} st=${i.idea_state} />
           <span class="fw-semibold">${i.title}</span>
           ${(parts[i.id] ?? []).map((p) => html`<span key=${p} class="badge text-bg-light">${p}</span>`)}
