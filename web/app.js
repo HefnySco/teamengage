@@ -811,16 +811,17 @@ const Inbox = ({ onOpen }) => {
         ),
       ),
     },
-    // TE-0164 — a pick like "create follow-up task" only writes the D-record;
-    // the row stays until the follow-through exists and the human marks it
+    // TE-0164 — orphan decisions: a pick like "create follow-up task" only
+    // writes the D-record; the row stays until follow-through is recorded or
+    // the human marks it processed
     {
       key: "decisions",
-      label: "Decisions",
+      label: "Orphan decisions",
       rows: view.decisions.map((x) =>
         itemRow(
           x.item,
           html`<${InboxStatus} s=${byId[x.item]?.status ?? ""} />`,
-          html` <span class="text-secondary">· you picked "${x.title.length > 80 ? `${x.title.slice(0, 80)}…` : x.title}" → ${x.id}${x.created ? ` ${ago(x.created)} ago` : ""}</span>`,
+          html` <span class="text-secondary">· you picked "${x.title.length > 80 ? `${x.title.slice(0, 80)}…` : x.title}" → ${x.id}${x.created ? ` ${ago(x.created)} ago` : ""} — no follow-through recorded</span>`,
           html`<button class="btn btn-sm py-0 btn-outline-secondary" title="the follow-through is done — the decision leaves this list" onClick=${async () => {
             await post(`/api/decisions/${x.id}/process`).catch((e) => toast(e.message));
             reload();

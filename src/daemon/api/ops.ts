@@ -2568,6 +2568,73 @@ export class WorkspaceOps {
   }
 
   /**
+   * Orphan decisions (TE-0164): picks that record a choice nothing executed.
+   * A decision is settled when any of these hold:
+   *  - the human marked it `processed`;
+   *  - a later item names the decision's item in relates/found_by/
+   *    depends_on/parent — the follow-up exists;
+   *  - the pick asked for inside work and the item's ## Log shows a later
+   *    action (claim, submit, bounce, accept, …).
+   * A pick asking for outside work ("create follow-up task", "separate bug
+   * task", "propose …") settles only through the first two — an accept or a
+   * resubmit on the item itself does not execute it.
+   */
+  orphanDecisions() {
+    const EXTERNAL_PICK = /\b(follow-?up|separate task|new task|bug task|propose|spawn)\b/i;
+    const ACTION =
+      /\b(claimed|took over|submitted|bounced|handed off|released|answered|resumed|accepted|rejected|dropped|archived|completed|approved)\b/i;
+    // item id → earliest creation date of an item that references it
+    const referencing = new Map<string, string>();
+    for (const it of this.index.items.values()) {
+      const m = it.meta;
+      const refs = [
+        ...m.depends_on,
+        ...m.relates,
+        ...(m.found_by ?? []),
+        ...(m.parent ? [m.parent] : []),
+      ];
+      for (const ref of refs) {
+        try {
+          const pid = parseItemRef(ref).id;
+          const cur = referencing.get(pid);
+          if (cur === undefined || (m.created ?? "") < cur) {
+            referencing.set(pid, m.created ?? "");
+          }
+        } catch {
+          /* unparseable ref */
+        }
+      }
+    }
+    const out: Array<{ id: string; item: string; title: string; created?: string }> = [];
+    for (const d of this.index.decisions.values()) {
+      if (d.meta.processed) continue;
+      let itemId = d.meta.item;
+      try {
+        itemId = parseItemRef(d.meta.item).id;
+      } catch {
+        /* keep the raw ref */
+      }
+      const refAt = referencing.get(itemId);
+      if (refAt !== undefined && (!d.meta.created || refAt >= d.meta.created)) continue;
+      const it = this.index.get(itemId);
+      if (it && !EXTERNAL_PICK.test(d.meta.title)) {
+        const log = it.sections.find((s) => s.heading.toLowerCase() === "log");
+        const lines = log?.body.split("\n") ?? [];
+        const pickIdx = lines.findIndex((l) => l.includes(`→ ${d.meta.id}`));
+        // no pick line and no mention at all = orphaned record; a mention
+        // without a pick line (e.g. a promote approval) is a settled record
+        if (pickIdx < 0) {
+          if (lines.some((l) => l.includes(d.meta.id))) continue;
+        } else if (lines.slice(pickIdx + 1).some((l) => ACTION.test(l))) {
+          continue;
+        }
+      }
+      out.push({ id: d.meta.id, item: itemId, title: d.meta.title, created: d.meta.created });
+    }
+    return out.sort((a, b) => compareIds(b.id, a.id));
+  }
+
+  /**
    * Mark a decision processed (TE-0164): its follow-through is done and it
    * leaves the inbox's decisions list. Human-only at the route; the flag
    * lives on the D-record so it survives item close.

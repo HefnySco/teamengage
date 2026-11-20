@@ -419,19 +419,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             .map((p) => ({ id: i.meta.id, ...p })),
         ),
         findings: await ops.findings(),
-        // TE-0164: every D-record the human has not marked processed — a pick
-        // like "create follow-up task" only records the decision; an agent or
-        // the human must still act, and accepting the item does not settle it.
-        // Newest first so fresh picks land on top.
-        decisions: [...ops.index.decisions.values()]
-          .filter((d) => !d.meta.processed)
-          .sort((a, b) => compareIds(b.meta.id, a.meta.id))
-          .map((d) => ({
-            id: d.meta.id,
-            item: d.meta.item,
-            title: d.meta.title,
-            created: d.meta.created,
-          })),
+        // TE-0164: orphan decisions — picks nothing executed (see
+        // WorkspaceOps.orphanDecisions for the settle rules)
+        decisions: ops.orphanDecisions(),
         // GL-0367: a workspace that failed to load is named here so
         // `te status` can show the real error instead of a silent gap
         ...(ctx.loadErrors?.size
