@@ -100,7 +100,9 @@ export async function startDaemon(opts: StartOpts = {}): Promise<DaemonHandle> {
   // server.close() open forever — SIGTERM must actually stop the daemon
   const app = Fastify({
     logger: false,
-    bodyLimit: 4 * 1024 * 1024,
+    // 64 MB: a chat transcript (JSONL, before conversion) can pass 4 MB; the
+    // discussions.transcript_max_mb check in ops.capture gives the real refusal
+    bodyLimit: 64 * 1024 * 1024,
     forceCloseConnections: true,
   });
 

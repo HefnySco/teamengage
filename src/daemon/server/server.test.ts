@@ -40,6 +40,21 @@ describe("daemon server", () => {
     await h.close();
   });
 
+  it("accepts a 5 MB JSON body (no 413 for a large transcript)", async () => {
+    const h = await startDaemon({
+      home,
+      register: (app) => app.post("/big", async (req) => ({ n: String((req.body as { t: string }).t.length) })),
+    });
+    const res = await fetch(`http://127.0.0.1:${h.port}/big`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${h.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ t: "x".repeat(5 * 1024 * 1024) }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).n).toBe(String(5 * 1024 * 1024));
+    await h.close();
+  });
+
   it("second start detects the running instance", async () => {
     const h = await startDaemon({ home });
     const running = await runningDaemon(home);

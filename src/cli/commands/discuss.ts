@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { daemonApi } from "../client.js";
 
@@ -54,7 +54,8 @@ export async function discussCmd(args: string[], home?: string): Promise<number>
       title,
       project: opt("project"),
       summary: opt("summary"),
-      transcript_text: readFileSync(abs, "utf8"),
+      // the daemon is local: send the path, not the bytes (no body limit)
+      transcript_path: abs,
       redact: rest.includes("--redact"),
       sensitive: rest.includes("--sensitive"),
     },
