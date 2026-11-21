@@ -104,7 +104,7 @@ describe("notifyKind", () => {
     expect(notifyKind(ev("review", "in_review"), { ai_review: {} } as ItemMeta, 5)).toBeUndefined();
   });
   it("a hold at max attempts → max_attempts; a plain hold and routine events → none", () => {
-    expect(notifyKind(ev("bounce", "hold"), { attempts: 5 } as ItemMeta, 5)).toBe("max_attempts");
+    expect(notifyKind(ev("review", "hold"), { attempts: 5 } as ItemMeta, 5)).toBe("max_attempts");
     expect(notifyKind(ev("hold", "hold"), { attempts: 1 } as ItemMeta, 5)).toBeUndefined();
     expect(notifyKind(ev("log"), undefined, 5)).toBeUndefined();
     expect(notifyKind(ev("claim"), undefined, 5)).toBeUndefined();

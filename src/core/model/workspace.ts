@@ -237,7 +237,7 @@ export const WorkspaceConfig = z
     /**
      * Agent models (metrics fallback): model id → glob patterns on the
      * agent name, matched like agent_kinds, first match wins. Used only
-     * when a submit/review/bounce event carries no declared model —
+     * when a submit/review event carries no declared model —
      * events from before GL-0360 and sessions that never declare one.
      * A name with no match keeps the "unknown" row.
      */

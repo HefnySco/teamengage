@@ -843,8 +843,10 @@ describe("autonomy: solo", () => {
       await ops.submit(base, agent, { notes: "done", what: "task done", how: "ran the steps" });
       const reviewer = ctx.sessions.hello("solo-reviewer");
       expect(ops.autoAcceptDue()).not.toContain(base); // unreviewed
-      await ops.review(base, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
+      await ops.review(base, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
+      // the issues verdict sent it back to the holder — a resubmit returns it to review
+      await ops.submit(base, agent, { what: "task done", how: "ran the steps" });
       await ops.review(base, reviewer, "ok");
       expect(ops.autoAcceptDue()).not.toContain(base); // too fresh
       // key tasks wait for the human
@@ -859,7 +861,7 @@ describe("autonomy: solo", () => {
       expect((await api(`/api/items/${base}/stop-auto-accept`, { method: "POST" })).status).toBe(200);
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       // a resubmit re-arms it
-      await ops.bounce(base, reviewer, "one more pass", undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
+      await ops.review(base, reviewer, "issues", "one more pass", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
       await ops.submit(base, agent, { what: "task done", how: "ran the steps" });
       await ops.review(base, reviewer, "ok");
       expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(base);

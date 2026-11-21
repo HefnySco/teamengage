@@ -40,4 +40,4 @@ Tell lens this rule in every review prompt. In the final report call such tasks
 
 For a minor real-logic defect found in review (not scope, not docs): accept the
 task, and have forge `propose` a light follow-up task (depends on the original,
-own Touches + checkable acceptance) to fix it. Never bounce the original for it.
+own Touches + checkable acceptance) to fix it. Never send the original back with issues for it.

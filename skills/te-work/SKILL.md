@@ -6,7 +6,7 @@ description: Implement, continue or pick up a task from a TeamEngage-tracked tas
 # te-work — execute a task through TeamEngage
 
 **Writing rule — ASD-STE100, always.** Every text you write in TeamEngage —
-`note`, `log`, `ask`, `simple`, `walkthrough`, `review`/`bounce` summaries
+`note`, `log`, `ask`, `simple`, `walkthrough`, `review` summaries
 and notes, `handoff`, `flag_drop` — is written in ASD-STE100 Simplified
 Technical English: short sentences, one idea each, active voice, plain
 approved words, one word per meaning. Technical names (files, functions,
@@ -241,7 +241,7 @@ Send `cost` when your runner reports it — `"cost": {"model": "swe-2-high",
 send what you have). It lands as one `cost:` line in `## Evidence` and feeds
 `te metrics`.
 
-When the last review or bounce left a findings checklist (the item page
+When the last review left a findings checklist (the item page
 shows it, `brief` lists them), answer every entry in `finding_states` —
 `{"finding": <1-based number>, "state": "done"|"skipped", "reason": "…"}`.
 A `must` finding left unanswered refuses the submit; a `skipped` should
@@ -277,19 +277,19 @@ curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"ok","summary":"Accepta
 - `verdict` is `ok` or `issues`; `summary` is required — in STE, for
   the human: what you verified and why the verdict. `needs_human: true`
   marks "ok, but the human should decide" — never auto-accepted.
-- A broken submission goes back to its holder (claim kept — they fix and
-  resubmit); the `reason` is what they see, `summary` is required too:
+- A broken submission goes back to its holder with `verdict:"issues"`
+  (claim kept — they fix and resubmit); the `note` is what they see,
+  `summary` and `ask_human` are required too:
 
   ```bash
-  curl -s -X POST $B/bounce/GL-0019 -H "$H" -d '{"reason":"acceptance 2 fails: restart counter never resets","summary":"The restart counter never resets — it goes back for fixes."}'
+  curl -s -X POST $B/review/GL-0019 -H "$H" -d '{"verdict":"issues","note":"acceptance 2 fails: restart counter never resets","summary":"The restart counter never resets — it goes back for fixes.","ask_human":{"problem":"acceptance 2 fails — the restart counter never resets","recommendation":"let the holder fix it and submit again"}}'
   ```
 
   Name concrete fix points in `findings` — `[{"text":"…","where":"f.ts:1","severity":"must"}]` —
   so the resubmit answers them one by one instead of reading long prose.
 
-- Never review or bounce **your own** submission. After 2 bounces in a row
-  the task stays in review for the human — record a `review` verdict
-  instead of bouncing again.
+- Never review **your own** submission. After 2 `issues` verdicts in a row
+  the task stays in review for the human.
 
 ## 8b. Stuck? Stop and hand off — don't spiral
 
@@ -312,7 +312,7 @@ curl -s -X POST $B/handoff/GL-0019 -H "$H" -d '{
 ```
 
 The claim is released (your branch is kept) and the task goes back to
-`ready`; your note lands in `## Handoff`. Every handoff and every bounce is
+`ready`; your note lands in `## Handoff`. Every handoff and every `issues` verdict is
 one failed **attempt**: after `escalate_after` (default 2) the task's tier
 goes up a step so a stronger model takes it, and at `max_attempts`
 (default 5) it goes on hold for the human. After a handoff **end this
@@ -358,10 +358,18 @@ you learned so the next agent starts from there:
 curl -s -X POST $B/release/GL-0019 -H "$H" -d '{"note":"blocked: needs firmware ≥4.5 for mission_mode; branch kept"}'
 ```
 
+Submitted already but spotted a mistake before the human looked? Pull it
+back — `withdraw` is holder-only, `in_review` → `in_progress`, claim and
+worktree kept:
+
+```bash
+curl -s -X POST $B/withdraw/GL-0019 -H "$H"
+```
+
 ## Never
 
 - mark a task done, approve, or accept — the human does;
-- review or bounce your own submission — second opinions only;
+- review your own submission — second opinions only;
 - `git push`, or move files (into `done/` or anywhere);
 - `git reset --hard`, `git reset HEAD^`, or any command that drops or
   rewrites commits — `git revert` / file-level `git restore` instead,

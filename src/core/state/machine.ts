@@ -99,12 +99,10 @@ export type Action =
    */
   | { type: "review"; verdict: AiReview["verdict"]; note?: string; summary?: string; needs_human?: boolean; report?: string; findings?: ReviewFinding[]; ask_human?: AiReview["ask_human"] }
   /**
-   * A second agent session bounces a broken submission back to its holder
-   * (in_review → in_progress, claim kept). Capped: after MAX_AI_BOUNCES in
-   * a row the item stays in review for the human (record a review instead).
-   * `findings` lists what must be fixed — the checklist for the resubmit.
+   * The holder pulls its own submission back to keep working
+   * (in_review → in_progress, claim kept) — before the human looks at it.
    */
-  | { type: "bounce"; reason: string; summary?: string; findings?: ReviewFinding[]; ask_human?: AiReview["ask_human"] }
+  | { type: "withdraw" }
   /**
    * The holder is stuck: it stops, writes down the problem, what it tried
    * and where it left off, and gives the item back for a fresh session
@@ -182,15 +180,16 @@ export interface TransitionCtx {
   depsDone?: boolean;
   /** Id of an ancestor plan on hold — a held plan pauses its subtree, claim refused. */
   planHold?: string;
-  /** AI bounces this item already took since the last human action (bounce cap). */
+  /** Issues verdicts this item already took since the last human action (review cap). */
   priorBounces?: number;
   /** workspace escalate_after / max_attempts (defaults 2 / 5) */
   escalation?: { after: number; max: number };
   /**
    * The claim's holder can't act from this daemon: it lives on another
-   * machine or its session is no longer live. An `issues` verdict or a
-   * bounce on such an item releases the claim to `ready` instead of sending
-   * it back to a session that will never answer (never set for human claims).
+   * machine or its session is no longer live. An `issues` verdict on a
+   * dead local holder releases the claim to `ready` instead of sending it
+   * back to a session that will never answer; a holder on another machine
+   * keeps its claim — a synced copy may be stale (never set for human claims).
    */
   holderAway?: boolean;
   /** workspace review_models (GL-0361) — which declared model may review which tier */
@@ -222,7 +221,7 @@ const TERMINAL: Status[] = ["done", "dropped"];
 export const MAX_AI_BOUNCES = 2;
 
 /**
- * One more failed attempt (AI bounce or handoff). Every `after` attempts the
+ * One more failed attempt (issues verdict or handoff). Every `after` attempts the
  * item's tier goes up a step; at `max` it is held for the human.
  */
 function recordFailure(
@@ -741,6 +740,39 @@ export function transition(
     case "review": {
       requireReviewer(actor, ctx, action.type, meta);
       if (from !== "in_review") fail(from, action.type);
+      const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
+      // TE-0175: issues is the one send-back path — a live holder on this
+      // machine keeps the claim and fixes; a dead or outgrown holder loses
+      // it to `ready` (branch kept); attempts exhausted → `hold`. A claim
+      // on another machine is a synced copy that may be stale, so the item
+      // stays in_review and the claim is never touched from here. Past
+      // MAX_AI_BOUNCES in a row the same applies: in_review for the human.
+      const issues = action.verdict === "issues";
+      const capped = issues && (ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES;
+      const otherMachine = issues && !!ctx.claim && ctx.claim.machine !== actor.machine;
+      if (issues && !capped && !otherMachine && ctx.claim) {
+        const f = recordFailure(meta, out, ctx);
+        const outgrown =
+          !!f.escalated && !!ctx.claim.tier && tierRank(ctx.claim.tier) < tierRank(f.escalated);
+        if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.note ?? "issues"}`);
+        else if (outgrown || ctx.holderAway === true) set("ready", verdict);
+        else set("in_progress", verdict);
+        if (f.held || outgrown || ctx.holderAway === true) {
+          out.effects.push({ type: "delete_claim" });
+          out.effects.push({ type: "cleanup_work", keepBranches: true });
+        }
+        out.log.push(`- ${stamp} ${who} sent the submission back with issues (attempt ${out.meta.attempts})`);
+        if (ctx.holderAway === true && !f.held && !outgrown)
+          out.log.push(`- ${stamp} claim released — holder ${ctx.claim.holder}@${ctx.claim.machine} can't act from here`);
+        if (f.escalated)
+          out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);
+        if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
+      } else {
+        out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
+        if (capped) out.log.push(`- ${stamp} ${ctx.priorBounces} issues verdicts in a row — the item stays in review for the human`);
+        if (otherMachine && ctx.claim)
+          out.log.push(`- ${stamp} holder ${ctx.claim.holder}@${ctx.claim.machine} is on another machine — claim left for it`);
+      }
       out.meta.ai_review = {
         verdict: action.verdict,
         reviewed_by: actor.session,
@@ -750,40 +782,26 @@ export function transition(
         ...(action.note ? { note: action.note } : {}),
         ...(action.summary ? { summary: action.summary } : {}),
         // GL-0349: an unverified submission is never auto-accepted — every
-        // review on it is needs_human, whatever the verdict
-        ...(action.needs_human || meta.unverified_reason ? { needs_human: true } : {}),
+        // review on it is needs_human, whatever the verdict; at the issues
+        // cap the item waits for the human the same way
+        ...(action.needs_human || capped || meta.unverified_reason ? { needs_human: true } : {}),
         ...(action.report ? { report: action.report } : {}),
         ...(action.ask_human ? { ask_human: action.ask_human } : {}),
       };
-      const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
-      // an issues verdict only records the review: it never releases the claim.
-      // The holder's view of another machine's claim is a synced copy and can be
-      // stale, so a reviewer here must not delete a claim that may still be live.
-      // Bounces still release it (see the bounce path) so the fix isn't stranded.
-      const releaseClaim = false;
-      out.events.push(ev(actor, stamp, meta.id, "review", from, releaseClaim ? "ready" : from, verdict));
       // GL-0365: the reviewer table keys verdicts by model
-      if (actor.model) {
+      if (actor.model && out.events.length) {
         const last = out.events[out.events.length - 1];
         last.data = { ...(last.data ?? {}), model: actor.model };
       }
-      if (releaseClaim) {
-        out.meta.status = "ready";
-        out.effects.push({ type: "delete_claim" });
-        out.effects.push({ type: "cleanup_work", keepBranches: true });
-        out.log.push(
-          `- ${stamp} claim released — holder ${ctx.claim!.holder}@${ctx.claim!.machine} can't act from here`,
-        );
-      }
-      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}${action.needs_human ? " (needs the human's call)" : ""}`);
+      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}${action.needs_human || capped ? " (needs the human's call)" : ""}`);
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
         heading: "Review",
         text: action.report
-          ? reviewWithReport(stamp, who, action.verdict, !!action.needs_human, action.summary, action.report, action.note)
+          ? reviewWithReport(stamp, who, action.verdict, !!(action.needs_human || capped), action.summary, action.report, action.note)
           : action.summary
-            ? `- ${stamp} ${who} ${action.verdict}${action.needs_human ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
-            : `- ${stamp} ${who} ${verdict}${action.needs_human ? " (needs the human's call)" : ""}\n`,
+            ? `- ${stamp} ${who} ${action.verdict}${action.needs_human || capped ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
+            : `- ${stamp} ${who} ${verdict}${action.needs_human || capped ? " (needs the human's call)" : ""}\n`,
       });
       // GL-0321: a new review replaces the findings checklist; a review
       // without findings clears the old list (it was already answered).
@@ -804,72 +822,13 @@ export function transition(
       return out;
     }
 
-    case "bounce": {
-      requireReviewer(actor, ctx, action.type, meta);
+    case "withdraw": {
+      // holder only: pulls the submission back to keep working before the
+      // human looks at it — the claim and the worktree stay
+      requireHolder(actor, ctx, action.type);
       if (from !== "in_review") fail(from, action.type);
-      if ((ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES) {
-        throw new ForbiddenError(
-          `bounce: ${ctx.priorBounces} AI bounces already — the human must review now (record a review verdict instead)`,
-        );
-      }
-      const f = recordFailure(meta, out, ctx);
-      // escalated past the holder, out of attempts, or a holder that can't
-      // act from here (other machine / dead session) → the claim goes;
-      // otherwise the holder keeps it and fixes (it has the context)
-      const outgrown = !!f.escalated && !!ctx.claim?.tier && tierRank(ctx.claim.tier) < tierRank(f.escalated);
-      const holderAway = !!ctx.claim && ctx.holderAway === true;
-      if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.reason}`);
-      else if (outgrown || holderAway) set("ready", action.reason);
-      else set("in_progress", action.reason);
-      if (f.held || outgrown || holderAway) {
-        out.effects.push({ type: "delete_claim" });
-        out.effects.push({ type: "cleanup_work", keepBranches: true });
-      }
-      if (holderAway && !f.held && !outgrown) {
-        out.log.push(
-          `- ${stamp} claim released — holder ${ctx.claim!.holder}@${ctx.claim!.machine} can't act from here`,
-        );
-      }
-      out.meta.ai_review = {
-        verdict: "issues",
-        ...(actor.tier ? { reviewer_tier: actor.tier } : {}),
-        ...(actor.model ? { reviewer_model: actor.model } : {}),
-        reviewed_by: actor.session,
-        reviewed_at: ctx.now,
-        note: action.reason,
-        ...(action.summary ? { summary: action.summary } : {}),
-        ...(action.ask_human ? { ask_human: action.ask_human } : {}),
-      };
-      out.log.push(`- ${stamp} ${who} ai-bounced submission: ${action.reason} (attempt ${out.meta.attempts})`);
-      if (f.escalated) out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);
-      if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
-      out.sectionWrites.push({
-        heading: "Review",
-        text: action.summary
-          ? `- ${stamp} ${who} bounced — ${action.summary} (${action.reason})\n`
-          : `- ${stamp} ${who} bounced: ${action.reason}\n`,
-      });
-      // GL-0321: a bounce's findings are the fix checklist for the resubmit.
-      if (action.findings?.length) {
-        out.meta.findings = action.findings;
-        out.sectionWrites.push({
-          heading: "Review",
-          text:
-            `  findings:\n` +
-            action.findings
-              .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}`)
-              .join("\n") +
-            "\n",
-        });
-      }
-      // GL-0365: the reviewer table keys verdicts by model — a bounce
-      // counts as an issues verdict
-      if (actor.model && out.events.length) {
-        const last = out.events[out.events.length - 1];
-        last.data = { ...(last.data ?? {}), model: actor.model };
-      }
-      // the claim is kept on purpose: the holder has the context and the
-      // worktree, so it fixes and resubmits (like the human's reject)
+      set("in_progress");
+      out.log.push(`- ${stamp} ${who} withdrew the submission to keep working`);
       return out;
     }
 

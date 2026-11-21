@@ -169,7 +169,7 @@ English (STE) — and every note another agent works from:
 - technical names stay as-is — functions, commands, file:line, field
   names; STE covers the prose around them.
 Applies to: task titles, summaries, acceptance items, notes, the simple
-version, questions, logs, walkthroughs, review and bounce text, handoffs.`;
+version, questions, logs, walkthroughs, review text, handoffs.`;
 
 /** Authoring rules for agent instruction files (`te agents-md`, GET /agent). */
 export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the task folder is the plan)

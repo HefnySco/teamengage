@@ -56,7 +56,7 @@ export const ROLE_RULES =
 
 /** Model tiers: what a session declares at hello, and what it may then do. */
 export const TIER_RULES =
-  "tiers: declare yours at hello (light|standard|heavy) · you can't claim an item above your tier · stuck (same error twice, no progress)? STOP and handoff with problem/tried/state/next — a fresh session continues from your note · every bounce or handoff is an attempt; after escalate_after attempts the item's tier goes up, at max_attempts it waits for the human";
+  "tiers: declare yours at hello (light|standard|heavy) · you can't claim an item above your tier · stuck (same error twice, no progress)? STOP and handoff with problem/tried/state/next — a fresh session continues from your note · every issues verdict or handoff is an attempt; after escalate_after attempts the item's tier goes up, at max_attempts it waits for the human";
 
 export function registerReadTools(server: McpServer, binding: AgentBinding, ctx: DaemonCtx): void {
   server.registerTool(

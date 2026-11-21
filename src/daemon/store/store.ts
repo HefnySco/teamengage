@@ -186,7 +186,7 @@ export class PlansStore {
       guard?: () => void | Promise<void>;
       /** bump claim.last_seen in the same write+commit (used by log). */
       touchClaim?: boolean;
-      /** AI bounces since the last human action — evaluated inside the queue (bounce cap). */
+      /** issues verdicts since the last human action — evaluated inside the queue (send-back cap). */
       priorBounces?: () => number | Promise<number>;
       /** Whether the claim's holder can't act from this daemon — evaluated inside the queue. */
       holderAway?: () => boolean;

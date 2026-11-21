@@ -51,12 +51,12 @@ Run `te agents-md` and paste the output into whichever file your agent reads:
 The snippet tells agents: `hello` once per session → `next` → `brief` →
 `claim` → `log`/`ask` → `submit`. Agents may not set `ready`/`done` — the
 human decides. A second session may peer-review a submission
-(`query status=in_review` → `review`, or `bounce` to send broken work back
-to its holder, max 2 in a row); accept/reject stay human-only.
+(`query status=in_review` → `review` — `ok` is advisory, `issues` sends
+broken work back to its holder, max 2 in a row); accept/reject stay human-only.
 
 Agent output has two layers. `submit` takes `what` and `how` (the human's
 short lines, 40 and 60 words, no code names) plus an optional `walkthrough`
-(the agent layer, no limit). `review`/`bounce` take `summary` and —
+(the agent layer, no limit). `review` takes `summary` and —
 when the human must decide — `ask_human`: `problem`, `recommendation` and
 `options` for the decision card. The detail stays in `note`, `report` and
 `findings`.
@@ -81,7 +81,7 @@ curl-only, no MCP needed:
 - `skills/te-work/` — implement / continue / pick up a task: hello → brief →
   claim → log / ask → submit with evidence, release if blocked.
 - `skills/te-review/` — peer-review another session's submission: verify the
-  work, record an advisory verdict, or bounce it back to the holder.
+  work, record a verdict — `issues` sends it back to the holder.
 - `skills/te-plan/` — break a goal into tasks with one `propose` call.
 - `skills/te-tag/` — tag untagged tasks with domains by reading them
   (`te domains untagged`, plan for the human's OK, `te tag`).

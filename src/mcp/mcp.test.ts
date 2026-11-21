@@ -121,6 +121,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "submit",
         "supersede",
         "vet",
+        "withdraw",
       ].sort(),
     );
   });

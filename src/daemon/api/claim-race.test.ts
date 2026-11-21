@@ -80,17 +80,24 @@ describe("claim serialization (MC-0003)", () => {
   });
 });
 
-describe("takeover of an AI-flagged submission", () => {
-  it("claim on in_review+issues moves the claim to another local session", async () => {
+describe("issues verdicts and the claim (TE-0175)", () => {
+  const AH = { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] };
+
+  it("issues on a live local holder sends it back in_progress — nobody else takes it", async () => {
     const holder = (await ops.hello("holder")).session;
     const reviewer = (await ops.hello("rev")).session;
     const fixer = (await ops.hello("fix")).session;
 
     await ops.claim("WS-0003", holder);
     await ops.submit("WS-0003", holder, { what: "task done", how: "ran the steps" });
-    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
+    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", undefined, undefined, undefined, undefined, AH);
 
-    // a session from another machine may not take over — worktrees are local
+    // a live local holder keeps the claim and fixes — in_progress, not stranded
+    const idx = wsr.store.idx;
+    expect(idx.items.get("WS-0003")!.meta.status).toBe("in_progress");
+    expect(idx.claims.get("WS-0003")!.holder).toBe(holder.id);
+
+    // nobody else takes a live claim — not from another machine, not locally
     const remote = {
       id: "other@laptop#0001",
       agent: "other",
@@ -99,17 +106,21 @@ describe("takeover of an AI-flagged submission", () => {
       last_seen: new Date().toISOString(),
     };
     await expect(ops.claim("WS-0003", remote)).rejects.toThrow(/claimed|cannot claim/i);
+    await expect(ops.claim("WS-0003", fixer)).rejects.toThrow(/claimed|cannot claim/i);
 
-    // a fresh session on the same machine takes the claim and the worktree
+    // the holder resubmits, then its session ends while the item is in
+    // review — the next issues verdict frees the item instead of stranding it
+    await ops.submit("WS-0003", holder, { what: "task done", how: "ran the steps" });
+    expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
+    sessions.disconnect(holder.id);
+    await ops.review("WS-0003", reviewer, "issues", "still unmet", undefined, undefined, undefined, undefined, AH);
+    expect(idx.items.get("WS-0003")!.meta.status).toBe("ready");
+    expect(idx.claims.has("WS-0003")).toBe(false);
+
+    // a fresh session on this machine claims the freed item, fixes, resubmits
     const { claim } = await ops.claim("WS-0003", fixer);
     expect(claim.holder).toBe(fixer.id);
-    const idx = wsr.store.idx;
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_progress");
-    expect(idx.claims.get("WS-0003")!.holder).toBe(fixer.id);
-    // the AI verdict stays visible until the fix is resubmitted
-    expect(idx.items.get("WS-0003")!.meta.ai_review?.verdict).toBe("issues");
-
-    // fix → resubmit → in_review again, marker cleared
     await ops.submit("WS-0003", fixer, { what: "task done", how: "ran the steps" });
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
     expect(idx.items.get("WS-0003")!.meta.ai_review).toBeUndefined();

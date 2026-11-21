@@ -7,7 +7,7 @@ plain HTTP.
 | Skill | Use |
 |---|---|
 | `te-work/` | Implement / continue / pick up a task: hello → claim → log/ask → submit. |
-| `te-review/` | Peer-review another session's submission: verify the work, record a verdict, or bounce it back. |
+| `te-review/` | Peer-review another session's submission: verify the work, record a verdict — `issues` sends it back. |
 | `te-plan/` | Break a goal into new tasks with a single `propose` call. |
 | `te-tag/` | Tag untagged tasks with domains: propose a plan, get the human's OK, apply. |
 | `te-analysis/` | Read-only analysis of the task bank: stale drafts, blockers, dependency order. |

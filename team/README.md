@@ -48,7 +48,7 @@ Leave it running with `te run --watch`; in another terminal,
 Agents still do every state change themselves over the daemon's HTTP
 interface (`curl http://127.0.0.1:4747/agent`), with the same claims, target
 locks and evidence as a session you start by hand. `te run` opens each
-agent's session and closes it when the process exits. Work that was bounced
+agent's session and closes it when the process exits. Work sent back with issues
 or abandoned goes back to `ready` and doesn't sit on a dead claim.
 
 Agents need the `te-work` and `te-review` skills (`skills/`, linked during

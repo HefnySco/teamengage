@@ -268,15 +268,16 @@ hold     = human only; draft|ready ──hold──▶ hold ──unhold──�
                        ready|hold|done ──to_draft──▶ draft
 review  = agent only, in_review, never the holder, never the submitter's
           model (a session without a declared model falls back to its
-          agent name): records an advisory verdict on the submission
-          (ai_review; status untouched)
-bounce  = agent only, in_review, never the holder, never the submitter's
-          model: ──▶ in_progress, claim kept — the holder fixes and
-          resubmits; capped at 2 in a row, then the item stays in review
-          and only a verdict may be recorded
+          agent name): records a verdict on the submission (ai_review).
+          `ok` is advisory — status untouched. `issues` is the one
+          send-back path: a holder live on this machine keeps the claim
+          and fixes ──▶ in_progress; a dead or outgrown holder's claim
+          ──▶ ready, branch kept; a holder on another machine keeps its
+          claim and the item stays in_review for it. Capped at 2 issues
+          verdicts in a row — then the item stays in review for the human.
 
 workspace.yaml review_models = {deep, quick, deep_from_tier (default
-          heavy)}: when set, review/bounce also require the reviewer to
+          heavy)}: when set, review also requires the reviewer to
           declare a model, items at or above deep_from_tier need the deep
           model, lower items the quick or deep model; next filters the
           reviewer pool the same way; te validate warns on unset models
@@ -355,22 +356,23 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   claimed — hides nothing, and never feeds `next` ordering (that stays
   `priority`-driven).
 - `ai_review` is the latest **AI peer review** of the current submission —
-  written by `review`/`bounce` from an agent session that is _not_ the
+  written by `review` from an agent session that is _not_ the
   holder (a self-review would only manufacture a trust marker): verdict
-  `ok|issues`, reviewer session, date, note. Pure triage hint for the
-  human's review queue (badge on board cards, marker in the inbox, banner
-  on the item page); never a gate — `accept`/`reject` stay human-only and
-  the turn stays the human's. Anything the human must decide on carries
+  `ok|issues`, reviewer session, date, note. An `ok` is a triage hint for
+  the human's review queue (badge on board cards, marker in the inbox,
+  banner on the item page); `issues` sends the submission back (§5).
+  `accept`/`reject` stay human-only and the turn stays the human's.
+  Anything the human must decide on carries
   `ask_human` — the short decision card (GL-0344): `problem` ≤40 words,
   `recommendation` ≤30 words, optional 2–3 `options` of ≤4 words each. A
-  `needs_human` review, an `issues` verdict and every `bounce` require it;
+  `needs_human` review and an `issues` verdict require it;
   a plain `ok` needs only `summary` ≤25 words. `ask` takes an optional
   `context` for the detail — the question text stays ≤40 words; `note`,
   `report` and `findings` stay the agent layer with no limit.
   `submit` clears it (a fresh submission starts
-  unreviewed); `bounce` sets it to `issues` with the bounce reason.
+  unreviewed).
 - `findings` is the latest review's **structured checklist** (GL-0321):
-  `review`/`bounce` may carry `findings: [{text, where?, severity:
+  `review` may carry `findings: [{text, where?, severity:
   must|should}]`, stored on the item and shown on the item page above the
   folded report. The holder answers on the next `submit` with
   `finding_states: [{finding: <1-based>, state: done|skipped, reason?}]` —
@@ -477,7 +479,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
     ⏱ countdown; the human stops it with **stop auto-accept** (that
     submission only — `auto_accept_off`, cleared by the next submit), by
     rejecting, or by making it a key task (🔑 — key tasks are never
-    auto-accepted); a resubmit, bounce or `issues` verdict resets the clock. A
+    auto-accepted); a resubmit or `issues` verdict resets the clock. A
     reviewer's own `needs_human` flag ("ok, but the human should decide")
     exempts the submission the same way — no countdown is armed. Archived items
     and human claims are skipped. `auto_accept_rules` refines the delay per
@@ -656,8 +658,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `log(id, note)`                 | Progress note (also updates `last_seen`).                                                                                                                       |
 | `ask(id, question, options?)`   | Raise question → item `waiting`, turn → human.                                                                                                                  |
 | `submit(id, evidence)`          | Commits/tests/notes + required `what` (≤40 words) and `how` (≤60 words) — the two short lines land under `## For the human` (GL-0343); walkthrough stays the optional agent layer → `in_review`. Optional `cost` `{model, tokens_in, tokens_out, usd}` → one `cost:` line in Evidence, summed by metrics. Optional `provides[]` → `provides:` lines in Evidence; a dependent's brief lists them under the dep outcome (GL-0325). `finding_states[]` answers the last review's must/should checklist (GL-0321). |
-| `review(id, verdict, note?)`    | Second session (never the holder) records an AI verdict on a submission — advisory marker, status untouched.                                                    |
-| `bounce(id, reason)`            | Reviewer sends broken work back to its holder (`in_progress`, claim kept); max 2 in a row, then it stays for the human.                                         |
+| `review(id, verdict, note?, …)` | Second session (never the holder) records a verdict — `ok` is advisory; `issues` sends the work back (§5); max 2 issues verdicts in a row, then it stays for the human. |
 | `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
 | `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |
 | `flag_drop(id, reason)`         | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status.                                                                          |

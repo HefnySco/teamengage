@@ -1366,12 +1366,15 @@ export class WorkspaceOps {
     if (mine) {
       // takeover: an AI-flagged submission (in_review + issues) stays
       // claimed to its machine — another session here may pick the fix up.
-      // An in_progress item whose holder can't act from here (dead
-      // session) is takeable the same way — it would strand otherwise.
-      // The state machine makes the final call (holderAway via ctx below).
+      // A needs_human card (the send-back cap) is the human's, never a
+      // takeover. An in_progress item whose holder can't act from here
+      // (dead session) is takeable the same way — it would strand
+      // otherwise. The state machine makes the final call (holderAway via
+      // ctx below).
       const takeover =
         (it.meta.status === "in_review" &&
           it.meta.ai_review?.verdict === "issues" &&
+          !it.meta.ai_review.needs_human &&
           mine.machine === session.machine) ||
         (it.meta.status === "in_progress" &&
           this.holderAway(it) &&
@@ -1667,9 +1670,12 @@ export class WorkspaceOps {
 
   /**
    * AI peer review of a submission: a second agent session (never the
-   * holder) records verdict ok|issues + note. Pure annotation — the item
-   * stays `in_review`, the human still accepts. Find submissions with
-   * `query status=in_review`.
+   * holder) records verdict ok|issues + note. An `ok` is advisory — the
+   * item stays `in_review` for the human. `issues` is the one send-back
+   * path: a live local holder keeps the claim and fixes, a dead or
+   * outgrown holder's claim goes to `ready` (branch kept), a holder on
+   * another machine is left untouched, and at the issues cap the item
+   * stays for the human. Find submissions with `query status=in_review`.
    */
   async review(
     id: string,
@@ -1693,18 +1699,24 @@ export class WorkspaceOps {
       it.meta.version,
       this.actorFor(session),
       { type: "review", verdict, note, summary, needs_human: needsHuman, report, findings, ask_human: askHuman },
-      { holderAway: () => this.holderAway(this.item(id)) },
+      {
+        ...(verdict === "issues"
+          ? { priorBounces: () => this.aiBouncesSinceHumanTouch(id) }
+          : {}),
+        holderAway: () => this.holderAway(this.item(id)),
+      },
     );
-    // an `issues` verdict on a holder that can't act released the claim
-    if (claim && r.meta.status !== "in_review") {
+    // an issues verdict that freed the claim (dead or outgrown holder,
+    // attempts exhausted) cleans the work up but keeps the branch
+    if (claim && r.meta.status !== "in_review" && r.meta.status !== "in_progress") {
       await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
     }
     return r;
   }
 
   /**
-   * AI bounce: a reviewer session sends a broken submission back to its
-   * holder (in_progress, claim kept — like the human's reject, but capped).
+   * Compat alias, one release only: a bounce is a `review` with an
+   * `issues` verdict now — same claim rules, same cap.
    */
   async bounce(
     id: string,
@@ -1714,26 +1726,16 @@ export class WorkspaceOps {
     findings?: ReviewFinding[],
     askHuman?: AskHuman,
   ) {
-    checkAskHuman(askHuman, true);
+    return this.review(id, session, "issues", reason, summary, undefined, undefined, findings, askHuman);
+  }
+
+  /**
+   * The holder pulls its own submission back to keep working:
+   * in_review → in_progress, claim and worktree kept.
+   */
+  async withdraw(id: string, actor: Session | "human") {
     const it = this.item(id);
-    const claim = it.claim;
-    return this.store
-      .perform(
-        id,
-        it.meta.version,
-        this.actorFor(session),
-        { type: "bounce", reason, summary, findings, ask_human: askHuman },
-        {
-          priorBounces: () => this.aiBouncesSinceHumanTouch(id),
-          holderAway: () => this.holderAway(this.item(id)),
-        },
-      )
-      .then(async (r) => {
-        if (claim && r.meta.status !== "in_progress") {
-          await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
-        }
-        return r;
-      });
+    return this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "withdraw" });
   }
 
   /**
@@ -1798,7 +1800,8 @@ export class WorkspaceOps {
     let bounces = 0;
     for (const e of [...r.events].reverse()) {
       if (e.item !== id) continue;
-      if (e.action === "bounce") {
+      // legacy bounce events and unified issues-reviews both count
+      if (e.action === "bounce" || (e.action === "review" && (e.note ?? "").startsWith("issues"))) {
         bounces++;
         continue;
       }
@@ -2170,8 +2173,8 @@ export class WorkspaceOps {
    * autonomy: solo — submissions whose latest peer review is `ok` and older
    * than auto_accept_after are accepted by the daemon (same local merge, never
    * a push). Key tasks, archived items, human claims and reviews the reviewer
-   * flagged needs_human ("ok, but…") wait for the human; a resubmit, bounce
-   * or `issues` verdict changes ai_review and so resets it.
+   * flagged needs_human ("ok, but…") wait for the human; a resubmit or a
+   * new review changes ai_review and so resets it.
    */
   autoAcceptDue(now = Date.now()): string[] {
     return [...this.index.items.values()]
@@ -2637,7 +2640,7 @@ export class WorkspaceOps {
    *  - a later item names the decision's item in relates/found_by/
    *    depends_on/parent — the follow-up exists;
    *  - the pick asked for inside work and the item's ## Log shows a later
-   *    action (claim, submit, bounce, accept, …).
+   *    action (claim, submit, review, accept, …).
    * A pick asking for outside work ("create follow-up task", "separate bug
    * task", "propose …") settles only through the first two — an accept or a
    * resubmit on the item itself does not execute it.

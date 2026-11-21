@@ -22,11 +22,11 @@ export type Status = z.infer<typeof Status>;
 export type Turn = "human" | "agent";
 
 /**
- * Latest AI peer review of a submission (review/bounce by an agent session
+ * Latest AI peer review of a submission (an agent session, never the holder)
  * that is not the holder). Advisory only: the human still accepts.
  */
 /**
- * The short card a review or bounce shows the human (GL-0344):
+ * The short card a review shows the human (GL-0344):
  * problem ≤40 words, recommendation ≤30 words, two or three options of
  * ≤4 words each. The agent layer (note, report, findings) has no limit.
  */
@@ -222,7 +222,7 @@ export const ItemMeta = z
     ai_review: AiReview.optional(),
     /**
      * The latest review's structured findings checklist (GL-0321).
-     * `review`/`bounce` replace it (a review without findings clears it);
+     * a `review` replaces it (a review without findings clears it);
      * `submit` fills each entry's `state`/`reason` from finding_states.
      */
     findings: z.array(ReviewFinding).optional(),

@@ -151,6 +151,10 @@ export function deriveMetrics(events: Event[], agentModels?: Record<string, stri
       case "bounce":
         m.bounces++;
         break;
+      case "review":
+        // TE-0175: an issues verdict is the send-back now — it counts as a bounce
+        if ((e.note ?? "").startsWith("issues")) m.bounces++;
+        break;
       case "handoff":
         m.handoffs++;
         break;

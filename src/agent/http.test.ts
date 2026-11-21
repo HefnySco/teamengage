@@ -316,10 +316,10 @@ describe("plain-HTTP agent API", () => {
     expect(h.text).not.toContain("WS-0001");
   });
 
-  it("AI peer review: a second session reviews a submission, bounces broken work, capped at 2 in a row", async () => {
+  it("AI peer review: a second session reviews a submission, issues sends broken work back, capped at 2 in a row", async () => {
     // the guide knows the tools
     const guide = await call("GET", "/agent");
-    for (const tool of ["review", "bounce", "supersede"]) {
+    for (const tool of ["review", "bounce", "withdraw", "supersede"]) {
       expect(guide.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
     }
     const holder = await hello("worker");
@@ -369,52 +369,56 @@ describe("plain-HTTP agent API", () => {
     expect((await call("GET", "/agent/brief/WS-0005", { token: reviewer })).text).toContain(
       "in_review",
     );
-    // broken work bounces back to the holder (claim kept, holder resubmits)
+    // broken work goes back to the holder on an issues verdict (claim kept, holder resubmits)
     for (let n = 1; n <= 2; n++) {
-      const bounced = await call("POST", "/agent/bounce/WS-0005", {
+      const back = await call("POST", "/agent/review/WS-0005", {
         token: reviewer,
-        body: { reason: `tests red (${n})`, summary: `The tests are failing (${n}).`, ask_human: {
+        body: { verdict: "issues", note: `tests red (${n})`, summary: `The tests are failing (${n}).`, ask_human: {
                   problem: "tests are red after the change",
                   recommendation: "revert or fix the failing path, then resubmit",
-                  options: ["bounce it", "I will check"],
+                  options: ["send it back", "I will check"],
                 } },
       });
-      expect(bounced.status).toBe(200);
+      expect(back.status).toBe(200);
+      expect(back.text).toContain("sent back to the holder");
       const resubmit = await call("POST", "/agent/submit/WS-0005", {
         token: holder,
         body: { notes: "fixed", walkthrough: "Fixed the red tests.", what: "task done", how: "ran the steps" },
       });
       expect(resubmit.text).toMatch(/^in_review/);
     }
-    // third bounce in a row: refused — the human must review now
+    // capped at 2: a third issues verdict stays in_review for the human —
+    // and the /agent/bounce compat alias maps to the same review call
     const capped = await call("POST", "/agent/bounce/WS-0005", {
       token: reviewer,
       body: { reason: "still red", summary: "The tests still fail.", ask_human: {
                 problem: "tests are red after the change",
                 recommendation: "revert or fix the failing path, then resubmit",
-                options: ["bounce it", "I will check"],
+                options: ["send it back", "I will check"],
               } },
     });
-    expect(capped.status).toBe(403);
-    expect(capped.text).toContain("AI bounces");
-    // a verdict is still welcome once capped
+    expect(capped.status).toBe(200);
+    expect(capped.text).toContain("WS-0005");
+    const brief = await call("GET", "/agent/brief/WS-0005", { token: reviewer });
+    expect(brief.text).toContain("in_review");
+    // the holder pulls its own submission back — another session is refused
+    const steal = await call("POST", "/agent/withdraw/WS-0005", { token: reviewer });
+    expect(steal.status).toBe(403);
+    const back = await call("POST", "/agent/withdraw/WS-0005", { token: holder });
+    expect(back.status).toBe(200);
+    expect(back.text).toContain("in_progress");
+    expect((await call("GET", "/agent/brief/WS-0005", { token: holder })).text).toContain(
+      "in_progress",
+    );
+    // put it back in review so the next tests find the pool they expect
     expect(
       (
-        await call("POST", "/agent/review/WS-0005", {
-          token: reviewer,
-          body: {
-            verdict: "issues",
-            summary: "The tests still fail.",
-            note: "still red",
-            ask_human: {
-                      problem: "tests are red after the change",
-                      recommendation: "revert or fix the failing path, then resubmit",
-                      options: ["bounce it", "I will check"],
-                    },
-          },
+        await call("POST", "/agent/submit/WS-0005", {
+          token: holder,
+          body: { notes: "resubmitted after withdraw", walkthrough: "Same work.", what: "task done", how: "ran the steps" },
         })
-      ).text.trim(),
-    ).toBe("reviewed WS-0005: issues");
+      ).text,
+    ).toMatch(/^in_review/);
     await new Promise((r) => setTimeout(r, 300));
     expect(dirty()).toBe("");
   });

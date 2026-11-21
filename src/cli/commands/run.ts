@@ -76,10 +76,14 @@ export function pickNext(
     if (r) return { id: r.id, mode: "review" };
   }
   if (!cfg.coder) return undefined;
+  // an issues verdict on a locally-held item that stayed in review — the
+  // review came from another machine, or the holder could not take it.
+  // needs_human ones (the cap) wait for the human, never a fix coder.
   const f = items.find(
     (i) =>
       i.status === "in_review" &&
       i.ai_review?.verdict === "issues" &&
+      !i.ai_review.needs_human &&
       here(i) &&
       free(i.id) &&
       (st.fixes.get(i.id) ?? 0) < cfg.fix_rounds,
@@ -301,7 +305,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
     say(`▶ ${p.mode} ${p.id} "${title}" — ${name}`);
     child.on("exit", (code) => {
       // the session ends with the process: its claims become rebindable,
-      // and a bounce or issues review on them releases instead of stranding
+      // and an issues review on them releases instead of stranding
       void bye(s.token).then(() => {
         children.delete(child);
         st.running.delete(p.id);

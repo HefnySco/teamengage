@@ -222,10 +222,12 @@ Reviewing (a second session, never the holder): query status=in_review lists
 submissions; review <id> {verdict: ok|issues, summary, note, report, needs_human?}
 records your verdict for the human — summary and note in STE saying
 what you verified and why; needs_human marks "ok, but the human should
-decide" (never auto-accepted). bounce <id> {reason, summary} sends broken
-work back to its holder (max 2 in a row; a holder on another machine or no
-longer live releases the claim to ready instead — bounced work must not
-strand). Accept/reject stay human-only.
+decide" (never auto-accepted). issues is the one send-back path: a holder
+live on this machine keeps the claim and fixes; a dead holder's claim goes
+to ready (branch kept); a holder on another machine keeps its claim and the
+item stays in_review for it. After 2 issues verdicts in a row the item
+stays in review for the human. The holder pulls its own submission back
+with withdraw <id> (claim kept). Accept/reject stay human-only.
 
 A wrong "## Evidence" line is never rewritten — supersede <id> {line,
 correct, reason} appends a correction naming the old line; it stays visible.

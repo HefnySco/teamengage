@@ -37,7 +37,7 @@ describe("every arrow in DESIGN §5", () => {
     ["ready →claim→ in_progress", "ready", agent, { type: "claim", claim: claimOf() }, "in_progress", { depsDone: true }],
     ["in_progress →submit→ in_review", "in_progress", agent, { type: "submit" }, "in_review", { claim: claimOf() }],
     ["in_review →review→ in_review", "in_review", agent2, { type: "review", verdict: "ok" }, "in_review", { claim: claimOf() }],
-    ["in_review →bounce→ in_progress", "in_review", agent2, { type: "bounce", reason: "tests fail" }, "in_progress", { claim: claimOf() }],
+    ["in_review →review issues→ in_progress", "in_review", agent2, { type: "review", verdict: "issues", note: "tests fail" }, "in_progress", { claim: claimOf() }],
     ["in_review →accept→ done", "in_review", human, { type: "accept" }, "done", {}],
     ["in_review →reject→ in_progress", "in_review", human, { type: "reject", reason: "no" }, "in_progress", {}],
     ["in_review →reject --release→ ready", "in_review", human, { type: "reject", reason: "no", release: true }, "ready", { claim: claimOf() }],
@@ -96,10 +96,9 @@ describe("every non-arrow is rejected", () => {
     ["in_progress", agent2, { type: "review", verdict: "ok" }, { claim: claimOf() }], // only a submission is reviewable
     ["in_review", agent, { type: "review", verdict: "ok" }, { claim: claimOf() }], // never your own submission
     ["in_review", human, { type: "review", verdict: "ok" }, {}], // agent-only
-    ["in_review", daemon, { type: "bounce", reason: "x" }, {}], // agent-only
-    ["in_progress", agent2, { type: "bounce", reason: "x" }, { claim: claimOf() }],
-    ["in_review", agent, { type: "bounce", reason: "x" }, { claim: claimOf() }], // never your own submission
-    ["in_review", agent2, { type: "bounce", reason: "x" }, { claim: claimOf(), priorBounces: 2 }], // cap
+    ["in_review", daemon, { type: "review", verdict: "issues" }, {}], // agent-only
+    ["in_progress", agent2, { type: "review", verdict: "issues" }, { claim: claimOf() }],
+    ["in_review", agent, { type: "review", verdict: "issues" }, { claim: claimOf() }], // never your own submission
     ["in_review", agent, { type: "accept" }, {}], // human-only
     ["in_progress", agent, { type: "approve_plan" }, { claim: claimOf() }],
     ["draft", human, { type: "submit" }, {}],
@@ -322,7 +321,7 @@ describe("effects", () => {
   });
 });
 
-describe("review / bounce (AI peer review of a submission)", () => {
+describe("review — the one flow (ok advisory, issues sends back)", () => {
   it("review report: the human reads it first, and agents keep summary and note", () => {
     const report = "Verdict: OK.\n\nWhat the reviewer checked:\n1. The tests pass.\n\nBottom line: You can accept it.";
     const r = transition(
@@ -359,11 +358,12 @@ describe("review / bounce (AI peer review of a submission)", () => {
   });
 
   it("review records the marker without touching status or turn; latest wins", () => {
+    // no claim on the item: an issues verdict only records — nobody to send it back to
     const r = transition(
       item("in_review"),
       { type: "review", verdict: "issues", note: "acceptance 2 fails locally" },
       agent2,
-      ctx({ claim: claimOf() }),
+      ctx({}),
     );
     expect(r.meta.status).toBe("in_review");
     expect(turnOf(r.meta.status)).toBe("human");
@@ -381,7 +381,7 @@ describe("review / bounce (AI peer review of a submission)", () => {
       r.meta,
       { type: "review", verdict: "ok", note: "fixed and rerun" },
       agent2,
-      ctx({ claim: claimOf() }),
+      ctx({}),
     );
     expect(again.meta.ai_review.verdict).toBe("ok");
   });
@@ -396,7 +396,7 @@ describe("review / bounce (AI peer review of a submission)", () => {
         note: "acceptance 2 fails locally",
       },
       agent2,
-      ctx({ claim: claimOf() }),
+      ctx({}),
     );
     expect(r.meta.ai_review).toEqual({
       verdict: "issues",
@@ -413,15 +413,15 @@ describe("review / bounce (AI peer review of a submission)", () => {
     ]);
   });
 
-  it("bounce with summary stores it on the marker", () => {
+  it("an issues review with summary stores it on the marker", () => {
     const r = transition(
       item("in_review"),
-      { type: "bounce", reason: "tests red", summary: "The tests are failing." },
+      { type: "review", verdict: "issues", note: "tests red", summary: "The tests are failing." },
       agent2,
       ctx({ claim: claimOf() }),
     );
     expect(r.meta.ai_review?.summary).toBe("The tests are failing.");
-    expect(r.sectionWrites[0].text).toContain("bounced — The tests are failing. (tests red)");
+    expect(r.sectionWrites[0].text).toContain("issues — The tests are failing. (tests red)");
   });
 
   it("submit clears a stale review — a fresh submission starts unreviewed", () => {
@@ -476,7 +476,7 @@ describe("review / bounce (AI peer review of a submission)", () => {
       item("in_review"),
       { type: "review", verdict: "issues", summary: "two things to fix", findings },
       agent2,
-      ctx({ claim: claimOf() }),
+      ctx({}),
     );
     expect(r.meta.findings).toEqual(findings);
     expect(r.sectionWrites[1]).toEqual({
@@ -494,12 +494,12 @@ describe("review / bounce (AI peer review of a submission)", () => {
     expect(r.meta.findings).toBeUndefined();
   });
 
-  it("bounce with findings stores the fix checklist", () => {
+  it("an issues review with findings stores the fix checklist", () => {
     const r = transition(
       item("in_review"),
-      { type: "bounce", reason: "tests red", findings: [{ text: "fix the red test", severity: "must" }] },
+      { type: "review", verdict: "issues", note: "tests red", findings: [{ text: "fix the red test", severity: "must" }] },
       agent2,
-      ctx({ claim: claimOf() }),
+      ctx({}),
     );
     expect(r.meta.findings).toEqual([{ text: "fix the red test", severity: "must" }]);
     expect(r.sectionWrites[1].text).toContain("1. [must] fix the red test");
@@ -563,10 +563,10 @@ describe("review / bounce (AI peer review of a submission)", () => {
     ).toThrowError(InvalidTransitionError);
   });
 
-  it("bounce keeps the claim with the holder, flags issues, logs the reason", () => {
+  it("issues sends it back to a live local holder — claim kept", () => {
     const r = transition(
       item("in_review"),
-      { type: "bounce", reason: "tests red" },
+      { type: "review", verdict: "issues", note: "tests red" },
       agent2,
       ctx({ claim: claimOf() }),
     );
@@ -578,27 +578,42 @@ describe("review / bounce (AI peer review of a submission)", () => {
       reviewed_at: NOW,
       note: "tests red",
     });
-    expect(r.log[0]).toContain("ai-bounced submission: tests red");
-    expect(r.events[0]).toMatchObject({ action: "bounce", from: "in_review", to: "in_progress", note: "tests red" });
+    expect(r.events[0]).toMatchObject({ action: "review", from: "in_review", to: "in_progress", note: "issues: tests red" });
   });
 
-  it("bounces are capped: MAX_AI_BOUNCES allowed, the next one is refused", () => {
+  it("issues verdicts are capped: MAX_AI_BOUNCES send back, the next stays for the human", () => {
     const at = (priorBounces: number) =>
-      transition(item("in_review"), { type: "bounce", reason: "again" }, agent2, ctx({ claim: claimOf(), priorBounces }));
+      transition(item("in_review"), { type: "review", verdict: "issues", note: "again" }, agent2, ctx({ claim: claimOf(), priorBounces }));
     for (let n = 0; n < MAX_AI_BOUNCES; n++) expect(at(n).meta.status).toBe("in_progress");
-    expect(() => at(MAX_AI_BOUNCES)).toThrow(/AI bounces/);
+    const capped = at(MAX_AI_BOUNCES);
+    expect(capped.meta.status).toBe("in_review");
+    expect(capped.meta.ai_review?.verdict).toBe("issues");
+    expect(capped.meta.ai_review?.needs_human).toBe(true);
   });
 
-  it("an issues verdict on a holder that can't act here records the review and keeps the claim", () => {
+  it("an issues verdict on a dead local holder releases the claim to ready", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues", note: "tests red" },
+      agent2,
+      ctx({ claim: claimOf(), holderAway: true }),
+    );
+    expect(r.meta.status).toBe("ready");
+    expect(r.effects).toEqual([{ type: "delete_claim" }, { type: "cleanup_work", keepBranches: true }]);
+    expect(r.events[0]).toMatchObject({ action: "review", from: "in_review", to: "ready", note: "issues: tests red" });
+    expect(r.log.some((l) => l.includes("claim released"))).toBe(true);
+  });
+
+  it("an issues verdict on a holder on another machine keeps in_review and the claim", () => {
     const r = transition(
       item("in_review"),
       { type: "review", verdict: "issues", note: "acceptance 2 fails" },
       agent2,
-      ctx({ claim: claimOf(), holderAway: true }),
+      ctx({ claim: { ...claimOf(), machine: "laptop" }, holderAway: true }),
     );
     expect(r.meta.status).toBe("in_review");
     expect(r.meta.ai_review?.verdict).toBe("issues");
-    expect(r.effects).toEqual([]);
+    expect(r.effects).toEqual([]); // a synced claim is never deleted from here
     expect(r.events[0]).toMatchObject({ action: "review", from: "in_review", to: "in_review" });
   });
 
@@ -620,18 +635,26 @@ describe("review / bounce (AI peer review of a submission)", () => {
     expect(ok.meta.status).toBe("in_review");
     expect(ok.effects).toEqual([]);
   });
+});
 
-  it("a bounce on a holder that can't act here releases the claim to ready", () => {
-    const r = transition(
-      item("in_review"),
-      { type: "bounce", reason: "tests red" },
-      agent2,
-      ctx({ claim: claimOf(), holderAway: true }),
-    );
-    expect(r.meta.status).toBe("ready");
-    expect(r.effects).toEqual([{ type: "delete_claim" }, { type: "cleanup_work", keepBranches: true }]);
-    expect(r.events[0]).toMatchObject({ action: "bounce", from: "in_review", to: "ready", note: "tests red" });
-    expect(r.log.some((l) => l.includes("claim released"))).toBe(true);
+describe("withdraw (the holder pulls its submission back)", () => {
+  it("holder moves in_review → in_progress, claim kept", () => {
+    const r = transition(item("in_review"), { type: "withdraw" }, agent, ctx({ claim: claimOf() }));
+    expect(r.meta.status).toBe("in_progress");
+    expect(r.effects).toEqual([]); // claim and worktree stay
+    expect(r.events[0]).toMatchObject({ action: "withdraw", from: "in_review", to: "in_progress" });
+  });
+
+  it("another session is refused, as is a withdraw outside in_review", () => {
+    expect(() =>
+      transition(item("in_review"), { type: "withdraw" }, agent2, ctx({ claim: claimOf() })),
+    ).toThrow(ForbiddenError);
+    expect(() =>
+      transition(item("in_review"), { type: "withdraw" }, agent, ctx({})),
+    ).toThrow(InvalidTransitionError); // unclaimed
+    expect(() =>
+      transition(item("in_progress"), { type: "withdraw" }, agent, ctx({ claim: claimOf() })),
+    ).toThrow(InvalidTransitionError);
   });
 });
 
@@ -855,17 +878,17 @@ describe("model tiers, attempts and handoff", () => {
     expect(r.meta.status).toBe("hold");
   });
 
-  it("an escalating bounce releases a holder that is now under-tier", () => {
+  it("an escalating issues verdict releases a holder that is now under-tier", () => {
     const r = transition(
       withMeta("in_review", { attempts: 1 }),
-      { type: "bounce", reason: "wrong logic" },
+      { type: "review", verdict: "issues", note: "wrong logic" },
       heavy,
       ctx({ claim: { ...claimOf(), tier: "light" }, escalation: esc }),
     );
     expect(r.meta.status).toBe("ready");
     expect(r.meta.tier).toBe("standard");
     expect(r.effects.map((e) => e.type)).toContain("delete_claim");
-    const keep = transition(item("in_review"), { type: "bounce", reason: "x" }, heavy, ctx({ claim: claimOf(), escalation: esc }));
+    const keep = transition(item("in_review"), { type: "review", verdict: "issues", note: "x" }, heavy, ctx({ claim: claimOf(), escalation: esc }));
     expect(keep.meta.status).toBe("in_progress");
     expect(keep.effects).toEqual([]);
   });
@@ -1177,11 +1200,11 @@ describe("declared model on submit and review (GL-0360)", () => {
     expect(r.meta.ai_review?.reviewer_model).toBe("claude-sonnet-5-5");
   });
 
-  it("bounce stores reviewer_model too", () => {
+  it("an issues review stores reviewer_model too", () => {
     const inReview = transition(item("in_progress"), { type: "submit" }, agent, ctx({ claim: claimOf() }));
     const r = transition(
       inReview.meta,
-      { type: "bounce", reason: "red" },
+      { type: "review", verdict: "issues", note: "red" },
       modeledReviewer,
       ctx({ claim: claimOf() }),
     );
@@ -1200,7 +1223,7 @@ describe("review must come from a different model (DE-0161)", () => {
       transition(sub.meta, { type: "review", verdict: "ok" }, sameModel, ctx({ claim: claimOf() })),
     ).toThrow(/different model/);
     expect(() =>
-      transition(sub.meta, { type: "bounce", reason: "x" }, sameModel, ctx({ claim: claimOf() })),
+      transition(sub.meta, { type: "review", verdict: "issues", note: "x" }, sameModel, ctx({ claim: claimOf() })),
     ).toThrow(/different model/);
   });
 

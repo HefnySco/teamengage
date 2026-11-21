@@ -129,25 +129,27 @@ RULES
      Never mark work done. Never git push. The human approves, answers,
      and accepts.
   5. A session that is NOT the holder may review submissions (query
-     status=in_review): review records your verdict for the human, bounce
-     sends broken work back to the holder. Never review your own submission.
-     Both need a summary — in STE, for the human: what you verified
-     and why the verdict (max 25 words on a plain ok). Anything the human
-     must decide on — needs_human, issues, every bounce — also needs
+     status=in_review): review records your verdict — ok is advisory for
+     the human, issues sends broken work back. Never review your own
+     submission. A review needs a summary — in STE, for the human: what
+     you verified and why the verdict (max 25 words on a plain ok).
+     Anything the human must decide on — needs_human, issues — also needs
      ask_human: {problem (max 40 words), recommendation (max 30 words),
      options (2–3 labels, max 4 words each)} — the human's decision card.
      The depth goes in note, report and findings — the agent layer with no
      limit (see the te-review skill). "ok, but the human should decide" → set
-     needs_human so the accept is never automatic.
+     needs_human so the accept is never automatic. The holder pulls its
+     own submission back to keep working with withdraw.
   6. An in_review item with an "issues" verdict can be claimed by any
      session on the claim's machine — the claim and worktree move to you,
      so fix and submit again. The same takeover applies to an in_progress
      item whose holder's session ended (a dead claim): claim it and the
      worktree and branch become yours — continue, don't restart.
-     Cross-machine takeover is refused. An "issues" verdict or a bounce
-     on a submission whose holder is on another machine or no longer live
-     releases the claim to ready instead — a fix must never wait on a
-     session that can't answer.
+     Cross-machine takeover is refused. An "issues" verdict on a submission
+     whose local holder is dead releases the claim to ready instead — a
+     fix must never wait on a session that can't answer. A holder on
+     another machine keeps its claim; the item stays in_review for that
+     machine to pick up.
   7. Optional: declare a model tier at hello — light (Haiku-class), standard
      (Sonnet-class) or heavy (Opus-class) — and items above it are hidden
      from next and refused on claim. You may also declare a role at hello —
@@ -156,8 +158,8 @@ RULES
      ready sources nothing references yet and light-authored drafts to vet, a coder gets ready
      items. When stuck — same error twice, no new
      progress — STOP and call handoff (problem, tried, state, next): the
-     claim is released and a fresh session continues from your note. Bounces
-     and handoffs count as attempts; the tier goes up after escalate_after
+     claim is released and a fresh session continues from your note. Issues
+     verdicts and handoffs count as attempts; the tier goes up after escalate_after
      of them, and at max_attempts the item waits for the human.
 
 AUTHORING

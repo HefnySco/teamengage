@@ -968,6 +968,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   );
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
   act("accept", (ops, id) => ops.accept(id));
+  act("withdraw", (ops, id) => ops.withdraw(id, "human"));
   act("reject", (ops, id, b) =>
     ops.reject(id, b.reason ? String(b.reason) : undefined, b.release === true),
   );

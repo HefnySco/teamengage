@@ -8,7 +8,7 @@ import { opsFor, needSession, isToolResult } from "./read.js";
 import { SubmitCost } from "../../core/model/item.js";
 
 /**
- * Write tools (DESIGN §7): claim, release, log, ask, submit, review, bounce,
+ * Write tools (DESIGN §7): claim, release, withdraw, log, ask, submit, review, bounce,
  * propose. All mutations go through the store — serialized, CAS-checked,
  * committed.
  */
@@ -84,6 +84,28 @@ export function registerWriteTools(
         if (isToolResult(o)) return o;
         await o.release(id, s, note);
         return okText(`released ${id} → ready`);
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "withdraw",
+    {
+      description:
+        "Holder only: pull your own submission back to keep working — in_review → in_progress, " +
+        "claim and worktree kept. Use it to fix something you spotted before the human looks.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.withdraw(id, s);
+        return okText(`withdrew ${id} → in_progress`);
       } catch (e) {
         return errFrom(e);
       }
@@ -306,7 +328,7 @@ export function registerWriteTools(
         "walkthrough is optional — the agent layer's longer STE explanation, shown as ## Walkthrough. " +
         "cost is optional — report {model, tokens_in, tokens_out, usd} when your runner gives them; " +
         "it lands as a cost: line in ## Evidence and feeds te metrics. " +
-        "When the last review or bounce left findings, answer them in finding_states — " +
+        "When the last review left findings, answer them in finding_states — " +
         "{finding: <1-based number>, state: done|skipped, reason?} for each; " +
         "a `must` finding left unanswered refuses the submit. " +
         "provides is optional — short lines naming what the task now provides " +
@@ -368,8 +390,10 @@ export function registerWriteTools(
         "{problem ≤40 words, recommendation ≤30 words, options? two or three labels ≤4 words each}. " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
-        "Advisory marker only — the human still accepts. One exception: an 'issues' verdict on a submission whose " +
-        "holder is on another machine or no longer live releases the claim to ready so the fix isn't stranded. " +
+        "An issues verdict is the one send-back path: a holder live on this machine keeps the claim and fixes; " +
+        "a dead or outgrown holder's claim goes to ready (branch kept) so the fix isn't stranded; a holder on " +
+        "another machine keeps its claim — the item stays in_review for that machine to pick up. " +
+        "After 2 issues verdicts in a row the item stays in review for the human. " +
         "Never review your own submission.",
       inputSchema: {
         id: z.string(),
@@ -389,9 +413,16 @@ export function registerWriteTools(
         const o = ops();
         if (isToolResult(o)) return o;
         const r = await o.review(id, s, verdict, note, summary, needs_human, report, findings, ask_human);
+        const where =
+          r.meta.status === "in_progress"
+            ? " — sent back to the holder, claim kept"
+            : r.meta.status === "ready"
+              ? " — holder can't act here, claim released → ready"
+              : r.meta.status === "hold"
+                ? " — out of attempts, on hold for the human"
+                : "";
         return okText(
-          `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}` +
-            (r.meta.status === "ready" ? " — holder can't act here, claim released → ready" : ""),
+          `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}${where}`,
         );
       } catch (e) {
         return errFrom(e);
@@ -403,16 +434,10 @@ export function registerWriteTools(
     "bounce",
     {
       description:
-        "Reviewer only (not the holder): send a broken submission back to its holder — in_review → in_progress, " +
-        "the claim is kept so the holder fixes and resubmits — unless the holder is on another machine or no " +
-        "longer live, where the claim is released to ready instead (a bounced item must not strand). " +
-        "reason is required and goes to the holder; " +
-        "summary is required too — one sentence in STE for the human. " +
-        "ask_human is required — the human's short card: {problem ≤40 words, recommendation ≤30 words, options? ≤4 words each}. " +
-        "Capped: after 2 AI bounces in a row the item stays in review for the human — record a review instead. " +
-        "List what must be fixed in findings: {text, where, severity must|should} — " +
-        "the holder answers each `must` with done or skipped on the resubmit. " +
-        "Each bounce is a failed attempt: on escalation past the holder's tier the claim is released for a stronger agent.",
+        "Deprecated alias, one release only — a bounce is `review` with verdict `issues` now: " +
+        "use review(id, \"issues\", note, summary, findings, ask_human). Same rules: the holder fixes, " +
+        "a dead or outgrown holder's claim goes to ready, a holder on another machine is left untouched, " +
+        "and after 2 issues verdicts in a row the item stays in review for the human.",
       inputSchema: {
         id: z.string(),
         reason: z.string(),
