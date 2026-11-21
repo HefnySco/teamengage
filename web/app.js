@@ -143,6 +143,12 @@ const DomainChips = ({ ds, onClick, active }) =>
   (ds ?? []).length ? html`<span class="d-inline-flex flex-wrap gap-1">${ds.map((d) => html`<${DomainChip} key=${d} d=${d} onClick=${onClick} active=${active === d} />`)}</span>` : null;
 
 const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secondary"}">${s}</span>`;
+
+// item tier flag — light/standard/heavy = the minimum agent level that may
+// claim it; a one-letter chip so a full ready column still scans
+const TIER_LETTER = { light: "L", standard: "S", heavy: "H" };
+const TierChip = ({ t }) => t == null ? null : html`
+  <span class=${`tier-chip tier-${t}`} title=${`tier ${t} — the minimum agent level that may claim this item`}>${TIER_LETTER[t] ?? t}</span>`;
 // an epic's derived plan lifecycle (plan_state) — draft → decomposing → ready → in_progress → done
 const PLAN_CHIP = {
   draft: "ps-draft",
@@ -1466,6 +1472,7 @@ const Board = ({ onOpen }) => {
                   <div class="card bcard p-2" key=${i.id} onClick=${() => onOpen(i.id)}>
                     <div class="d-flex align-items-center gap-1 flex-wrap">
                       <${ItemKindIcon} i=${i} /><span class="id">${i.id}${i.unblocks_on === "done" ? html` <span title="key task: dependents wait for its acceptance">🔑</span>` : ""}</span>
+                      <${TierChip} t=${i.tier} />
                       ${i.type === "feature" && html`<span class="plan-chip ps-active" title=${`feature ${i.feature_status ?? "planned"} — ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0} parts done across ${(i.feature_plans ?? []).length} plan(s)`}>feat ${i.feature_status ?? ""} ${i.feature_progress?.done ?? 0}/${i.feature_progress?.total ?? 0}</span>`}
                       <span class="ms-auto d-flex align-items-center gap-1">
                         ${s === "done" && !i.claim && html`<button class="icon-btn" title="archive"

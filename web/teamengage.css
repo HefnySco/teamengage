@@ -1236,3 +1236,18 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .disc-assistant { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
 .disc-tool summary { cursor: pointer; font-family: var(--bs-font-monospace); font-size: .8rem; }
 .disc-tool-body { background: var(--bs-tertiary-bg); border-radius: .3rem; padding: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* item tier flag on board cards — one letter, colour says the level */
+.tier-chip {
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.16rem 0.3rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--bs-border-color);
+  color: var(--bs-tertiary-color);
+  align-self: center;
+}
+.tier-chip.tier-light { color: var(--bs-success-text-emphasis); border-color: color-mix(in srgb, var(--bs-success) 50%, transparent); }
+.tier-chip.tier-standard { color: var(--bs-primary-text-emphasis); border-color: color-mix(in srgb, var(--bs-primary) 50%, transparent); }
+.tier-chip.tier-heavy { color: var(--bs-warning-text-emphasis); border-color: color-mix(in srgb, var(--bs-warning) 50%, transparent); }
