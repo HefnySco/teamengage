@@ -59,12 +59,15 @@ export type Action =
       evidence?: {
         commits?: string[];
         tests?: string;
+        /** TE-0178: the one short line for the human — lands under ## For the human */
+        summary?: string;
+        /** one-release compat (TE-0178): folds into summary at the ops layer */
         notes?: string;
-        /** "walk me through this code" — plain-English explanation of the change for the human */
+        /** "walk me through this code" — plain-English explanation of the change for the human (required on heavy-tier items) */
         walkthrough?: string;
-        /** GL-0343: what the task does now (≤40 words) — lands under ## For the human */
+        /** one-release compat (TE-0178): GL-0343's `what` — folds into summary */
         what?: string;
-        /** GL-0343: how the agent did it, plain words (≤60 words) — lands under ## For the human */
+        /** one-release compat (TE-0178): GL-0343's `how` — folds into summary */
         how?: string;
         /** reported run cost (GL-0318) — one `cost:` line in ## Evidence + event data */
         cost?: SubmitCost;
@@ -719,11 +722,15 @@ export function transition(
           });
         }
         if (lines.length) out.sectionWrites.push({ heading: "Evidence", text: lines.join("\n") + "\n" });
-        // GL-0343: the two short human-facing lines land in their own
-        // managed section — the Walkthrough stays the agent layer
+        // TE-0178: one short summary for the human under its own managed
+        // section — ops folds old-style what/how/notes into it. Callers
+        // that skip ops still render their what/how lines for one release.
         const humanLines: string[] = [];
-        if (action.evidence.what?.trim()) humanLines.push(`- what: ${action.evidence.what.trim()}`);
-        if (action.evidence.how?.trim()) humanLines.push(`- how: ${action.evidence.how.trim()}`);
+        if (action.evidence.summary?.trim()) humanLines.push(`- summary: ${action.evidence.summary.trim()}`);
+        else {
+          if (action.evidence.what?.trim()) humanLines.push(`- what: ${action.evidence.what.trim()}`);
+          if (action.evidence.how?.trim()) humanLines.push(`- how: ${action.evidence.how.trim()}`);
+        }
         if (humanLines.length)
           out.sectionWrites.push({ heading: "For the human", text: humanLines.join("\n") + "\n" });
         // the submitter's own walkthrough, kept per submission like Handoff
@@ -820,16 +827,24 @@ export function transition(
       });
       // GL-0321: a new review replaces the findings checklist; a review
       // without findings clears the old list (it was already answered).
-      if (action.findings?.length) {
-        out.meta.findings = action.findings;
+      // TE-0178 compat: an old-style note and ask_human options render
+      // inside the same numbered list for one release — only real
+      // findings land on meta.findings (the holder answers those).
+      const compatFindings: string[] = [];
+      if (action.note?.trim()) compatFindings.push(`[note] ${action.note.trim()}`);
+      for (const o of action.ask_human?.options ?? []) compatFindings.push(`[option] ${o}`);
+      if (action.findings?.length || compatFindings.length) {
+        if (action.findings?.length) out.meta.findings = action.findings;
+        else delete out.meta.findings;
+        const numbered = [
+          ...(action.findings ?? []).map(
+            (f) => `[${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}`,
+          ),
+          ...compatFindings,
+        ];
         out.sectionWrites.push({
           heading: "Review",
-          text:
-            `  findings:\n` +
-            action.findings
-              .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.text}${f.where ? ` (${f.where})` : ""}`)
-              .join("\n") +
-            "\n",
+          text: `  findings:\n` + numbered.map((t, i) => `  ${i + 1}. ${t}`).join("\n") + "\n",
         });
       } else {
         delete out.meta.findings;

@@ -2918,12 +2918,15 @@ const ArtStrip = ({ arts, onOpen }) => {
 // real actions now: accept, send back, follow-up task, hold — no decision
 // records are written from here.
 const HumanCard = ({ it, onAccept, onSendBack, onFollowUp, onHold }) => {
+  // TE-0178: one summary line on new submissions; what/how stays for old ones
+  const sum = fhLine(it.sections, "summary");
   const what = fhLine(it.sections, "what");
   const how = fhLine(it.sections, "how");
   const ah = it.meta.ai_review?.ask_human;
-  if (!what && !how && !ah) return null;
+  if (!sum && !what && !how && !ah) return null;
   const reviewing = it.meta.status === "in_review";
   return html`<div class="card hcard mb-2"><div class="card-body py-2 px-3">
+    ${sum && html`<div class="hc-line"><span class="hc-k">summary</span> ${sum}</div>`}
     ${what && html`<div class="hc-line"><span class="hc-k">what</span> ${what}</div>`}
     ${how && html`<div class="hc-line"><span class="hc-k">how</span> ${how}</div>`}
     ${ah && html`

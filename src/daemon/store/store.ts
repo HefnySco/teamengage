@@ -418,7 +418,6 @@ export class PlansStore {
         if (!prefix) throw new NotFoundError(`unknown project '${project}'`);
         const id = allocateId(prefix, [...this.items().metaIds(), ...ids]);
         let source: string | undefined;
-        let simpleSource: string | undefined;
         if (overlay) {
           const folder = this.projectFolder(project);
           const fp = filePrefix(d.type);
@@ -444,11 +443,8 @@ export class PlansStore {
             abs: join(abs, name),
             content: renderTaskFile({ id, ...d }),
           });
-          if (d.simple?.trim()) {
-            const simpleName = name.replace(/\.md$/, ".simple.md");
-            simpleSource = toSourcePath(this.ws.root, join(abs, simpleName));
-            taskWrites.push({ abs: join(abs, simpleName), content: renderSimpleFile(id, d.title, d.simple) });
-          }
+          // TE-0178: the simple version is a ## Simple section inside the
+          // task file now — no X.simple.md companion for new items
           files.push(source);
         }
         const meta = ItemMeta.parse({
@@ -470,7 +466,7 @@ export class PlansStore {
           version: 1,
           created: now,
           updated: now,
-          ...(source ? { source, simple_source: simpleSource } : {}),
+          ...(source ? { source } : {}),
         });
         let body = "";
         if (!overlay) {
@@ -1139,13 +1135,24 @@ export class PlansStore {
       let path = it.path;
       const sectionWrites: Array<{ heading: string; text: string }> = [];
       if (this.ws.config.mode === "overlay" && doc.meta.source) {
-        const rel = doc.meta.simple_source ?? doc.meta.source.replace(/\.md$/i, ".simple.md");
-        const abs = join(this.ws.root, rel);
-        const out = renderSimpleFile(id, doc.meta.title, text);
-        await writeFileAtomic(abs, out);
-        this.onFileWrite?.(abs, out);
-        meta.simple_source = rel;
-        path = rel;
+        if (doc.meta.simple_source) {
+          // an existing companion stays the source of truth (TE-0178)
+          const rel = doc.meta.simple_source;
+          const abs = join(this.ws.root, rel);
+          const out = renderSimpleFile(id, doc.meta.title, text);
+          await writeFileAtomic(abs, out);
+          this.onFileWrite?.(abs, out);
+          path = rel;
+        } else {
+          // TE-0178: the simple version is a ## Simple section in the task file
+          const found = await resolveSource(this.ws.root, id, doc.meta.source);
+          if (!found) throw new NotFoundError(`${id}: task file ${doc.meta.source} not found`);
+          const abs = join(this.ws.root, found.path);
+          const out = replaceSection(found.text, "Simple", text.trim());
+          await writeFileAtomic(abs, out);
+          this.onFileWrite?.(abs, out);
+          path = found.path;
+        }
       } else {
         // standard mode: replace the Simple section wholesale
         doc.sections = doc.sections.filter((s) => s.heading.toLowerCase() !== "simple");

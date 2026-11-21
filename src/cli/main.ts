@@ -213,15 +213,19 @@ server "teamengage" if your IDE has it configured — same tools, same rules.
 3. brief <id>                                — read targets, deps, decisions
 4. claim <id>                                — then work only in returned paths
 5. log <id> {note} / ask <id> {question}     — progress / blockers
-6. submit <id> {commits, tests, notes, walkthrough} — hand to the human
-   (walkthrough: in STE — "what I changed and how it works")
+6. submit <id> {commits, summary, tests?, walkthrough?, provides?} — hand
+   to the human (summary: one STE line; tests auto-fills from te verify;
+   walkthrough required on heavy tasks; what+how+notes fold into summary
+   for one release)
 You may NOT set ready/done and must never git push — the human decides.
 Ask, don't guess.
 
 Reviewing (a second session, never the holder): query status=in_review lists
-submissions; review <id> {verdict: ok|issues, summary, note, report, needs_human?}
-records your verdict for the human — summary and note in STE saying
-what you verified and why; needs_human marks "ok, but the human should
+submissions; review <id> {verdict: ok|issues, summary, findings?, needs_human?}
+records your verdict for the human — summary in STE saying
+what you verified and why; findings is the numbered fix list; note and
+report are accepted for one release and render inside it. needs_human marks
+"ok, but the human should
 decide" (never auto-accepted). issues is the one send-back path: a holder
 live on this machine keeps the claim and fixes; a dead holder's claim goes
 to ready (branch kept); a holder on another machine keeps its claim and the

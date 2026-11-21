@@ -90,7 +90,7 @@ describe("issues verdicts and the claim (TE-0175)", () => {
 
     await ops.claim("WS-0003", holder);
     await ops.submit("WS-0003", holder, { what: "task done", how: "ran the steps" });
-    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", undefined, undefined, undefined, undefined, AH);
+    await ops.review("WS-0003", reviewer, "issues", "acceptance unmet", "goes back for fixes", undefined, undefined, undefined, AH);
 
     // a live local holder keeps the claim and fixes — in_progress, not stranded
     const idx = wsr.store.idx;
@@ -113,15 +113,16 @@ describe("issues verdicts and the claim (TE-0175)", () => {
     await ops.submit("WS-0003", holder, { what: "task done", how: "ran the steps" });
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
     sessions.disconnect(holder.id);
-    await ops.review("WS-0003", reviewer, "issues", "still unmet", undefined, undefined, undefined, undefined, AH);
+    await ops.review("WS-0003", reviewer, "issues", "still unmet", "still unmet — goes back", undefined, undefined, undefined, AH);
     expect(idx.items.get("WS-0003")!.meta.status).toBe("ready");
     expect(idx.claims.has("WS-0003")).toBe(false);
 
     // a fresh session on this machine claims the freed item, fixes, resubmits
+    // (the two issues verdicts escalated the tier — a walkthrough is required)
     const { claim } = await ops.claim("WS-0003", fixer);
     expect(claim.holder).toBe(fixer.id);
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_progress");
-    await ops.submit("WS-0003", fixer, { what: "task done", how: "ran the steps" });
+    await ops.submit("WS-0003", fixer, { what: "task done", how: "ran the steps", walkthrough: "fixed and re-ran" });
     expect(idx.items.get("WS-0003")!.meta.status).toBe("in_review");
     expect(idx.items.get("WS-0003")!.meta.ai_review).toBeUndefined();
   });
@@ -129,7 +130,7 @@ describe("issues verdicts and the claim (TE-0175)", () => {
   it("an ok verdict is not takeable", async () => {
     const reviewer = (await ops.hello("rev2")).session;
     const third = (await ops.hello("third")).session;
-    await ops.review("WS-0003", reviewer, "ok", "verified");
+    await ops.review("WS-0003", reviewer, "ok", "verified", "verified the fix");
     await expect(ops.claim("WS-0003", third)).rejects.toThrow(/claimed|cannot claim/i);
   });
 });

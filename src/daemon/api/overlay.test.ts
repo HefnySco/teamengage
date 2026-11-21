@@ -261,9 +261,11 @@ describe("overlay propose writes real task files", () => {
     expect(it.meta).toMatchObject({
       status: "draft",
       source: "global/TASK-17-clear-latched-events-on-restart.md",
-      simple_source: "global/TASK-17-clear-latched-events-on-restart.simple.md",
       depends_on: [t13],
     });
+    // TE-0178: no .simple.md companion — the simple version is a ## Simple
+    // section inside the task file
+    expect(it.meta.simple_source).toBeUndefined();
     // the tracking file holds state only — the content is in the task file
     expect(it.sections.find((s) => s.heading === "Summary")).toBeUndefined();
     expect(readFileSync(join(plans, it.path), "utf8")).not.toContain("Reset latched events");
@@ -282,6 +284,9 @@ describe("overlay propose writes real task files", () => {
         "## Summary",
         "Reset latched events when a restart is detected.",
         "",
+        "## Simple",
+        "Events fire again on a second flight.",
+        "",
         "## Acceptance",
         "- [ ] second AUTO run fires module events",
         "- [ ] ctest -R mission_restart passes",
@@ -292,9 +297,7 @@ describe("overlay propose writes real task files", () => {
         "",
       ].join("\n"),
     );
-    expect(readFileSync(join(root, "global", "TASK-17-clear-latched-events-on-restart.simple.md"), "utf8")).toBe(
-      `---\nte: ${id}\n---\n# Clear latched events on restart (simple)\n\nEvents fire again on a second flight.\n`,
-    );
+    expect(existsSync(join(root, "global", "TASK-17-clear-latched-events-on-restart.simple.md"))).toBe(false);
 
     // brief serves the new file; the epic is an epic
     const b = (await (await api(`/api/items/${id}`)).json()) as { source: { text: string } };
@@ -1079,8 +1082,7 @@ describe("delete", () => {
     const r = await post(`/api/items/${victim}/delete`, { reason: "mistake" });
     expect(r.status).toBe(200);
     const body = (await r.json()) as { untagged: string[]; ignored: string[] };
-    const simple = files[0].replace(/\.md$/, ".simple.md");
-    expect(body.untagged.sort()).toEqual([files[0], simple].sort());
+    expect(body.untagged).toEqual([files[0]]);
 
     expect(store().idx.get(victim)).toBeUndefined();
     expect(existsSync(itemPath)).toBe(false);
@@ -1089,7 +1091,7 @@ describe("delete", () => {
     expect(text.startsWith("# Delete me\n")).toBe(true);
     // ignored in config (memory + file), so the tracker doesn't flag it
     const ws = ctx.workspaces.get("tasks")!.ws;
-    expect(ws.config.ignore).toEqual(expect.arrayContaining([files[0], simple]));
+    expect(ws.config.ignore).toEqual(expect.arrayContaining([files[0]]));
     expect(readFileSync(join(plans, "workspace.yaml"), "utf8")).toContain(files[0]);
     const tracker = new OverlayTracker(store(), { debounceMs: 50 });
     await tracker.rescan();
@@ -1114,13 +1116,13 @@ describe("simple tool", () => {
 
     const r = await call(`/agent/simple/${id}`, { text: "The drone waits at a gate until told to go." });
     expect(r.status).toBe(200);
-    expect(r.text.trim()).toBe(`simple ${id} → global/TASK-12-gate.simple.md`);
+    // TE-0178: the text lands in the task file's ## Simple section — no companion
+    expect(r.text.trim()).toBe(`simple ${id} → global/TASK-12-gate.md`);
     const meta = store().idx.get(id)!.meta;
-    expect(meta.simple_source).toBe("global/TASK-12-gate.simple.md");
-    const file = join(root, "global", "TASK-12-gate.simple.md");
-    expect(readFileSync(file, "utf8")).toBe(
-      `---\nte: ${id}\n---\n# TASK-12: Wait gate (simple)\n\nThe drone waits at a gate until told to go.\n`,
-    );
+    expect(meta.simple_source).toBeUndefined();
+    const file = join(root, "global", "TASK-12-gate.md");
+    expect(readFileSync(file, "utf8")).toContain("## Simple\n\nThe drone waits at a gate until told to go.");
+    expect(existsSync(join(root, "global", "TASK-12-gate.simple.md"))).toBe(false);
 
     await call(`/agent/simple/${id}`, { text: "Version two." });
     expect(readFileSync(file, "utf8")).toContain("Version two.");
@@ -1380,7 +1382,8 @@ describe("nothing TeamEngage writes is left untracked (commit: false)", () => {
     const status = git("status", "--porcelain", "--untracked-files=all");
     const line = (p: string) => status.split("\n").find((l) => l.endsWith(p)) ?? "";
     expect(line(files[0])).toMatch(/^A /);
-    expect(line(files[0].replace(/\.md$/, ".simple.md"))).toMatch(/^A /);
+    // TE-0178: no .simple.md companion — the Simple section lives in the task file
+    expect(existsSync(join(root, files[0].replace(/\.md$/, ".simple.md")))).toBe(false);
     const itemRel = `.teamengage/${store().idx.get(ids[0])!.path}`;
     expect(line(itemRel)).toMatch(/^A /);
     expect(git("rev-parse", "HEAD")).toBe(head); // staged, not committed

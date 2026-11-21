@@ -366,10 +366,16 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   Anything the human must decide on carries
   `ask_human` — the short decision card (GL-0344): `problem` ≤40 words,
   `recommendation` ≤30 words, optional 2–3 `options` of ≤4 words each. A
-  `needs_human` review and an `issues` verdict require it;
-  a plain `ok` needs only `summary` ≤25 words. `ask` takes an optional
-  `context` for the detail — the question text stays ≤40 words; `note`,
-  `report` and `findings` stay the agent layer with no limit.
+  `needs_human` review and an `issues` verdict require it. Every verdict
+  requires `summary` — what the reviewer verified and why, in STE.
+  `ask` takes an optional
+  `context` for the detail — the question text stays ≤40 words.
+  Word limits are advisory (TE-0177): an over-limit field is accepted and
+  the reply carries a `warn:` line with the field, the count and the limit;
+  a missing required field still fails.
+  `note`, `report` and `ask_human.options` are accepted for one release and
+  render inside the findings list (TE-0178); `findings` is the structured
+  fix list the holder answers.
   The review card shows `problem` and `recommendation` as text (TE-0176):
   its buttons are fixed actions — **Accept**, **Send back to coder**
   (the `review` issues verdict with the human as actor: a live local
@@ -669,7 +675,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `withdraw(id)`                  | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept.                                                                                  |
 | `log(id, note)`                 | Progress note (also updates `last_seen`).                                                                                                                       |
 | `ask(id, question, options?)`   | Raise question → item `waiting`, turn → human.                                                                                                                  |
-| `submit(id, evidence)`          | Commits/tests/notes + required `what` (≤40 words) and `how` (≤60 words) — the two short lines land under `## For the human` (GL-0343); walkthrough stays the optional agent layer → `in_review`. Optional `cost` `{model, tokens_in, tokens_out, usd}` → one `cost:` line in Evidence, summed by metrics. Optional `provides[]` → `provides:` lines in Evidence; a dependent's brief lists them under the dep outcome (GL-0325). `finding_states[]` answers the last review's must/should checklist (GL-0321). |
+| `submit(id, evidence)`          | Commits + required `summary` — one STE line under `## For the human`; `tests` auto-fills from the stored `te verify` results when omitted; `walkthrough` is required on heavy-tier items, optional otherwise (TE-0178). `what`, `how` and `notes` are accepted for one release and fold into `summary`. Optional `cost` `{model, tokens_in, tokens_out, usd}` → one `cost:` line in Evidence, summed by metrics. Optional `provides[]` → `provides:` lines in Evidence; a dependent's brief lists them under the dep outcome (GL-0325). `finding_states[]` answers the last review's must/should checklist (GL-0321). |
 | `review(id, verdict, note?, …)` | Second session (never the holder) records a verdict — `ok` is advisory; `issues` sends the work back (§5); max 2 issues verdicts in a row, then it stays for the human. |
 | `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
 | `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |

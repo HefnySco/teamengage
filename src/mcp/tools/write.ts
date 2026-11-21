@@ -164,7 +164,7 @@ export function registerWriteTools(
       description:
         "Write the item's plain-English version for the human in STE (ASD-STE100 Simplified Technical English — " +
         "a short, non-technical explanation of what and why). " +
-        "Creates or replaces <task>.simple.md and links it — never create .simple.md files by hand. No claim needed.",
+        "Writes a ## Simple section into the task file (an existing .simple.md companion is updated instead). No claim needed.",
       inputSchema: { id: z.string(), text: z.string() },
     },
     async ({ id, text }) => {
@@ -329,10 +329,11 @@ export function registerWriteTools(
     "submit",
     {
       description:
-        "Hand work to the human with evidence (commits/tests/notes). " +
-        "what and how are required — the human's two short lines under ## For the human: " +
-        "what the task does now (≤40 words) and how you did it (≤60 words), plain words, no file or function names. " +
-        "walkthrough is optional — the agent layer's longer STE explanation, shown as ## Walkthrough. " +
+        "Hand work to the human with evidence. " +
+        "summary is required — one short line for the human under ## For the human (plain words, no code names; " +
+        "what+how+notes are accepted for one release and fold into it). " +
+        "tests auto-fills from te verify results when omitted; walkthrough (the agent layer's longer STE " +
+        "explanation, shown as ## Walkthrough) is required on heavy-tier tasks only. " +
         "cost is optional — report {model, tokens_in, tokens_out, usd} when your runner gives them; " +
         "it lands as a cost: line in ## Evidence and feeds te metrics. " +
         "When the last review left findings, answer them in finding_states — " +
@@ -347,9 +348,10 @@ export function registerWriteTools(
         id: z.string(),
         commits: z.array(z.string()).optional(),
         tests: z.string().optional(),
+        summary: z.string().optional(),
         notes: z.string().optional(),
-        what: z.string(),
-        how: z.string(),
+        what: z.string().optional(),
+        how: z.string().optional(),
         walkthrough: z.string().optional(),
         cost: SubmitCost.optional(),
         provides: z.array(z.string()).optional(),
@@ -365,13 +367,13 @@ export function registerWriteTools(
           .optional(),
       },
     },
-    async ({ id, commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states }) => {
+    async ({ id, commits, tests, summary, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.submit(id, s, { commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
+        const r = await o.submit(id, s, { commits, tests, summary, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
         return okText(`in_review ${id}` + warnLines(r));
       } catch (e) {
         return errFrom(e);
@@ -385,16 +387,14 @@ export function registerWriteTools(
       description:
         "Peer-review a submission as a different session than the holder (find them: query status=in_review). " +
         "Read the task file, the Walkthrough and Evidence sections and the actual diff/tests first, then record " +
-        "verdict ok|issues with summary (STE prose for the human — what you verified and why the verdict) " +
-        "and a specific note for whoever fixes it (findings with file:line). " +
-        "Also give report: the multi-line decision report for the human, in STE, with the sections Verdict, " +
-        "What the reviewer checked, What the reviewer could not check, Small notes and Bottom line. " +
-        "Agents read summary and note, so keep any note markers there. " +
-        "Use findings for a structured list the holder must answer: {text, where, severity must|should} — " +
-        "a `must` blocks the next submit until the holder marks it done or skipped. " +
-        "summary is at most 25 words on a plain ok. " +
+        "verdict ok|issues with summary (required — STE prose for the human: what you verified and why the " +
+        "verdict) and findings: the optional numbered list for whoever fixes it ({text, where, severity " +
+        "must|should} — a `must` blocks the next submit until the holder marks it done or skipped). " +
+        "note and report are accepted for one release and render inside the findings list — put fix detail " +
+        "in findings instead. " +
         "A review with needs_human or verdict issues needs ask_human — the human's short card: " +
-        "{problem ≤40 words, recommendation ≤30 words, options? two or three labels ≤4 words each}. " +
+        "{problem ≤40 words, recommendation ≤30 words, options? two or three labels ≤4 words each, " +
+        "accepted for one release and folded into the findings list}. " +
         "Set needs_human for an 'ok, but…' verdict — looks right, yet a judgement call only the human should make " +
         "(risky area, a step you could not verify, unclear acceptance); it is never auto-accepted. " +
         "An issues verdict is the one send-back path: a holder live on this machine keeps the claim and fixes; " +

@@ -5,17 +5,17 @@ description: Peer-review a TeamEngage task another session submitted — list wh
 
 # te-review — peer-review another session's submission
 
-**Writing rule — ASD-STE100, always.** `summary` and `note` are ASD-STE100
+**Writing rule — ASD-STE100, always.** `summary` and `findings` are ASD-STE100
 Simplified Technical English: short
-sentences, one idea each, active voice, plain approved words. The review
-report must read like a chat reply to the human — no vague text, no
+sentences, one idea each, active voice, plain approved words. Review text
+must read like a chat reply to the human — no vague text, no
 compressed log dumps. file:line and commit shas only where they pin a
 finding down.
 
 A second pair of eyes before the human looks. You are the reviewer — **not** the
-holder of the claim and **not** the decider. What you produce is a verdict + note
-the human reads; an `issues` note the submitter reads too. Final accept stays with
-the human.
+holder of the claim and **not** the decider. What you produce is a verdict +
+summary the human reads; an `issues` verdict's findings the submitter reads
+too. Final accept stays with the human.
 
 **Review the request, not the build.** The build stage already did the
 mechanical checks: compile, lint, syntax, and the test run. The submit gate
@@ -134,7 +134,7 @@ For each requirement, find three things:
   requirement with no code is a finding too; say that it is implied, so the
   human can decide whether the task meant it.
 
-Put the trace (short form) in `note`.
+Put the trace (short form) in `findings`.
 
 ### 4c. Judge the interpretation and the logic
 
@@ -209,13 +209,22 @@ Put the trace (short form) in `note`.
 
 ```bash
 curl -s -X POST $B/review/GL-0019 -H "$H" \
-  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — every acceptance item has code and a test that proves it.","report":"Verdict: OK.\n\nWhat the reviewer checked:\n1. Acceptance 1 (count restarts): the counter goes up in the start path, and a test asserts the new value.\n2. Acceptance 2 (survive a restart): the counter is saved to the state file and read back at start. A test restarts the daemon and asserts the value.\n3. The diff stays inside the task scope.\n\nBottom line: The work meets every acceptance item. You can accept it.","note":"I traced each acceptance item to code and proof. 1. acceptance 1 → src/counter.ts:40, proved by test \"increments on start\". 2. acceptance 2 → src/counter.ts:72 (save) and :88 (load), proved by test \"keeps count over restart\". 3. The summary implies no further requirement. The diff stays inside **Touches:**. The verify result is at the claim HEAD; I did not run tests again."}'
+  -d '{"verdict":"ok","summary":"Restart counting works and survives a restart — every acceptance item has code and a test that proves it."}'
 ```
 
-- `report` is the **default output for the human** — always give it. It is
-  a short multi-line decision report in STE, and the page shows it first.
-  Use this layout. Number the items across sections, and leave out a section
-  that has no items (never leave out `Verdict` or `Bottom line`):
+- `summary` is **required** — one or two sentences in STE for the human,
+  no jargon: what you verified and why the verdict follows. _"The fix works
+  but error reporting was left out"_, not _"missing stderr propagation in
+  run()"_. It is what the human reads on the item page.
+- `findings` is the **numbered list** the holder answers — one entry per
+  point, `{text, where, severity: "must"|"should"}`. `where` pins it down
+  (`file:line`, a test name). A `must` blocks the next submit until the
+  holder marks it done or skipped.
+- `note` and `report` are **accepted for one release** — they render inside
+  the findings list; put fix detail in `findings` instead. If you still give
+  a `report`, use this layout in STE, number the items across sections, and
+  leave out a section that has no items (never leave out `Verdict` or
+  `Bottom line`):
 
   ```text
   Verdict: OK — but the human must decide.
@@ -235,23 +244,15 @@ curl -s -X POST $B/review/GL-0019 -H "$H" \
   ```
 
   Say what each item means for the decision. Say clearly when you trust the
-  submitter's report and did not run a check yourself. Agents do not read
-  `report`, so keep every marker (`unverifiable:`, `trivial:`, `follow-up
-  task needed`) in `note`.
-- `summary` is **required** — one sentence in STE for the human, no
-  jargon: what the verdict means. _"The fix works but error reporting was
-  left out"_, not _"missing stderr propagation in run()"_. It is what the
-  human reads on the item page.
-- `note` is the technical detail for whoever fixes it — what you ran, what
-  passed, over which diff. `"looks fine"` tells nobody anything.
+  submitter's report and did not run a check yourself.
 - `ask_human` is the **human's decision card** — required on `issues` and
   on `ok` + `needs_human`. Plain words the human
   reads first; no file names, no code names, no commit ids:
   - `problem` — what is wrong or what needs deciding, max 40 words.
   - `recommendation` — what you would do, max 30 words.
-  - `options` — 2–3 short labels (max 4 words each) the human picks on
-    the item page; their pick is recorded as a decision.
-  Depth goes in `note`, `report` and `findings` — no limit there.
+  - `options` — 2–3 short labels (max 4 words each), shown as text on the
+    card; accepted for one release and folded into the findings list.
+  Depth goes in `findings` — no limit there.
 
   ```text
   problem, good:        "the change touches the auth path; the reviewer could not fully verify it"

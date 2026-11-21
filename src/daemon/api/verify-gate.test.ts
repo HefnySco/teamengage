@@ -189,7 +189,7 @@ describe("submit checks gate (GL-0349)", () => {
     expect(text).toContain("- unverified: no runner on this box");
     // the ok review is needs_human → never auto-accepted
     const reviewer = holder("gate-review");
-    await ops.review("WS-0008", reviewer, "ok", "looks fine");
+    await ops.review("WS-0008", reviewer, "ok", "looks fine", "verified the work");
     const rv = ops.item("WS-0008").meta.ai_review;
     expect(rv?.verdict).toBe("ok");
     expect(rv?.needs_human).toBe(true);
@@ -206,7 +206,7 @@ describe("verified badge + require_verified (GL-0350)", () => {
     await ops.claim("WS-0009", s);
     await ops.verifyResult("WS-0009", { check: "chk-WS-0009", exit_code: 0, passed: true, commit: head(wt("WS-0009")) }, s);
     await ops.submit("WS-0009", s, { notes: "done", what: "badge", how: "verify" });
-    await ops.review("WS-0009", reviewer, "ok");
+    await ops.review("WS-0009", reviewer, "ok", undefined, "verified the work");
 
     const brief = await ops.brief("WS-0009");
     expect(brief.verified?.ok).toBe(true);
@@ -240,7 +240,7 @@ describe("verified badge + require_verified (GL-0350)", () => {
     const reviewer = holder("badge-r2");
     await ops.claim("WS-0010", s);
     await ops.submit("WS-0010", s, { notes: "done", what: "no checks", how: "plain submit" });
-    await ops.review("WS-0010", reviewer, "ok");
+    await ops.review("WS-0010", reviewer, "ok", undefined, "verified the work");
     expect(ops.verifiedBadge(ops.index.get("WS-0010")!).ok).toBe(false);
 
     const cfg = wsr().ws.config;

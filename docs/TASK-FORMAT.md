@@ -15,7 +15,7 @@ this page and that code must agree.
 | Idea | `IDEA-<NN>-<slug>.md` | same |
 | Discussion | `DISC-<NN>-<slug>.md` | same |
 | Discussion transcript | `<same name>.transcript.md` | next to its discussion |
-| Plain-English (STE) companion | `<same name>.simple.md` | next to its task |
+| Plain-English (STE) version | `## Simple` section in the task file (legacy: `<same name>.simple.md` companion, still read) | in the task file |
 
 - `NN` is one above the highest number used anywhere under the project
   folder, `done/` included, and above any number an item still records —
@@ -74,7 +74,7 @@ previous run must be cleared so the second run fires them again.
 | `## Checks` | optional | Machine checks (GL-0348): a YAML list of `{name, repo, run, timeout, expect_exit}`. `te verify` runs each `run` in `repo` (must be named in `**Touches:**`), `timeout` in seconds, `expect_exit` defaults to 0. Written by `propose`/`edit` (`checks` argument); `te validate` reports a check with no run, a repo outside Touches and a duplicate name. |
 
 Agent-written text — the title, `## Summary`, `## Acceptance`, `## Notes`
-and the `.simple.md` companion — is written in ASD-STE100 Simplified
+and the `## Simple` version — is written in ASD-STE100 Simplified
 Technical English (STE): short sentences, active voice, plain approved
 words used consistently. See the WRITING rules in `te agents-md`.
 

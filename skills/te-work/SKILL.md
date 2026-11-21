@@ -156,15 +156,16 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
 
 Asked for a "simple" version (or the task has none and the human wants one)?
 Write it with the tool — in STE (ASD-STE100 Simplified Technical English:
-short sentences, active voice, plain approved words) — never create
-`X.simple.md` by hand:
+short sentences, active voice, plain approved words) — never edit the
+task file's `## Simple` section by hand:
 
 ```bash
 curl -s -X POST $B/simple/GL-0019 -H "$H" -d '{"text":"If you fly the same mission twice, the add-ons now react the second time too."}'
 ```
 
-It creates (or replaces) the companion file next to the task, tags and links
-it, and the web page shows it under "simple". No claim needed.
+It writes the `## Simple` section into the task file (an existing
+`.simple.md` companion is updated instead), and the web page shows it
+under "simple". No claim needed.
 
 ### Attaching files (mockups, screenshots)
 
@@ -205,33 +206,31 @@ runs each check in your claim worktree and posts the result. Submit is
 refused while a check is missing, failed, or stale at the repo HEAD; only
 use `unverified_reason` when a check genuinely cannot run here (it makes
 the review needs_human, never auto-accepted).
-Then submit with the evidence. **`what` and `how` are required** — the
-human's two short lines under `## For the human`. Plain words, no file
-names, no function names, no commit ids: `what` says what the task does
-now (max 40 words), `how` says how you did it (max 60 words). The daemon
-refuses a line over the limit — and the error names the count.
+Then submit with the evidence. **`summary` is required** — the human's
+one short line under `## For the human`: what the task does now and how
+you did it, in plain words, no file names, no function names, no commit
+ids. (`what`, `how` and `notes` are still accepted for one release and
+fold into the summary.) A field over its word limit is accepted — the
+reply carries a `warn:` line.
 
-- **what, good:** `"the mission counter now survives an autopilot reboot"`
-- **what, weak:** `"changed handleMissionCurrentCount in de_mavlink.cpp
-  and fixed the dedup flag"` (code names, says what you touched not what
-  the task does)
-- **how, good:** `"set a restart flag when the FC reboots and reset the
-  dedup cache on it; ran the rerun test twice"`
-- **how, weak:** `"edited the code, added a flag, ran tests"` (says
-  nothing — where? what kind of flag?)
+- **summary, good:** `"the mission counter now survives an autopilot
+  reboot — set a restart flag on FC reboot and reset the dedup cache on
+  it"`
+- **summary, weak:** `"changed handleMissionCurrentCount and fixed the
+  dedup flag"` (code names, says what you touched not what the task does)
 
-The `walkthrough` is the **optional agent layer** — the longer STE
-explanation (what you changed, how it works, where to look first) written
-like a chat reply. Depth goes in `walkthrough`, `notes`, `report` and
-`findings` — those have no limit. It lands in the item's `## Walkthrough`:
+`tests` auto-fills from the stored `te verify` results when you leave it
+out. `walkthrough` is the **agent layer** — the longer STE explanation
+(what you changed, how it works, where to look first) written like a
+chat reply — required on heavy-tier tasks, optional otherwise. Depth
+goes in `walkthrough` and `notes` — those have no limit. The walkthrough
+lands in the item's `## Walkthrough`:
 
 ```bash
 curl -s -X POST $B/submit/GL-0019 -H "$H" -d '{
   "commits": ["droneengage_mavlink@3f2a1c9", "droneengage_comm@8be0d14"],
+  "summary": "the mission counter now survives an autopilot reboot — a restart flag on FC reboot resets the dedup cache",
   "tests": "ctest -R mission_restart: 4/4 passed; SITL tests/rerun.sh: second AUTO run fired all 6 module events",
-  "notes": "acceptance 1–3 verified as above; de_comm dedup reset behind the new restart flag",
-  "what": "the mission counter now survives an autopilot reboot",
-  "how": "set a restart flag on FC reboot and reset the dedup cache on it; ran the rerun test twice",
   "walkthrough": "de_mavlink already knew when the FC restarted; the new part is a restart flag that de_comm also resets its dedup cache on, so the second run of the same mission is not swallowed as a duplicate. Worth looking at first: the flag is set in handleMissionCurrentCount and read in the dedup path — everything else is plumbing."
 }'
 ```

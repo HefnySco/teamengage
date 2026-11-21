@@ -1203,11 +1203,14 @@ export class WorkspaceOps {
     const simple = it.meta.simple_source
       ? await resolveSource(root, it.meta.id, it.meta.simple_source, { simple: true })
       : undefined;
+    // TE-0178: no companion — the ## Simple section inside the task file
+    const inline = !simple ? sectionBody(main.text, "Simple")?.trim() : undefined;
     return {
       path: main.path,
       text: stripFrontmatter(main.text),
       moved: main.moved,
       ...(simple ? { simple: { path: simple.path, text: stripFrontmatter(simple.text) } } : {}),
+      ...(inline ? { simple: { path: `${main.path}#simple`, text: inline } } : {}),
     };
   }
 
@@ -1623,9 +1626,15 @@ export class WorkspaceOps {
     evidence?: {
       commits?: string[];
       tests?: string;
+      /** TE-0178: the one short line for the human — required (what+how+notes
+       * fold into it for one release) */
+      summary?: string;
       notes?: string;
+      /** required on heavy-tier items (TE-0178) */
       walkthrough?: string;
+      /** one-release compat (TE-0178): folds into summary */
       what?: string;
+      /** one-release compat (TE-0178): folds into summary */
       how?: string;
       cost?: SubmitCost;
       finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
@@ -1674,11 +1683,38 @@ export class WorkspaceOps {
         }
       }
     }
-    // GL-0343: the human reads what/how, the agent layer keeps walkthrough
+    // TE-0178: one short summary for the human — old-style what/how/notes
+    // fold into it for one release; the notes Evidence line stays only
+    // when an explicit summary is given
+    const folded = [evidence?.what, evidence?.how, evidence?.notes]
+      .map((t) => t?.trim())
+      .filter(Boolean)
+      .join("; ");
+    const summary = evidence?.summary?.trim() || folded;
+    if (!summary) {
+      throw new TeError(
+        "USAGE",
+        "summary is required — one short line for the human (what+how accepted for one release)",
+      );
+    }
+    // TE-0178: the walkthrough is required on heavy-tier work only
+    if (it.meta.tier === "heavy" && !evidence?.walkthrough?.trim()) {
+      throw new TeError("USAGE", "walkthrough is required on heavy tasks");
+    }
     const warnings = [
-      wordLimitWarn("what", evidence?.what, true),
-      wordLimitWarn("how", evidence?.how, true),
+      wordLimitWarn("summary", summary),
+      wordLimitWarn("what", evidence?.what),
+      wordLimitWarn("how", evidence?.how),
+      ...(evidence?.commits?.length ? [] : ["no commits listed — name the commit(s) the work made"]),
     ].filter((w): w is string => !!w);
+    // TE-0178: tests auto-fill from the stored te verify results
+    const tests =
+      evidence?.tests?.trim() ||
+      this.verifyOf(it)
+        .filter((r) => r.passed)
+        .map((r) => `${r.check} passed @${r.commit.slice(0, 10)}`)
+        .join(", ") ||
+      undefined;
     // RS-0006/7: attach the live-vs-snapshot diff for ssh/folder targets
     const diffs: string[] = [];
     const seen = new Set<string>();
@@ -1691,9 +1727,20 @@ export class WorkspaceOps {
       const d = await snapshotDiff(this.wsr.ws, id, resource, this.home);
       if (d) diffs.push(`@${resource}: ${d}`);
     }
+    // compat fields fold into the summary — what/how always, notes only
+    // when it was folded (an explicit summary leaves notes in Evidence)
+    const notesFolded = !evidence?.summary?.trim() && !!evidence?.notes?.trim();
+    const base = {
+      ...evidence,
+      summary,
+      tests,
+      what: undefined,
+      how: undefined,
+      notes: notesFolded ? undefined : evidence?.notes,
+    };
     const ev = diffs.length
-      ? { ...evidence, notes: [evidence?.notes, diffs.join("\n")].filter(Boolean).join("\n") }
-      : evidence;
+      ? { ...base, notes: [base.notes, diffs.join("\n")].filter(Boolean).join("\n") }
+      : base;
     const r = await this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "submit",
       evidence: ev,
@@ -1721,12 +1768,12 @@ export class WorkspaceOps {
     findings?: ReviewFinding[],
     askHuman?: AskHuman,
   ) {
-    // GL-0344: a plain ok needs only a ≤25-word summary; anything the
-    // human must decide on needs the ask_human card
-    const warnings =
-      verdict === "ok" && !needsHuman
-        ? [wordLimitWarn("summary", summary)].filter((w): w is string => !!w)
-        : askHumanWarnings(askHuman, true);
+    // TE-0178: every verdict needs a summary — anything the human must
+    // decide on also needs the ask_human card (problem + recommendation)
+    const warnings = [
+      wordLimitWarn("summary", summary, true),
+      ...(verdict === "ok" && !needsHuman ? [] : askHumanWarnings(askHuman, true)),
+    ].filter((w): w is string => !!w);
     const it = this.item(id);
     const claim = it.claim;
     const r = await this.store.perform(
@@ -1751,7 +1798,8 @@ export class WorkspaceOps {
 
   /**
    * Compat alias, one release only: a bounce is a `review` with an
-   * `issues` verdict now — same claim rules, same cap.
+   * `issues` verdict now — same claim rules, same cap. Old callers have
+   * no summary, so it bypasses the new required-summary gate.
    */
   async bounce(
     id: string,
@@ -1761,7 +1809,22 @@ export class WorkspaceOps {
     findings?: ReviewFinding[],
     askHuman?: AskHuman,
   ) {
-    return this.review(id, session, "issues", reason, summary, undefined, undefined, findings, askHuman);
+    const it = this.item(id);
+    const claim = it.claim;
+    const r = await this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor(session),
+      { type: "review", verdict: "issues", note: reason, summary, findings, ask_human: askHuman },
+      {
+        priorBounces: () => this.aiBouncesSinceHumanTouch(id),
+        holderAway: () => this.holderAway(this.item(id)),
+      },
+    );
+    if (claim && r.meta.status !== "in_review" && r.meta.status !== "in_progress") {
+      await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    }
+    return r;
   }
 
   /**

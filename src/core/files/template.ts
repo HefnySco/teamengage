@@ -30,6 +30,8 @@ export interface TaskDraft {
   checks?: Check[];
   /** discussion files only: body text for the fixed ## sections, keyed by heading */
   sections?: Record<string, string>;
+  /** plain-English version for the human (STE) — a ## Simple section in the task file (TE-0178) */
+  simple?: string;
 }
 
 /**
@@ -73,6 +75,7 @@ export function renderTaskBody(d: TaskDraft): string {
     "## Summary",
     (d.summary ?? d.title).trim(),
     "",
+    ...(d.simple?.trim() ? ["## Simple", d.simple.trim(), ""] : []),
     ...(discussion
       ? DISCUSSION_SECTIONS.flatMap((h) => [`## ${h}`, (d.sections?.[h] ?? "").trim(), ""])
       : []),
@@ -174,7 +177,8 @@ version, questions, logs, walkthroughs, review text, handoffs.`;
 /** Authoring rules for agent instruction files (`te agents-md`, GET /agent). */
 export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the task folder is the plan)
 - One task per file: <project>/TASK-<NN>-<slug>.md. Epics are PHASE-*.md or
-  *-MEGAPLAN.md. Optional plain-English companion (in STE): X.simple.md.
+  *-MEGAPLAN.md. The optional plain-English version for the human (in STE)
+  is a ## Simple section in the task file.
 - Ideas are IDEA-*.md — source documents (thoughts, specs, brainstorms) an
   agent can be asked to plan from. They are never claimed; tasks generated
   from one name it in "relates".
@@ -189,8 +193,8 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
 - Create tasks with propose (it writes the file from the template and
   tracks it) — never by hand. Work generated from an idea names it in
   "relates" (reference only — no ordering, no gate). Plain-English version
-  for the human, in STE: simple <id> {text} (writes and links X.simple.md)
-  — never by hand.
+  for the human, in STE: simple <id> {text} (writes the task file's
+  ## Simple section) — never by hand.
 - Every task carries at least one domain (#tag). Give domains in propose,
   or they are inferred from the title/touches/summary — a proposal where
   nothing applies is refused. A fix (type bug, or fix/bug/defect/

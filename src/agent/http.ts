@@ -122,10 +122,11 @@ RULES
   1. Read freely: GET endpoints, or the plan files themselves.
   2. Change state ONLY through these endpoints — never edit .teamengage/ files.
   3. claim before touching code; work only in the paths brief/claim return.
-  4. ask instead of guessing; submit with evidence: what (what the task
-     does now, max 40 words) and how (how you did it, max 60 words) are
-     required — the human's two short lines under ## For the human, plain
-     words, no code names. walkthrough is the optional agent layer.
+  4. ask instead of guessing; submit with evidence: summary is required —
+     the human's one short line under ## For the human (plain words, no
+     code names); what+how+notes are accepted for one release and fold
+     into it. tests auto-fills from te verify results; walkthrough is
+     required on heavy-tier tasks only.
      A field over its word limit is accepted — the reply carries a warn:
      line; a missing required field still fails.
      Never mark work done. Never git push. The human approves, answers,
@@ -134,12 +135,14 @@ RULES
      status=in_review): review records your verdict — ok is advisory for
      the human, issues sends broken work back. Never review your own
      submission. A review needs a summary — in STE, for the human: what
-     you verified and why the verdict (max 25 words on a plain ok).
+     you verified and why the verdict (max 25 words on a plain ok) — and
+     findings carries the fix detail as a numbered list ({text, where,
+     severity must|should}). note and report are accepted for one release
+     and render inside the findings list.
      Anything the human must decide on — needs_human, issues — also needs
      ask_human: {problem (max 40 words), recommendation (max 30 words),
      options (2–3 labels, max 4 words each)} — the human's decision card.
-     The depth goes in note, report and findings — the agent layer with no
-     limit (see the te-review skill). "ok, but the human should decide" → set
+     "ok, but the human should decide" → set
      needs_human so the accept is never automatic. The holder pulls its
      own submission back to keep working with withdraw.
   6. An in_review item with an "issues" verdict can be claimed by any
@@ -205,7 +208,7 @@ EXAMPLES
   curl -s -X POST ${base}/agent/log/MP-0002 -H "X-TE-Session: $T" -d '{"note":"tests green"}'
   curl -s -X POST ${base}/agent/ask/MP-0002 -H "X-TE-Session: $T" -d '{"question":"A or B?","options":["A","B"]}'
   curl -s -X POST ${base}/agent/attach/MP-0002 -H "X-TE-Session: $T" -d '{"path":"mockups/home.png","caption":"home tab mockup"}'
-  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"tests":"42 passed","what":"the link retries on timeout","how":"added a retry loop in connect"}'
+  curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"summary":"the link retries on timeout — added a retry loop in connect"}'
 
 Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.
 `;

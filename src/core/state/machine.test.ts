@@ -341,6 +341,10 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
           `  Verdict: OK.\n\n  What the reviewer checked:\n  1. The tests pass.\n\n  Bottom line: You can accept it.\n` +
           `\n  Technical note: unverifiable: flight test\n`,
       },
+      {
+        heading: "Review",
+        text: `  findings:\n  1. [note] unverifiable: flight test\n`,
+      },
     ]);
   });
 
@@ -354,6 +358,7 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
     expect(r.meta.ai_review?.report).toBeUndefined();
     expect(r.sectionWrites).toEqual([
       { heading: "Review", text: `- ${NOW} ${agent2.session} ok — The work is good. (checked)\n` },
+      { heading: "Review", text: `  findings:\n  1. [note] checked\n` },
     ]);
   });
 
@@ -376,6 +381,7 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
     });
     expect(r.sectionWrites).toEqual([
       { heading: "Review", text: `- ${NOW} ${agent2.session} issues: acceptance 2 fails locally\n` },
+      { heading: "Review", text: `  findings:\n  1. [note] acceptance 2 fails locally\n` },
     ]);
     const again = transition(
       r.meta,
@@ -410,6 +416,7 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
         heading: "Review",
         text: `- ${NOW} ${agent2.session} issues — The restart flag is ignored — it goes back for fixes. (acceptance 2 fails locally)\n`,
       },
+      { heading: "Review", text: `  findings:\n  1. [note] acceptance 2 fails locally\n` },
     ]);
   });
 

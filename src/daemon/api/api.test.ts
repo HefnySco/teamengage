@@ -843,11 +843,11 @@ describe("autonomy: solo", () => {
       await ops.submit(base, agent, { notes: "done", what: "task done", how: "ran the steps" });
       const reviewer = ctx.sessions.hello("solo-reviewer");
       expect(ops.autoAcceptDue()).not.toContain(base); // unreviewed
-      await ops.review(base, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
+      await ops.review(base, reviewer, "issues", "broken", "goes back for fixes", undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       // the issues verdict sent it back to the holder — a resubmit returns it to review
       await ops.submit(base, agent, { what: "task done", how: "ran the steps" });
-      await ops.review(base, reviewer, "ok");
+      await ops.review(base, reviewer, "ok", undefined, "verified the work");
       expect(ops.autoAcceptDue()).not.toContain(base); // too fresh
       // key tasks wait for the human
       await ops.setUnblocksOn(base, "done");
@@ -861,9 +861,10 @@ describe("autonomy: solo", () => {
       expect((await api(`/api/items/${base}/stop-auto-accept`, { method: "POST" })).status).toBe(200);
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).not.toContain(base);
       // a resubmit re-arms it
-      await ops.review(base, reviewer, "issues", "one more pass", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
-      await ops.submit(base, agent, { what: "task done", how: "ran the steps" });
-      await ops.review(base, reviewer, "ok");
+      await ops.review(base, reviewer, "issues", "one more pass", "goes back for fixes", undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or send it back", options: ["accept", "send back"] });
+      // the second send-back escalated the tier — a walkthrough is required now
+      await ops.submit(base, agent, { what: "task done", how: "ran the steps", walkthrough: "fixed the red path end to end" });
+      await ops.review(base, reviewer, "ok", undefined, "verified the work");
       expect(await ops.autoAccept(Date.now() + 3_600_000)).toContain(base);
       expect(store.idx.get(base)!.meta.status).toBe("done");
 
@@ -944,7 +945,7 @@ describe("autonomy: solo", () => {
       await ops.submit(id, agent, { what: "task done", how: "ran the steps" });
     }
     await ops.review(nh, reviewer, "ok", "borderline", "looks right, wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
-    for (const id of [light, meta, plain]) await ops.review(id, reviewer, "ok");
+    for (const id of [light, meta, plain]) await ops.review(id, reviewer, "ok", undefined, "verified the work");
 
     wsr.ws.config.autonomy = "solo";
     wsr.ws.config.auto_accept_after = "30m";
@@ -1181,10 +1182,10 @@ describe("batch actions", () => {
       await ops.claim(id, agent);
       await ops.submit(id, agent, { what: "task done", how: "ran the steps" });
     }
-    await ops.review(ok1, reviewer, "ok");
-    await ops.review(ok2, reviewer, "ok");
-    await ops.review(ok3, reviewer, "ok");
-    await ops.review(bad, reviewer, "issues", "broken", undefined, undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
+    await ops.review(ok1, reviewer, "ok", undefined, "verified the work");
+    await ops.review(ok2, reviewer, "ok", undefined, "verified the work");
+    await ops.review(ok3, reviewer, "ok", undefined, "verified the work");
+    await ops.review(bad, reviewer, "issues", "broken", "goes back for fixes", undefined, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
     await ops.review(nh, reviewer, "ok", "risky bit", "wants your eyes", true, undefined, undefined, { problem: "the change is not verified end to end", recommendation: "read the diff and accept or bounce it", options: ["accept", "bounce"] });
     await ops.setParent(da, epic);
     await ops.setParent(db, epic);
@@ -1782,7 +1783,7 @@ describe("review_models: which model may review which tier (GL-0361)", () => {
     const doer = ctx.sessions.hello("rm-doer", { model: "sonnet" });
     for (const [id, w] of [[heavy, "heavy work done"], [light, "light work done"], [base, "baseline work done"]] as const) {
       await ops.claim(id, doer);
-      await ops.submit(id, doer, { what: w, how: "ran the steps" });
+      await ops.submit(id, doer, { what: w, how: "ran the steps", walkthrough: "did the work end to end" });
     }
 
     const quick = ctx.sessions.hello("rm-quick", { role: "reviewer", model: "haiku" });
@@ -1791,22 +1792,22 @@ describe("review_models: which model may review which tier (GL-0361)", () => {
     const sameModel = ctx.sessions.hello("rm-same", { role: "reviewer", model: "sonnet" });
 
     // unset review_models: the DE-0161 different-model rule only
-    await ops.review(base, quick, "ok");
+    await ops.review(base, quick, "ok", undefined, "verified the work");
     expect(wsr.store.idx.get(base)!.meta.ai_review?.verdict).toBe("ok");
 
     wsr.ws.config.review_models = { deep: "opus", quick: "haiku", deep_from_tier: "heavy" };
     try {
       // rule 1: no declared model — refused
-      await expect(ops.review(heavy, noModel, "ok")).rejects.toThrow(/declare a model/);
+      await expect(ops.review(heavy, noModel, "ok", undefined, "verified the work")).rejects.toThrow(/declare a model/);
       // rule 2: same model as the submitter — refused
-      await expect(ops.review(heavy, sameModel, "ok")).rejects.toThrow(/different model/);
+      await expect(ops.review(heavy, sameModel, "ok", undefined, "verified the work")).rejects.toThrow(/different model/);
       // rule 3: a heavy item needs the deep model — quick is refused, error names deep_from_tier
-      await expect(ops.review(heavy, quick, "ok")).rejects.toThrow(/deep_from_tier/);
+      await expect(ops.review(heavy, quick, "ok", undefined, "verified the work")).rejects.toThrow(/deep_from_tier/);
       // a light item takes the quick or the deep model
-      await ops.review(light, quick, "ok");
+      await ops.review(light, quick, "ok", undefined, "verified the work");
       expect(wsr.store.idx.get(light)!.meta.ai_review?.reviewer_model).toBe("haiku");
       // the deep model reviews the heavy item
-      await ops.review(heavy, deep, "ok");
+      await ops.review(heavy, deep, "ok", undefined, "verified the work");
       expect(wsr.store.idx.get(heavy)!.meta.ai_review?.reviewer_model).toBe("opus");
 
       // next: the quick reviewer sees the light item only; no model sees nothing
@@ -1843,12 +1844,12 @@ describe("auto-accept follows the model rule (GL-0362)", () => {
     const doer = ctx.sessions.hello("aa-doer", { model: "sonnet" });
     for (const id of [old, fresh]) {
       await ops.claim(id, doer);
-      await ops.submit(id, doer, { what: "work done", how: "ran the steps" });
+      await ops.submit(id, doer, { what: "work done", how: "ran the steps", walkthrough: "did the work end to end" });
     }
 
     // an ok review recorded before review_models existed — no reviewer_model
     const oldRev = ctx.sessions.hello("aa-old", { role: "reviewer" });
-    await ops.review(old, oldRev, "ok");
+    await ops.review(old, oldRev, "ok", undefined, "verified the work");
     expect(wsr.store.idx.get(old)!.meta.ai_review?.reviewer_model).toBeUndefined();
 
     wsr.ws.config.autonomy = "solo";
@@ -1861,7 +1862,7 @@ describe("auto-accept follows the model rule (GL-0362)", () => {
 
       // a compliant deep-model review arms the delay
       const deep = ctx.sessions.hello("aa-deep", { role: "reviewer", model: "opus" });
-      await ops.review(fresh, deep, "ok");
+      await ops.review(fresh, deep, "ok", undefined, "verified the work");
       const itFresh = ops.index.get(fresh)!;
       expect(ops.autoAcceptAt(itFresh)).toBeTruthy();
       expect(ops.autoAcceptDue(Date.now() + 3_600_000)).toContain(fresh);
@@ -2103,10 +2104,10 @@ describe("ask_human decision card (GL-0344)", () => {
     const a = await submitted(ops, "Card check A");
     const b = await submitted(ops, "Card check B");
     await expect(ops.review(a, reviewer, "ok", "n", "s", true)).rejects.toMatchObject({ code: "USAGE" });
-    await expect(ops.review(b, reviewer, "issues", "n")).rejects.toMatchObject({ code: "USAGE" });
+    await expect(ops.review(b, reviewer, "issues", "n", "goes back for fixes")).rejects.toMatchObject({ code: "USAGE" });
     // with the card both go through
     await ops.review(a, reviewer, "ok", "n", "s", true, undefined, undefined, AH);
-    await ops.review(b, reviewer, "issues", "n", undefined, undefined, undefined, undefined, AH);
+    await ops.review(b, reviewer, "issues", "n", "goes back for fixes", undefined, undefined, undefined, AH);
   });
 
   it("an ok review with a 26-word summary stands and warns (TE-0177)", async () => {
@@ -2125,7 +2126,7 @@ describe("ask_human decision card (GL-0344)", () => {
     const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
     const reviewer = ctx.sessions.hello("r-344c");
     const id = await submitted(ops, "Card stored");
-    await ops.review(id, reviewer, "issues", "broken bit", undefined, undefined, undefined, undefined, AH);
+    await ops.review(id, reviewer, "issues", "broken bit", "goes back for fixes", undefined, undefined, undefined, AH);
     const stored = ctx.workspaces.get("ws")!.store.idx.get(id)!.meta.ai_review;
     expect(stored?.ask_human).toEqual(AH);
     const body = (await (await api(`/api/items/${id}`)).json()) as { item: { meta: { ai_review?: { ask_human?: unknown } } } };
@@ -2169,7 +2170,7 @@ describe("ask_human decision card (GL-0344)", () => {
 });
 
 describe("For the human — what/how on submit (GL-0343)", () => {
-  it("submit writes what/how under ## For the human; no walkthrough is fine", async () => {
+  it("submit writes the summary under ## For the human; no walkthrough is fine on a standard task (TE-0178)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const ops = new WorkspaceOps(wsr, ctx.sessions);
@@ -2179,7 +2180,27 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     await ops.approve(id);
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
-    // no walkthrough at all — accepted
+    // no walkthrough at all — accepted on a standard task
+    await ops.submit(id, holder, {
+      commits: ["repo@abc1234"],
+      summary: "the counter now resets on FC restart — the reset call moved into the restart path",
+    });
+    const it = wsr.store.idx.get(id)!;
+    const sec = it.sections.find((s) => s.heading.toLowerCase() === "for the human");
+    expect(sec?.body).toContain("- summary: the counter now resets on FC restart — the reset call moved into the restart path");
+    expect(it.meta.status).toBe("in_review");
+  });
+
+  it("an old-style submit (what/how/notes) folds into the summary line for one release", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Old style" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
     await ops.submit(id, holder, {
       notes: "done",
       what: "the counter now resets on FC restart",
@@ -2187,8 +2208,7 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     });
     const it = wsr.store.idx.get(id)!;
     const sec = it.sections.find((s) => s.heading.toLowerCase() === "for the human");
-    expect(sec?.body).toContain("- what: the counter now resets on FC restart");
-    expect(sec?.body).toContain("- how: moved the reset call into the restart path and ran the tests");
+    expect(sec?.body).toContain("- summary: the counter now resets on FC restart; moved the reset call into the restart path and ran the tests; done");
     expect(it.meta.status).toBe("in_review");
   });
 
@@ -2205,10 +2225,14 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     const long = Array.from({ length: 45 }, (_, i) => `w${i}`).join(" ");
     const r = await ops.submit(id, holder, { what: long, how: "ran the steps" });
     expect(r.meta.status).toBe("in_review");
-    expect(r.warnings).toEqual(["what is 45 words — max 40"]);
+    expect(r.warnings).toEqual([
+      "summary is 48 words — max 25",
+      "what is 45 words — max 40",
+      "no commits listed — name the commit(s) the work made",
+    ]);
   });
 
-  it("a submit with no what still fails (TE-0177)", async () => {
+  it("a submit with no summary text at all still fails (TE-0178)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const ops = new WorkspaceOps(wsr, ctx.sessions);
@@ -2219,8 +2243,120 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
     await expect(
-      ops.submit(id, holder, { how: "ran the steps" }),
-    ).rejects.toThrow(/what is required/);
+      ops.submit(id, holder, {}),
+    ).rejects.toThrow(/summary is required/);
+  });
+
+  it("tests auto-fill from te verify results when the submit leaves them out (TE-0178)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [{ type: "task", title: "Verify fill", checks: [{ name: "unit tests", run: "true" }] }],
+      human,
+    );
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    await ops.verifyResult(id, { check: "unit tests", exit_code: 0, passed: true, commit: "abc123def456" }, holder);
+    const r = await ops.submit(id, holder, {
+      commits: ["repo@abc1234"],
+      summary: "the counter now resets on FC restart",
+    });
+    expect(r.meta.status).toBe("in_review");
+    const it = wsr.store.idx.get(id)!;
+    const ev = it.sections.find((s) => s.heading.toLowerCase() === "evidence")?.body ?? "";
+    expect(ev).toContain("unit tests passed @abc123def4");
+  });
+
+  it("a heavy-tier submit without a walkthrough fails with a clear message (TE-0178)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Heavy work", tier: "heavy" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
+    await expect(
+      ops.submit(id, holder, { commits: ["repo@abc1234"], summary: "deep change done" }),
+    ).rejects.toThrow(/walkthrough is required on heavy tasks/);
+    // with the walkthrough it submits
+    const r = await ops.submit(id, holder, {
+      commits: ["repo@abc1234"],
+      summary: "deep change done",
+      walkthrough: "the retry path now owns the timer — start there",
+    });
+    expect(r.meta.status).toBe("in_review");
+  });
+
+  it("a review needs only verdict and summary; findings render a numbered list (TE-0178)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Review shape" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    const reviewer = ctx.sessions.hello(`r-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { commits: ["repo@abc1234"], summary: "work done" });
+    await ops.review(id, reviewer, "ok", undefined, "verified the work");
+    expect(wsr.store.idx.get(id)!.meta.ai_review?.verdict).toBe("ok");
+    // a findings review writes the numbered list into ## Review
+    await ops.withdraw(id, holder);
+    await ops.submit(id, holder, { commits: ["repo@abc1234"], summary: "work done again" });
+    const reviewer2 = ctx.sessions.hello(`r2-${id}`);
+    await ops.review(
+      id,
+      reviewer2,
+      "issues",
+      undefined,
+      "two problems stay open",
+      undefined,
+      undefined,
+      [
+        { text: "the retry timer is not stopped", where: "src/retry.ts:41", severity: "must" },
+        { text: "naming is off", severity: "should" },
+      ],
+      { problem: "two problems stay open", recommendation: "send it back" },
+    );
+    const review = wsr.store.idx.get(id)!.sections.find((s) => s.heading.toLowerCase() === "review")?.body ?? "";
+    expect(review).toContain("two problems stay open");
+    expect(review).toContain("1. [must] the retry timer is not stopped (src/retry.ts:41)");
+    expect(review).toContain("2. [should] naming is off");
+  });
+
+  it("an old-style review (report + note) still succeeds and renders (TE-0178)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Old review" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    const reviewer = ctx.sessions.hello(`r-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { commits: ["repo@abc1234"], summary: "work done" });
+    const r = await ops.review(
+      id,
+      reviewer,
+      "ok",
+      "traced acceptance 1 to code",
+      "the work holds up",
+      undefined,
+      "Verdict: OK.\n\nBottom line: You can accept it.",
+    );
+    const review = wsr.store.idx.get(id)!.sections.find((s) => s.heading.toLowerCase() === "review")?.body ?? "";
+    expect(review).toContain("Verdict: OK.");
+    expect(review).toContain("Technical note: traced acceptance 1 to code");
+    // the note folds into the numbered findings list for one release
+    expect(review).toContain("1. [note] traced acceptance 1 to code");
   });
 
   it("an old item with only a walkthrough loads with no error", async () => {
@@ -2287,7 +2423,7 @@ describe("review card actions are real (TE-0176)", () => {
     const holder2 = wsr.store.idx.claims.get(id)!.holder;
     await ops.submit(id, { ...ctx.sessions.get(holder2)! }, { what: "fixed", how: "patched" });
     const reviewer = ctx.sessions.hello("r-176");
-    const r = await ops.review(id, reviewer, "issues", "still red", undefined, undefined, undefined, undefined, { problem: "tests are red", recommendation: "send it back", options: ["send back", "keep"] });
+    const r = await ops.review(id, reviewer, "issues", "still red", "goes back for fixes", undefined, undefined, undefined, { problem: "tests are red", recommendation: "send it back", options: ["send back", "keep"] });
     expect(r.meta.status).toBe("in_progress");
   });
 

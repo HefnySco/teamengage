@@ -251,8 +251,7 @@ When restart is detected (GL-0019), clear latched module events so the second ru
 ## Notes
 ```
 
-plus `TASK-14-clear-latched-events-when-a-mission-restarts.simple.md` with
-the STE line.
+plus a `## Simple` section in the task file with the STE line.
 
 ## 8. Vetting a light-authored draft
 
