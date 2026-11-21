@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -275,5 +276,45 @@ describe("capture: the caller owns the ready transition (TE-0180)", () => {
       transcript_text: "x",
     });
     expect(ops.index.get(r.id)!.meta.domains).toContain("teamengage");
+  });
+
+  it("keep_raw writes the untouched export gzipped outside the plans folder (TE-0181)", async () => {
+    const s = sessions.hello("capturer3");
+    const r = await ops.capture(s, {
+      title: "raw chat",
+      transcript_text: "user: hi\nassistant: hello\n",
+      keep_raw: true,
+    });
+    expect(r.raw_store).toBeDefined();
+    expect(r.raw_store!.startsWith(plans)).toBe(false);
+    expect(gunzipSync(readFileSync(r.raw_store!)).toString()).toBe(
+      "user: hi\nassistant: hello\n",
+    );
+  });
+
+  it("transcript paging and in:transcript search work on a stripped capture (TE-0181)", async () => {
+    const s = sessions.hello("capturer4");
+    const jsonl = [
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "zebra question" },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "checking that" },
+            { type: "tool_use", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+      }),
+    ].join("\n");
+    const r = await ops.capture(s, { title: "paged chat", transcript_text: jsonl });
+    const t = ops.discussionTranscript(r.id, 1);
+    expect(t.text).toContain("zebra question");
+    expect(t.text).toContain("### tool: Bash —");
+    const hits = await ops.search({ text: "zebra", in: "transcript" });
+    expect(hits.map((h) => h.id)).toContain(r.id);
   });
 });

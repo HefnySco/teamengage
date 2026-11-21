@@ -53,7 +53,11 @@ and `brief` see — write them well.
    `!sensitive`). Either way the transcript goes into the plans git repo —
    prefer `redact`.
 3. **Capture.** Give the transcript as a file (preferred) or inline text.
-   A Claude Code JSONL export converts to Markdown turns by itself.
+   A Claude Code JSONL export converts to Markdown turns by itself — tool
+   calls and tool results land as one-line summaries (name, first
+   arguments, size), so the file that joins the plans repo stays small.
+   `keep_raw: true` also writes the untouched export gzipped under
+   `~/.teamengage/transcripts/<ws>/` — this machine only, never in git.
 
 ```bash
 curl -s -X POST $B/capture -H "$H" -d '{

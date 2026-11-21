@@ -1,7 +1,9 @@
 import YAML from "yaml";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir, unlink } from "node:fs/promises";
-import { readFileSync, statSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, statSync, existsSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
+import { homedir } from "node:os";
 import { join, resolve, sep, isAbsolute, relative } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
@@ -3228,6 +3230,8 @@ export class WorkspaceOps {
       domains?: string[];
       redact?: boolean;
       sensitive?: boolean;
+      /** also keep the untouched raw export gzipped on this machine only (TE-0181) */
+      keep_raw?: boolean;
     },
   ) {
     if (!a.title?.trim()) throw new ValidationError("capture needs {title}");
@@ -3301,11 +3305,26 @@ export class WorkspaceOps {
       },
       this.actorFor(actor),
     );
+    // TE-0181: the stored transcript drops tool output; keep_raw leaves
+    // the untouched export gzipped under the home dir — never in plans git
+    let raw_store: string | undefined;
+    if (a.keep_raw) {
+      const dir = join(
+        this.home ?? homedir(),
+        ".teamengage",
+        "transcripts",
+        this.wsr.ws.config.name,
+      );
+      mkdirSync(dir, { recursive: true });
+      raw_store = join(dir, `${id}.jsonl.gz`);
+      writeFileSync(raw_store, gzipSync(raw));
+    }
     return {
       id,
       file: files[0],
       transcript: path,
       format: conv.format,
+      ...(raw_store ? { raw_store } : {}),
       ...(redacted ? { redacted: hits.length } : {}),
       ...(hits.length ? { secret_hits: hits.map((h) => `line ${h.line} (${h.kind})`) } : {}),
       warning:

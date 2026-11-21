@@ -221,11 +221,15 @@ never claimed and never worked; tasks plan from it through `relates`
   `## Decisions reached`, `## Open questions`, `## Guidelines`,
   `## Actions`, `## Artifacts`, `## Notes`). This is what `search` and
   `brief` read.
-- `DISC-NN-<slug>.transcript.md` — the **raw** layer: the whole chat,
-  linked under `## Artifacts` and committed with the plans repo. Import
-  skips it; the default search skips it; `search in=transcript` reads
-  it, and `brief <id> more=transcript page=N` pages it ~200 lines at a
-  time.
+- `DISC-NN-<slug>.transcript.md` — the **raw** layer: the chat as Markdown
+  turns, linked under `## Artifacts` and committed with the plans repo.
+  Tool calls and tool results land as one-line summaries — name, first
+  arguments, result size — so megabytes of tool output never reach the
+  repo (TE-0181). `keep_raw: true` on capture also writes the untouched
+  export gzipped under `~/.teamengage/transcripts/<ws>/` on this machine
+  only (outside the plans git repo). Import skips the transcript; the
+  default search skips it; `search in=transcript` reads it, and
+  `brief <id> more=transcript page=N` pages it ~200 lines at a time.
 
 A discussion's state is **derived**, not stored — the same rule as an
 idea: its own `draft`/`dropped`/`done` status wins outright, `done` when
@@ -235,8 +239,9 @@ related count covers that signal.
 
 **Capture** (`capture`, `POST /api/discussions`, `te discuss save`) takes
 the distilled sections plus the transcript as text or a file; a Claude
-Code JSONL export converts to Markdown turns (user / assistant / tool
-calls in short form). Before the write the transcript is **secret-scanned**
+Code JSONL export converts to Markdown turns (user / assistant turns in
+full, tool calls and results as one-line summaries). Before the write the
+transcript is **secret-scanned**
 (API keys, tokens, passwords, private keys, JWTs): a hit refuses the call
 and names the lines, unless `redact: true` masks each with `[REDACTED]` or
 `sensitive: true` keeps it and tags the artifact `!sensitive`.

@@ -761,7 +761,9 @@ export function registerWriteTools(
         "Key points, Decisions reached, Open questions, Guidelines, Actions — pass their bodies in " +
         "sections, or participants as a string list) and the raw transcript as " +
         "DISC-NN-<slug>.transcript.md, linked in ## Artifacts. A Claude Code JSONL transcript converts " +
-        "to Markdown turns first. The transcript is secret-scanned: hits refuse the call and name the " +
+        "to Markdown turns first. Tool calls and results land as one-line summaries — keep_raw: true " +
+        "also writes the untouched export gzipped under ~/.teamengage/transcripts/ on this machine. " +
+        "The transcript is secret-scanned: hits refuse the call and name the " +
         "lines, unless redact: true ([REDACTED] each) or sensitive: true (kept, tagged !sensitive). " +
         "The transcript goes into the plans git repo — the reply warns. Discussions are sources: " +
         "never claimed; tasks name them in relates to plan from them.",
@@ -778,6 +780,7 @@ export function registerWriteTools(
         domains: z.array(z.string()).optional(),
         redact: z.boolean().optional(),
         sensitive: z.boolean().optional(),
+        keep_raw: z.boolean().optional(),
       },
     },
     async (args) => {
@@ -789,6 +792,7 @@ export function registerWriteTools(
         const r = await o.capture(s, args);
         return okText(
           `captured ${r.id} → ${r.file}\ntranscript → ${r.transcript}` +
+            (r.raw_store ? `\nraw export → ${r.raw_store} (this machine only)` : "") +
             (r.redacted ? `\nredacted ${r.redacted} secret-looking string(s)` : "") +
             (r.secret_hits?.length ? `\nsecret hits kept (!sensitive): ${r.secret_hits.join(", ")}` : "") +
             `\nwarning: ${r.warning}`,

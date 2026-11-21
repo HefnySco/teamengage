@@ -43,8 +43,38 @@ describe("transcriptToMarkdown", () => {
     expect(r.text).toContain("# Talk about gates");
     expect(r.text).toContain("## user — 2026-05-01T10:00:00Z\n\nwhat does the gate do?");
     expect(r.text).toContain("## assistant — 2026-05-01T10:00:01Z\n\nIt holds the mission");
-    expect(r.text).toContain('### tool: Read\n\n{"file_path":"/x/gate.ts"}');
-    expect(r.text).toContain("### tool result\n\ngate source here");
+    expect(r.text).toContain('### tool: Read — {"file_path":"/x/gate.ts"}');
+    expect(r.text).toContain("### tool result — 16 chars");
+  });
+
+  it("a 1 MB tool result lands as a one-line summary; user and assistant text stays whole (TE-0181)", () => {
+    const big = "x".repeat(1024 * 1024);
+    const jsonl = [
+      JSON.stringify({ type: "user", message: { role: "user", content: "first question" } }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "running the tool" },
+            { type: "tool_use", name: "Bash", input: { command: "npm test", pad: "y".repeat(500) } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "tool_result", content: big }] },
+      }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "last question" } }),
+    ].join("\n");
+    const r = transcriptToMarkdown(jsonl);
+    expect(r.text.length).toBeLessThan(10 * 1024);
+    expect(r.text).toContain("first question");
+    expect(r.text).toContain("running the tool");
+    expect(r.text).toContain("last question");
+    expect(r.text).toContain('### tool: Bash — {"command":"npm test"');
+    expect(r.text).toContain(`### tool result — ${big.length} chars`);
+    expect(r.text).not.toContain(big.slice(0, 100));
   });
 
   it("passes plain text and Markdown through unchanged", () => {
@@ -113,8 +143,8 @@ describe("transcriptToMarkdown", () => {
     const r = transcriptToMarkdown(jsonl);
     expect((r.text.match(/^## user/gm) ?? []).length).toBe(1);
     expect(r.text).toContain("## user — 2026-11-14T10:31:16.443Z\n\nstudy these docs please");
-    expect(r.text).toContain('### tool: Read\n\n{"file_path":"/x/a.md"}');
-    expect(r.text).toContain(`### tool result\n\n${"x".repeat(400)}…`);
+    expect(r.text).toContain('### tool: Read — {"file_path":"/x/a.md"}');
+    expect(r.text).toContain("### tool result — 600 chars");
     expect(r.text).toContain("### system\n\nCodebase and user instructions");
     expect(r.text).toContain("### system\n\n<task-id>abc123</task-id>");
   });
@@ -135,7 +165,7 @@ describe("transcriptToMarkdown", () => {
     });
     const r = transcriptToMarkdown(jsonl);
     expect(r.text).toContain("## user — 2026-11-14T10:00:00Z\n\nbefore");
-    expect(r.text).toContain("### tool result\n\nok");
+    expect(r.text).toContain("### tool result — 2 chars");
     expect(r.text).toContain("## user\n\nafter");
   });
 });
@@ -148,7 +178,7 @@ describe("foldReminderTurns", () => {
       "## assistant\n\nok\n";
     const out = foldReminderTurns(stored);
     expect(out).toContain("## user — 2026-11-14T10:31:16.443Z\n\nreal words");
-    expect(out).toContain('### tool: Read\n\n{"file_path":"/x"}');
+    expect(out).toContain('### tool: Read — {"file_path":"/x"}');
     expect(out).toContain("## assistant\n\nok");
     expect((out.match(/^## user/gm) ?? []).length).toBe(1);
   });

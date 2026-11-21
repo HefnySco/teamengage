@@ -2,8 +2,11 @@
  * Chat transcripts → the Markdown a discussion keeps (TE-0157). A Claude
  * Code JSONL export becomes Markdown turns: `## user`, `## assistant` and
  * `### tool:`/`### tool result`/`### system` headers, so the web reader can
- * fold them later. Plain text and Markdown pass through — except `## user`
- * turns that carry <system-reminder> plumbing, which refold the same way.
+ * fold them later. Tool calls and results keep a one-line summary only —
+ * name, first arguments, result size — so megabytes of tool output never
+ * reach the plans git repo (TE-0181). Plain text and Markdown pass
+ * through — except `## user` turns that carry <system-reminder> plumbing,
+ * which refold the same way.
  */
 
 export interface TranscriptResult {
@@ -13,8 +16,7 @@ export interface TranscriptResult {
   format: "jsonl" | "markdown";
 }
 
-const MAX_TOOL_RESULT = 400;
-const MAX_TOOL_INPUT = 240;
+const MAX_TOOL_LINE = 160;
 const MAX_SYSTEM = 4000;
 
 // some exports carry tool plumbing as <system-reminder> or <task-notification>
@@ -25,13 +27,16 @@ const TOOL_RESULT_RE = /^Result of calling the (.+?) tool:?\s*([\s\S]*)$/;
 
 const systemBlock = (body: string) => `### system\n\n${trunc(body.trim(), MAX_SYSTEM)}\n`;
 
+/** One line, whitespace collapsed — the tool summary (TE-0181). */
+const oneLine = (s: string, n = MAX_TOOL_LINE) => trunc(s.replace(/\s+/g, " ").trim(), n);
+
 /** A <system-reminder> body → the folded ### block it really is. */
 function reminderBlock(body: string): string {
   const b = body.trim();
   let m = TOOL_CALL_RE.exec(b);
-  if (m) return `### tool: ${m[1]}\n\n${trunc(m[2].trim(), MAX_TOOL_INPUT)}\n`;
+  if (m) return `### tool: ${m[1]} — ${oneLine(m[2])}\n`;
   m = TOOL_RESULT_RE.exec(b);
-  if (m) return `### tool result\n\n${trunc(m[2].trim(), MAX_TOOL_RESULT)}\n`;
+  if (m) return `### tool result — ${m[2].trim().length} chars\n`;
   return systemBlock(b);
 }
 
@@ -193,8 +198,10 @@ function jsonlToMarkdown(text: string): string {
       if (Array.isArray(content)) {
         for (const b of content) {
           if (b.type !== "tool_result") continue;
+          // TE-0181: a result keeps only its size — the chat can be
+          // megabytes of tool output that lands in the plans git repo
           const body = toolResultText(b).trim();
-          if (body) out.push(`### tool result\n\n${trunc(body, MAX_TOOL_RESULT)}\n`);
+          if (body) out.push(`### tool result — ${body.length} chars\n`);
         }
       }
     } else if (role === "assistant") {
@@ -202,8 +209,7 @@ function jsonlToMarkdown(text: string): string {
       if (Array.isArray(content)) {
         for (const b of content) {
           if (b.type !== "tool_use" || typeof b.name !== "string") continue;
-          const input = trunc(JSON.stringify(b.input ?? {}), MAX_TOOL_INPUT);
-          out.push(`### tool: ${b.name}\n\n${input}\n`);
+          out.push(`### tool: ${b.name} — ${oneLine(JSON.stringify(b.input ?? {}))}\n`);
         }
       }
     }

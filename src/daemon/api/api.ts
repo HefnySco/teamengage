@@ -791,6 +791,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         domains: list("domains"),
         redact: b.redact === true,
         sensitive: b.sensitive === true,
+        keep_raw: b.keep_raw === true,
       });
     } catch (e) {
       return sendErr(reply, e);
