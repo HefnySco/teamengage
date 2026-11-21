@@ -267,13 +267,15 @@ export const ItemMeta = z
      * an ok review on it records needs_human, so it is never auto-accepted */
     unverified_reason: z.string().optional(),
     starred_at: z.string().optional(),
-    /**
-     * epic only: the human closed the plan — no more parts are coming.
-     * plan_state stays derived (see Index.planState), never stored.
-     */
-    plan_closed: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough()
+  // compat: pre-TE-0172 epic files may still carry `plan_closed` — the flag
+  // is gone, the plan derives from its parts; strip it so it never
+  // round-trips back into a rewritten file
+  .transform((m) => {
+    delete (m as Record<string, unknown>).plan_closed;
+    return m;
+  });
 export type ItemMeta = z.infer<typeof ItemMeta>;
 
 /** A parsed item: frontmatter meta + markdown body sections (see core/files). */

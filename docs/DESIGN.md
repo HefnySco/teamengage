@@ -323,8 +323,6 @@ peer_timeout= daemon sweep: a peer question unanswered longer than
           (the `notify` kind `question` covers it).
 change_answer = human only, any status but done/dropped: revise the item's latest answer
            (same decision id, version +1, old → new in the Log)
-close_plan = human only, epic: sets plan_closed — a flag, not a status
-           (reopen_plan clears it; plan_state below is derived)
 done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mistake;
            the item goes through approve → claim again)
 ```
@@ -399,23 +397,20 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   done/total over live referrers (dropped ones do not count); archived
   referrers count as hidden.
 - A **plan** is an epic; its parts are the items whose `parent` points at
-  it (sub-plans are epics too, so it nests). `plan_closed` is the only
-  stored flag — the human sets it (close plan / reopen plan on the item
-  page) when no more parts are coming. `plan_state` is **derived, never
-  stored**: `dropped` when the human drops it, `draft` with no children,
-  `decomposing` until closed, `ready` once closed, `in_progress` while any
-  part is in flight (claimed, waiting or in review — the plan itself
-  belongs to no machine, its parts may run on different ones), `done` when
-  the stored status says so — a hand or auto-done verdict — or when every
-  descendant is done/dropped and no problem under the plan is still open
-  (a sub-plan marked done counts as done for its parent; parent cycles
-  count as not done). `in_progress` needs `plan_closed`: closing the plan
-  is the human's approval to run, so an unclosed plan with parts in
-  flight stays `decomposing`. In-flight parts beat a stored done: a
-  reopened part drags a closed plan back to `in_progress`. A plan that is not ready gates its
-  whole subtree: a part under a
-  `draft`/`decomposing` plan is never `ready` and `claim` is refused until
-  the human closes the plan. `plan_progress` is finished/total over
+  it (sub-plans are epics too, so it nests). `plan_state` is **derived,
+  never stored** — the children alone decide it: `dropped` when the human
+  drops it, `draft` with no children or every child still a draft,
+  `in_progress` while any part is in flight (claimed, waiting or in
+  review — the plan itself belongs to no machine, its parts may run on
+  different ones), `done` when the stored status says so — a hand or
+  auto-done verdict — or when every descendant is done/dropped and no
+  problem under the plan is still open (a sub-plan marked done counts as
+  done for its parent; parent cycles count as not done), `ready`
+  otherwise. In-flight parts beat a stored done: a reopened part drags
+  the plan back to `in_progress`. Each part's own `draft` status is the
+  only gate — approving the epic approves its draft children in the same
+  click (one event per child), and a ready part under a draft plan is
+  claimable as usual. `plan_progress` is finished/total over
   non-epic descendants; archived parts still count. Epics are plans, not
   work — `next` skips them and `claim` answers "epics are plans — claim
   their tasks". A plan in `done` state whose status is not yet `done` gets
@@ -451,7 +446,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   changes nothing).
 - Only the human performs `approve_plan`, `accept`, `reject`, `drop`,
   `undrop`, `unflag_drop`, `complete`, `hold`, `unhold`, `to_draft`, `archive`/`unarchive`,
-  `star`/`unstar`, `close_plan`/`reopen_plan`, and `release` of someone
+  `star`/`unstar`, and `release` of someone
   else's claim — except an agent may release an `in_review` claim held on
   its own machine (see `release` above).
 - `complete` (`te done <ID>`, "mark done" / "already done" in the UI) moves
@@ -486,7 +481,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
     items fall back to `auto_accept_after`. The item page names the rule
     behind its countdown.
     Everything else stays human-only in both modes: pushing, drop/undrop,
-    delete, archive, star, hold, close_plan, change_answer, and releasing
+    delete, archive, star, hold, change_answer, and releasing
     another machine's claim. `hello` adds an `autonomy: solo` rules line.
 - `auto_archive_after` (workspace.yaml, unset = off) removes the routine
   archive clicks: on its sweep the daemon archives any item whose status has
@@ -494,7 +489,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   item file records when the terminal status was entered). A starred item is
   never archived by rule, and a claimed one is skipped until its claim is
   released. Each archive lands in the event log with actor `daemon`. With the
-  key set, closing a plan whose parts are all finished archives those parts
+  key set, a plan the sweep marks done also has its finished parts archived
   in the same step.
 - `auto_release_after` (workspace.yaml, unset = off) releases a dead claim
   without a click: when a claim is stale longer than the duration and its

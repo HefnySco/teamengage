@@ -158,15 +158,6 @@ export type Action =
   | { type: "star"; color?: StarColor }
   | { type: "unstar" }
   /**
-   * Human closes a plan (epic): no more parts are coming — plan_state turns
-   * ready, then in_progress while parts run and done when every part and
-   * problem finishes. Status is untouched — a plan also finishes without it
-   * (plan_auto_done below).
-   */
-  | { type: "close_plan" }
-  /** Human reopens a closed plan (epic) — more parts may still be added. */
-  | { type: "reopen_plan" }
-  /**
    * Internal (daemon only): the sweep found every part and problem of this
    * plan finished — the stored status catches up with the derived
    * plan_state. Forward only: work added later shows `ready` again until
@@ -185,8 +176,6 @@ export interface TransitionCtx {
   depsDone?: boolean;
   /** Id of an ancestor plan on hold — a held plan pauses its subtree, claim refused. */
   planHold?: string;
-  /** Id of an ancestor plan not ready for work (still decomposing) — parts claim only after close_plan. */
-  planNotReady?: string;
   /** AI bounces this item already took since the last human action (bounce cap). */
   priorBounces?: number;
   /** workspace escalate_after / max_attempts (defaults 2 / 5) */
@@ -449,13 +438,6 @@ export function transition(
       if (ctx.planHold) {
         throw new InvalidTransitionError(
           `cannot claim: plan ${ctx.planHold} is on hold — everything under it is paused`,
-          from,
-          "claim",
-        );
-      }
-      if (ctx.planNotReady) {
-        throw new InvalidTransitionError(
-          `cannot claim: plan ${ctx.planNotReady} is not closed — its parts start once the human closes it`,
           from,
           "claim",
         );
@@ -1113,40 +1095,6 @@ export function transition(
       out.meta.updated = meta.updated; // a bookmark isn't an edit — keeps the card's place in date-sorted views
       out.events.push(ev(actor, stamp, meta.id, "unstar", from, from));
       out.log.push(`- ${stamp} ${who} unstarred (status ${from})`);
-      return out;
-    }
-
-    case "close_plan": {
-      requireHuman(actor, action.type);
-      if (meta.type !== "epic") {
-        throw new InvalidTransitionError(
-          `cannot close_plan: ${meta.id} is a ${meta.type}, not an epic`,
-          from,
-          action.type,
-        );
-      }
-      if (meta.plan_closed)
-        throw new InvalidTransitionError("plan is already closed", from, action.type);
-      out.meta.plan_closed = true;
-      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
-      out.log.push(`- ${stamp} ${who} closed the plan — no more parts expected`);
-      return out;
-    }
-
-    case "reopen_plan": {
-      requireHuman(actor, action.type);
-      if (meta.type !== "epic") {
-        throw new InvalidTransitionError(
-          `cannot reopen_plan: ${meta.id} is a ${meta.type}, not an epic`,
-          from,
-          action.type,
-        );
-      }
-      if (!meta.plan_closed)
-        throw new InvalidTransitionError("plan is not closed", from, action.type);
-      out.meta.plan_closed = false;
-      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
-      out.log.push(`- ${stamp} ${who} reopened the plan`);
       return out;
     }
 

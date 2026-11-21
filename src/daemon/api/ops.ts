@@ -1406,7 +1406,6 @@ export class WorkspaceOps {
         guard: this.overlapGuard(it.meta.targets, roots, id),
         holderAway: () => this.holderAway(this.item(id)),
         planHold: () => this.index.get(id)?.paused_by,
-        planNotReady: () => this.index.get(id)?.unready_by,
       },
     );
     // worktrees/snapshots come after the committed claim; failure → release
@@ -2351,9 +2350,9 @@ export class WorkspaceOps {
   /**
    * Plans finish themselves: an epic whose derived plan_state is `done` —
    * every part done or dropped, no open problem under it — gets `status:
-   * done` from the daemon sweep (plan_auto_done). No close_plan is needed;
-   * a sub-plan's own status never counts, so a plan marked done by hand
-   * with unfinished parts still waits.
+   * done` from the daemon sweep (plan_auto_done). A sub-plan's own status
+   * never counts, so a plan marked done by hand with unfinished parts
+   * still waits.
    */
   autoCompletePlansDue(): string[] {
     return [...this.index.items.values()]
@@ -2378,6 +2377,23 @@ export class WorkspaceOps {
           type: "plan_auto_done",
         });
         done.push(id);
+        // with auto_archive_after set, a plan that finishes also has its
+        // finished parts archived — the starred and the claimed keep
+        // their place
+        if (this.wsr.ws.config.auto_archive_after) {
+          for (const cid of this.index.descendants(id)) {
+            const c = this.index.get(cid);
+            if (!c || c.meta.archived || c.meta.star_color || c.claim) continue;
+            try {
+              await this.store.perform(cid, c.meta.version, this.daemonActor(), {
+                type: "archive",
+                reason: "plan finished",
+              });
+            } catch {
+              // a part that refuses to archive never blocks the plan
+            }
+          }
+        }
       } catch {
         // one failing epic must not stall the sweep
       }
@@ -2493,11 +2509,31 @@ export class WorkspaceOps {
     return { done, skipped };
   }
 
+  /**
+   * Human approve. On an epic the same click also approves every draft
+   * child — the plan carries no gate of its own, each part's draft status
+   * is the only lock (one approve_plan event per child, the human actor).
+   * A child that refuses is skipped, it never blocks the epic's approval.
+   */
   async approve(id: string) {
     const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor("human"), {
+    const r = await this.store.perform(id, it.meta.version, this.actorFor("human"), {
       type: "approve_plan",
     });
+    if (it.meta.type === "epic") {
+      for (const cid of it.children) {
+        const c = this.index.get(cid);
+        if (!c || c.meta.status !== "draft") continue;
+        try {
+          await this.store.perform(cid, c.meta.version, this.actorFor("human"), {
+            type: "approve_plan",
+          });
+        } catch {
+          // a part that refuses never blocks the plan's approval
+        }
+      }
+    }
+    return r;
   }
 
   async answer(id: string, decisionTitle: string) {
@@ -3544,43 +3580,6 @@ export class WorkspaceOps {
   async undrop(id: string) {
     const it = this.item(id);
     return this.store.perform(id, it.meta.version, this.actorFor("human"), { type: "undrop" });
-  }
-
-  /**
-   * Close a plan (epic): no more parts are coming. plan_state turns `ready`,
-   * then `done` when every descendant and problem finishes — though a plan
-   * finishes without it too (autoCompletePlans marks the epic done on the
-   * sweep). Human-only — an agent actor is refused by the state machine.
-   * With auto_archive_after set, a plan that closes already finished also
-   * has its parts archived by the daemon — the starred and the claimed keep
-   * their place.
-   */
-  async closePlan(id: string, actor: Session | "human" = "human") {
-    const it = this.item(id);
-    const r = await this.store.perform(id, it.meta.version, this.actorFor(actor), {
-      type: "close_plan",
-    });
-    if (this.wsr.ws.config.auto_archive_after && this.index.planState(id) === "done") {
-      for (const cid of this.index.descendants(id)) {
-        const c = this.index.get(cid);
-        if (!c || c.meta.archived || c.meta.star_color || c.claim) continue;
-        try {
-          await this.store.perform(cid, c.meta.version, this.daemonActor(), {
-            type: "archive",
-            reason: "plan closed and finished",
-          });
-        } catch {
-          // a part that refuses to archive never blocks closing the plan
-        }
-      }
-    }
-    return r;
-  }
-
-  /** Reopen a closed plan — more parts may still be added. Human-only. */
-  async reopenPlan(id: string, actor: Session | "human" = "human") {
-    const it = this.item(id);
-    return this.store.perform(id, it.meta.version, this.actorFor(actor), { type: "reopen_plan" });
   }
 
   async humanClaim(id: string) {

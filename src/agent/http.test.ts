@@ -419,21 +419,13 @@ describe("plain-HTTP agent API", () => {
     expect(dirty()).toBe("");
   });
 
-  it("epics are plans: next skips them; claim and close_plan are refused", async () => {
-    const guide = await call("GET", "/agent");
-    for (const tool of ["close_plan", "reopen_plan"]) {
-      expect(guide.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
-    }
+  it("epics are plans: next skips them and claim is refused", async () => {
     const t = await hello("epic-check");
     const next = await call("GET", "/agent/next?limit=10", { token: t });
     expect(next.text).not.toContain("WS-0004");
     const claim = await call("POST", "/agent/claim/WS-0004", { token: t });
     expect(claim.status).toBe(409);
     expect(claim.text).toContain("epics are plans");
-    // close_plan is human-only — an agent session is refused
-    const close = await call("POST", "/agent/close_plan/WS-0004", { token: t });
-    expect(close.status).toBe(403);
-    expect(close.text).toContain("human-only");
     // brief still works — epics are readable, just not claimable
     const brief = await call("GET", "/agent/brief/WS-0004", { token: t });
     expect(brief.status).toBe(200);

@@ -42,7 +42,7 @@ export function matchesSearch(meta: ItemMeta, q: string | undefined): boolean {
 }
 
 /** Plan lifecycle of an epic — derived, never stored (see Index.planState). */
-export type PlanState = "draft" | "decomposing" | "ready" | "in_progress" | "done" | "dropped";
+export type PlanState = "draft" | "ready" | "in_progress" | "done" | "dropped";
 
 /**
  * Derived state of a source document (idea or discussion) — never stored.
@@ -91,10 +91,6 @@ export interface IndexedItem {
   paused: boolean;
   /** the nearest held ancestor's id, when paused */
   paused_by?: string;
-  /** derived: an ancestor plan is not ready (still decomposing) — parts can't start until the human closes it */
-  unready: boolean;
-  /** the nearest not-ready ancestor plan's id, when gated */
-  unready_by?: string;
   /** derived: reverse of depends_on */
   blocks: string[];
   /** derived: items whose parent is this id */
@@ -199,7 +195,6 @@ export class Index {
               path: relative(plansDir, file),
               blocked: false,
               paused: false,
-              unready: false,
               blocks: [],
               children: [],
               found_here: [],
@@ -269,7 +264,6 @@ export class Index {
       path: rel,
       blocked: false,
       paused: false,
-      unready: false,
       blocks: [],
       children: [],
       found_here: [],
@@ -357,14 +351,9 @@ export class Index {
         return status !== undefined && !depSatisfied(status, this.reviewUnblocks, unblocksOn);
       });
       // held-plan cascade: an ancestor epic on hold pauses the whole subtree —
-      // parts keep their status but are never ready for an agent to claim.
-      // Same walk: an ancestor plan the human has not closed yet is not ready —
-      // its parts can't start until close_plan (a dropped plan's leftovers are
-      // exempt: the plan is dead, not decomposing)
+      // parts keep their status but are never ready for an agent to claim
       it.paused = false;
       it.paused_by = undefined;
-      it.unready = false;
-      it.unready_by = undefined;
       for (let p = it.meta.parent, seen = new Set([it.meta.id]); p; ) {
         try {
           const ref = parseItemRef(p);
@@ -372,15 +361,11 @@ export class Index {
           seen.add(ref.id);
           const anc = this.items.get(ref.id);
           if (!anc) break;
-          if (!it.paused && anc.meta.status === "hold") {
+          if (anc.meta.status === "hold") {
             it.paused = true;
             it.paused_by = anc.meta.id;
+            break;
           }
-          if (!it.unready && anc.meta.type === "epic" && anc.meta.plan_closed !== true && anc.meta.status !== "dropped") {
-            it.unready = true;
-            it.unready_by = anc.meta.id;
-          }
-          if (it.paused && it.unready) break;
           p = anc.meta.parent;
         } catch {
           break; // unparseable ref → validator finding, not a pause
@@ -388,7 +373,7 @@ export class Index {
       }
       it.turn = turnOf(it.meta.status);
       it.ready =
-        it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim && !it.paused && !it.unready;
+        it.meta.status === "ready" && !it.meta.archived && !it.blocked && !it.claim && !it.paused;
     }
     // plan lifecycle for epics (children are already built above)
     for (const it of this.items.values()) {
@@ -481,15 +466,16 @@ export class Index {
   }
 
   /**
-   * An epic's derived plan lifecycle: `dropped` when the human drops it;
-   * `draft` while it has no children; `in_progress` while any part is in
-   * flight (the plan belongs to no machine: its parts may run on different
-   * ones); `done` when its stored status is done — a hand or auto-done
-   * verdict — or when every part is finished and no problem under it is
-   * open. Otherwise `decomposing` until the human sets `plan_closed`, then
-   * `ready`. In-flight parts beat a stored done: reopening a part drags the
-   * plan back to in_progress. Parent cycles count as not done. Archived
-   * descendants still count. Undefined for non-epics.
+   * An epic's derived plan lifecycle — the children alone decide it, no
+   * stored flag: `dropped` when the human drops it; `draft` while it has
+   * no children or every child is still a draft; `in_progress` while any
+   * part is in flight (the plan belongs to no machine: its parts may run
+   * on different ones); `done` when its stored status is done — a hand or
+   * auto-done verdict — or when every part is finished and no problem
+   * under it is open; `ready` otherwise. In-flight parts beat a stored
+   * done: reopening a part drags the plan back to in_progress. Parent
+   * cycles count as not done. Archived descendants still count.
+   * Undefined for non-epics.
    */
   planState(id: string): PlanState | undefined {
     const it = this.items.get(id);
@@ -497,17 +483,16 @@ export class Index {
     // dropped is the human's kill verdict — it wins over whatever the parts say
     if (it.meta.status === "dropped") return "dropped";
     if (it.children.length === 0) return "draft";
+    if (it.children.every((cid) => this.items.get(cid)?.meta.status === "draft")) return "draft";
     // live work in flight beats a stored done — a reopened part drags the
-    // plan back off done. Only a closed plan can be in progress: an unclosed
-    // plan with parts in flight shows decomposing (the gate keeps its
-    // remaining parts from claiming until the human closes it)
-    if (this.planInFlight(id)) return it.meta.plan_closed === true ? "in_progress" : "decomposing";
+    // plan back off done
+    if (this.planInFlight(id)) return "in_progress";
     if (
       it.meta.status === "done" ||
       (this.planFinished(id, new Set([id])) && (this.planProblems(id)?.open ?? 0) === 0)
     )
       return "done";
-    return it.meta.plan_closed === true ? "ready" : "decomposing";
+    return "ready";
   }
 
   /** Any non-epic descendant in flight — claimed, waiting or under review. */

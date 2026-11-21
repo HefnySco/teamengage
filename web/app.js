@@ -149,10 +149,9 @@ const Badge = ({ s }) => html`<span class="badge ${ST_BADGE[s] ?? "text-bg-secon
 const TIER_LETTER = { light: "L", standard: "S", heavy: "H" };
 const TierChip = ({ t }) => t == null ? null : html`
   <span class=${`tier-chip tier-${t}`} title=${`tier ${t} — the minimum agent level that may claim this item`}>${TIER_LETTER[t] ?? t}</span>`;
-// an epic's derived plan lifecycle (plan_state) — draft → decomposing → ready → in_progress → done
+// an epic's derived plan lifecycle (plan_state) — draft → ready → in_progress → done
 const PLAN_CHIP = {
   draft: "ps-draft",
-  decomposing: "ps-decomposing",
   ready: "ps-ready",
   in_progress: "ps-in-progress",
   done: "ps-done",
@@ -304,7 +303,6 @@ const XCircleIcon = () => glyph([
 ]);
 const XIcon = () => glyph(["M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"]);
 const UnlockIcon = () => glyph(["M11 1a2 2 0 0 0-2 2v4a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h5V3a3 3 0 0 1 6 0v4a.5.5 0 0 1-1 0V3a2 2 0 0 0-2-2M3 8a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z"]);
-const LockIcon = () => glyph(["M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM5 8h6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1"]);
 const PlayIcon = () => glyph(["m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"]);
 const PauseIcon = () => glyph(["M5.5 3.5A1.5 1.5 0 0 1 7 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5m5 0A1.5 1.5 0 0 1 12 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5"]);
 const PencilIcon = () => glyph([
@@ -333,10 +331,6 @@ const RefreshBtn = ({ refresh }) => {
       }
     }}><${RefreshIcon} /></button>`;
 };
-const PlusSquareIcon = () => glyph([
-  "M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2z",
-  "M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4",
-]);
 const CheckSquareIcon = () => glyph([
   "M3 14.5A1.5 1.5 0 0 1 1.5 13V3A1.5 1.5 0 0 1 3 1.5h8a.5.5 0 0 1 0 1H3a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5V8a.5.5 0 0 1 1 0v5a1.5 1.5 0 0 1-1.5 1.5z",
   "m8.354 10.354 7-7a.5.5 0 0 0-.708-.708L8 9.293 5.354 6.646a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0",
@@ -1490,7 +1484,6 @@ const Board = ({ onOpen }) => {
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
-                        ${i.unready && html`<span title=${`plan ${i.unready_by} is not closed — new parts can be claimed once the human closes it`}>plan not closed</span>`}
                         ${(i.overlap ?? []).length > 0 && html`<span class="badge text-bg-warning"
                           title=${`Touches overlap — warning only:\n${i.overlap.map((o) => `${o.id}: ${o.paths.join(", ")}`).join("\n")}`}
                           onClick=${(e) => { e.stopPropagation(); onOpen(i.overlap[0].id); }}>overlap</span>`}
@@ -1564,7 +1557,6 @@ const PlanNode = ({ i, depth, tree }) => {
         ${!isPlan && (i.depends_on ?? []).length > 0 && html`<span class="small text-secondary" title="depends on">← ${i.depends_on.join(", ")}</span>`}
         ${i.blocked && html`<span class="small text-warning-emphasis">blocked</span>`}
         ${i.paused && html`<span class="small text-warning-emphasis" title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
-        ${i.unready && html`<span class="small text-warning-emphasis" title=${`plan ${i.unready_by} is not closed — new parts can be claimed once the human closes it`}>plan not closed</span>`}
         ${i.claim && html`<span class="av" title=${`${i.claim.holder}@${i.claim.machine}`}>${(i.claim.holder[0] ?? "?").toUpperCase()}</span>`}
         ${isPlan && html`<span class="ms-auto d-flex align-items-center gap-2"><${DomainTags} ds=${i.domains} />${i.plan_state && html`<span class="plan-chip ${PLAN_CHIP[i.plan_state] ?? "ps-draft"}" title=${`plan ${i.plan_state} — derived from its parts`}>${i.plan_state.replace("_", " ")}</span>`}<${PlanBar} p=${i.plan_progress} /></span>`}
         ${isPlan && html`<span class="acts">
@@ -2811,8 +2803,6 @@ export const ItemActions = ({ mode, it, act, filePath, onDeleted }) => {
     ${work && st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
     ${work && it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
     ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
-    ${mode === "plan" && !it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="close plan — no more parts are coming; the plan becomes ready, then done when every part finishes" onClick=${() => act("close_plan")}><${LockIcon} /></${ActBtn}>`}
-    ${mode === "plan" && it.meta.plan_closed && html`<${ActBtn} variant="outline-primary" title="reopen plan — more parts may still be added" onClick=${() => act("reopen_plan")}><${PlusSquareIcon} /></${ActBtn}>`}
     ${st !== "done" && html`<${ActBtn} variant="outline-success" title=${mode === "discuss" ? "mark done — the discussion is settled, optional note" : "mark done — complete it now, optional note"} onClick=${async () => { const note = await promptDialog("mark done", { label: "note (optional)" }); if (note !== null) act("complete", { note }); }}><${CheckSquareIcon} /></${ActBtn}>`}
     ${!closed && html`<${ActBtn} variant="outline-danger" title="drop — abandon it with a reason" onClick=${() => askThen("drop", "drop reason")}><${XIcon} /></${ActBtn}>`}
     ${it.meta.archived && html`<${ActBtn} variant="primary" title="unarchive — back to the lists" onClick=${() => act("unarchive")}><${UndoIcon} /></${ActBtn}>`}

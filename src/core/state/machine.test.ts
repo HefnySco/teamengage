@@ -105,7 +105,6 @@ describe("every non-arrow is rejected", () => {
     ["draft", human, { type: "submit" }, {}],
     ["ready", daemon, { type: "claim", claim: claimOf() }, { depsDone: true }],
     ["ready", agent, { type: "claim", claim: claimOf() }, { depsDone: true, planHold: "PL-0001" }], // a held plan pauses its subtree
-    ["ready", agent, { type: "claim", claim: claimOf() }, { depsDone: true, planNotReady: "PL-0001" }], // a decomposing plan's parts can't start
   ];
   it.each(cases)("%s + %o → error", (from, actor, action, extra) => {
     expect(() => transition(item(from), action, actor, ctx(extra))).toThrow(
@@ -728,47 +727,14 @@ describe("archive", () => {
   });
 });
 
-describe("close_plan / reopen_plan (epics)", () => {
-  const epic = (status: Status, closed = false) =>
+describe("epics are plans, never work", () => {
+  const epic = (status: Status) =>
     ItemMeta.parse({
       id: "EP-0001",
       type: "epic",
       title: "p",
       status,
-      plan_closed: closed || undefined,
     });
-
-  it("toggles plan_closed without touching the status", () => {
-    for (const s of ["draft", "ready", "in_progress", "waiting", "in_review", "done"] as Status[]) {
-      const r = transition(epic(s), { type: "close_plan" }, human, ctx());
-      expect(r.meta.status).toBe(s);
-      expect(r.meta.plan_closed).toBe(true);
-      const back = transition(r.meta, { type: "reopen_plan" }, human, ctx());
-      expect(back.meta.status).toBe(s);
-      expect(back.meta.plan_closed).toBe(false);
-    }
-  });
-
-  it("agents, non-epics, and wrong flag states are refused", () => {
-    expect(() => transition(epic("ready"), { type: "close_plan" }, agent, ctx())).toThrow(
-      ForbiddenError,
-    );
-    expect(() => transition(epic("ready", true), { type: "reopen_plan" }, agent, ctx())).toThrow(
-      ForbiddenError,
-    );
-    expect(() => transition(item("ready"), { type: "close_plan" }, human, ctx())).toThrow(
-      /not an epic/,
-    );
-    expect(() => transition(item("ready"), { type: "reopen_plan" }, human, ctx())).toThrow(
-      /not an epic/,
-    );
-    expect(() => transition(epic("ready", true), { type: "close_plan" }, human, ctx())).toThrow(
-      /already closed/,
-    );
-    expect(() => transition(epic("ready"), { type: "reopen_plan" }, human, ctx())).toThrow(
-      /not closed/,
-    );
-  });
 
   it("an epic can never be claimed — epics are plans", () => {
     for (const a of [agent, human] as Actor[]) {

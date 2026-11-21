@@ -102,8 +102,6 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         blocked: i.blocked,
         paused: i.paused,
         paused_by: i.paused_by,
-        unready: i.unready,
-        unready_by: i.unready_by,
         ready: i.ready,
         turn: i.turn,
         auto_accept_at: ops.autoAcceptAt(i),
@@ -1033,8 +1031,6 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   act("domains", (ops, id, b) =>
     ops.setDomains(id, Array.isArray(b.domains) ? b.domains.map(String) : [], "human"),
   );
-  act("close_plan", (ops, id) => ops.closePlan(id));
-  act("reopen_plan", (ops, id) => ops.reopenPlan(id));
   act("attach", (ops, id, b) =>
     ops.attach(id, "human", {
       path: String(b.path ?? ""),

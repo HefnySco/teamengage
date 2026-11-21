@@ -192,8 +192,6 @@ export class PlansStore {
       holderAway?: () => boolean;
       /** Id of an ancestor plan on hold — evaluated inside the queue like holderAway. */
       planHold?: () => string | undefined;
-      /** Id of an ancestor plan not ready for work — evaluated inside the queue like planHold. */
-      planNotReady?: () => string | undefined;
     } = {},
   ): Promise<PerformResult> {
     return this.enqueue(async () => {
@@ -218,7 +216,6 @@ export class PlansStore {
         priorBounces: ctx.priorBounces ? await ctx.priorBounces() : undefined,
         holderAway: ctx.holderAway ? ctx.holderAway() : undefined,
         planHold: ctx.planHold ? ctx.planHold() : undefined,
-        planNotReady: ctx.planNotReady ? ctx.planNotReady() : undefined,
         escalation: { after: this.ws.config.escalate_after, max: this.ws.config.max_attempts },
         reviewModels: this.ws.config.review_models,
       });

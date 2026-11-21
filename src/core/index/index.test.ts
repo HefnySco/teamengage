@@ -42,7 +42,7 @@ describe("Index", () => {
     writeItem("GL-0002", { depends_on: "[GL-0001]", parent: "TE-0001" }); // dep done → ready
     writeItem("GL-0003", { depends_on: "[GL-0002]" }); // dep ready → blocked
     writeItem("GL-0004", { status: "in_progress" });
-    writeItem("TE-0001", { type: "epic", status: "draft", plan_closed: "true" }, "## Children\n- GL-0002\n");
+    writeItem("TE-0001", { type: "epic", status: "draft" }, "## Children\n- GL-0002\n");
     const idx = await Index.load(plans);
     expect(idx.get("GL-0002")!.blocked).toBe(false);
     expect(idx.get("GL-0002")!.ready).toBe(true);
@@ -82,8 +82,8 @@ describe("Index", () => {
   });
 
   it("a plan on hold pauses its whole subtree — parts keep their status but are never ready", async () => {
-    writeItem("HLD-0001", { type: "epic", status: "hold", plan_closed: "true" }); // held root plan
-    writeItem("HLD-0002", { type: "epic", parent: "HLD-0001", plan_closed: "true" }); // sub-plan
+    writeItem("HLD-0001", { type: "epic", status: "hold" }); // held root plan
+    writeItem("HLD-0002", { type: "epic", parent: "HLD-0001" }); // sub-plan
     writeItem("HLD-0003", { parent: "HLD-0002" }); // nested task
     writeItem("HLD-0004", {}); // unrelated
     let idx = await Index.load(plans);
@@ -95,38 +95,36 @@ describe("Index", () => {
     expect(idx.get("HLD-0004")!.paused).toBe(false);
 
     // unhold → the subtree becomes claimable again
-    writeItem("HLD-0001", { type: "epic", status: "ready", plan_closed: "true" });
+    writeItem("HLD-0001", { type: "epic", status: "ready" });
     idx = await Index.load(plans);
     expect(idx.get("HLD-0003")!.paused).toBe(false);
     expect(idx.get("HLD-0003")!.ready).toBe(true);
   });
 
-  it("a plan that is not ready gates its whole subtree — parts are never claimable until it closes", async () => {
-    writeItem("UNR-0001", { type: "epic" }); // decomposing root plan
-    writeItem("UNR-0002", { type: "epic", parent: "UNR-0001", plan_closed: "true" }); // closed sub-plan
+  it("a plan's own state never gates its subtree — a ready part is claimable whatever the plan shows", async () => {
+    writeItem("UNR-0001", { type: "epic" }); // draft-status root plan
+    writeItem("UNR-0002", { type: "epic", parent: "UNR-0001" }); // sub-plan
     writeItem("UNR-0003", { parent: "UNR-0002" }); // nested task
-    writeItem("UNR-0004", { type: "epic", plan_closed: "true" }); // ready root plan
-    writeItem("UNR-0005", { parent: "UNR-0004" }); // its part
-    writeItem("UNR-0006", { type: "epic", status: "dropped" }); // a dropped plan's leftovers are exempt
+    writeItem("UNR-0006", { type: "epic", status: "dropped" }); // a dropped plan's leftovers are exempt too
     writeItem("UNR-0007", { parent: "UNR-0006" });
-    let idx = await Index.load(plans);
-    // the root plan is decomposing → the sub-plan's parts can't start either
-    expect(idx.get("UNR-0003")!.unready).toBe(true);
-    expect(idx.get("UNR-0003")!.unready_by).toBe("UNR-0001");
-    expect(idx.get("UNR-0003")!.ready).toBe(false);
-    expect(idx.get("UNR-0002")!.unready).toBe(true);
-    expect(idx.get("UNR-0002")!.unready_by).toBe("UNR-0001");
-    // a closed plan's parts claim as usual
-    expect(idx.get("UNR-0005")!.unready).toBe(false);
-    expect(idx.get("UNR-0005")!.ready).toBe(true);
-    // dropped plans gate nothing
-    expect(idx.get("UNR-0007")!.unready).toBe(false);
-
-    // closing the root plan frees the subtree
-    writeItem("UNR-0001", { type: "epic", plan_closed: "true" });
-    idx = await Index.load(plans);
-    expect(idx.get("UNR-0003")!.unready).toBe(false);
+    const idx = await Index.load(plans);
+    // the task's own status alone controls claim — the plan gate is gone
     expect(idx.get("UNR-0003")!.ready).toBe(true);
+    expect(idx.get("UNR-0007")!.ready).toBe(true);
+  });
+
+  it("a new draft child on an in_progress plan does not make its ready siblings unclaimable", async () => {
+    writeItem("UNR-0010", { type: "epic" });
+    writeItem("UNR-0011", { parent: "UNR-0010", status: "in_progress" });
+    writeItem("UNR-0012", { parent: "UNR-0010" }); // ready sibling
+    let idx = await Index.load(plans);
+    expect(idx.planState("UNR-0010")).toBe("in_progress");
+    expect(idx.get("UNR-0012")!.ready).toBe(true);
+    // a draft part lands later — the running plan and its ready part are untouched
+    writeItem("UNR-0013", { parent: "UNR-0010", status: "draft" });
+    idx = await Index.load(plans);
+    expect(idx.planState("UNR-0010")).toBe("in_progress");
+    expect(idx.get("UNR-0012")!.ready).toBe(true);
   });
 
   it("incremental upsertFile equals full reload", async () => {
@@ -195,19 +193,20 @@ describe("Index", () => {
 });
 
 describe("plan_state and plan_progress (epics)", () => {
-  it("draft → decomposing → ready → in_progress → done as children appear, close, run and finish", async () => {
+  it("draft → ready → in_progress → done as children appear, approve, run and finish", async () => {
     writeItem("PL-0001", { type: "epic" });
     let idx = await Index.load(plans);
     expect(idx.planState("PL-0001")).toBe("draft");
     expect(idx.get("PL-0001")!.plan_state).toBe("draft");
     expect(idx.planProgress("PL-0001")).toEqual({ done: 0, total: 0 });
 
-    writeItem("PL-0002", { parent: "PL-0001" });
+    // a plan whose children are all drafts is still a draft itself
+    writeItem("PL-0002", { parent: "PL-0001", status: "draft" });
     idx = await Index.load(plans);
-    expect(idx.planState("PL-0001")).toBe("decomposing");
+    expect(idx.planState("PL-0001")).toBe("draft");
     expect(idx.planProgress("PL-0001")).toEqual({ done: 0, total: 1 });
 
-    writeItem("PL-0001", { type: "epic", plan_closed: "true" });
+    writeItem("PL-0002", { parent: "PL-0001", status: "ready" });
     idx = await Index.load(plans);
     expect(idx.planState("PL-0001")).toBe("ready");
 
@@ -221,36 +220,41 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planProgress("PL-0001")).toEqual({ done: 1, total: 1 });
   });
 
-  it("waiting and in_review parts count as in flight too; an unclosed plan with parts in flight shows decomposing", async () => {
-    writeItem("IP-0001", { type: "epic", plan_closed: "true" });
+  it("waiting and in_review parts count as in flight too", async () => {
+    writeItem("IP-0001", { type: "epic" });
     writeItem("IP-0002", { parent: "IP-0001", status: "done" });
     writeItem("IP-0003", { parent: "IP-0001", status: "waiting" });
     writeItem("IP-0004", { parent: "IP-0001", status: "in_review" });
-    writeItem("IP-0005", { type: "epic" }); // never closed — busy parts, still decomposing
-    writeItem("IP-0006", { parent: "IP-0005", status: "in_progress" });
     const idx = await Index.load(plans);
     expect(idx.planState("IP-0001")).toBe("in_progress");
-    expect(idx.planState("IP-0005")).toBe("decomposing");
   });
 
-  it("non-epics have no plan fields; old epics without plan_closed still load", async () => {
+  it("non-epics have no plan fields", async () => {
     const idx = await Index.load(plans);
     expect(idx.planState("GL-0001")).toBeUndefined();
     expect(idx.get("GL-0001")!.plan_state).toBeUndefined();
     expect(idx.planProgress("GL-0001")).toBeUndefined();
   });
 
+  it("old epic files carrying plan_closed still load — the flag is ignored", async () => {
+    writeItem("OLD-0001", { type: "epic", plan_closed: "true" });
+    writeItem("OLD-0002", { type: "epic", plan_closed: "false" });
+    writeItem("OLD-0003", { parent: "OLD-0001", status: "ready" });
+    const idx = await Index.load(plans);
+    // no parse error, no gate: the part is claimable and the state derives
+    expect([...idx.invalidFiles.keys()].some((k) => k.includes("OLD-"))).toBe(false);
+    expect(idx.get("OLD-0003")!.ready).toBe(true);
+    expect(idx.planState("OLD-0001")).toBe("ready");
+    expect(idx.planState("OLD-0002")).toBe("draft");
+  });
+
   it("nested: a plan isn't done until sub-plans and their parts finish", async () => {
-    writeItem("PL-0010", { type: "epic", plan_closed: "true" }); // plan A
+    writeItem("PL-0010", { type: "epic" }); // plan A
     writeItem("PL-0011", { type: "epic", parent: "PL-0010" }); // sub-plan B
     writeItem("PL-0012", { parent: "PL-0011" }); // task T
     let idx = await Index.load(plans);
     expect(idx.planState("PL-0010")).toBe("ready"); // B not finished yet
-    expect(idx.planState("PL-0011")).toBe("decomposing");
-
-    writeItem("PL-0011", { type: "epic", parent: "PL-0010", plan_closed: "true" });
-    idx = await Index.load(plans);
-    expect(idx.planState("PL-0010")).toBe("ready"); // T not done yet
+    expect(idx.planState("PL-0011")).toBe("ready"); // T is ready to claim
 
     writeItem("PL-0012", { parent: "PL-0011", status: "done" });
     idx = await Index.load(plans);
@@ -261,7 +265,7 @@ describe("plan_state and plan_progress (epics)", () => {
   });
 
   it("dropped and archived children count as finished", async () => {
-    writeItem("PL-0020", { type: "epic", plan_closed: "true" });
+    writeItem("PL-0020", { type: "epic" });
     writeItem("PL-0021", { parent: "PL-0020", status: "dropped" });
     writeItem("PL-0022", { parent: "PL-0020", status: "done", archived: "true" });
     const idx = await Index.load(plans);
@@ -269,17 +273,17 @@ describe("plan_state and plan_progress (epics)", () => {
     expect(idx.planProgress("PL-0020")).toEqual({ done: 2, total: 2 });
   });
 
-  it("auto-done: no close_plan needed once every part and problem is finished", async () => {
+  it("auto-done: every part and problem finished marks the plan done", async () => {
     writeItem("AD-0001", { type: "epic" });
     writeItem("AD-0002", { parent: "AD-0001", status: "done" });
     writeItem("AD-0003", { parent: "AD-0001", status: "dropped" });
     let idx = await Index.load(plans);
-    expect(idx.planState("AD-0001")).toBe("done"); // never closed — the work is finished
+    expect(idx.planState("AD-0001")).toBe("done"); // the work is finished
 
     // an open problem under the plan blocks done
     writeItem("AD-0004", { type: "bug", found_by: "[AD-0002]" });
     idx = await Index.load(plans);
-    expect(idx.planState("AD-0001")).toBe("decomposing");
+    expect(idx.planState("AD-0001")).toBe("ready");
     expect(idx.get("AD-0001")!.plan_problems).toEqual({ open: 1, done: 0 });
 
     // the problem finishing restores done
@@ -289,8 +293,8 @@ describe("plan_state and plan_progress (epics)", () => {
   });
 
   it("a hand-done plan shows done, but a part back in flight reopens it", async () => {
-    writeItem("AD-0010", { type: "epic", plan_closed: "true" });
-    writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done", plan_closed: "true" }); // done by hand
+    writeItem("AD-0010", { type: "epic" });
+    writeItem("AD-0011", { type: "epic", parent: "AD-0010", status: "done" }); // done by hand
     writeItem("AD-0012", { parent: "AD-0011", status: "in_review" }); // can bounce back
     writeItem("AD-0013", { parent: "AD-0010", status: "done" });
     let idx = await Index.load(plans);
@@ -328,7 +332,7 @@ describe("plan_state and plan_progress (epics)", () => {
     let idx = await Index.load(plans);
     // the empty sub-plan is draft, and the parent must not auto-complete over it
     expect(idx.planState("PL-0041")).toBe("draft");
-    expect(idx.planState("PL-0040")).toBe("decomposing");
+    expect(idx.planState("PL-0040")).toBe("ready");
 
     // a dropped empty sub-epic still counts as finished
     writeItem("PL-0041", { type: "epic", parent: "PL-0040", status: "dropped" });
@@ -337,8 +341,8 @@ describe("plan_state and plan_progress (epics)", () => {
   });
 
   it("a parent cycle reports not done instead of hanging", async () => {
-    writeItem("PL-0030", { type: "epic", plan_closed: "true", parent: "PL-0031" });
-    writeItem("PL-0031", { type: "epic", plan_closed: "true", parent: "PL-0030" });
+    writeItem("PL-0030", { type: "epic", parent: "PL-0031" });
+    writeItem("PL-0031", { type: "epic", parent: "PL-0030" });
     const idx = await Index.load(plans);
     expect(idx.planState("PL-0030")).toBe("ready");
     expect(idx.planState("PL-0031")).toBe("ready");

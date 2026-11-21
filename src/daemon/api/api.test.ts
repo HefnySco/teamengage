@@ -663,7 +663,7 @@ describe("change_answer", () => {
 });
 
 describe("plan tracking (epics)", () => {
-  it("next skips epics, claim refuses them; close_plan → ready → done; reopen goes back", async () => {
+  it("next skips epics, claim refuses them; approve on an epic approves its draft children", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const store = wsr.store;
@@ -673,24 +673,27 @@ describe("plan tracking (epics)", () => {
       [
         { type: "epic", title: "Plan P" },
         { type: "task", title: "P part 1", parent: "#0" },
+        { type: "task", title: "P part 2", parent: "#0" },
+        { type: "task", title: "P part 3", parent: "#0" },
+        { type: "task", title: "P part 4", parent: "#0" },
       ],
       human,
     );
-    const [epic, t1] = ids;
+    const [epic, t1, t2, t3, t4] = ids;
+    // one child already ready; approve on the epic approves the 3 draft
+    // children too — each part's own draft status is the only gate
+    await ops.approve(t4);
     await ops.approve(epic);
-    await ops.approve(t1);
+    for (const t of [t1, t2, t3, t4]) expect(store.idx.get(t)!.meta.status).toBe("ready");
+    expect(store.idx.get(epic)!.meta.status).toBe("ready");
+    expect(store.idx.planState(epic)).toBe("ready");
+    // a ready part under it claims as usual — no plan gate left
+    const s = ctx.sessions.hello("plan-agent");
+    await ops.claim(t1, s);
+    await ops.release(t1, s);
     // a ready epic is never offered to agents and can't be claimed
     expect(ops.next(50).map((i) => i.meta.id)).not.toContain(epic);
-    const s = ctx.sessions.hello("plan-agent");
     await expect(ops.claim(epic, s)).rejects.toThrow(/epics are plans/);
-    expect(store.idx.planState(epic)).toBe("decomposing");
-    expect(store.idx.planProgress(epic)).toEqual({ done: 0, total: 1 });
-    // closing is human-only: an agent actor is refused
-    await expect(ops.closePlan(epic, s)).rejects.toThrow(/human-only/);
-    const r = await api(`/api/items/${epic}/close_plan`, { method: "POST" });
-    expect(r.status).toBe(200);
-    expect(((await r.json()) as { meta: { plan_closed?: boolean } }).meta.plan_closed).toBe(true);
-    expect(store.idx.planState(epic)).toBe("ready");
     // the board JSON carries plan fields on epics
     const list = (await (await api("/api/items?type=epic")).json()) as Array<{
       id: string;
@@ -698,19 +701,14 @@ describe("plan tracking (epics)", () => {
       plan_progress?: { done: number; total: number };
     }>;
     const row = list.find((i) => i.id === epic)!;
-    expect(row.plan_state).toBe("ready");
-    expect(row.plan_progress).toEqual({ done: 0, total: 1 });
-    // the part finishes → the plan is done
+    expect(row.plan_state).toBe("ready"); // t1's release sent it back to ready — nothing in flight
+    expect(row.plan_progress).toEqual({ done: 0, total: 4 });
+    // the parts finish → the plan is done
     await ops.complete(t1);
+    await ops.complete(t2);
+    await ops.complete(t3);
+    await ops.complete(t4);
     expect(store.idx.planState(epic)).toBe("done");
-    // reopen → still done: plan_state derives from the parts, and they are
-    // finished — decomposing returns only when unfinished work lands
-    const rr = await api(`/api/items/${epic}/reopen_plan`, { method: "POST" });
-    expect(rr.status).toBe(200);
-    expect(store.idx.planState(epic)).toBe("done");
-    // close_plan on a non-epic fails cleanly
-    const bad = await api(`/api/items/${t1}/close_plan`, { method: "POST" });
-    expect(bad.status).toBe(400);
   });
 });
 
@@ -738,10 +736,7 @@ describe("plan auto-done sweep", () => {
     await ops.complete(t1);
     await ops.complete(sub); // done by hand — its part is still open
     await ops.approve(subT);
-    // parts of a not-ready plan can't start — both plans must be closed first
-    await expect(ops.claim(subT, ctx.sessions.hello("pad-agent-early"))).rejects.toThrow(/not closed/);
-    await ops.closePlan(sub);
-    await ops.closePlan(plan);
+    // no plan gate: the approved part claims straight away
     const agent = ctx.sessions.hello("pad-agent");
     await ops.claim(subT, agent);
     await ops.submit(subT, agent, { what: "part done", how: "ran the steps" }); // in_review — can bounce back
@@ -1068,14 +1063,16 @@ describe("auto_archive_after", () => {
 
     wsr.ws.config.auto_archive_after = "7d";
     try {
-      // all parts finished → close archives them; the epic stays visible
-      await ops.closePlan(epic);
+      // all parts finished → the auto-done sweep archives them in the same
+      // step; the epic stays visible
+      await ops.autoCompletePlans();
+      expect(store.idx.get(epic)!.meta.status).toBe("done");
       expect(store.idx.get(p1)!.meta.archived).toBe(true);
       expect(store.idx.get(p2)!.meta.archived).toBe(true);
       expect(store.idx.get(epic)!.meta.archived).toBeUndefined();
-      // a plan with an open part archives nothing
-      await ops.closePlan(epic2);
+      // a plan with an open part finishes nothing and archives nothing
       expect(store.idx.get(p3)!.meta.archived).toBeUndefined();
+      expect(store.idx.get(epic2)!.meta.status).not.toBe("done");
     } finally {
       delete wsr.ws.config.auto_archive_after;
     }
@@ -1991,7 +1988,6 @@ describe("feature item and feature page (GL-0331)", () => {
 
     // finish one part → in_progress; the plan's progress lands on the view
     await ops.approve(p1);
-    await ops.closePlan(plan); // parts claim only once the plan is ready
     await ops.claim(p1, s);
     await ops.submit(p1, s, { walkthrough: "did it", what: "task done", how: "ran the steps" });
     await ops.accept(p1, human);
