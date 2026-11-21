@@ -15,6 +15,10 @@ import { SubmitCost } from "../../core/model/item.js";
 
 /** A finding the reviewer sends (GL-0321) — state/reason are the holder's. */
 /** GL-0344: the human's short decision card — problem ≤40 w, recommendation ≤30 w, 2–3 options ≤4 w each. */
+/** TE-0177: an over-limit human-facing field warns in the reply — the action stands. */
+const warnLines = (r: { warnings?: string[] }) =>
+  r.warnings?.length ? "\n" + r.warnings.map((w) => `warn: ${w}`).join("\n") : "";
+
 const askHuman = z.object({
   problem: z.string(),
   recommendation: z.string(),
@@ -284,8 +288,11 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.ask(id, s, question, options, to, context);
-        return okText(to === "peer" ? `peer question on ${id} — item stays yours` : `waiting ${id}: human's turn`);
+        const r = await o.ask(id, s, question, options, to, context);
+        return okText(
+          (to === "peer" ? `peer question on ${id} — item stays yours` : `waiting ${id}: human's turn`) +
+            warnLines(r),
+        );
       } catch (e) {
         return errFrom(e);
       }
@@ -364,8 +371,8 @@ export function registerWriteTools(
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        await o.submit(id, s, { commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
-        return okText(`in_review ${id}`);
+        const r = await o.submit(id, s, { commits, tests, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
+        return okText(`in_review ${id}` + warnLines(r));
       } catch (e) {
         return errFrom(e);
       }
@@ -422,7 +429,8 @@ export function registerWriteTools(
                 ? " — out of attempts, on hold for the human"
                 : "";
         return okText(
-          `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}${where}`,
+          `reviewed ${id}: ${verdict}${needs_human ? " (needs the human's call — never auto-accepted)" : ""}${where}` +
+            warnLines(r),
         );
       } catch (e) {
         return errFrom(e);

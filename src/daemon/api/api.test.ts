@@ -2109,14 +2109,15 @@ describe("ask_human decision card (GL-0344)", () => {
     await ops.review(b, reviewer, "issues", "n", undefined, undefined, undefined, undefined, AH);
   });
 
-  it("an ok review with a 26-word summary is refused and the error shows the count", async () => {
+  it("an ok review with a 26-word summary stands and warns (TE-0177)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
     const reviewer = ctx.sessions.hello("r-344b");
     const id = await submitted(ops, "Summary length");
     const long = Array.from({ length: 26 }, (_, i) => `w${i}`).join(" ");
-    await expect(ops.review(id, reviewer, "ok", undefined, long)).rejects.toThrow(/26 words — max 25/);
-    await ops.review(id, reviewer, "ok", undefined, "short enough");
+    const r = await ops.review(id, reviewer, "ok", undefined, long);
+    expect(r.warnings).toEqual(["summary is 26 words — max 25"]);
+    expect(r.meta.ai_review?.summary).toBe(long);
   });
 
   it("ask_human lands on ai_review and the item API returns it", async () => {
@@ -2145,8 +2146,13 @@ describe("ask_human decision card (GL-0344)", () => {
     const q = wsr.store.idx.get(id)!.meta.question!;
     expect(q.text).toBe("keep the old path or take the new one?");
     expect(q.context).toContain("long detail");
-    // and a 41-word question is refused
-    await expect(ops.ask(id, holder, Array.from({ length: 41 }, (_, i) => `w${i}`).join(" "))).rejects.toThrow(/41 words — max 40/);
+    // a 41-word question stands and warns (TE-0177) — fresh item, the
+    // first one's question is still open
+    const { ids: ids2 } = await wsr.store.createItems([{ type: "task", title: "Long question" }], human);
+    await ops.approve(ids2[0]);
+    await ops.claim(ids2[0], holder);
+    const long = await ops.ask(ids2[0], holder, Array.from({ length: 41 }, (_, i) => `w${i}`).join(" "));
+    expect(long.warnings).toEqual(["question is 41 words — max 40"]);
   });
 
   it("a review record made before ask_human loads with no error", async () => {
@@ -2186,7 +2192,7 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     expect(it.meta.status).toBe("in_review");
   });
 
-  it("a what of 41 words is refused and the error shows 41 and 40", async () => {
+  it("a what of 45 words submits and warns with what, 45 and 40 (TE-0177)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const ops = new WorkspaceOps(wsr, ctx.sessions);
@@ -2196,10 +2202,25 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     await ops.approve(id);
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
-    const long = Array.from({ length: 41 }, (_, i) => `w${i}`).join(" ");
+    const long = Array.from({ length: 45 }, (_, i) => `w${i}`).join(" ");
+    const r = await ops.submit(id, holder, { what: long, how: "ran the steps" });
+    expect(r.meta.status).toBe("in_review");
+    expect(r.warnings).toEqual(["what is 45 words — max 40"]);
+  });
+
+  it("a submit with no what still fails (TE-0177)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "No what" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    await ops.claim(id, holder);
     await expect(
-      ops.submit(id, holder, { what: long, how: "ran the steps" }),
-    ).rejects.toThrow(/41 words — max 40/);
+      ops.submit(id, holder, { how: "ran the steps" }),
+    ).rejects.toThrow(/what is required/);
   });
 
   it("an old item with only a walkthrough loads with no error", async () => {

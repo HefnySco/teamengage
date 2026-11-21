@@ -96,34 +96,60 @@ export interface Links {
 }
 
 /** Title/summary words that mark an item as a fix — it always carries `bug`. */
-/** GL-0343/0344: word-count guard for the short human-facing fields. */
-function checkWords(field: string, text: string | undefined, max: number, required = false): void {
+/**
+ * GL-0343/0344 + TE-0177: word limits for the short human-facing fields —
+ * one table so the text-cut task tunes them in one place. Over-limit is a
+ * warning line in the reply, never a refused action; a missing required
+ * field still fails.
+ */
+const WORD_LIMITS = {
+  question: 40,
+  what: 40,
+  how: 60,
+  summary: 25,
+  "ask_human.problem": 40,
+  "ask_human.recommendation": 30,
+  "ask_human option": 4,
+} as const;
+type WordField = keyof typeof WORD_LIMITS;
+
+function wordLimitWarn(field: WordField, text: string | undefined, required = false): string | undefined {
   const t = text?.trim() ?? "";
   if (!t) {
     if (required) throw new TeError("USAGE", `${field} is required`);
     return;
   }
   const n = t.split(/\s+/).filter(Boolean).length;
-  if (n > max) throw new TeError("USAGE", `${field} is ${n} words — max ${max}`);
+  if (n > WORD_LIMITS[field]) return `${field} is ${n} words — max ${WORD_LIMITS[field]}`;
+  return undefined;
 }
 
 /**
- * GL-0344: the human's decision card on reviews and bounces — problem
- * ≤40 words, recommendation ≤30 words, two or three options of ≤4 words.
+ * GL-0344: the human's decision card on reviews — problem ≤40 words,
+ * recommendation ≤30 words, two or three options of ≤4 words. Over-limit
+ * fields warn (TE-0177); a missing card or field, or a wrong options
+ * count, still refuses.
  */
-function checkAskHuman(a: AskHuman | undefined, required: boolean): void {
+function askHumanWarnings(a: AskHuman | undefined, required: boolean): string[] {
   if (!a) {
     if (required) throw new TeError("USAGE", "ask_human is required — {problem, recommendation, options?}");
-    return;
+    return [];
   }
-  checkWords("ask_human.problem", a.problem, 40, true);
-  checkWords("ask_human.recommendation", a.recommendation, 30, true);
+  const warnings: string[] = [];
+  for (const w of [
+    wordLimitWarn("ask_human.problem", a.problem, true),
+    wordLimitWarn("ask_human.recommendation", a.recommendation, true),
+  ]) if (w) warnings.push(w);
   if (a.options !== undefined) {
     if (a.options.length < 2 || a.options.length > 3) {
       throw new TeError("USAGE", `ask_human.options has ${a.options.length} entries — want 2 or 3`);
     }
-    for (const o of a.options) checkWords("ask_human option", o, 4, true);
+    for (const o of a.options) {
+      const w = wordLimitWarn("ask_human option", o, true);
+      if (w) warnings.push(w);
+    }
   }
+  return warnings;
 }
 
 const FIX_WORDS =
@@ -1534,7 +1560,7 @@ export class WorkspaceOps {
   async ask(id: string, session: Session, text: string, options?: string[], to?: "peer", context?: string) {
     const it = this.item(id);
     this.assertLiveClaim(it);
-    checkWords("question", text, 40, true);
+    const warnings = [wordLimitWarn("question", text, true)].filter((w): w is string => !!w);
     const question = {
       text,
       options,
@@ -1542,11 +1568,12 @@ export class WorkspaceOps {
       asked_by: session.id,
       asked_at: new Date().toISOString(),
     };
-    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "ask",
       question,
       to,
     });
+    return { ...r, warnings };
   }
 
   /** A peer session answers a `to: "peer"` question — the item stays with its holder (GL-0324). */
@@ -1648,8 +1675,10 @@ export class WorkspaceOps {
       }
     }
     // GL-0343: the human reads what/how, the agent layer keeps walkthrough
-    checkWords("what", evidence?.what, 40, true);
-    checkWords("how", evidence?.how, 60, true);
+    const warnings = [
+      wordLimitWarn("what", evidence?.what, true),
+      wordLimitWarn("how", evidence?.how, true),
+    ].filter((w): w is string => !!w);
     // RS-0006/7: attach the live-vs-snapshot diff for ssh/folder targets
     const diffs: string[] = [];
     const seen = new Set<string>();
@@ -1665,10 +1694,11 @@ export class WorkspaceOps {
     const ev = diffs.length
       ? { ...evidence, notes: [evidence?.notes, diffs.join("\n")].filter(Boolean).join("\n") }
       : evidence;
-    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+    const r = await this.store.perform(id, it.meta.version, this.actorFor(session), {
       type: "submit",
       evidence: ev,
     });
+    return { ...r, warnings };
   }
 
   /**
@@ -1693,8 +1723,10 @@ export class WorkspaceOps {
   ) {
     // GL-0344: a plain ok needs only a ≤25-word summary; anything the
     // human must decide on needs the ask_human card
-    if (verdict === "ok" && !needsHuman) checkWords("summary", summary, 25);
-    else checkAskHuman(askHuman, true);
+    const warnings =
+      verdict === "ok" && !needsHuman
+        ? [wordLimitWarn("summary", summary)].filter((w): w is string => !!w)
+        : askHumanWarnings(askHuman, true);
     const it = this.item(id);
     const claim = it.claim;
     const r = await this.store.perform(
@@ -1714,7 +1746,7 @@ export class WorkspaceOps {
     if (claim && r.meta.status !== "in_review" && r.meta.status !== "in_progress") {
       await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
     }
-    return r;
+    return { ...r, warnings };
   }
 
   /**

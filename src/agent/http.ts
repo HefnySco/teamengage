@@ -126,6 +126,8 @@ RULES
      does now, max 40 words) and how (how you did it, max 60 words) are
      required — the human's two short lines under ## For the human, plain
      words, no code names. walkthrough is the optional agent layer.
+     A field over its word limit is accepted — the reply carries a warn:
+     line; a missing required field still fails.
      Never mark work done. Never git push. The human approves, answers,
      and accepts.
   5. A session that is NOT the holder may review submissions (query
