@@ -665,6 +665,29 @@ describe("hold", () => {
     expect(r.log[0]).toMatch(/put on hold \(from ready\): after the release$/);
     expect(r.events[0]).toMatchObject({ action: "hold", from: "ready", to: "hold", note: "after the release" });
   });
+
+  it("parks a review (TE-0176): the claim is released, the branches stay", () => {
+    const r = transition(
+      item("in_review"),
+      { type: "hold", reason: "look at it next week" },
+      human,
+      ctx({ claim: claimOf() }),
+    );
+    expect(r.meta.status).toBe("hold");
+    expect(r.log[0]).toMatch(/put on hold \(from in_review\): look at it next week$/);
+    expect(r.effects).toEqual([
+      { type: "delete_claim" },
+      { type: "cleanup_work", keepBranches: true },
+    ]);
+    // an unclaimed in_review item still holds cleanly
+    const bare = transition(item("in_review"), { type: "hold" }, human, ctx());
+    expect(bare.meta.status).toBe("hold");
+    expect(bare.effects).toEqual([]);
+    // in_progress is still refused — a claimed in-flight item needs release first
+    expect(() =>
+      transition(item("in_progress"), { type: "hold" }, human, ctx({ claim: claimOf() })),
+    ).toThrow(InvalidTransitionError);
+  });
 });
 
 describe("drop flags (agent asks, human decides)", () => {

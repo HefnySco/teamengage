@@ -342,7 +342,8 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
 - `hold` parks an item: it is not a draft (the plan is fine), but not for
   agents yet — `next` skips it and `claim` refuses it. `te hold` / `te unhold`
   / `te draft`, or hold / resume / to draft in the UI. A claimed item must be
-  released before it can be held.
+  released before it can be held — except `in_review`, where hold parks the
+  review and frees the claim (the branches stay, TE-0176).
 - `archived` is a **tag, not a status** (`te archive` / `te unarchive`, the
   Archive page in the UI). The item keeps its real status, so dependency
   chains still resolve (an archived `done` dep is still done) and agents see
@@ -369,6 +370,17 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   a plain `ok` needs only `summary` ≤25 words. `ask` takes an optional
   `context` for the detail — the question text stays ≤40 words; `note`,
   `report` and `findings` stay the agent layer with no limit.
+  The review card shows `problem` and `recommendation` as text (TE-0176):
+  its buttons are fixed actions — **Accept**, **Send back to coder**
+  (the `review` issues verdict with the human as actor: a live local
+  holder keeps the claim and fixes, a dead or outgrown holder's claim
+  goes to `ready` with the branch kept, a holder on another machine is
+  untouched, never capped and never `needs_human`), **Create follow-up
+  task** (propose with `found_by` set) and **Hold**. Picks are no longer
+  recorded as D-records — decisions come only from `answer` (an agent
+  `ask`) and from promoted decision lines on discussions. Existing
+  review-card picks list at `GET /api/decisions/review-card-picks`
+  (read-only) and are excluded from `domain_decisions`.
   `submit` clears it (a fresh submission starts
   unreviewed).
 - `findings` is the latest review's **structured checklist** (GL-0321):

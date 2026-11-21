@@ -930,6 +930,16 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
     }
   });
 
+  // TE-0176: one-time listing — the D-records review-card buttons wrote.
+  // Read-only; the human deletes the ones that should not stay.
+  app.get("/api/decisions/review-card-picks", async (req, reply) => {
+    try {
+      return await opsFor(ctx, wsOf(req.query)).reviewCardDecisions();
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   // TE-0164: a decision's follow-through is done — it leaves the inbox list
   app.post("/api/decisions/:id/process", async (req, reply) => {
     try {
@@ -959,13 +969,9 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
 
   act("approve", (ops, id) => ops.approve(id));
   act("answer", (ops, id, b) => ops.answer(id, String(b.text ?? b.title ?? "answered")));
-  act("decide", (ops, id, b) =>
-    ops.recordDecision(
-      id,
-      String(b.text ?? b.title ?? "decided"),
-      b.question && typeof b.question === "object" ? (b.question as never) : undefined,
-    ),
-  );
+  // TE-0176: the review card's send-back — the issues verdict with the
+  // human as actor; no separate decide endpoint (review picks are gone)
+  act("send_back", (ops, id, b) => ops.sendBack(id, b.reason ? String(b.reason) : undefined));
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
   act("accept", (ops, id) => ops.accept(id));
   act("withdraw", (ops, id) => ops.withdraw(id, "human"));

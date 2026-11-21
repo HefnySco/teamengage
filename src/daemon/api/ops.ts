@@ -571,9 +571,12 @@ export class WorkspaceOps {
       }
     }
     const listed = new Set(decisions.map((d) => d.meta.id));
+    // TE-0176: a pick made on a review card is context for its item only —
+    // it must not leak into other briefs as a domain rule
+    const reviewCardPicks = this.reviewCardDecisionIds();
     const domain_decisions = [...this.index.decisions.values()]
       .filter((d) => {
-        if (listed.has(d.meta.id)) return false;
+        if (listed.has(d.meta.id) || reviewCardPicks.has(d.meta.id)) return false;
         try {
           const src = this.index.get(parseItemRef(d.meta.item).id);
           return src !== undefined && src.meta.domains.some((x) => it.meta.domains.includes(x));
@@ -1730,6 +1733,29 @@ export class WorkspaceOps {
   }
 
   /**
+   * The human's send-back button on a review card (TE-0176): the same
+   * issues verdict the agent review flow uses — live holder keeps the
+   * claim and fixes, a dead or outgrown holder's claim goes to `ready`
+   * (branch kept), a holder on another machine is left untouched. The
+   * human is never capped and never flagged needs_human.
+   */
+  async sendBack(id: string, note?: string) {
+    const it = this.item(id);
+    const claim = it.claim;
+    const r = await this.store.perform(
+      id,
+      it.meta.version,
+      this.actorFor("human"),
+      { type: "review", verdict: "issues", note },
+      { holderAway: () => this.holderAway(this.item(id)) },
+    );
+    if (claim && r.meta.status !== "in_review" && r.meta.status !== "in_progress") {
+      await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+    }
+    return r;
+  }
+
+  /**
    * The holder pulls its own submission back to keep working:
    * in_review → in_progress, claim and worktree kept.
    */
@@ -1800,6 +1826,9 @@ export class WorkspaceOps {
     let bounces = 0;
     for (const e of [...r.events].reverse()) {
       if (e.item !== id) continue;
+      // a review event by the human (the send-back button) is a human
+      // touch — the AI send-back count starts over
+      if (e.action === "review" && e.actor === "human") break;
       // legacy bounce events and unified issues-reviews both count
       if (e.action === "bounce" || (e.action === "review" && (e.note ?? "").startsWith("issues"))) {
         bounces++;
@@ -2699,6 +2728,44 @@ export class WorkspaceOps {
       out.push({ id: d.meta.id, item: itemId, title: d.meta.title, created: d.meta.created });
     }
     return out.sort((a, b) => compareIds(b.id, a.id));
+  }
+
+  /**
+   * TE-0176: ids of the D-records a review-card option button wrote. A card
+   * pick logged `picked "…" → D-NNNN` on the reviewed item; a promote
+   * approval logs the same line but on the discussion it promotes, so only
+   * non-discussion items count here.
+   */
+  reviewCardDecisionIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const it of this.index.items.values()) {
+      if (it.meta.type === "discussion") continue;
+      const log = it.sections.find((s) => s.heading.toLowerCase() === "log");
+      for (const l of log?.body.split("\n") ?? []) {
+        const m = /picked ".*" → (D-\d+)/.exec(l);
+        if (m) ids.add(m[1]);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * One-time listing for the human (TE-0176): the decision records review
+   * cards wrote before the buttons did real actions. Read-only — nothing
+   * is deleted here.
+   */
+  reviewCardDecisions() {
+    const ids = this.reviewCardDecisionIds();
+    return [...this.index.decisions.values()]
+      .filter((d) => ids.has(d.meta.id))
+      .map((d) => ({
+        id: d.meta.id,
+        item: d.meta.item,
+        title: d.meta.title,
+        created: d.meta.created,
+        processed: Boolean(d.meta.processed),
+      }))
+      .sort((a, b) => compareIds(b.id, a.id));
   }
 
   /**

@@ -2217,34 +2217,115 @@ describe("For the human — what/how on submit (GL-0343)", () => {
   });
 });
 
-describe("decide — option pick records a decision (GL-0345)", () => {
-  it("a pick on an in_review item lands a decision, status untouched", async () => {
-    const { WorkspaceOps } = await import("./ops.js");
+describe("review card actions are real (TE-0176)", () => {
+  const submitted = async (ops: InstanceType<typeof WorkspaceOps>, title: string) => {
     const wsr = ctx.workspaces.get("ws")!;
-    const ops = new WorkspaceOps(wsr, ctx.sessions);
     const human = { kind: "human" as const, session: "human", machine: "test" };
-    const { ids } = await wsr.store.createItems([{ type: "task", title: "Pick a button" }], human);
+    const { ids } = await wsr.store.createItems([{ type: "task", title }], human);
     const [id] = ids;
     await ops.approve(id);
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
-    await ops.submit(id, holder, { notes: "done", what: "added the thing", how: "ran the steps" });
-    const res = await api(`/api/items/${id}/decide`, {
+    await ops.submit(id, holder, { notes: "done", what: "did the work", how: "ran the steps" });
+    return { id, holder };
+  };
+
+  it("the decide route is gone; send_back moves the item, writes no D-record", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const { id } = await submitted(ops, "Real buttons");
+
+    const gone = await api(`/api/items/${id}/decide`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "accept it", question: { text: "tests are red" } }),
+      body: JSON.stringify({ text: "accept it" }),
+    });
+    expect(gone.status).toBe(404);
+
+    // send back on a live holder: in_progress, claim kept, no decision file
+    const { readdirSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const decisionDir = join(wsr.ws.plansDir, "decisions");
+    const decisionFiles = () =>
+      existsSync(decisionDir) ? readdirSync(decisionDir).filter((f) => f.startsWith("D-")) : [];
+    const beforeSendBack = decisionFiles();
+    const res = await api(`/api/items/${id}/send_back`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "tests are red" }),
     });
     expect(res.status).toBe(200);
-    expect(wsr.store.idx.get(id)!.meta.status).toBe("in_review");
-    const brief = (await (await api(`/api/items/${id}`)).json()) as {
-      decisions: Array<{ meta: { title: string; question?: { text: string } } }>;
-    };
-    const d = brief.decisions.find((x) => x.meta.title === "accept it");
-    expect(d).toBeTruthy();
-    expect(d?.meta.question).toBe("tests are red");
-    // the list rows carry the human lines for the inbox
-    const rows = (await (await api(`/api/items?status=in_review`)).json()) as Array<{ id: string; what?: string }>;
-    expect(rows.find((r) => r.id === id)?.what).toBe("added the thing");
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("in_progress");
+    expect(wsr.store.idx.claims.get(id)).toBeTruthy();
+    expect(wsr.store.idx.get(id)!.meta.ai_review?.verdict).toBe("issues");
+    expect(wsr.store.idx.get(id)!.meta.ai_review?.needs_human).toBeUndefined();
+    expect(decisionFiles()).toEqual(beforeSendBack);
+
+    // the human's send-back resets the AI cap: an agent issues verdict still sends back
+    const holder2 = wsr.store.idx.claims.get(id)!.holder;
+    await ops.submit(id, { ...ctx.sessions.get(holder2)! }, { what: "fixed", how: "patched" });
+    const reviewer = ctx.sessions.hello("r-176");
+    const r = await ops.review(id, reviewer, "issues", "still red", undefined, undefined, undefined, undefined, { problem: "tests are red", recommendation: "send it back", options: ["send back", "keep"] });
+    expect(r.meta.status).toBe("in_progress");
+  });
+
+  it("send_back on a dead holder releases the claim to ready", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const { id, holder } = await submitted(ops, "Dead holder card");
+    ctx.sessions.disconnect(holder.id);
+    const res = await api(`/api/items/${id}/send_back`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "holder gone" }),
+    });
+    expect(res.status).toBe(200);
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("ready");
+    expect(wsr.store.idx.claims.get(id)).toBeUndefined();
+  });
+
+  it("hold parks a claimed review: claim released, item held", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const { id } = await submitted(ops, "Park the card");
+    const res = await api(`/api/items/${id}/hold`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "next week" }),
+    });
+    expect(res.status).toBe(200);
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("hold");
+    expect(wsr.store.idx.claims.get(id)).toBeUndefined();
+  });
+
+  it("review-card-picks lists legacy card decisions; domain_decisions excludes them", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "Card pick source", domains: ["teamengage"] },
+        { type: "task", title: "Sibling same domain", domains: ["teamengage"] },
+      ],
+      human,
+    );
+    const [src, sib] = ids;
+    // the legacy shape: a decide-route pick wrote `picked "…" → D-N` on the item
+    await ops.recordDecision(src, "accept it", { text: "tests are red" } as never);
+    const picks = (await (await api("/api/decisions/review-card-picks")).json()) as Array<{ id: string; item: string; title: string }>;
+    const pick = picks.find((p) => p.title === "accept it");
+    expect(pick).toBeTruthy();
+    expect(pick!.item).toBe(src);
+    // the same-domain sibling's brief must not carry it as a domain rule
+    const brief = await ops.brief(sib);
+    expect(brief.domain_decisions.some((d) => d.id === pick!.id)).toBe(false);
+    // but the source item keeps the record on its own decisions list
+    const own = (await (await api(`/api/items/${src}`)).json()) as { decisions: Array<{ meta: { id: string } }> };
+    expect(own.decisions.some((d) => d.meta.id === pick!.id)).toBe(true);
   });
 });
 
@@ -2260,12 +2341,8 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
     await ops.submit(id, holder, { notes: "done", what: "fixed it", how: "ran the steps" });
-    const res = await api(`/api/items/${id}/decide`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "create follow-up task", question: { text: "two checks open" } }),
-    });
-    expect(res.status).toBe(200);
+    // a pick decision — the promote path still creates these (record_decision)
+    await ops.recordDecision(id, "create follow-up task", { text: "two checks open" } as never);
 
     const inbox = (await (await api("/api/inbox")).json()) as {
       decisions: Array<{ id: string; item: string; title: string }>;
@@ -2298,11 +2375,7 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
     await ops.submit(id, holder, { notes: "done", what: "fixed it", how: "ran the steps" });
-    await api(`/api/items/${id}/decide`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "create follow-up task" }),
-    });
+    await ops.recordDecision(id, "create follow-up task");
     const before = (await (await api("/api/inbox")).json()) as {
       decisions: Array<{ id: string; item: string }>;
     };
@@ -2345,12 +2418,7 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
       [extId, "create follow-up task"],
       [workId, "widen Touches, fix now"],
     ] as const) {
-      const r = await api(`/api/items/${id}/decide`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      expect(r.status).toBe(200);
+      await ops.recordDecision(id, text);
     }
     const inbox1 = (await (await api("/api/inbox")).json()) as {
       decisions: Array<{ id: string; item: string }>;

@@ -2913,28 +2913,84 @@ const ArtStrip = ({ arts, onOpen }) => {
   </div>`;
 };
 
-// GL-0345: the card the human reads first — the what/how lines, and on a
-// flagged review the problem and recommendation with one button per option.
-// A button click records the pick as a decision; it never moves the status.
-const HumanCard = ({ it, picked, onDecide }) => {
+// TE-0176: the card the human reads first — the what/how lines, and on a
+// flagged review the problem and recommendation as text. The buttons do
+// real actions now: accept, send back, follow-up task, hold — no decision
+// records are written from here.
+const HumanCard = ({ it, onAccept, onSendBack, onFollowUp, onHold }) => {
   const what = fhLine(it.sections, "what");
   const how = fhLine(it.sections, "how");
   const ah = it.meta.ai_review?.ask_human;
   if (!what && !how && !ah) return null;
+  const reviewing = it.meta.status === "in_review";
   return html`<div class="card hcard mb-2"><div class="card-body py-2 px-3">
     ${what && html`<div class="hc-line"><span class="hc-k">what</span> ${what}</div>`}
     ${how && html`<div class="hc-line"><span class="hc-k">how</span> ${how}</div>`}
     ${ah && html`
       ${ah.problem && html`<div class="hc-line"><span class="hc-k">problem</span> ${ah.problem}</div>`}
-      ${ah.recommendation && html`<div class="hc-line"><span class="hc-k">recommendation</span> ${ah.recommendation}</div>`}
-      ${(ah.options ?? []).length > 0 && html`<div class="d-flex gap-2 mt-2 flex-wrap">
-        ${ah.options.map((o) => html`<button key=${o} type="button"
-          class=${`btn btn-sm ${picked === o ? "btn-primary" : "btn-outline-primary"}`}
-          disabled=${picked !== undefined}
-          title="records your pick as a decision on this item"
-          onClick=${() => onDecide(o)}>${o}</button>`)}
-      </div>`}`}
+      ${ah.recommendation && html`<div class="hc-line"><span class="hc-k">recommendation</span> ${ah.recommendation}</div>`}`}
+    ${reviewing && html`<div class="d-flex gap-2 mt-2 flex-wrap">
+      <button type="button" class="btn btn-sm btn-success" title="accept — merge the work, the item becomes done" onClick=${onAccept}>Accept</button>
+      <button type="button" class="btn btn-sm btn-outline-warning" title="send back to the coder — the issues verdict: a live holder keeps the claim and fixes, a dead holder's claim goes to ready" onClick=${onSendBack}>Send back to coder</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" title="propose a follow-up task that names this item in found_by" onClick=${onFollowUp}>Create follow-up task</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" title="hold — park the review" onClick=${onHold}>Hold</button>
+    </div>`}
   </div></div>`;
+};
+
+// TE-0176: the review card's follow-up — a draft task that names this item
+// in found_by (reference only — no ordering, no gate).
+const FollowUp = ({ id, onClose }) => {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const titleRef = useRef(null);
+  useEffect(() => titleRef.current?.focus(), []);
+  const save = async () => {
+    if (!title.trim() || busy) return;
+    setBusy(true);
+    try {
+      const r = await post("/api/propose", {
+        items: [{
+          type: "task",
+          title: title.trim(),
+          summary: body.trim() || undefined,
+          found_by: [id],
+        }],
+      });
+      toast(`follow-up ${r.ids[0]} drafted`, "success");
+      onClose();
+    } catch (e) {
+      toast(e.message);
+      setBusy(false);
+    }
+  };
+  return html`
+    <div class="modal-backdrop show"></div>
+    <div class="modal d-block" tabindex="-1"
+      onKeyDown=${(e) => e.key === "Escape" && onClose()}
+      onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header py-2">
+            <b class="modal-title fs-6">follow-up task for ${id}</b>
+            <button type="button" class="btn-close" title="cancel" onClick=${onClose}></button>
+          </div>
+          <div class="modal-body py-2 small">
+            <input class="form-control form-control-sm mb-2" placeholder="title" value=${title}
+              ref=${titleRef}
+              onInput=${(e) => setTitle(e.target.value)}
+              onKeyDown=${(e) => e.key === "Enter" && save()} />
+            <textarea class="form-control form-control-sm" rows="5"
+              placeholder="what to do (becomes the task's ## Summary)"
+              value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>
+          </div>
+          <div class="modal-footer py-1">
+            <button type="button" class="btn btn-sm btn-primary" disabled=${!title.trim() || busy} onClick=${save}>propose as draft</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
 };
 
 const ItemView = ({ id }) => {
@@ -2942,6 +2998,7 @@ const ItemView = ({ id }) => {
   const { data: arts } = useApi(`/api/items/${id}/artifacts`, [id]);
   const [viewing, setViewing] = useState(null); // artifact index being viewed
   const [picked, setTab] = useState(null);
+  const [followUp, setFollowUp] = useState(false);
   const [mdView, setMdView] = useState(loadMdView);
   const [viewMode, setViewMode] = useState(loadItemView);
   const setItemView = (v) => { setViewMode(v); saveItemView(v); };
@@ -2950,7 +3007,7 @@ const ItemView = ({ id }) => {
     setMdView(v);
     saveMdView(v);
   };
-  useEffect(() => { setTab(null); setViewing(null); }, [id]);
+  useEffect(() => { setTab(null); setViewing(null); setFollowUp(false); }, [id]);
   // a discussion opens in its own view — #/item/<id> links (relates chips,
   // markdown ids, lists) land there; replace the hash so Back still works
   useEffect(() => {
@@ -2975,9 +3032,6 @@ const ItemView = ({ id }) => {
   // the answer the human gave on this item (its latest decision) - changeable until the item is closed
   const ownLast = (b?.decisions ?? []).filter((d) => d.meta.item === id).map((d) => d.meta.id)
     .sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).pop();
-  // a cancelled prompt (null) aborts the action — only OK fires it
-  const pickedOpt = (b?.decisions ?? []).find((d) => d.meta.id === ownLast)?.meta.title;
-  const ahProblem = it.meta.ai_review?.ask_human?.problem;
   const TABS = ["simple", "technical", "walkthrough", "evidence"];
   const history = parseLog(sec("log"));
   const last = history.at(-1);
@@ -3205,8 +3259,12 @@ ${b.deps.length > 0 && html`
       </span>
       <${ItemActions} mode=${it.meta.type === "epic" ? "plan" : it.meta.type === "idea" ? "idea" : "task"} it=${it} act=${act} filePath=${b.source?.path} />
     </div>
-    <${HumanCard} it=${it} picked=${pickedOpt}
-      onDecide=${(o) => act("decide", { text: o, ...(ahProblem ? { question: { text: ahProblem } } : {}) })} />
+    <${HumanCard} it=${it}
+      onAccept=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}
+      onSendBack=${async () => { const reason = await promptDialog("send back — what must the coder fix?", { label: "note for the coder (optional)" }); if (reason !== null) act("send_back", { reason }); }}
+      onFollowUp=${() => setFollowUp(true)}
+      onHold=${async () => { const reason = await promptDialog("hold reason", { label: "reason (optional)" }); if (reason !== null) act("hold", { reason }); }} />
+    ${followUp && html`<${FollowUp} id=${id} onClose=${() => setFollowUp(false)} />`}
     ${viewMode === "full" ? preQ : ""}
 ${it.meta.question && html`<div class="alert alert-info py-2 px-2 small mb-2">
       <b>question</b>${it.meta.question.asked_by ? html` <span class="text-secondary">from <b class=${whoCls(it.meta.question.asked_by)}>${it.meta.question.asked_by}</b></span>` : ""}

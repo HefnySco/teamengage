@@ -738,7 +738,18 @@ export function transition(
     }
 
     case "review": {
-      requireReviewer(actor, ctx, action.type, meta);
+      // TE-0176: the human's review is the send-back button — issues verdict
+      // only, and never capped (the human is the cap). Agents get the full
+      // peer-review flow through requireReviewer.
+      const humanBack = actor.kind === "human";
+      if (humanBack) {
+        if (action.verdict !== "issues")
+          throw new ForbiddenError(
+            "ok reviews are agent-only — the human's review is the send-back (verdict issues; accept/reject cover the rest)",
+          );
+      } else {
+        requireReviewer(actor, ctx, action.type, meta);
+      }
       if (from !== "in_review") fail(from, action.type);
       const verdict = `${action.verdict}${action.note ? `: ${action.note}` : ""}`;
       // TE-0175: issues is the one send-back path — a live holder on this
@@ -748,7 +759,7 @@ export function transition(
       // stays in_review and the claim is never touched from here. Past
       // MAX_AI_BOUNCES in a row the same applies: in_review for the human.
       const issues = action.verdict === "issues";
-      const capped = issues && (ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES;
+      const capped = issues && !humanBack && (ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES;
       const otherMachine = issues && !!ctx.claim && ctx.claim.machine !== actor.machine;
       if (issues && !capped && !otherMachine && ctx.claim) {
         const f = recordFailure(meta, out, ctx);
@@ -773,6 +784,8 @@ export function transition(
         if (otherMachine && ctx.claim)
           out.log.push(`- ${stamp} holder ${ctx.claim.holder}@${ctx.claim.machine} is on another machine — claim left for it`);
       }
+      // the human's send-back never flags needs_human — the human decided
+      const flagHuman = !humanBack && !!(action.needs_human || capped || meta.unverified_reason);
       out.meta.ai_review = {
         verdict: action.verdict,
         reviewed_by: actor.session,
@@ -784,7 +797,7 @@ export function transition(
         // GL-0349: an unverified submission is never auto-accepted — every
         // review on it is needs_human, whatever the verdict; at the issues
         // cap the item waits for the human the same way
-        ...(action.needs_human || capped || meta.unverified_reason ? { needs_human: true } : {}),
+        ...(flagHuman ? { needs_human: true } : {}),
         ...(action.report ? { report: action.report } : {}),
         ...(action.ask_human ? { ask_human: action.ask_human } : {}),
       };
@@ -793,15 +806,17 @@ export function transition(
         const last = out.events[out.events.length - 1];
         last.data = { ...(last.data ?? {}), model: actor.model };
       }
-      out.log.push(`- ${stamp} ${who} ai-reviewed ${verdict}${action.needs_human || capped ? " (needs the human's call)" : ""}`);
+      out.log.push(
+        `- ${stamp} ${who} ${humanBack ? "sent the submission back" : `ai-reviewed ${verdict}`}${flagHuman ? " (needs the human's call)" : ""}`,
+      );
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
         heading: "Review",
         text: action.report
-          ? reviewWithReport(stamp, who, action.verdict, !!(action.needs_human || capped), action.summary, action.report, action.note)
+          ? reviewWithReport(stamp, who, action.verdict, flagHuman, action.summary, action.report, action.note)
           : action.summary
-            ? `- ${stamp} ${who} ${action.verdict}${action.needs_human || capped ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
-            : `- ${stamp} ${who} ${verdict}${action.needs_human || capped ? " (needs the human's call)" : ""}\n`,
+            ? `- ${stamp} ${who} ${action.verdict}${flagHuman ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
+            : `- ${stamp} ${who} ${verdict}${flagHuman ? " (needs the human's call)" : ""}\n`,
       });
       // GL-0321: a new review replaces the findings checklist; a review
       // without findings clears the old list (it was already answered).
@@ -986,9 +1001,14 @@ export function transition(
 
     case "hold": {
       requireHuman(actor, action.type);
-      if (from !== "draft" && from !== "ready") fail(from, action.type);
+      if (from !== "draft" && from !== "ready" && from !== "in_review") fail(from, action.type);
       set("hold", action.reason);
       out.log.push(`- ${stamp} ${who} put on hold (from ${from})${action.reason ? `: ${action.reason}` : ""}`);
+      if (from === "in_review" && ctx.claim) {
+        // a parked review frees the claim; the submission's branches stay
+        out.effects.push({ type: "delete_claim" });
+        out.effects.push({ type: "cleanup_work", keepBranches: true });
+      }
       return out;
     }
 
