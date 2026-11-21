@@ -90,6 +90,14 @@ export type Action =
          * brief dep outcomes.
          */
         provides?: string[];
+        /**
+         * Files the commit touched outside the task's Touches (TE-0183):
+         * `repo: path` strings, at most `extra_touches_max`, each an
+         * `outside scope:` Evidence line the reviewer judges.
+         */
+        extra_touches?: string[];
+        /** Why the outside-scope files belong in this change. */
+        extra_touches_reason?: string;
       };
     }
   /**
@@ -699,6 +707,10 @@ export function transition(
         const lines: string[] = [];
         for (const c of action.evidence.commits ?? []) lines.push(`- commit ${c}`);
         for (const p of action.evidence.provides ?? []) lines.push(`- provides: ${p}`);
+        for (const p of action.evidence.extra_touches ?? [])
+          lines.push(
+            `- outside scope: ${p}${action.evidence.extra_touches_reason ? ` — ${action.evidence.extra_touches_reason}` : ""}`,
+          );
         if (action.evidence.tests) lines.push(`- tests: ${action.evidence.tests}`);
         if (action.evidence.notes) lines.push(`- ${action.evidence.notes}`);
         if (action.evidence.cost) {

@@ -141,6 +141,12 @@ beforeAll(async () => {
     `# lessons — #teamengage\n\n${Array.from({ length: 25 }, (_, i) => `- 2026-01-01 a@x — old lesson ${i + 1}`).join("\n")}\n`,
   );
 
+  // extra_touches fixtures (TE-0183): WS-0061's claim locks src/locked.ts
+  item("WS-0060", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/a.ts\n");
+  item("WS-0061", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/locked.ts\n");
+  item("WS-0062", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/b.ts\n");
+  item("WS-0063", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/c.ts\n");
+
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
   execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
@@ -389,5 +395,50 @@ describe("curated domain lessons (TE-0182)", () => {
     expect(lines.length).toBe(count);
     expect(lines[0]).not.toContain("old lesson 1");
     expect(lines[lines.length - 1]).toContain(`overflow lesson ${count + 1}`);
+  });
+});
+
+describe("extra_touches on submit (TE-0183)", () => {
+  it("a declared outside-scope file lands in Evidence with its reason", async () => {
+    const s = sessions.hello("xsubmit1");
+    await ops.claim("WS-0060", s);
+    await ops.submit("WS-0060", s, {
+      summary: "the change plus one helper file",
+      commits: ["abc123"],
+      extra_touches: ["self: src/helper.ts"],
+      extra_touches_reason: "the helper the change calls",
+    });
+    const file = readFileSync(join(plans, "items", "WS", "WS-0060.md"), "utf8");
+    expect(file).toContain(
+      "- outside scope: self: src/helper.ts — the helper the change calls",
+    );
+  });
+
+  it("three extra_touches paths fail with a clear message", async () => {
+    const s = sessions.hello("xsubmit2");
+    await ops.claim("WS-0062", s);
+    await expect(
+      ops.submit("WS-0062", s, {
+        summary: "x",
+        commits: ["abc123"],
+        extra_touches: ["self: x1.ts", "self: x2.ts", "self: x3.ts"],
+        extra_touches_reason: "needed",
+      }),
+    ).rejects.toThrow(/at most 2/);
+  });
+
+  it("an extra_touches path inside another live claim is refused", async () => {
+    const holder = sessions.hello("xholder");
+    await ops.claim("WS-0061", holder); // locks self: src/locked.ts
+    const s = sessions.hello("xsubmit3");
+    await ops.claim("WS-0063", s);
+    await expect(
+      ops.submit("WS-0063", s, {
+        summary: "x",
+        commits: ["abc123"],
+        extra_touches: ["self: src/locked.ts"],
+        extra_touches_reason: "needed",
+      }),
+    ).rejects.toThrow(/WS-0061.*live claim/);
   });
 });

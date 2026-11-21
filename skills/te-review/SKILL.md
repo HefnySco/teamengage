@@ -157,8 +157,12 @@ Put the trace (short form) in `findings`.
   behind?
 - **Scope.** The diff should implement what the task says and stay inside
   `**Touches:**`. Drive-by refactors and unrelated cleanups widen what must
-  be reviewed — flag them. Changes outside Touches are an `issues` finding;
-  if that work is genuinely needed, the fix is a new dependent task
+  be reviewed — flag them. Changes outside Touches are an `issues` finding
+  UNLESS the submit declared them — they show as `outside scope:` lines in
+  `## Evidence` (and on the review card): the submitter's declaration, up
+  to 2 paths with a reason. Say ok or not for EACH such line in your
+  summary or a finding — an undeclared out-of-scope path stays an
+  `issues` finding; if that work is genuinely needed, the fix is a new dependent task
   (`propose`, `depends_on` = this one), never a wider Touches on this task. A bug you find
   in review gets its own task with `found_by` = this task (reference only),
   not `depends_on`.

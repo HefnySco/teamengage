@@ -109,14 +109,18 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   findings there and `submit` again. Any other `in_review`/`held` item stays
   off-limits.
 - The reply may return worktree paths — work there, not in the main checkout.
-- Work only inside what `**Touches:**` / the claim names. Something outside
-  that is needed → `ask` first. Never widen the task's own Touches or
-  acceptance: extra work becomes a new task via `propose`, with
-  `depends_on` set to this one, for the human to approve. (If `hello`
-  prints `autonomy: solo`, such a follow-up lands `ready` at once — the
-  propose reply lists it under `ready`; it is still a separate task, never
-  folded into this one.) A task for a problem you found on the way gets
-  `found_by` = this task, not `depends_on`: `found_by` is reference only.
+- Work only inside what `**Touches:**` / the claim names. One or two files
+  outside it that the commit genuinely needs → declare them at `submit`
+  (`extra_touches` + `extra_touches_reason`) — they show as 'outside
+  scope' and the human judges them at acceptance. A path locked by another
+  live claim is refused. Anything more → `ask` first. Never widen the
+  task's own Touches or acceptance: extra work becomes a new task via
+  `propose`, with `depends_on` set to this one, for the human to approve.
+  (If `hello` prints `autonomy: solo`, such a follow-up lands `ready` at
+  once — the propose reply lists it under `ready`; it is still a separate
+  task, never folded into this one.) A task for a problem you found on the
+  way gets `found_by` = this task, not `depends_on`: `found_by` is
+  reference only.
 
 ## 5. Work
 
@@ -124,9 +128,11 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   commit style). Commit in the code repos as those rules say.
 - Before each commit, check `git diff --name-only` (and `git diff --cached
   --name-only`) against the task's `**Touches:**` — a path outside Touches
-  stays out of the commit; carry it in a new dependent task (`propose` with
-  `depends_on` = this one, its own Touches + acceptance). Never widen the
-  task's own Touches to make a commit fit.
+  stays out of the commit unless you will declare it at `submit`
+  (`extra_touches`, at most 2 paths, plus `extra_touches_reason`); more
+  than that goes in a new dependent task (`propose` with `depends_on` =
+  this one, its own Touches + acceptance). Never widen the task's own
+  Touches to make a commit fit.
 - **Never rewrite or drop commits.** No `git reset --hard`, no
   `git reset HEAD^`, no `git rebase` that drops or rewrites commits, no
   `git checkout .` / `git restore .` that wipes the tree. A shared

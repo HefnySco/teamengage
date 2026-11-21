@@ -275,6 +275,12 @@ export const WorkspaceConfig = z
      */
     lessons_max: z.number().int().min(1).default(25),
     /**
+     * submit: the most files outside the task's Touches a submit may
+     * declare (TE-0183). Each needs extra_touches_reason and must not sit
+     * inside another live claim; the human judges them at acceptance.
+     */
+    extra_touches_max: z.number().int().min(1).default(2),
+    /**
      * A session with no pid (curl hello) whose last call is older than this
      * duration is not live; its claims become dead claims. Default 2h.
      */

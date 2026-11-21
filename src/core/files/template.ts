@@ -205,9 +205,12 @@ export const AUTHORING_RULES = `Writing plans and tasks (overlay mode — the ta
   Other edits to existing task files: additive only (e.g. new "## Acceptance"
   items), each recorded with log.
 - Scope is the human's. Never widen a task's "**Touches:**" or rewrite its
-  acceptance — not while working, reviewing or taking over a fix. Work that
-  needs more → propose a new task that depends on the original (its own
-  Touches + acceptance); the human approves it and it is reviewed on its own.
+  acceptance — not while working, reviewing or taking over a fix. A commit
+  that needs one or two files outside Touches declares them at submit
+  (extra_touches + extra_touches_reason) — they show as 'outside scope'
+  and the human judges them at acceptance. Work that needs more → propose
+  a new task that depends on the original (its own Touches + acceptance);
+  the human approves it and it is reviewed on its own.
   A task for a problem you found (a bug) names the item where you found it in
   found_by, not in depends_on. found_by is reference only: no ordering, no gate.
   Exceptions while a task is a draft: a planner may rewrite any of it with

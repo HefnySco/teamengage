@@ -127,6 +127,12 @@ RULES
      code names); what+how+notes are accepted for one release and fold
      into it. tests auto-fills from te verify results; walkthrough is
      required on heavy-tier tasks only.
+     A commit that needs one or two files outside the task's Touches
+     declares them at submit: extra_touches (repo:path strings, at most
+     2) + extra_touches_reason — they land as 'outside scope' Evidence
+     lines the reviewer judges; a path locked by another live claim is
+     refused. More than that stays the old rule: ask, or propose a
+     dependent task.
      A field over its word limit is accepted — the reply carries a warn:
      line; a missing required field still fails.
      Never mark work done. Never git push. The human approves, answers,

@@ -1780,6 +1780,13 @@ export class WorkspaceOps {
       cost?: SubmitCost;
       finding_states?: Array<{ finding: number; state: "done" | "skipped"; reason?: string }>;
       provides?: string[];
+      /** TE-0183: files outside Touches the commit carries — at most
+       * extra_touches_max (default 2), each judged by the human at
+       * acceptance; they must not sit inside another live claim */
+      extra_touches?: string[];
+      /** why the outside-scope files belong in this change — required
+       * with extra_touches */
+      extra_touches_reason?: string;
       /** GL-0349: skip the checks gate — the reason is stored and the
        * ok review on this submission becomes needs_human */
       unverified_reason?: string;
@@ -1787,6 +1794,38 @@ export class WorkspaceOps {
   ) {
     const it = this.item(id);
     this.assertLiveClaim(it);
+    // TE-0183: one or two files outside Touches, declared with a reason —
+    // a path locked by another live claim is refused
+    const extra_touches = (evidence?.extra_touches ?? [])
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (extra_touches.length) {
+      const max = this.wsr.ws.config.extra_touches_max;
+      if (extra_touches.length > max) {
+        throw new ValidationError(
+          `submit: extra_touches allows at most ${max} paths (extra_touches_max) — got ${extra_touches.length}; ask the human to widen Touches for more`,
+        );
+      }
+      if (!evidence?.extra_touches_reason?.trim()) {
+        throw new ValidationError(
+          "submit: extra_touches needs extra_touches_reason — one line on why the file is outside the task's Touches",
+        );
+      }
+      const mine = parseTouches(`touches: ${extra_touches.join("; ")}`);
+      for (const [oid, c] of this.index.claims) {
+        if (oid === id || this.claimDead(c)) continue;
+        const other = this.index.get(oid);
+        if (!other) continue;
+        const locked = touchesOverlap(mine, await this.touchesOf(other));
+        if (locked.length) {
+          throw new ValidationError(
+            `submit: extra_touches overlaps ${oid}'s live claim (${locked.join(", ")}) — wait for it, or ask the human`,
+          );
+        }
+      }
+    } else if (evidence?.extra_touches_reason?.trim()) {
+      throw new ValidationError("submit: extra_touches_reason without extra_touches paths");
+    }
     // GL-0349: an item with checks needs a passed verify result per check
     // at the current HEAD of its repo — unverified_reason is the way around
     const { checks } = await this.checksOf(it);

@@ -341,6 +341,9 @@ export function registerWriteTools(
         "a `must` finding left unanswered refuses the submit. " +
         "provides is optional — short lines naming what the task now provides " +
         "(an API, a file, a message id, a command); dependents see them in their brief. " +
+        "extra_touches declares up to 2 repo:path files the commit carries outside the task's " +
+        "Touches, with extra_touches_reason — they land as 'outside scope' lines the reviewer " +
+        "judges; a path locked by another live claim is refused. " +
         "If the item has ## Checks, submit needs a passed te verify result per check at the repo HEAD — " +
         "unverified_reason submits without it; the reason lands in ## Evidence and the ok review " +
         "becomes needs_human (never auto-accepted).",
@@ -355,6 +358,8 @@ export function registerWriteTools(
         walkthrough: z.string().optional(),
         cost: SubmitCost.optional(),
         provides: z.array(z.string()).optional(),
+        extra_touches: z.array(z.string()).optional(),
+        extra_touches_reason: z.string().optional(),
         unverified_reason: z.string().optional(),
         finding_states: z
           .array(
@@ -367,13 +372,13 @@ export function registerWriteTools(
           .optional(),
       },
     },
-    async ({ id, commits, tests, summary, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states }) => {
+    async ({ id, commits, tests, summary, notes, what, how, walkthrough, cost, provides, extra_touches, extra_touches_reason, unverified_reason, finding_states }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.submit(id, s, { commits, tests, summary, notes, what, how, walkthrough, cost, provides, unverified_reason, finding_states });
+        const r = await o.submit(id, s, { commits, tests, summary, notes, what, how, walkthrough, cost, provides, extra_touches, extra_touches_reason, unverified_reason, finding_states });
         return okText(`in_review ${id}` + warnLines(r));
       } catch (e) {
         return errFrom(e);

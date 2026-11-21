@@ -2953,12 +2953,18 @@ const HumanCard = ({ it, onAccept, onSendBack, onFollowUp, onHold }) => {
   const what = fhLine(it.sections, "what");
   const how = fhLine(it.sections, "how");
   const ah = it.meta.ai_review?.ask_human;
+  // TE-0183: paths the submit declared outside Touches — one line each so
+  // the human can judge them at acceptance
+  const outside = it.sections
+    ?.find((s) => s.heading.toLowerCase() === "evidence")
+    ?.body.match(/^- outside scope:\s*.+$/gm) ?? [];
   if (!sum && !what && !how && !ah) return null;
   const reviewing = it.meta.status === "in_review";
   return html`<div class="card hcard mb-2"><div class="card-body py-2 px-3">
     ${sum && html`<div class="hc-line"><span class="hc-k">summary</span> ${sum}</div>`}
     ${what && html`<div class="hc-line"><span class="hc-k">what</span> ${what}</div>`}
     ${how && html`<div class="hc-line"><span class="hc-k">how</span> ${how}</div>`}
+    ${outside.map((l) => html`<div class="hc-line"><span class="hc-k">outside scope</span> ${l.replace(/^- outside scope:\s*/, "")}</div>`)}
     ${ah && html`
       ${ah.problem && html`<div class="hc-line"><span class="hc-k">problem</span> ${ah.problem}</div>`}
       ${ah.recommendation && html`<div class="hc-line"><span class="hc-k">recommendation</span> ${ah.recommendation}</div>`}`}
