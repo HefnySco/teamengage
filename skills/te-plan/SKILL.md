@@ -111,7 +111,9 @@ When the human points you at one or more ("plan from GL-0044 and GL-0047"):
 3. Set `"relates": ["GL-0044", "DISC-0007"]` on every item it grows from —
    the epic at minimum. The edge is **reference only**: no ordering, no
    gate. The source's page then lists the plan under "referenced by" /
-   "related items".
+   "related items". Naming only the epic is enough — the source's
+   progress counts the epic's leaf tasks, and it shows done once every
+   leaf is done.
 
 Capturing a thought as an idea works the same way — an agent may
 `propose { "type": "idea", "title": "…", "summary": "…" }` to save a

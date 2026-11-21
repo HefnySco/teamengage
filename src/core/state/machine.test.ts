@@ -745,6 +745,30 @@ describe("epics are plans, never work", () => {
   });
 });
 
+describe("source_auto_done (daemon sweep finishes sources)", () => {
+  const src = (type: "idea" | "discussion", status: Status) =>
+    ItemMeta.parse({ id: "ID-0001", type, title: "s", status });
+
+  it("daemon marks a non-terminal source done", () => {
+    for (const type of ["idea", "discussion"] as const) {
+      const r = transition(src(type, "ready"), { type: "source_auto_done" }, daemon, ctx());
+      expect(r.meta.status).toBe("done");
+    }
+  });
+
+  it("is daemon-only and sources only", () => {
+    expect(() =>
+      transition(src("idea", "ready"), { type: "source_auto_done" }, human, ctx()),
+    ).toThrow(ForbiddenError);
+    expect(() =>
+      transition(item("ready"), { type: "source_auto_done" }, daemon, ctx()),
+    ).toThrow(InvalidTransitionError);
+    expect(() =>
+      transition(src("idea", "done"), { type: "source_auto_done" }, daemon, ctx()),
+    ).toThrow(InvalidTransitionError);
+  });
+});
+
 describe("star", () => {
   it("bookmarks any status without touching it — even claimed items", () => {
     for (const s of ["draft", "ready", "hold", "in_progress", "waiting", "in_review", "done", "dropped"] as Status[]) {

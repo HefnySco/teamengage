@@ -53,16 +53,17 @@ export type PlanState = "draft" | "ready" | "in_progress" | "done" | "dropped";
 export type IdeaState = "draft" | "ready" | "done" | "dropped";
 
 /**
- * Pure rule: the item's own status decides draft/dropped/done outright; a
- * triaged source turns done when every live referrer is done (≥1 referrer),
- * otherwise it is ready — sources never track in_progress.
+ * Pure rule: `dropped` first, then `done` — the stored verdict, or every
+ * live referrer done (≥1 referrer); then `draft`, then `ready`. Done
+ * beats draft: a draft source whose tasks all finished shows done —
+ * sources never track in_progress.
  */
 export function ideaStateOf(status: Status, referrerStatuses: Status[]): IdeaState {
   if (status === "dropped") return "dropped";
-  if (status === "draft") return "draft";
   if (status === "done") return "done";
   const live = referrerStatuses.filter((s) => s !== "dropped");
   if (live.length > 0 && live.every((s) => s === "done")) return "done";
+  if (status === "draft") return "draft";
   return "ready";
 }
 
@@ -444,13 +445,23 @@ export class Index {
         continue;
       }
       const refs = named.get(it.meta.id) ?? [];
-      const statuses = refs.map((r) => r.status);
+      // an epic referrer counts through its leaf tasks (like
+      // feature_progress): relates on the epic alone is enough — an
+      // epic with no leaf parts yet contributes nothing
+      const statuses = refs.flatMap((r) => {
+        const ref = this.items.get(r.id);
+        if (ref?.meta.type !== "epic") return [r.status];
+        if (r.status === "dropped") return []; // a dead plan's leaves count nothing
+        return this.nonEpicDescendants(r.id)
+          .map((cid) => this.items.get(cid)?.meta.status)
+          .filter((s): s is Status => s !== undefined);
+      });
       it.idea_state =
         it.meta.type === "idea"
           ? ideaStateOf(it.meta.status, statuses)
           : discussionStateOf(it.meta.status, statuses);
-      const live = refs.filter((r) => r.status !== "dropped");
-      it.idea_progress = { done: live.filter((r) => r.status === "done").length, total: live.length };
+      const live = statuses.filter((s) => s !== "dropped");
+      it.idea_progress = { done: live.filter((s) => s === "done").length, total: live.length };
       it.idea_refs = refs.map((r) => r.id).sort(compareIds);
     }
   }

@@ -164,6 +164,12 @@ export type Action =
    * the human re-drafts the epic.
    */
   | { type: "plan_auto_done" }
+  /**
+   * Internal (daemon only): the sweep found every live referrer of this
+   * source finished (≥1 referrer) — the stored status catches up with
+   * the derived idea_state.
+   */
+  | { type: "source_auto_done" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -1111,6 +1117,22 @@ export function transition(
       if (TERMINAL.includes(from)) fail(from, action.type);
       set("done");
       out.log.push(`- ${stamp} auto-completed: every part and problem finished`);
+      return out;
+    }
+
+    case "source_auto_done": {
+      if (actor.kind !== "daemon")
+        throw new ForbiddenError("source_auto_done is a daemon-only action");
+      if (meta.type !== "idea" && meta.type !== "discussion") {
+        throw new InvalidTransitionError(
+          `cannot source_auto_done: ${meta.id} is a ${meta.type}, not a source`,
+          from,
+          action.type,
+        );
+      }
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      set("done");
+      out.log.push(`- ${stamp} auto-completed: every referrer finished`);
       return out;
     }
 

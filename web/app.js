@@ -48,6 +48,7 @@ const es = new EventSource("/events");
 es.onmessage = (e) => notify({ kind: "event", data: JSON.parse(e.data) });
 for (const kind of [
   "watch", "reconcile", "auto_accept", "auto_archive", "auto_release", "peer_timeout",
+  "auto_source_done",
   "session_start", "session_end", "dispatch_start", "dispatch_fail", "dispatch_off",
 ]) {
   es.addEventListener(kind, (e) => notify({ kind, data: JSON.parse(e.data) }));

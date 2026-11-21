@@ -222,7 +222,7 @@ export class WorkspaceOps {
   /**
    * `session`: the asking session — its tier hides items above it (its own
    * tier first) and its role picks the pool: a reviewer gets in_review items
-   * it did not submit, a planner gets ideas nothing references yet and
+   * it did not submit, a planner gets ready sources nothing references yet and
    * light-authored drafts to vet, a coder (or no role) gets ready items as
    * usual (GL-0323).
    */
@@ -258,8 +258,14 @@ export class WorkspaceOps {
         .filter((i) => !i.meta.archived)
         .filter(
           (i) =>
+            // sources: only ready ones with no live referrer — a draft is
+            // not offered (the human's approve queues it) and a referenced
+            // one is planned already; refs left only by dropped items count as free
             ((i.meta.type === "idea" || i.meta.type === "discussion") &&
-              (i.idea_progress?.total ?? 0) === 0) ||
+              i.meta.status === "ready" &&
+              (i.idea_refs ?? []).every(
+                (rid) => this.index.get(rid)?.meta.status === "dropped",
+              )) ||
             (i.meta.status === "draft" && i.meta.authored_tier === "light" && !i.meta.vetted_by),
         )
         .filter((i) => !d || i.meta.domains.includes(d))
@@ -2396,6 +2402,43 @@ export class WorkspaceOps {
         }
       } catch {
         // one failing epic must not stall the sweep
+      }
+    }
+    return done;
+  }
+
+  /**
+   * Sources finish themselves: an idea or discussion whose derived
+   * idea_state is `done` — one or more live referrers, every one done —
+   * gets `status: done` from the daemon sweep (source_auto_done), so the
+   * archive sweep and the UI treat it as finished. A source with no live
+   * referrer yet is left for the planner.
+   */
+  autoCompleteSourcesDue(): string[] {
+    return [...this.index.items.values()]
+      .filter((it) => {
+        const m = it.meta;
+        return (
+          (m.type === "idea" || m.type === "discussion") &&
+          m.status !== "done" &&
+          m.status !== "dropped" &&
+          it.idea_state === "done"
+        );
+      })
+      .map((it) => it.meta.id);
+  }
+
+  async autoCompleteSources() {
+    const done: string[] = [];
+    for (const id of this.autoCompleteSourcesDue()) {
+      try {
+        const it = this.item(id);
+        await this.store.perform(id, it.meta.version, this.daemonActor(), {
+          type: "source_auto_done",
+        });
+        done.push(id);
+      } catch {
+        // one failing source must not stall the sweep
       }
     }
     return done;

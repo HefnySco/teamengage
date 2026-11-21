@@ -52,7 +52,7 @@ export const SOLO_RULES =
 
 /** Session roles: what a session declares at hello, and what `next` picks. */
 export const ROLE_RULES =
-  "role: declare yours at hello (planner|coder|reviewer|ops) — next then picks for it: reviewer → in_review items you did not submit, planner → ideas nothing references yet + light-authored drafts to vet, coder/ops → ready items; no role → next as usual";
+  "role: declare yours at hello (planner|coder|reviewer|ops) — next then picks for it: reviewer → in_review items you did not submit, planner → ready sources nothing references yet + light-authored drafts to vet, coder/ops → ready items; no role → next as usual";
 
 /** Model tiers: what a session declares at hello, and what it may then do. */
 export const TIER_RULES =

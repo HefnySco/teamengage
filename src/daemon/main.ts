@@ -273,6 +273,11 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_plan_done", { workspace: name, message: `auto-completed plans: ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_plan_done", { workspace: name, message: `auto-plan-done sweep failed: ${err.message}` }));
+      ops.autoCompleteSources()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("auto_source_done", { workspace: name, message: `auto-completed sources: ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("auto_source_done", { workspace: name, message: `auto-source-done sweep failed: ${err.message}` }));
       ops.autoArchive()
         .then((ids) => {
           if (ids.length) ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archived ${ids.join(", ")}` });

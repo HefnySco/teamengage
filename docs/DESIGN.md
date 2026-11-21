@@ -390,12 +390,18 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   "referenced by". `te relate <ID> [refs|--off]` edits the edge, like `te deps`.
   Ideas live on their own page (`#/ideas`), never in the inbox or on the
   board: each row folds open to the plans and tasks that name it.
-  `idea_state` is **derived, never stored**: `draft`/`dropped`/`done` from
-  the idea's own status, otherwise `done` when every live referrer is done
-  (≥1 referrer), otherwise `ready` — ideas never track `in_progress`, they
-  are sources. `idea_refs` holds the referrer ids and `idea_progress` the
-  done/total over live referrers (dropped ones do not count); archived
-  referrers count as hidden.
+  `idea_state` is **derived, never stored**: `dropped` first, then `done`
+  — the stored verdict, or every live referrer done (≥1 referrer) — then
+  `draft`, otherwise `ready`: done beats draft, so a draft source whose
+  tasks all finished shows done. Ideas never track `in_progress`, they
+  are sources. A referrer that is an epic counts through its leaf tasks
+  — naming the plan in `relates` is enough; a dropped plan's leaves
+  count nothing. On its sweep the daemon marks such a source's stored
+  status `done` (`source_auto_done`, like `plan_auto_done` for epics —
+  §5), so the archive sweep and the UI treat it as finished. `idea_refs`
+  holds the referrer ids and `idea_progress` the done/total over live
+  referrers (dropped ones do not count); archived referrers count as
+  hidden.
 - A **plan** is an epic; its parts are the items whose `parent` points at
   it (sub-plans are epics too, so it nests). `plan_state` is **derived,
   never stored** — the children alone decide it: `dropped` when the human
@@ -500,7 +506,7 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
 - `dispatch` (workspace.yaml, unset = off) makes the daemon the foreman:
   while `enabled`, each sweep starts an agent's command when `next` sees
   work for its role (a reviewer probe sees `in_review`, a planner probe
-  sees ideas nothing references yet and unvetted light drafts, a coder or ops probe
+  sees ready sources nothing references yet and unvetted light drafts, a coder or ops probe
   sees ready items) and the live-session count is under `max_sessions` —
   sessions it started count toward the cap. It stops no session; each
   start writes a `dispatch_start` event, a role's command that fails three
@@ -642,7 +648,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | Tool                            | Purpose                                                                                                                                                         |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hello(agent, workspace?, tier?, role?, model?)` | Register session; returns session id, machine, workspace summary, any claims this agent should resume. Optional `role` — planner, coder, reviewer, ops — is stored on the session and picked by `next`. Optional `model` — the model id, stored lowercased on the session and copied to `submitted_model` on the item and the submit event, and to `reviewer_model` on `ai_review` — is shown on the team panel and the item page. |
-| `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first. With a session role the pool changes: a reviewer gets `in_review` items it did not submit, a planner gets ideas nothing references yet and light-authored drafts to vet, a coder/ops gets ready items as usual. |
+| `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first. With a session role the pool changes: a reviewer gets `in_review` items it did not submit, a planner gets ready ideas and discussions nothing references yet (a draft source needs the human's approve first) plus light-authored drafts to vet, a coder/ops gets ready items as usual. |
 | `brief(id)`                     | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path).                               |
 | `claim(id)`                     | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only.             |
 | `release(id, note)`             | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |

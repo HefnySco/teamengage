@@ -417,6 +417,47 @@ describe("idea state", () => {
     expect(idx.query({ type: "idea", idea_state: "done" }).map((i) => i.meta.id)).toEqual(["ID-0003"]);
     expect(idx.query({ type: "idea", idea_state: "draft" }).map((i) => i.meta.id)).toEqual(["ID-0004"]);
   });
+
+  it("done beats draft: a draft idea whose live referrers are all done is done", async () => {
+    writeItem("ID-0020", { type: "idea", status: "draft" });
+    writeItem("ID-0021", { type: "idea", status: "draft" });
+    writeItem("ID-0022", { status: "done", relates: "[ID-0020]" });
+    writeItem("ID-0023", { status: "done", relates: "[ID-0020]" });
+    writeItem("ID-0024", { status: "dropped", relates: "[ID-0020]" }); // dropped doesn't count either way
+    writeItem("ID-0025", { status: "done", relates: "[ID-0021]" });
+    writeItem("ID-0026", { status: "ready", relates: "[ID-0021]" }); // a live referrer still open
+    const idx = await Index.load(plans);
+    expect(idx.get("ID-0020")!.idea_state).toBe("done"); // 3 done referrers
+    expect(idx.get("ID-0021")!.idea_state).toBe("draft"); // open work left — still a draft
+  });
+
+  it("an epic referrer counts through its leaf tasks", async () => {
+    writeItem("ID-0030", { type: "idea", status: "ready" });
+    writeItem("ID-0031", { type: "idea", status: "ready" });
+    writeItem("ID-0032", { type: "idea", status: "ready" });
+    // EP-0001 relates the idea; its two leaf tasks carry the progress
+    writeItem("EP-0001", { type: "epic", status: "ready", relates: "[ID-0030]" });
+    writeItem("EP-0002", { parent: "EP-0001", status: "done" });
+    writeItem("EP-0003", { parent: "EP-0001", status: "ready" });
+    // EP-0010: every leaf finished → the idea shows done
+    writeItem("EP-0010", { type: "epic", status: "ready", relates: "[ID-0031]" });
+    writeItem("EP-0011", { parent: "EP-0010", status: "done" });
+    writeItem("EP-0012", { parent: "EP-0010", status: "dropped" }); // dropped leaf: no count
+    // EP-0020 dropped → its leaves count nothing
+    writeItem("EP-0020", { type: "epic", status: "dropped", relates: "[ID-0032]" });
+    writeItem("EP-0021", { parent: "EP-0020", status: "ready" });
+    // EP-0030 relates nothing but has its own idea inside the subtree — no effect
+    writeItem("EP-0030", { type: "epic", status: "ready" });
+    const idx = await Index.load(plans);
+    expect(idx.get("ID-0030")!.idea_progress).toEqual({ done: 1, total: 2 });
+    expect(idx.get("ID-0030")!.idea_state).toBe("ready");
+    expect(idx.get("ID-0031")!.idea_progress).toEqual({ done: 1, total: 1 });
+    expect(idx.get("ID-0031")!.idea_state).toBe("done");
+    expect(idx.get("ID-0032")!.idea_progress).toEqual({ done: 0, total: 0 });
+    expect(idx.get("ID-0032")!.idea_state).toBe("ready");
+    // idea_refs still names the referrers themselves, not their leaves
+    expect(idx.get("ID-0030")!.idea_refs).toEqual(["EP-0001"]);
+  });
 });
 
 describe("discussion state", () => {

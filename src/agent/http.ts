@@ -153,7 +153,7 @@ RULES
      from next and refused on claim. You may also declare a role at hello —
      planner, coder, reviewer or ops — and next picks its pool for it:
      a reviewer gets in_review items it did not submit, a planner gets
-     ideas nothing references yet and light-authored drafts to vet, a coder gets ready
+     ready sources nothing references yet and light-authored drafts to vet, a coder gets ready
      items. When stuck — same error twice, no new
      progress — STOP and call handoff (problem, tried, state, next): the
      claim is released and a fresh session continues from your note. Bounces
