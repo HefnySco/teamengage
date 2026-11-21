@@ -71,6 +71,22 @@ beforeAll(async () => {
   // archive fixture — a source already done for longer than auto_archive_after
   item("ID-0300", "done", "idea", "finished_at: 2020-01-01T00:00:00Z\n");
 
+  // feature fixtures (TE-0174): FE-0001's parts are all done; FE-0002's are
+  // done but a bug found under its plan stays open
+  item("FE-0001", "ready", "feature");
+  item("EP-0001", "ready", "epic", "feature: FE-0001\n");
+  item("TS-0001", "done", "task", "parent: EP-0001\n");
+  item("TS-0002", "done", "task", "parent: EP-0001\n");
+  item("FE-0002", "ready", "feature");
+  item("EP-0002", "ready", "epic", "feature: FE-0002\n");
+  item("TS-0003", "done", "task", "parent: EP-0002\n");
+  item("TS-0004", "dropped", "task", "parent: EP-0002\n");
+  item("BG-0001", "ready", "bug", 'found_by: ["EP-0002"]\n');
+  item("FE-0003", "ready", "feature");
+  item("EP-0003", "ready", "epic", "feature: FE-0003\n");
+  item("TS-0005", "done", "task", "parent: EP-0003\n");
+  item("TS-0006", "in_progress", "task", "parent: EP-0003\n");
+
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
   execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
@@ -137,5 +153,19 @@ describe("auto_archive on a finished source", () => {
     expect(ops.autoArchiveDue()).toContain("ID-0300");
     await ops.autoArchive();
     expect(ops.index.get("ID-0300")!.meta.archived).toBe(true);
+  });
+});
+
+describe("featureStatus (TE-0174)", () => {
+  it("a feature with all parts done and 0 open problems is done", async () => {
+    expect(await ops.featureStatus(ops.index.get("FE-0001")!)).toBe("done");
+  });
+
+  it("a feature with all parts finished but an open problem stays in_progress", async () => {
+    expect(await ops.featureStatus(ops.index.get("FE-0002")!)).toBe("in_progress");
+  });
+
+  it("a feature with open parts stays in_progress, and none at all stays planned", async () => {
+    expect(await ops.featureStatus(ops.index.get("FE-0003")!)).toBe("in_progress");
   });
 });

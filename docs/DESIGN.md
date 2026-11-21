@@ -1125,8 +1125,9 @@ Rules:
 - **A feature is never claimed.** `claim` refuses `type: feature` the
   same way it refuses `idea` — there is no turn and no work to hold.
 - **No stored status.** The daemon derives it: `planned` (no done
-  parts), `in_progress` (some parts done). The stored `status` field
-  is absent; the index computes it.
+  parts), `in_progress` (some parts done), `done` (every part finished
+  — done or dropped — and no open problem, TE-0174). The stored
+  `status` field is absent; the index computes it.
 - **Progress is derived:** the plans that name it, their parts, and
   done/total per plan — same roll-up the Metrics page already does.
 - **Found problems roll up** through the plans: a `found_by` item under
@@ -1157,7 +1158,7 @@ single source of truth; the file is a derived export for customers.
 
 | Stored                                                        | Derived                                                                                |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| feature item (id, title, summary, simple, `relates` to ideas) | feature status (`planned`/`in_progress`), progress (done/total parts per plan)         |
+| feature item (id, title, summary, simple, `relates` to ideas) | feature status (`planned`/`in_progress`/`done`), progress (done/total parts per plan)  |
 | `feature:` field on a plan                                    | a feature's open found problems (`found_by` under its plans), `CAPABILITIES.md`        |
 
 ### 15.5 Questions — decided (D-0046)

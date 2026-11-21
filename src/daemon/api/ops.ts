@@ -667,9 +667,18 @@ export class WorkspaceOps {
 
   /**
    * A feature's derived lifecycle (GL-0331, DESIGN §15.1): `planned` while no
-   * part is done, `in_progress` once work lands.
+   * part is done, `in_progress` once work lands, `done` when every part is
+   * finished and no problem stays open (TE-0174).
    */
-  async featureStatus(it: IndexedItem): Promise<"planned" | "in_progress"> {
+  async featureStatus(it: IndexedItem): Promise<"planned" | "in_progress" | "done"> {
+    const { done, total } = it.feature_progress ?? { done: 0, total: 0 };
+    if (total > 0 && done === total) {
+      const openProblems = (it.feature_plans ?? []).reduce(
+        (n, pid) => n + (this.index.planProblems(pid)?.open ?? 0),
+        0,
+      );
+      if (openProblems === 0) return "done";
+    }
     const accepted = (it.feature_parts ?? []).filter(
       (p) => this.index.items.get(p)?.meta.status === "done",
     );
