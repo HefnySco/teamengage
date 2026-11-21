@@ -58,7 +58,17 @@ import {
   ValidationError,
 } from "../../core/model/errors.js";
 import { parseDuration, type AutoAcceptRule } from "../../core/model/workspace.js";
-import { appendLesson, readLessons, removeLesson } from "../../core/files/lessons.js";
+import {
+  appendLesson,
+  lessonKey,
+  pendingLesson,
+  pendingLessons,
+  readLessons,
+  recordPendingLesson,
+  removeLesson,
+  settlePendingLesson,
+  updateLesson,
+} from "../../core/files/lessons.js";
 import { readRepoContext, writeRepoContext } from "../../core/files/repo-context.js";
 import { isRepo, revParse, commitFiles as gitCommitFiles } from "../../resources/git/git.js";
 import { validate, type Finding } from "../../core/validate/validate.js";
@@ -367,9 +377,11 @@ export class WorkspaceOps {
   }
 
   /**
-   * An agent shares a hard-won lesson: one `- date session — text` line
-   * appended to lessons/<domain>.md in the plans folder. Unknown domains
-   * are refused — a lesson under a typo teaches nobody.
+   * An agent shares a hard-won lesson (TE-0182): it goes to the inbox as a
+   * pending candidate — lessons/<domain>.md changes only when the human
+   * accepts. A repeat of an existing line (same normalized text) merges
+   * into it and updates its date instead; it needs no gate. Unknown
+   * domains are refused — a lesson under a typo teaches nobody.
    */
   async lesson(session: Session, domain: string, text: string) {
     const d = normalizeDomain(domain);
@@ -379,8 +391,56 @@ export class WorkspaceOps {
         `lesson: unknown domain '${d}' — define it first (domains page or a domains: tag on an item)`,
       );
     }
-    await appendLesson(this.wsr.ws.plansDir, d, session.id, text, new Date().toISOString());
-    return { domain: d };
+    const plansDir = this.wsr.ws.plansDir;
+    const now = new Date().toISOString();
+    const body = text.trim().replace(/\s*\n\s*/g, " ");
+    const existing = await readLessons(plansDir, d);
+    const at = existing.findIndex((l) => lessonKey(l) === lessonKey(body));
+    if (at >= 0) {
+      await updateLesson(plansDir, d, at + 1, session.id, now);
+      return { domain: d, merged: at + 1 };
+    }
+    const n = await recordPendingLesson(plansDir, {
+      domain: d,
+      text: body,
+      by: session.id,
+      at: now,
+    });
+    return { domain: d, pending: n };
+  }
+
+  /** Pending lesson candidates, newest first — the inbox lists them. */
+  async pendingLessons() {
+    return pendingLessons(this.wsr.ws.plansDir);
+  }
+
+  /**
+   * The human settles a pending lesson (TE-0182): approve writes the
+   * `- date session — text` line under the candidate's own author; reject
+   * only marks the candidate. When the domain is at the lessons_max cap
+   * the approve needs `drop` — the number of the existing line to remove
+   * so the new one fits.
+   */
+  async settleLesson(n: number, verdict: "approved" | "rejected", drop?: number) {
+    const plansDir = this.wsr.ws.plansDir;
+    const p = await pendingLesson(plansDir, n);
+    if (!p) throw new NotFoundError(`no pending lesson #${n}`);
+    if (verdict === "approved") {
+      const cap = this.wsr.ws.config.lessons_max;
+      const count = (await readLessons(plansDir, p.domain)).length;
+      if (count >= cap) {
+        if (drop === undefined) {
+          throw new ValidationError(
+            `lesson #${n}: #${p.domain} holds ${count} lessons (cap ${cap}) — pass drop:<line> to say which it replaces`,
+          );
+        }
+        const removed = await removeLesson(plansDir, p.domain, drop);
+        if (removed === null) throw new NotFoundError(`no lesson ${drop} for #${p.domain}`);
+      }
+      await appendLesson(plansDir, p.domain, p.by, p.text, new Date().toISOString());
+    }
+    const settled = await settlePendingLesson(plansDir, n, verdict);
+    return { pending: n, verdict, domain: p.domain, line: settled?.text };
   }
 
   /**
@@ -3373,9 +3433,20 @@ export class WorkspaceOps {
       .split("\n")
       .map((l) => l.trim().replace(/^[-*]\s*/, ""))
       .filter(Boolean);
+    // TE-0182: a bullet number ("3" → the third bullet), an exact copy, a
+    // normalized match (case/whitespace) or a near match — not only exact.
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
+    const byNumber = /^\d+$/.test(want) ? bullets[Number(want) - 1] : undefined;
     const exact = bullets.filter((b) => b === want);
+    const same = bullets.filter((b) => norm(b) === norm(want));
     const contained = bullets.filter((b) => want.length >= 8 && b.includes(want));
-    const matches = exact.length ? exact : contained;
+    const matches = byNumber
+      ? [byNumber]
+      : exact.length
+        ? exact
+        : same.length
+          ? same
+          : contained;
     if (matches.length !== 1) {
       throw new ValidationError(
         matches.length > 1

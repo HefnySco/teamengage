@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ beforeAll(async () => {
   mkdirSync(join(plans, "claims"), { recursive: true });
   writeFileSync(
     join(plans, "workspace.yaml"),
-    "name: ws\nprefix: WS\nauto_archive_after: 30d\ndomains:\n  teamengage: { keywords: [teamengage, daemon] }\nresources:\n  self: { kind: git, path: ., worktree: false }\n",
+    "name: ws\nprefix: WS\nauto_archive_after: 30d\ndomains:\n  teamengage: { keywords: [teamengage, daemon] }\n  build: {}\nresources:\n  self: { kind: git, path: ., worktree: false }\n",
   );
 
   // planner pool fixtures
@@ -125,6 +125,21 @@ beforeAll(async () => {
     `## Summary\n${Array.from({ length: 70 }, (_, i) => `line ${i + 1}`).join("\n")}\n`,
   );
   item("WS-0042", "ready", "task", 'relates: ["ID-0400"]\n');
+
+  // lessons fixture (TE-0182): a discussion whose ## Guidelines the
+  // promote tests number, and a lessons file at the 25-line cap
+  item(
+    "DC-0500",
+    "ready",
+    "discussion",
+    "domains: [teamengage]\n",
+    "## Summary\ntalked about tests\n\n## Guidelines\n- always run typecheck first\n- keep tests hermetic\n- never push from an agent\n",
+  );
+  mkdirSync(join(plans, "lessons"), { recursive: true });
+  writeFileSync(
+    join(plans, "lessons", "teamengage.md"),
+    `# lessons — #teamengage\n\n${Array.from({ length: 25 }, (_, i) => `- 2026-01-01 a@x — old lesson ${i + 1}`).join("\n")}\n`,
+  );
 
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
@@ -316,5 +331,63 @@ describe("capture: the caller owns the ready transition (TE-0180)", () => {
     expect(t.text).toContain("### tool: Bash —");
     const hits = await ops.search({ text: "zebra", in: "transcript" });
     expect(hits.map((h) => h.id)).toContain(r.id);
+  });
+});
+
+describe("curated domain lessons (TE-0182)", () => {
+  it("an agent lesson does not change the file until the human accepts it", async () => {
+    const s = sessions.hello("lessoner");
+    const r = await ops.lesson(s, "build", "run the daemon build before route changes");
+    expect(r).toMatchObject({ domain: "build" });
+    expect(r.pending).toBeTypeOf("number");
+    const file = join(plans, "lessons", "build.md");
+    expect(existsSync(file)).toBe(false);
+    const pending = await ops.pendingLessons();
+    expect(pending.map((p) => p.text)).toContain(
+      "run the daemon build before route changes",
+    );
+    await ops.settleLesson(r.pending!, "approved");
+    expect(readFileSync(file, "utf8")).toContain("run the daemon build");
+  });
+
+  it("promote with a bullet number promotes that bullet", async () => {
+    const r = await ops.promote("human", {
+      id: "DC-0500",
+      section: "guidelines",
+      line: "2",
+      to: "lesson",
+    });
+    expect((r.promotion as Record<string, unknown>).line).toBe("keep tests hermetic");
+  });
+
+  it("a duplicate lesson merges into the existing line", async () => {
+    const s = sessions.hello("lessoner2");
+    const file = join(plans, "lessons", "build.md");
+    const first = await ops.lesson(s, "build", "git needs user.email set in fixtures");
+    await ops.settleLesson(first.pending!, "approved");
+    const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith("- "));
+    const second = await ops.lesson(s, "build", "  git needs   user.email set in fixtures  ");
+    expect(second.merged).toBe(lines.length);
+    const after = readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith("- "));
+    expect(after.length).toBe(lines.length);
+    expect(after[after.length - 1]).toContain("git needs user.email set in fixtures");
+    expect(after[after.length - 1]).toContain(new Date().toISOString().slice(0, 10));
+  });
+
+  it("a 26th lesson stays pending and needs the human's drop line", async () => {
+    const s = sessions.hello("lessoner3");
+    const file = join(plans, "lessons", "teamengage.md");
+    const count = readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith("- ")).length;
+    const r = await ops.lesson(s, "teamengage", `overflow lesson ${count + 1}`);
+    expect(r.pending).toBeTypeOf("number");
+    expect(readFileSync(file, "utf8")).not.toContain(`overflow lesson ${count + 1}`);
+    await expect(ops.settleLesson(r.pending!, "approved")).rejects.toThrow(/cap/);
+    await expect(ops.settleLesson(r.pending!, "approved", 999)).rejects.toThrow(/no lesson 999/);
+    const settled = await ops.settleLesson(r.pending!, "approved", 1);
+    expect(settled.verdict).toBe("approved");
+    const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith("- "));
+    expect(lines.length).toBe(count);
+    expect(lines[0]).not.toContain("old lesson 1");
+    expect(lines[lines.length - 1]).toContain(`overflow lesson ${count + 1}`);
   });
 });

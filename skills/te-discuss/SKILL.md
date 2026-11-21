@@ -129,7 +129,8 @@ curl -s -X POST $B/promote -H "$H" -d '{
   approves; then the lesson line names the discussion.
 - `to: "decision"` → a decision draft; on approval a `D-NNNN` record
   names the discussion as its source.
-- `line` must exist in that section — copy it exactly.
+- `line` names the bullet — its number (`"2"` picks the second line), the
+  exact text, or a near copy that matches one line only.
 - Either way the discussion's `## Actions` links the result, so the
   provenance stays visible.
 

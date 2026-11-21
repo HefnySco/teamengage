@@ -416,6 +416,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             .filter((p) => p.state === "pending")
             .map((p) => ({ id: i.meta.id, ...p })),
         ),
+        // TE-0182: agent lessons waiting for the human's OK
+        pending_lessons: await ops.pendingLessons(),
         findings: await ops.findings(),
         // TE-0164: orphan decisions — picks nothing executed (see
         // WorkspaceOps.orphanDecisions for the settle rules)
@@ -1106,6 +1108,25 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         throw new TeError("USAGE", "lesson delete needs {domain, line} (1-based)");
       }
       return await opsFor(ctx, wsOf(req.query)).deleteLesson(b.domain, b.line as number);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+  // TE-0182: a pending agent lesson the human accepts or rejects in the
+  // inbox; `drop` names the existing line it replaces when the domain is
+  // at the lessons_max cap.
+  app.post("/api/lessons/pending/:n", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("settling a lesson is human-only — agents flag it in a note instead");
+      }
+      const n = Number((req.params as { n?: string }).n);
+      const b = (req.body ?? {}) as { verdict?: string; drop?: number };
+      const verdict = b.verdict === "approved" ? "approved" : b.verdict === "rejected" ? "rejected" : null;
+      if (!Number.isInteger(n) || n < 1 || !verdict) {
+        throw new TeError("USAGE", "lesson settle needs a pending n and {verdict: approved|rejected, drop?}");
+      }
+      return await opsFor(ctx, wsOf(req.query)).settleLesson(n, verdict, b.drop);
     } catch (e) {
       return sendErr(reply, e);
     }

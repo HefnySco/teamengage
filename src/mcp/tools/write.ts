@@ -706,9 +706,11 @@ export function registerWriteTools(
     {
       description:
         "Share a hard-won lesson for a domain — {domain, text}: repo traps, build commands, " +
-        "test rules the next agent needs. One line appended to lessons/<domain>.md in the " +
-        "plans folder with your session and the date; brief shows the newest 10 to whoever " +
-        "works that domain next. The domain must already exist — an unknown one is refused. " +
+        "test rules the next agent needs. It goes to the inbox as a candidate — the human " +
+        "accepts or rejects it; an accepted one becomes a `- date session — text` line in " +
+        "lessons/<domain>.md that brief shows to whoever works that domain next. A repeat of " +
+        "a line already there just updates its date. The domain must already exist — an " +
+        "unknown one is refused. " +
         "Lost time on a trap? Leave the lesson, don't make the next agent lose it too.",
       inputSchema: { domain: z.string(), text: z.string() },
     },
@@ -719,7 +721,11 @@ export function registerWriteTools(
         const o = ops();
         if (isToolResult(o)) return o;
         const r = await o.lesson(s, domain, text);
-        return okText(`lesson added for #${r.domain}`);
+        return okText(
+          r.merged
+            ? `lesson for #${r.domain} already there — refreshed line ${r.merged}`
+            : `lesson #${r.pending} for #${r.domain} waits in the inbox for the human`,
+        );
       } catch (e) {
         return errFrom(e);
       }

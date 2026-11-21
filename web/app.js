@@ -654,6 +654,7 @@ const Inbox = ({ onOpen }) => {
     reviews: (id) => byId[id] ?? { id },
     drop_flags: (x) => byId[x.id] ?? { id: x.id },
     promotions: (x) => byId[x.id] ?? { id: x.id },
+    pending_lessons: (x) => ({ id: `#${x.domain}`, title: x.text }),
     decisions: (x) => byId[x.item] ?? { id: x.item },
     claims: (c) => byId[c.item] ?? { id: c.item },
     findings: (f) => byId[f.item] ?? { id: f.item ?? "", title: f.message ?? f.path ?? "" },
@@ -682,8 +683,9 @@ const Inbox = ({ onOpen }) => {
     digest_finished: sortRows("digest_finished", digestFinished.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_stuck: sortRows("digest_stuck", digestStuck.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_waits: sortRows("digest_waits", digestWaits.filter((x) => hit(x.id, x.title, x.what, x.why))),
+    pending_lessons: sortRows("pending_lessons", (data.pending_lessons ?? []).filter((x) => hit(x.domain, x.text, x.by))),
   };
-  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0) + (data.promotions?.length ?? 0) + (data.decisions?.length ?? 0);
+  const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0) + (data.promotions?.length ?? 0) + (data.pending_lessons?.length ?? 0) + (data.decisions?.length ?? 0);
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
   // every item the inbox lists, deduped — the pool the search filters and the
   // suggestion dropdown's @agent / #domain counts draw from
@@ -848,6 +850,34 @@ const Inbox = ({ onOpen }) => {
                 reload();
               }
             }}>reject</button>`,
+        ),
+      ).concat(
+        (view.pending_lessons ?? []).map((x) =>
+          html`<div class="triage-li" key=${"lesson-" + x.n}>
+            <span class="id-cell d-flex align-items-center gap-1"><span class="item id text-secondary">#${x.domain}</span></span>
+            <${InboxStatus} s="ready" />
+            <span class="t" title=${x.text}>${x.text.length > 120 ? `${x.text.slice(0, 120)}…` : x.text}
+              <span class="text-secondary"> · lesson — offered by <b class=${whoCls(x.by)}>${x.by}</b> ${ago(x.at)} ago</span></span>
+            <${DomainTags} ds=${[x.domain]} />
+            <span class="ages"></span>
+            <span class="acts">
+              <button class="btn btn-sm py-0 btn-primary" title="write it into lessons/${x.domain}.md" onClick=${async () => {
+                if (!(await confirmDialog(`accept lesson #${x.n} for #${x.domain}?`, `"${x.text}" → a new line in lessons/${x.domain}.md`, { ok: "accept" }))) return;
+                const dropRaw = await promptDialog("is the file full (over the cap)?", { label: "line number the new lesson replaces — empty = just append" });
+                if (dropRaw === null) return;
+                const drop = dropRaw.trim() === "" ? undefined : Number(dropRaw);
+                if (drop !== undefined && (!Number.isInteger(drop) || drop < 1)) { toast("drop must be a line number (1 or more)"); return; }
+                await post(`/api/lessons/pending/${x.n}`, { verdict: "approved", ...(drop !== undefined ? { drop } : {}) }).catch((e) => toast(e.message));
+                reload();
+              }}>accept</button>
+              <button class="btn btn-sm py-0 text-danger" title="reject — nothing is written" onClick=${async () => {
+                if (await confirmDialog(`reject lesson #${x.n}?`, `"${x.text}" — nothing is written to lessons/${x.domain}.md.`, { ok: "reject", danger: true })) {
+                  await post(`/api/lessons/pending/${x.n}`, { verdict: "rejected" }).catch((e) => toast(e.message));
+                  reload();
+                }
+              }}>reject</button>
+            </span>
+          </div>`,
         ),
       ),
     },

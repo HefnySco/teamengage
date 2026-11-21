@@ -117,6 +117,7 @@ auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer 
 auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
 peer_answer_after: 30m # a peer question unanswered this long becomes the human's (§5)
 brief_inherit_lines: 60 # brief: per-block cap on inherited text — parent plan, relates sources (§4)
+lessons_max: 25 # cap on the bullet lines in each lessons/<domain>.md — over it the inbox asks which to drop
 dispatch: # unset = off: the daemon starts agent commands when work exists (§5)
   enabled: false            # the human turns it on: te dispatch on (agents get FORBIDDEN)
   max_sessions: 2           # live agent sessions on this machine the daemon fills up to
@@ -686,16 +687,21 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | `propose(items[])`              | Create `draft` items/edges (a plan for the human to approve).                                                                                                   |
 | `edit(id, reason, …)`           | Rewrite a draft — any field incl. depends_on/parent and `##` sections; planner tiers only, the item stays a draft.                                              |
 | `flag_drop(id, reason)`         | Ask the human to drop the item — advisory flag for the inbox; any non-terminal status.                                                                          |
-| `lesson(domain, text)`          | Share a lesson for a domain — one `- date session — text` line in `lessons/<domain>.md`; unknown domains refused (INVALID_TRANSITION).                            |
+| `lesson(domain, text)`          | Offer a lesson for a domain — a candidate that waits in the inbox for the human; a repeat of an existing line just refreshes its date; unknown domains refused (INVALID_TRANSITION). |
 | `query(filter)`                 | Search by status/type/state/project/domain/resource/text/claimed/starred; `q` = board search (all words in id/title/file/#domains). Archived items never match. |
 | `graph(root?, depth?, filter?)` | Mermaid text of a scoped subgraph.                                                                                                                              |
 
 **Shared lessons** — one markdown list per domain at
 `lessons/<domain>.md` in the plans folder. Any session may `lesson`
-a line (`domain`, `text`; the daemon adds date and session); an unknown
-domain is refused so typos teach nobody. `brief` shows the lessons of the
-item's domains, newest first, at most ten. The human deletes single lines
-on the domains page — agents cannot (FORBIDDEN).
+a line (`domain`, `text`); it lands in the inbox as a pending candidate —
+the file changes only when the human accepts, under the candidate's own
+session and date. A line whose text repeats an existing one merges into
+it and refreshes its date instead of duplicating it. Each file caps at
+`lessons_max` lines (default 25); an accept that would cross the cap asks
+the human which existing line to drop. An unknown domain is refused so
+typos teach nobody. `brief` shows the lessons of the item's domains,
+newest first, at most ten. The human deletes single lines on the domains
+page — agents cannot (FORBIDDEN).
 
 Plus a generated instruction snippet (`teamengage agents-md`) to drop into
 `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`: "call `hello`, then `next`, always

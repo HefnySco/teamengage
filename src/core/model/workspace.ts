@@ -269,6 +269,12 @@ export const WorkspaceConfig = z
      */
     brief_inherit_lines: z.number().int().min(1).default(60),
     /**
+     * lessons: cap on the `- ` bullet lines in each lessons/<domain>.md
+     * (TE-0182). An accepted lesson that would cross the cap stays pending
+     * and the inbox asks the human which line to drop instead.
+     */
+    lessons_max: z.number().int().min(1).default(25),
+    /**
      * A session with no pid (curl hello) whose last call is older than this
      * duration is not live; its claims become dead claims. Default 2h.
      */

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, execFile } from "node:child_process";
@@ -510,16 +510,23 @@ describe("plain-HTTP agent API", () => {
 });
 
 describe("shared lessons per domain (GL-0322)", () => {
-  it("an agent adds a lesson, brief shows it; unknown domains and agent deletes refused", async () => {
+  it("an agent lesson waits in the inbox; the human accepts it; brief shows it", async () => {
     const t = await hello("prof");
 
-    // lesson writes one "- date session — text" line under lessons/<domain>.md
+    // TE-0182: the lesson lands as a pending candidate — no line yet
     const ok = await call("POST", "/agent/lesson", {
       token: t,
       body: { domain: "test-domain", text: "run npm build before npm test — dist must be fresh" },
     });
     expect(ok.status).toBe(200);
-    expect(ok.text).toContain("lesson added for #test-domain");
+    expect(ok.text).toContain("lesson #1 for #test-domain waits in the inbox");
+    expect(existsSync(join(plans, "lessons", "test-domain.md"))).toBe(false);
+
+    // the human accepts it — the line lands under the offering session
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+    const settled = await ops.settleLesson(1, "approved");
+    expect(settled.domain).toBe("test-domain");
     const file = readFileSync(join(plans, "lessons", "test-domain.md"), "utf8");
     expect(file).toMatch(/- \d{4}-\d{2}-\d{2} prof@test#\w+ — run npm build before npm test/);
 

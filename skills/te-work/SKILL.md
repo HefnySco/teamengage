@@ -328,8 +328,10 @@ its item's domains:
 curl -s -X POST $B/lesson -H "$H" -d '{"domain":"mavlink","text":"de_mavlink tests need SITL running first — sim/bin/sitl.sh, then ctest"}'
 ```
 
-One line, in STE, only what is not obvious from the code. The domain must
-already exist (an unknown one is refused). Wrong or stale lessons are the
+One line, in STE, only what is not obvious from the code. The lesson goes
+to the inbox — the file changes only when the human accepts it. A repeat
+of a line already there just refreshes its date. The domain must already
+exist (an unknown one is refused). Wrong or stale lessons are the
 human's to delete on the domains page — if one misleads you, say so in a
 `note` on your task instead of editing the file.
 

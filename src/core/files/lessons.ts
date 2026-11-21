@@ -74,3 +74,107 @@ export async function removeLesson(
   await fs.writeFile(file, lines.join("\n"));
   return removed;
 }
+
+/**
+ * Rewrite lesson number `n` in place with a fresh date and session — the
+ * merge path (TE-0182): a repeat lesson updates the existing line's date
+ * instead of appending a duplicate. Returns false when there is no such line.
+ */
+export async function updateLesson(
+  plansDir: string,
+  domain: string,
+  n: number,
+  session: string,
+  now: string,
+): Promise<boolean> {
+  const file = fileFor(plansDir, domain);
+  let text: string;
+  try {
+    text = await fs.readFile(file, "utf8");
+  } catch {
+    return false;
+  }
+  const lines = text.split("\n");
+  let seen = 0;
+  const idx = lines.findIndex((l) => l.startsWith(MARK) && ++seen === n);
+  if (idx < 0) return false;
+  const body = lines[idx].slice(MARK.length);
+  // keep the lesson text after the last " — " (the date + session prefix)
+  const lessonText = body.includes(" — ") ? body.slice(body.lastIndexOf(" — ") + 3) : body;
+  lines[idx] = `${MARK}${now.slice(0, 10)} ${session} — ${lessonText.trim()}`;
+  await fs.writeFile(file, lines.join("\n"));
+  return true;
+}
+
+/**
+ * Text-only compare for lessons (TE-0182): strip the `- date session — `
+ * prefix, lowercase, collapse whitespace. Two lessons whose texts
+ * normalize equal are the same lesson.
+ */
+export function lessonKey(line: string): string {
+  const body = line.trim().replace(/^[-*]\s*/, "");
+  const text = body.includes(" — ") ? body.slice(body.lastIndexOf(" — ") + 3) : body;
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** A pending agent lesson waiting for the human's OK (TE-0182). */
+export interface PendingLesson {
+  n: number;
+  domain: string;
+  text: string;
+  by: string;
+  at: string;
+  state: "pending" | "approved" | "rejected";
+}
+
+const PENDING_FILE = ".pending.json";
+
+async function readAllPending(plansDir: string): Promise<PendingLesson[]> {
+  try {
+    const list = JSON.parse(await fs.readFile(join(plansDir, "lessons", PENDING_FILE), "utf8"));
+    return Array.isArray(list) ? (list as PendingLesson[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeAllPending(plansDir: string, list: PendingLesson[]): Promise<void> {
+  await fs.mkdir(join(plansDir, "lessons"), { recursive: true });
+  await fs.writeFile(join(plansDir, "lessons", PENDING_FILE), `${JSON.stringify(list, null, 1)}\n`);
+}
+
+/** Pending lesson candidates, newest first — the inbox view. */
+export async function pendingLessons(plansDir: string): Promise<PendingLesson[]> {
+  return (await readAllPending(plansDir)).filter((p) => p.state === "pending");
+}
+
+/** Add a candidate; returns its n (1-based across all recorded entries). */
+export async function recordPendingLesson(
+  plansDir: string,
+  p: Omit<PendingLesson, "n" | "state">,
+): Promise<number> {
+  const all = await readAllPending(plansDir);
+  const n = all.length ? Math.max(...all.map((x) => x.n)) + 1 : 1;
+  all.push({ ...p, n, state: "pending" });
+  await writeAllPending(plansDir, all);
+  return n;
+}
+
+/** Mark candidate `n` approved or rejected. Returns it, or null when unsettled/missing. */
+export async function settlePendingLesson(
+  plansDir: string,
+  n: number,
+  state: "approved" | "rejected",
+): Promise<PendingLesson | null> {
+  const all = await readAllPending(plansDir);
+  const p = all.find((x) => x.n === n);
+  if (!p || p.state !== "pending") return null;
+  p.state = state;
+  await writeAllPending(plansDir, all);
+  return p;
+}
+
+/** One pending candidate by n, or undefined. */
+export async function pendingLesson(plansDir: string, n: number): Promise<PendingLesson | undefined> {
+  return (await readAllPending(plansDir)).find((x) => x.n === n && x.state === "pending");
+}
