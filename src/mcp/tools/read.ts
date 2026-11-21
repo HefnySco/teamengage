@@ -144,7 +144,9 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     "brief",
     {
       description:
-        "What an agent needs to work an item: summary, acceptance, dep outcomes, decisions, resolved targets. " +
+        "What an agent needs to work an item: summary, acceptance, dep outcomes, decisions, resolved targets, " +
+        "the parent plan's context, relates sources' digests, and — on a submitted item — its own " +
+        "evidence and latest review. " +
         "The default brief stays under 120 lines — a block that does not fit shows its count and " +
         "the call for more: `brief <id> more=<block>` (blocks: lessons, decisions, " +
         "domain_decisions, history, repo_context). A discussion's brief also names its transcript; " +
@@ -199,6 +201,16 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           const a = it.meta.peer_answer;
           lines.push(`peer answer by ${a.by} at ${a.at}: ${a.text}`);
         }
+        // TE-0179: the item's own submission record — a reviewer reads it
+        // here, not from the .teamengage item file on disk
+        if (b.submission) {
+          if (b.submission.evidence) lines.push(`evidence:\n${b.submission.evidence}`);
+          if (b.submission.for_human) lines.push(`for the human:\n${b.submission.for_human}`);
+          if (b.submission.walkthrough)
+            lines.push(`walkthrough:\n${b.submission.walkthrough}`);
+          if (b.submission.latest_review)
+            lines.push(`latest review:\n${b.submission.latest_review}`);
+        }
         if (it.meta.type === "epic" && it.plan_state) {
           lines.push(
             `plan: ${it.plan_state} ${it.plan_progress?.done ?? 0}/${it.plan_progress?.total ?? 0} — epics are plans; work their children, not this item`,
@@ -230,6 +242,14 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         if (handoff) lines.push(`handoff notes:\n${handoff}`);
         if (it.meta.domains.length) lines.push(`domains: ${it.meta.domains.map((d) => `#${d}`).join(" ")}`);
         if (b.plan_goal) lines.push(`plan goal: ${b.plan_goal}`);
+        // TE-0179: the full parent-plan context, not only the goal line
+        if (b.plan) {
+          if (b.plan.summary) lines.push(`plan summary:\n${b.plan.summary}`);
+          if (b.plan.architecture)
+            lines.push(`plan architecture:\n${b.plan.architecture}`);
+          for (const d of b.plan.decisions)
+            lines.push(`plan decision ${d.id}: ${d.title}`);
+        }
         const lessons = await ops.lessonsFor(it.meta.domains);
         if (!b.source) lines.push(`summary: ${sec("Summary")}`);
         else if ("missing" in b.source) lines.push(`source: ${b.source.path} (MISSING — ask the human)`);
@@ -252,6 +272,15 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         }
         for (const r of b.relates) {
           lines.push(`relates ${r.ref} ${r.status}`);
+          // TE-0179: a source's digest (summary, key points, decisions
+          // reached) indents under its line
+          if (r.digest)
+            lines.push(
+              r.digest
+                .split("\n")
+                .map((l) => `  ${l}`)
+                .join("\n"),
+            );
         }
         for (const r of b.found_by) {
           lines.push(`found by ${r.ref} ${r.status}`);

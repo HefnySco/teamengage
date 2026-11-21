@@ -569,12 +569,38 @@ export class WorkspaceOps {
       const dep = this.index.get(ref);
       return { ref, status: dep?.meta.status ?? "unknown", archived: Boolean(dep?.meta.archived) };
     });
+    // TE-0179: inherited text (the parent plan's context, a relates
+    // source's digest) stops at brief_inherit_lines with a `more` hint
+    const inheritCap = this.wsr.ws.config.brief_inherit_lines;
+    const capInherited = (text: string, more: string) => {
+      const ls = text.trim().split("\n");
+      if (ls.length === 1 && !ls[0]) return "";
+      return ls.length <= inheritCap
+        ? ls.join("\n")
+        : `${ls.slice(0, inheritCap).join("\n")}\n… (${ls.length - inheritCap} more lines — ${more})`;
+    };
     // loose references, both ways — e.g. a plan pointing back at the idea(s)
     // it was generated from. Reference only: no ordering, no blocking.
     const relates = it.meta.relates.map((ref) => {
       const parsed = parseItemRef(ref);
       const dep = parsed.workspace ? undefined : this.index.get(parsed.id);
-      return { ref, status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown" };
+      // a relates source gives its distilled text — summary, key points and
+      // the decisions it reached — not only id + status
+      const digest =
+        dep && (dep.meta.type === "idea" || dep.meta.type === "discussion")
+          ? capInherited(
+              ["Summary", "Key points", "Decisions reached"]
+                .map((h) => sectionBody(dep, h).trim())
+                .filter(Boolean)
+                .join("\n\n"),
+              `brief ${parsed.id}`,
+            )
+          : "";
+      return {
+        ref,
+        status: dep?.meta.status ?? this.links?.statusOf(ref) ?? "unknown",
+        ...(digest ? { digest } : {}),
+      };
     });
     const found_by = (it.meta.found_by ?? []).map((ref) => {
       const parsed = parseItemRef(ref);
@@ -585,17 +611,59 @@ export class WorkspaceOps {
     // titles of decisions in this item's domains, and the newest done
     // items that touched the same paths.
     let plan_goal: string | undefined;
+    let plan:
+      | {
+          id: string;
+          title: string;
+          summary: string;
+          architecture: string;
+          decisions: { id: string; title: string }[];
+        }
+      | undefined;
     if (it.meta.parent) {
       try {
         const p = this.index.get(parseItemRef(it.meta.parent).id);
         if (p) {
           plan_goal =
             sectionBody(p, "Summary").trim().split("\n").find((l) => l.trim()) ?? p.meta.title;
+          // TE-0179: the full plan context — the whole Summary, an
+          // Architecture section if present, and the plan's own decisions
+          plan = {
+            id: p.meta.id,
+            title: p.meta.title,
+            summary: capInherited(sectionBody(p, "Summary"), `brief ${p.meta.id}`),
+            architecture: capInherited(sectionBody(p, "Architecture"), `brief ${p.meta.id}`),
+            decisions: [...this.index.decisions.values()]
+              .filter((d) => {
+                try {
+                  return parseItemRef(d.meta.item).id === p.meta.id;
+                } catch {
+                  return false;
+                }
+              })
+              .map((d) => ({ id: d.meta.id, title: d.meta.title })),
+          };
         }
       } catch {
         /* bad parent ref — the validator reports it */
       }
     }
+    // TE-0179: a reviewer reads the submission record from brief — the
+    // item's own Evidence, For the human and Walkthrough, and the latest
+    // Review entry — instead of opening the item file on disk
+    const reviewBody = sectionBody(it, "Review").trim();
+    const reviewLines = reviewBody.split("\n");
+    let lastReview = -1;
+    for (const [i, l] of reviewLines.entries()) if (l.startsWith("- ")) lastReview = i;
+    const submission =
+      it.meta.status === "in_review" || (it.meta.attempts ?? 0) > 0
+        ? {
+            evidence: sectionBody(it, "Evidence").trim(),
+            for_human: sectionBody(it, "For the human").trim(),
+            walkthrough: sectionBody(it, "Walkthrough").trim(),
+            latest_review: lastReview < 0 ? "" : reviewLines.slice(lastReview).join("\n"),
+          }
+        : undefined;
     const listed = new Set(decisions.map((d) => d.meta.id));
     // TE-0176: a pick made on a review card is context for its item only —
     // it must not leak into other briefs as a domain rule
@@ -648,6 +716,8 @@ export class WorkspaceOps {
       question: it.meta.question,
       repo_context: await this.repoContextsOf(it),
       plan_goal,
+      plan,
+      submission,
       domain_decisions,
       history: histAll.slice(0, 3),
       history_total: histAll.length,

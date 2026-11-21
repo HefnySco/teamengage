@@ -22,12 +22,12 @@ let wsr: WorkspaceRuntime;
 let ops: WorkspaceOps;
 let sessions: SessionRegistry;
 
-function item(id: string, status: string, type = "task", extra = "") {
+function item(id: string, status: string, type = "task", extra = "", body = "## Summary\nx\n") {
   const prefix = id.split("-")[0];
   mkdirSync(join(plans, "items", prefix), { recursive: true });
   writeFileSync(
     join(plans, "items", prefix, `${id}.md`),
-    `---\nid: ${id}\ntype: ${type}\ntitle: ${id}\nstatus: ${status}\nversion: 1\n${extra}---\n\n## Summary\nx\n`,
+    `---\nid: ${id}\ntype: ${type}\ntitle: ${id}\nstatus: ${status}\nversion: 1\n${extra}---\n\n${body}`,
   );
 }
 
@@ -86,6 +86,44 @@ beforeAll(async () => {
   item("EP-0003", "ready", "epic", "feature: FE-0003\n");
   item("TS-0005", "done", "task", "parent: EP-0003\n");
   item("TS-0006", "in_progress", "task", "parent: EP-0003\n");
+
+  // brief fixtures (TE-0179): parent-epic context, a relates source's
+  // digest, the item's own submission record, and the inherit line cap
+  mkdirSync(join(plans, "decisions"), { recursive: true });
+  item(
+    "EP-0400",
+    "ready",
+    "epic",
+    "",
+    "## Summary\nFirst goal line.\nSecond goal line.\n\n## Architecture\nlayer one\nlayer two\n",
+  );
+  writeFileSync(
+    join(plans, "decisions", "D-0400.md"),
+    `---\nid: D-0400\ntitle: "epic call"\nitem: EP-0400\ndecided_by: human\n---\n\n## Decision\nx\n`,
+  );
+  item(
+    "DC-0400",
+    "ready",
+    "discussion",
+    "",
+    "## Summary\ntalked about cache keys\n\n## Key points\n- keys derive from the session\n\n## Decisions reached\n- keep the two-line format\n",
+  );
+  item("WS-0040", "ready", "task", 'parent: EP-0400\nrelates: ["DC-0400"]\n');
+  item(
+    "WS-0041",
+    "in_review",
+    "task",
+    "",
+    "## Summary\nsubmitted work\n\n## Evidence\n- commit abc123\n- tests: pass\n\n## For the human\n- summary: did the thing\n\n## Walkthrough\n### 2026-11-20 devin@x\n\nhow it works\n\n## Review\n- 2026-11-20T10:00:00Z rev@y issues — first pass\n  findings:\n  1. [must] fix the loop\n- 2026-11-21T10:00:00Z rev@y ok — second pass looks right\n",
+  );
+  item(
+    "ID-0400",
+    "ready",
+    "idea",
+    "",
+    `## Summary\n${Array.from({ length: 70 }, (_, i) => `line ${i + 1}`).join("\n")}\n`,
+  );
+  item("WS-0042", "ready", "task", 'relates: ["ID-0400"]\n');
 
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
@@ -167,5 +205,41 @@ describe("featureStatus (TE-0174)", () => {
 
   it("a feature with open parts stays in_progress, and none at all stays planned", async () => {
     expect(await ops.featureStatus(ops.index.get("FE-0003")!)).toBe("in_progress");
+  });
+});
+
+describe("brief: own record and inherited context (TE-0179)", () => {
+  it("an in_review item's brief carries its Evidence and its latest Review", async () => {
+    const b = await ops.brief("WS-0041");
+    expect(b.submission?.evidence).toContain("commit abc123");
+    expect(b.submission?.for_human).toContain("did the thing");
+    expect(b.submission?.walkthrough).toContain("how it works");
+    expect(b.submission?.latest_review).toContain("second pass looks right");
+    expect(b.submission?.latest_review).not.toContain("first pass");
+  });
+
+  it("a task under an epic gets the full Summary, Architecture and the epic's decisions", async () => {
+    const b = await ops.brief("WS-0040");
+    expect(b.plan?.id).toBe("EP-0400");
+    expect(b.plan?.summary).toContain("First goal line.");
+    expect(b.plan?.summary).toContain("Second goal line.");
+    expect(b.plan?.architecture).toContain("layer two");
+    expect(b.plan?.decisions.map((d) => d.id)).toContain("D-0400");
+  });
+
+  it("a relates discussion gives its summary, key points and decisions reached", async () => {
+    const b = await ops.brief("WS-0040");
+    const r = b.relates.find((x) => x.ref === "DC-0400");
+    expect(r?.digest).toContain("talked about cache keys");
+    expect(r?.digest).toContain("keys derive from the session");
+    expect(r?.digest).toContain("keep the two-line format");
+  });
+
+  it("inherited text stops at brief_inherit_lines and shows a more hint", async () => {
+    const b = await ops.brief("WS-0042");
+    const r = b.relates.find((x) => x.ref === "ID-0400");
+    expect(r?.digest).toContain("line 60");
+    expect(r?.digest).not.toContain("line 61");
+    expect(r?.digest).toContain("10 more lines — brief ID-0400");
   });
 });

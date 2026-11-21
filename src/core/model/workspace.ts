@@ -263,6 +263,12 @@ export const WorkspaceConfig = z
     /** Duration string like `24h`, `30m`, `7d`. */
     stale_after: z.string().default("24h"),
     /**
+     * brief: the line cap on each inherited context block — the parent
+     * plan's summary/architecture and each relates source's digest
+     * (TE-0179). Longer text stops at the cap with a `more` hint.
+     */
+    brief_inherit_lines: z.number().int().min(1).default(60),
+    /**
      * A session with no pid (curl hello) whose last call is older than this
      * duration is not live; its claims become dead claims. Default 2h.
      */

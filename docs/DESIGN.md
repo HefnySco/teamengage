@@ -116,6 +116,7 @@ auto_accept_rules: # solo: ordered rules; first match sets the item's delay
 auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
 auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
 peer_answer_after: 30m # a peer question unanswered this long becomes the human's (§5)
+brief_inherit_lines: 60 # brief: per-block cap on inherited text — parent plan, relates sources (§4)
 dispatch: # unset = off: the daemon starts agent commands when work exists (§5)
   enabled: false            # the human turns it on: te dispatch on (agents get FORBIDDEN)
   max_sessions: 2           # live agent sessions on this machine the daemon fills up to
@@ -669,7 +670,7 @@ All responses are compact text; IDs + one-line titles unless detail is asked for
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hello(agent, workspace?, tier?, role?, model?)` | Register session; returns session id, machine, workspace summary, any claims this agent should resume. Optional `role` — planner, coder, reviewer, ops — is stored on the session and picked by `next`. Optional `model` — the model id, stored lowercased on the session and copied to `submitted_model` on the item and the submit event, and to `reviewer_model` on `ai_review` — is shown on the team panel and the item page. |
 | `next(limit=3)`                 | Ready, unclaimed items whose targets are free, best first. With a session role the pool changes: a reviewer gets `in_review` items it did not submit, a planner gets ready ideas and discussions nothing references yet (a draft source needs the human's approve first) plus light-authored drafts to vet, a coder/ops gets ready items as usual. |
-| `brief(id)`                     | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path).                               |
+| `brief(id)`                     | Exactly what's needed to work: item, outcomes of its deps, inherited decisions, resolved targets (worktree paths, ssh host/path), the parent plan's full Summary/Architecture + its decisions, each relates source's digest (TE-0179, capped per block at `brief_inherit_lines`), and — on a submitted item — its own Evidence, For the human, Walkthrough and latest Review. |
 | `claim(id)`                     | Take an item (+ target locks, worktrees, snapshots). On an `in_review` item with an `issues` verdict this takes the claim over — same machine only.             |
 | `release(id, note)`             | Give back an item → `ready` (claim dropped, branches kept). On `in_review` a non-holder session may do it only on the claim's machine and must give the reason. |
 | `withdraw(id)`                  | Holder pulls its own submission back: `in_review` → `in_progress`, claim kept.                                                                                  |

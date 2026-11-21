@@ -85,15 +85,18 @@ curl -s $B/brief/GL-0019 -H "$H"
 
 You get: the task's summary, `## Acceptance`, dep statuses, resolved target
 paths (the claim's **worktrees** — where the submitted work lives), and an
-`ai_review:` line if a verdict exists.
+`ai_review:` line if a verdict exists. On a submitted item the brief also
+carries the submission record itself:
 
-Then read the submission record — the item file
-`.teamengage/items/<XX>/<id>.md` inside the task folder. `## Walkthrough` is
-the submitter's own STE explanation of the change (read it, then
-check it against the diff — it is a claim, not proof), `## Evidence` is what
-they cite (commits, tests, notes), `## Review` the earlier verdicts,
-`## Log` the full history. Reading `.teamengage/` files is fine —
-just never edit them.
+- `evidence:` — what the submitter cites (commits, tests, notes);
+- `for the human:` — their short summary of the change;
+- `walkthrough:` — the submitter's own STE explanation of the change
+  (read it, then check it against the diff — it is a claim, not proof);
+- `latest review:` — the newest verdict entry with its findings.
+
+The task file itself holds `## Log` (full history) and the earlier `## Review`
+entries if you need them — read files freely, just never edit `.teamengage/`
+state.
 
 ## 4. Read the actual diff — this is the review
 
