@@ -155,7 +155,10 @@ RULES
      session on the claim's machine — the claim and worktree move to you,
      so fix and submit again. The same takeover applies to an in_progress
      item whose holder's session ended (a dead claim): claim it and the
-     worktree and branch become yours — continue, don't restart.
+     worktree and branch become yours — continue, don't restart. A holder
+     with no pid (a curl hello) counts as dead once it goes quiet past
+     session_idle_after (default 2h) — claim the item then; before that
+     limit, the holder may still be live: ask the human.
      Cross-machine takeover is refused. An "issues" verdict on a submission
      whose local holder is dead releases the claim to ready instead — a
      fix must never wait on a session that can't answer. A holder on
