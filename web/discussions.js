@@ -58,8 +58,12 @@ const transcriptBlocks = (text) => {
       blocks.at(-1)?.body.push(line);
       return;
     }
-    if ((m = /^##\s+(.+)$/.exec(line))) blocks.push({ kind: "turn", head: m[1], body: [], start: at });
-    else if ((m = /^###\s+(.+)$/.exec(line))) blocks.push({ kind: "tool", head: m[1], body: [], start: at });
+    // only the emitted turn/tool vocabulary counts as a header — "## Section"
+    // or "### note" lines inside a body are content, not block starts
+    if ((m = /^##\s+((?:user|assistant|human)\b.*)$/i.exec(line)))
+      blocks.push({ kind: "turn", head: m[1], body: [], start: at });
+    else if ((m = /^###\s+((?:tool|system)\b.*)$/i.exec(line)))
+      blocks.push({ kind: "tool", head: m[1], body: [], start: at });
     else if (blocks.length) blocks.at(-1).body.push(line);
   });
   return blocks.map((b) => ({ ...b, body: b.body.join("\n").trim() }));

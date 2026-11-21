@@ -841,7 +841,9 @@ export class WorkspaceOps {
         return;
       }
       if (fence) return;
-      const m = /^##\s+(.+)$/.exec(l);
+      // only real turn heads count — "## Section" lines inside a body are
+      // content (dumps carry task files, docs, reports)
+      const m = /^##\s+((?:user|assistant|human)\b.*)$/i.exec(l);
       if (m) turns.push({ line: i, page: Math.floor(i / TRANSCRIPT_PAGE_LINES) + 1, head: m[1] });
     });
     return {
