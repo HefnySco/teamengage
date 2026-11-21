@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -38,7 +38,7 @@ beforeAll(async () => {
   mkdirSync(join(plans, "claims"), { recursive: true });
   writeFileSync(
     join(plans, "workspace.yaml"),
-    "name: ws\nprefix: WS\nauto_archive_after: 30d\nresources:\n  self: { kind: git, path: ., worktree: false }\n",
+    "name: ws\nprefix: WS\nauto_archive_after: 30d\ndomains:\n  teamengage: { keywords: [teamengage, daemon] }\nresources:\n  self: { kind: git, path: ., worktree: false }\n",
   );
 
   // planner pool fixtures
@@ -241,5 +241,39 @@ describe("brief: own record and inherited context (TE-0179)", () => {
     expect(r?.digest).toContain("line 60");
     expect(r?.digest).not.toContain("line 61");
     expect(r?.digest).toContain("10 more lines — brief ID-0400");
+  });
+});
+
+describe("capture: the caller owns the ready transition (TE-0180)", () => {
+  const eventLines = () =>
+    readdirSync(join(plans, "events", "test")).flatMap((f) =>
+      readFileSync(join(plans, "events", "test", f), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { item?: string; action: string; actor: string }),
+    );
+
+  it("an agent capture writes no event with the human as actor", async () => {
+    const s = sessions.hello("capturer");
+    const r = await ops.capture(s, {
+      title: "chat about ops",
+      transcript_text: "## user\n\nhi\n\n## assistant\n\nhello\n",
+    });
+    const mine = eventLines().filter((e) => e.item === r.id);
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.every((e) => e.actor !== "human")).toBe(true);
+    expect(mine.find((e) => e.action === "source_ready")?.actor).toBe(s.id);
+    // and the record still lands ready
+    expect(ops.index.get(r.id)!.meta.status).toBe("ready");
+  });
+
+  it("a captured discussion whose summary names a known domain gets that #domain", async () => {
+    const s = sessions.hello("capturer2");
+    const r = await ops.capture(s, {
+      title: "a chat",
+      summary: "how the teamengage daemon indexes the items",
+      transcript_text: "x",
+    });
+    expect(ops.index.get(r.id)!.meta.domains).toContain("teamengage");
   });
 });

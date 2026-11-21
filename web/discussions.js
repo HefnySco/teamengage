@@ -147,7 +147,9 @@ const DiscussionView = ({ id }) => {
     reload();
   };
   const sections = sectionsOf(b.source && !("missing" in b.source) ? b.source.text : "");
-  const shown = sections.filter((s) => s.body || !/^artifacts$/i.test(s.heading));
+  // TE-0180: empty section cards add noise — show only filled ones plus
+  // the Summary card, which always anchors the distilled view
+  const shown = sections.filter((s) => s.body || /^summary$/i.test(s.heading));
   return html`
     <div>
       <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
@@ -187,6 +189,8 @@ const DiscussionView = ({ id }) => {
 const CaptureForm = ({ projects, onSaved }) => {
   const [title, setTitle] = useState("");
   const [project, setProject] = useState(projects[0] ?? "");
+  const [summary, setSummary] = useState("");
+  const [decisions, setDecisions] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [hits, setHits] = useState(null);
@@ -200,6 +204,10 @@ const CaptureForm = ({ projects, onSaved }) => {
       const r = await post("/api/discussions", {
         title: title.trim(),
         project: project || undefined,
+        // TE-0180: the distilled fields — they make the saved chat
+        // searchable; both optional
+        summary: summary.trim() || undefined,
+        sections: decisions.trim() ? { "Decisions reached": decisions.trim() } : undefined,
         transcript_text: text,
         ...extra,
       });
@@ -229,6 +237,11 @@ const CaptureForm = ({ projects, onSaved }) => {
             </select>
           </div>
         </div>
+        <input class="form-control form-control-sm mb-2" placeholder="summary — one or two lines of what the chat decided or covered (optional)"
+          value=${summary} onInput=${(e) => setSummary(e.target.value)} />
+        <textarea class="form-control form-control-sm mb-2" rows="2"
+          placeholder="decisions reached — one per line, optional"
+          value=${decisions} onInput=${(e) => setDecisions(e.target.value)} />
         <textarea class="form-control form-control-sm font-monospace" rows="8"
           placeholder="paste the chat — plain text, Markdown, or a Claude Code JSONL export"
           value=${text} onInput=${(e) => setText(e.target.value)} />

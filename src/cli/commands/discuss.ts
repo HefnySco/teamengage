@@ -13,16 +13,17 @@ interface CaptureResult {
 }
 
 /**
- * `te discuss save <file> --title <t> [--project p] [--summary s] [--redact|--sensitive]`
+ * `te discuss save <file> --title <t> [--project p] [--summary s] [--decisions d] [--redact|--sensitive]`
  * — save an exported chat as a discussion (TE-0157). The daemon converts a
  * Claude Code JSONL transcript to Markdown turns, scans it for secrets and
- * writes DISC-NN-<slug>.md + .transcript.md.
+ * writes DISC-NN-<slug>.md + .transcript.md. `--summary` fills ## Summary and
+ * `--decisions` fills ## Decisions reached (TE-0180) so the chat is searchable.
  */
 export async function discussCmd(args: string[], home?: string): Promise<number> {
   const sub = args.find((a) => !a.startsWith("--"));
   if (sub !== "save") {
     process.stderr.write(
-      "usage: te discuss save <file> --title <t> [--project p] [--summary s] [--redact|--sensitive] [--ws name]\n",
+      "usage: te discuss save <file> --title <t> [--project p] [--summary s] [--decisions d] [--redact|--sensitive] [--ws name]\n",
     );
     return 2;
   }
@@ -35,7 +36,7 @@ export async function discussCmd(args: string[], home?: string): Promise<number>
   const title = opt("title");
   if (!file || !title) {
     process.stderr.write(
-      "usage: te discuss save <file> --title <t> [--project p] [--summary s] [--redact|--sensitive] [--ws name]\n",
+      "usage: te discuss save <file> --title <t> [--project p] [--summary s] [--decisions d] [--redact|--sensitive] [--ws name]\n",
     );
     return 2;
   }
@@ -54,6 +55,9 @@ export async function discussCmd(args: string[], home?: string): Promise<number>
       title,
       project: opt("project"),
       summary: opt("summary"),
+      // TE-0180: the distilled sections the human typed — they make the
+      // saved chat searchable (more keys go through --section later)
+      sections: opt("decisions") ? { "Decisions reached": opt("decisions") } : undefined,
       // the daemon is local: send the path, not the bytes (no body limit)
       transcript_path: abs,
       redact: rest.includes("--redact"),

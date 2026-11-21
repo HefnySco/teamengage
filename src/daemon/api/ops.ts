@@ -2306,9 +2306,18 @@ export class WorkspaceOps {
     const defs = await this.store.currentDomains();
     const enriched = drafts.map((d, i) => {
       let domains = normalizeDomains(d.domains ?? []);
-      if (!domains.length && d.type !== "idea" && d.type !== "discussion") {
+      // TE-0180: a discussion infers too — a saved chat with no #tag is
+      // invisible to domain filters and search. The refusal below still
+      // covers tasks only: an unmatched chat stays untagged, never refused.
+      if (!domains.length && d.type !== "idea") {
         domains = rankDomains(
-          { strong: [d.title, ...(d.touches ?? [])].join("\n"), lead: d.summary ?? "", body: "" },
+          {
+            strong: [d.title, ...(d.touches ?? [])].join("\n"),
+            lead: [d.summary, ...Object.values(d.sections ?? {})]
+              .filter(Boolean)
+              .join("\n"),
+            body: "",
+          },
           defs,
         );
       }
@@ -3277,8 +3286,12 @@ export class WorkspaceOps {
       actor,
     );
     const id = ids[0];
-    // a saved chat is a record, not a proposal — it lands ready, the human drops it if unwanted
-    await this.approve(id);
+    // a saved chat is a record, not a proposal — it lands ready under the
+    // capturer's own name (TE-0180), the human drops it if unwanted
+    const created = this.item(id);
+    await this.store.perform(id, created.meta.version, this.actorFor(actor), {
+      type: "source_ready",
+    });
     const { path } = await this.store.captureTranscript(
       id,
       {

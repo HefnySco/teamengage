@@ -171,6 +171,12 @@ export type Action =
    * the derived idea_state.
    */
   | { type: "source_auto_done" }
+  /**
+   * A saved source lands ready under its capturer's own name (TE-0180).
+   * Capture is the gate — not a plan approval — so the actor is whoever
+   * saved it (agent, human or daemon); sources only.
+   */
+  | { type: "source_ready" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
   | { type: "merge_conflict"; conflicts: string[] };
 
@@ -1127,6 +1133,22 @@ export function transition(
       if (TERMINAL.includes(from)) fail(from, action.type);
       set("done");
       out.log.push(`- ${stamp} auto-completed: every referrer finished`);
+      return out;
+    }
+
+    case "source_ready": {
+      // TE-0180: a captured source lands ready under its capturer's name —
+      // saving the record is the gate, so any actor kind may do it
+      if (meta.type !== "idea" && meta.type !== "discussion") {
+        throw new InvalidTransitionError(
+          `cannot source_ready: ${meta.id} is a ${meta.type}, not a source`,
+          from,
+          action.type,
+        );
+      }
+      if (from !== "draft") fail(from, action.type);
+      set("ready");
+      out.log.push(`- ${stamp} ${who} saved the ${meta.type}`);
       return out;
     }
 
