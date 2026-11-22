@@ -1443,8 +1443,8 @@ const Board = ({ onOpen }) => {
   const inStar = starredOnly ? inDomain.filter((i) => i.star_color) : inDomain;
   const inAi = aiFilter ? inStar.filter((i) => i.ai_review?.verdict === aiFilter) : inStar;
   // plans live on the plans page, ideas on the ideas page, discussions on the
-  // discussions page — the board is work cards only
-  const noIdeas = inAi.filter((i) => i.type !== "idea" && i.type !== "epic" && i.type !== "discussion");
+  // discussions page, features on their own views — the board is work cards only
+  const noIdeas = inAi.filter((i) => i.type !== "idea" && i.type !== "epic" && i.type !== "discussion" && i.type !== "feature");
   // "found problems" mirrors the plans chip: found_by/found_here links AND
   // bug items (type bug or #bug) sitting inside a plan's subtree
   const byIdMap = new Map(data.map((i) => [i.id, i]));
