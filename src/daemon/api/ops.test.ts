@@ -382,6 +382,23 @@ describe("curated domain lessons (TE-0182)", () => {
     expect(after[after.length - 1]).toContain(new Date().toISOString().slice(0, 10));
   });
 
+  it("a repeat of a pending lesson refreshes its date, never a second entry (TE-0186)", async () => {
+    const s = sessions.hello("lessoner-dup");
+    const first = await ops.lesson(s, "build", "never edit a te colon line by hand");
+    expect(first.pending).toBeTypeOf("number");
+    const firstEntry = (await ops.pendingLessons()).find((p) => p.n === first.pending)!;
+    // same lesson in different case and spacing — no second inbox entry
+    await new Promise((r) => setTimeout(r, 10));
+    const second = await ops.lesson(s, "build", "  NEVER   edit a TE colon line   by hand ");
+    expect(second.pending).toBe(first.pending);
+    const pendingAfter = await ops.pendingLessons();
+    expect(pendingAfter.filter((p) => p.domain === "build" && p.text.toLowerCase().includes("te colon line"))).toHaveLength(1);
+    expect(pendingAfter.find((p) => p.n === first.pending)!.at > firstEntry.at).toBe(true);
+    // a different text still queues as before
+    const third = await ops.lesson(s, "build", "run npm ci before a bisect");
+    expect(third.pending).toBeGreaterThan(first.pending!);
+  });
+
   it("a 26th lesson stays pending and needs the human's drop line", async () => {
     const s = sessions.hello("lessoner3");
     const file = join(plans, "lessons", "teamengage.md");

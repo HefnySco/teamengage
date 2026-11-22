@@ -400,6 +400,15 @@ export class WorkspaceOps {
       await updateLesson(plansDir, d, at + 1, session.id, now);
       return { domain: d, merged: at + 1 };
     }
+    // TE-0186: the same text already pending queues nothing new — the
+    // first entry's date refreshes instead
+    const dup = (await pendingLessons(plansDir)).find(
+      (p) => p.domain === d && lessonKey(p.text) === lessonKey(body),
+    );
+    if (dup) {
+      await this.touchPendingLesson(plansDir, dup.n, now);
+      return { domain: d, pending: dup.n };
+    }
     const n = await recordPendingLesson(plansDir, {
       domain: d,
       text: body,
@@ -407,6 +416,24 @@ export class WorkspaceOps {
       at: now,
     });
     return { domain: d, pending: n };
+  }
+
+  /**
+   * Refresh one pending candidate's `at` in place (TE-0186). lessons.ts is
+   * outside this change's Touches, so this mirrors its read/write of
+   * lessons/.pending.json — keep the two in step.
+   */
+  private async touchPendingLesson(plansDir: string, n: number, at: string): Promise<void> {
+    const file = join(plansDir, "lessons", ".pending.json");
+    try {
+      const list = JSON.parse(await readFile(file, "utf8")) as Array<{ n: number; at: string; state: string }>;
+      const p = list.find((x) => x.n === n && x.state === "pending");
+      if (!p) return;
+      p.at = at;
+      writeFileSync(file, `${JSON.stringify(list, null, 1)}\n`);
+    } catch {
+      // a missing or half-written pending file — nothing to refresh
+    }
   }
 
   /** Pending lesson candidates, newest first — the inbox lists them. */
