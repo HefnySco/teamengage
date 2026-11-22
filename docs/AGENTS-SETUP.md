@@ -97,6 +97,12 @@ te skills --install    # detects ~/.claude, ~/.config/devin, ~/.codeium/windsurf
 te skills --check      # exit 1 on drift (copy, stale copy, missing, broken link)
 ```
 
+`--install` never deletes: a real dir it replaces lands under
+`~/.teamengage/skill-backups/<ide>/<name>-<date>`, and it sweeps any old
+`<name>.te-bak-*` / `<name>.bak-*` folder it finds out of the live dir —
+IDEs load every subfolder, so a backup inside the skills folder would run
+as a second, stale skill.
+
 ## Git safety
 
 Agents never rewrite or drop commits: no `git reset --hard`, no

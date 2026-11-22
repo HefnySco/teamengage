@@ -62,9 +62,28 @@ describe("skillsCmd --install/--uninstall (tmp home)", () => {
     for (const s of ["te-alpha", "te-beta", "te-copy"]) {
       expect(lstatSync(join(agent, s)).isSymbolicLink()).toBe(true);
     }
-    const baks = readdirSync(agent).filter((n) => n.startsWith("te-alpha.te-bak-"));
+    // TE-0195: the moved-aside copy leaves the live dir — the IDE scans
+    // every subfolder, so a backup inside it would load as a second skill
+    expect(readdirSync(agent).filter((n) => n.includes(".bak-") || n.includes(".te-bak-"))).toHaveLength(0);
+    const bakRoot = join(home, ".teamengage", "skill-backups", "claude");
+    const baks = readdirSync(bakRoot).filter((n) => n.startsWith("te-alpha-"));
     expect(baks).toHaveLength(1);
-    expect(readFileSyncSafe(join(agent, baks[0], "SKILL.md"))).toBe("stale\n");
+    expect(readFileSyncSafe(join(bakRoot, baks[0], "SKILL.md"))).toBe("stale\n");
+  });
+
+  it("install sweeps old *.bak-* folders out of the live dir and reports them", async () => {
+    const agent = join(home, ".codeium", "windsurf", "skills");
+    mkdirSync(join(agent, "te-old.bak-20261101"), { recursive: true });
+    writeFileSync(join(agent, "te-old.bak-20261101", "SKILL.md"), "ancient\n");
+    mkdirSync(join(agent, "te-alpha.te-bak-20261102"), { recursive: true });
+    writeFileSync(join(agent, "te-alpha.te-bak-20261102", "SKILL.md"), "older\n");
+
+    const code = await skillsCmd(["--install", "--dir", agent], home, skillsDir);
+    expect(code).toBe(0);
+    expect(readdirSync(agent).filter((n) => n.includes(".bak-"))).toHaveLength(0);
+    const bakRoot = join(home, ".teamengage", "skill-backups", "windsurf");
+    expect(readFileSyncSafe(join(bakRoot, "te-old.bak-20261101", "SKILL.md"))).toBe("ancient\n");
+    expect(readFileSyncSafe(join(bakRoot, "te-alpha.te-bak-20261102", "SKILL.md"))).toBe("older\n");
   });
 
   it("is idempotent", async () => {

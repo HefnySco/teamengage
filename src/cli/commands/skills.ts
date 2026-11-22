@@ -11,7 +11,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expandTilde } from "../../core/config/config.js";
 
@@ -25,8 +25,11 @@ import { expandTilde } from "../../core/config/config.js";
  * They must be LINKED, never copied: a copied SKILL.md goes stale the day
  * the repo moves on and silently teaches agents an outdated protocol.
  * --install links (an existing real dir is moved aside to
- * <name>.te-bak-<date>, never deleted), --uninstall removes only links that
- * point into this repo, --check reports drift and exits 1 on any.
+ * ~/.teamengage/skill-backups/<ide>/<name>-<date>, never deleted, and any
+ * *.te-bak-* / *.bak-* folder already in the live dir is moved there too —
+ * IDEs load every subfolder, so a backup inside it runs as a second live
+ * skill), --uninstall removes only links that point into this repo, --check
+ * reports drift and exits 1 on any.
  * Bare `te skills` prints the same report without changing anything.
  */
 
@@ -122,9 +125,32 @@ export function survey(agentDirs: string[], skillsDir: string): SkillRow[] {
 
 const BAD: SkillState[] = ["copy", "stale", "broken", "linked-other", "missing"];
 
-function backupPath(path: string, stamp: string): string {
-  let p = `${path}.te-bak-${stamp}`;
-  for (let i = 2; existsSync(p); ++i) p = `${path}.te-bak-${stamp}.${i}`;
+/** a moved-aside skill or any old backup folder left in a live skills dir */
+const BAK_NAME = /^.+\.(?:te-bak|bak)-.+$/;
+
+/**
+ * ~/.teamengage/skill-backups/<ide> — moved-aside skills and swept backup
+ * folders live here, out of the IDE's live scan (TE-0195). <ide> derives
+ * from the skills dir's parent (~/.claude/skills → claude).
+ */
+function backupRoot(home: string, agentDir: string): string {
+  const ide = basename(dirname(agentDir)).replace(/^\.+/, "") || "agent";
+  return join(home, ".teamengage", "skill-backups", ide);
+}
+
+/** a fresh backup path for `name` under root — never overwrites */
+function backupPath(root: string, name: string, stamp: string): string {
+  const base = join(root, `${name}-${stamp}`);
+  let p = base;
+  for (let i = 2; existsSync(p); ++i) p = `${base}.${i}`;
+  return p;
+}
+
+/** the same folder name under root, suffixed when it already exists */
+function freePath(root: string, name: string): string {
+  const base = join(root, name);
+  let p = base;
+  for (let i = 2; existsSync(p); ++i) p = `${base}.${i}`;
   return p;
 }
 
@@ -177,6 +203,17 @@ export async function skillsCmd(args: string[], home?: string, srcDir?: string):
       if (install) {
         if (!installable(agentDir)) continue;
         mkdirSync(agentDir, { recursive: true });
+        // TE-0195: old *.te-bak-* / *.bak-* folders load as duplicate live
+        // skills — sweep them into the backup root before linking
+        const bakRoot = backupRoot(hm, agentDir);
+        for (const name of readdirSync(agentDir)) {
+          if (!BAK_NAME.test(name)) continue;
+          if (lstatSync(join(agentDir, name), { throwIfNoEntry: false })?.isSymbolicLink()) continue;
+          mkdirSync(bakRoot, { recursive: true });
+          const dest = freePath(bakRoot, name);
+          renameSync(join(agentDir, name), dest);
+          process.stdout.write(`moved backup ${join(agentDir, name)} -> ${dest}\n`);
+        }
       }
       if (!existsSync(agentDir)) continue;
       if (uninstall) {
@@ -208,7 +245,9 @@ export async function skillsCmd(args: string[], home?: string, srcDir?: string):
         const state = skillState(path, target);
         if (state === "linked") continue;
         if (state !== "missing") {
-          const bak = backupPath(path, stampStr);
+          const bakRoot = backupRoot(hm, agentDir);
+          mkdirSync(bakRoot, { recursive: true });
+          const bak = backupPath(bakRoot, skill, stampStr);
           renameSync(path, bak);
           process.stdout.write(`moved aside ${path} -> ${bak}\n`);
         }
@@ -234,7 +273,7 @@ export async function skillsCmd(args: string[], home?: string, srcDir?: string):
     return 0;
   }
   if (drift.length > 0) {
-    process.stdout.write("\nrun 'te skills --install' to link them (real dirs are moved aside to .te-bak-<date>, never deleted)\n");
+    process.stdout.write("\nrun 'te skills --install' to link them (real dirs are moved aside under ~/.teamengage/skill-backups/, never deleted)\n");
   }
   return 0;
 }
