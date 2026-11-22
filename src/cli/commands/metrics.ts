@@ -65,6 +65,7 @@ interface Part {
 }
 interface MetricsResponse {
   totals: Rollup;
+  lessons_after_hard?: { hard_submits: number; lessons_left: number };
   agents?: Group[];
   tiers?: Group[];
   models?: Group[];
@@ -163,8 +164,15 @@ export async function metricsCmd(args: string[], home?: string): Promise<number>
   const t = data.totals;
   process.stdout.write(
     `${t.items} items with events — ${t.done} done, ${t.review_rounds} review rounds, ` +
-      `${t.bounces} bounces, ${t.handoffs} handoffs\n\n`,
+      `${t.bounces} bounces, ${t.handoffs} handoffs\n`,
   );
+  if (data.lessons_after_hard) {
+    // TE-0198: submits after a failed attempt that left a lesson behind
+    process.stdout.write(
+      `lessons after hard tasks: ${data.lessons_after_hard.lessons_left} of ${data.lessons_after_hard.hard_submits}\n`,
+    );
+  }
+  process.stdout.write("\n");
   const agents = data.agents ?? [];
   if (agents.length) {
     process.stdout.write("agents\n");

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveMetrics, rollUp, median, agentName, agentKind, agentModel, deriveReviewers } from "./metrics.js";
+import { deriveMetrics, rollUp, median, agentName, agentKind, agentModel, deriveReviewers, deriveLessonNudges } from "./metrics.js";
 import type { Event } from "../model/event.js";
 
 const ev = (
@@ -133,6 +133,29 @@ describe("agentKind (GL-0364)", () => {
 
   it("a name with no separator keeps itself", () => {
     expect(agentKind("devin")).toBe("devin");
+  });
+});
+
+describe("deriveLessonNudges (TE-0198)", () => {
+  it("counts submits after a failed attempt, and the ones followed by a same-session lesson", () => {
+    const events = [
+      // easy submit — no attempts, not counted
+      ev("2026-11-01T01:00:00Z", "submit", "GL-1", "devin@dt#a1"),
+      // hard submit — issues verdict before it
+      ev("2026-11-01T02:00:00Z", "review", "GL-2", "rev@dt#r1", { note: "issues: broken" }),
+      ev("2026-11-01T03:00:00Z", "submit", "GL-2", "devin@dt#a2"),
+      // hard submit — handoff before it; same actor leaves a lesson after
+      ev("2026-11-01T04:00:00Z", "handoff", "GL-3", "devin@dt#a3"),
+      ev("2026-11-01T05:00:00Z", "submit", "GL-3", "devin@dt#a3"),
+      ev("2026-11-01T06:00:00Z", "lesson", "", "devin@dt#a3"),
+      // a different actor's repo_context does not count for GL-2's submit
+      ev("2026-11-01T07:00:00Z", "repo_context", "", "other@dt#o1"),
+      // a lesson BEFORE a submit does not count
+      ev("2026-11-01T08:00:00Z", "lesson", "", "devin@dt#a4"),
+      ev("2026-11-01T09:00:00Z", "bounce", "GL-4", "rev@dt#r1"),
+      ev("2026-11-01T10:00:00Z", "submit", "GL-4", "devin@dt#a4"),
+    ];
+    expect(deriveLessonNudges(events)).toEqual({ hard_submits: 3, lessons_left: 1 });
   });
 });
 

@@ -415,10 +415,21 @@ export class WorkspaceOps {
     const plansDir = this.wsr.ws.plansDir;
     const now = new Date().toISOString();
     const body = text.trim().replace(/\s*\n\s*/g, " ");
+    // TE-0198: every lesson call logs an event — the metrics count how many
+    // hard-task submits the session followed with a lesson
+    const logLesson = () =>
+      this.store.logEvent({
+        ts: new Date().toISOString(),
+        actor: session.id,
+        session: session.id,
+        action: "lesson",
+        note: `#${d}`,
+      });
     const existing = await readLessons(plansDir, d);
     const at = existing.findIndex((l) => lessonKey(l) === lessonKey(body));
     if (at >= 0) {
       await updateLesson(plansDir, d, at + 1, session.id, now);
+      await logLesson();
       return { domain: d, merged: at + 1 };
     }
     // TE-0186: the same text already pending queues nothing new — the
@@ -428,6 +439,7 @@ export class WorkspaceOps {
     );
     if (dup) {
       await touchPendingLesson(plansDir, dup.n, now);
+      await logLesson();
       return { domain: d, pending: dup.n };
     }
     const n = await recordPendingLesson(plansDir, {
@@ -436,6 +448,7 @@ export class WorkspaceOps {
       by: session.id,
       at: now,
     });
+    await logLesson();
     return { domain: d, pending: n };
   }
 
@@ -2167,9 +2180,10 @@ export class WorkspaceOps {
    */
   async metrics(plan?: string) {
     const { readAllEvents } = await import("../../core/events/log.js");
-    const { deriveMetrics, rollUp, agentKind, deriveReviewers } = await import("../../core/metrics/metrics.js");
+    const { deriveMetrics, rollUp, agentKind, deriveReviewers, deriveLessonNudges } = await import("../../core/metrics/metrics.js");
     const r = await readAllEvents(join(this.wsr.ws.plansDir, "events"));
     const stats = deriveMetrics(r.events, this.wsr.ws.config.agent_models);
+    const lessons_after_hard = deriveLessonNudges(r.events);
 
     if (plan) {
       const ids = new Set([plan, ...this.index.descendants(plan)]);
@@ -2193,6 +2207,7 @@ export class WorkspaceOps {
           parts.map((p) => p.metrics).filter((m): m is NonNullable<typeof m> => m !== null),
         ),
         parts,
+        lessons_after_hard,
         warnings: r.warnings,
       };
     }
@@ -2266,6 +2281,7 @@ export class WorkspaceOps {
         const d = this.index.items.get(id)?.meta.domains;
         return d && d.length ? d : "untagged";
       }),
+      lessons_after_hard,
       warnings: r.warnings,
     };
   }

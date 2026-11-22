@@ -381,7 +381,16 @@ export function registerWriteTools(
         const o = ops();
         if (isToolResult(o)) return o;
         const r = await o.submit(id, s, { commits, tests, summary, notes, what, how, walkthrough, cost, provides, extra_touches, extra_touches_reason, unverified_reason, finding_states });
-        return okText(`in_review ${id}` + warnLines(r));
+        const lines = [`in_review ${id}` + warnLines(r)];
+        // TE-0198: a task that needed retries taught something — ask the
+        // agent to leave it behind. Advisory only, the submit stands.
+        const attempts = o.index.get(id)?.meta.attempts ?? 0;
+        if (attempts > 0) {
+          lines.push(
+            `this task needed ${attempts} attempt(s) — leave a lesson for the next agent: lesson {domain, text} or repo_context {repo, section, text}`,
+          );
+        }
+        return okText(lines.join("\n"));
       } catch (e) {
         return errFrom(e);
       }

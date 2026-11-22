@@ -528,13 +528,13 @@ describe("plain-HTTP agent API", () => {
     const claim = await call("POST", "/agent/claim/WS-0010", { token: t });
     expect(claim.status).toBe(200);
     expect(claim.text).toMatch(/^claimed WS-0010/);
-    expect(claim.text).toContain("warn: WS-0011 touches self: src/shared.ts");
+    expect(claim.text).toMatch(/warn:.*WS-0011 touches self: src\/shared\.ts/);
     expect(claim.text).not.toContain("WS-0012"); // done — not counted
     expect(claim.text).not.toContain("WS-0014"); // dropped — not counted
     expect(claim.text).not.toContain("WS-0013"); // same path, different repo
     // brief shows the same warning (WS-0010 is now in_progress, still counted)
     const brief = await call("GET", "/agent/brief/WS-0011", { token: t });
-    expect(brief.text).toContain("warn: WS-0010 touches self: src/shared.ts");
+    expect(brief.text).toMatch(/warn:.*WS-0010 touches self: src\/shared\.ts/);
   });
 });
 
@@ -739,6 +739,66 @@ describe("brief context (TE-0197)", () => {
     const clean = await call("GET", "/agent/brief/WS-0006", { token: t });
     expect(clean.text).not.toContain("open bugs on these paths");
     expect(clean.text).not.toContain("history (done items");
+  });
+});
+
+describe("lesson nudge (TE-0198)", () => {
+  it("no nudge on a first-try submit; nudge after a failed attempt; metrics counts lessons", async () => {
+    const wsr = ctx.workspaces.get("ws")!;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "easy task" },
+        { type: "task", title: "hard task" },
+      ],
+      human,
+    );
+    const [easy, hard] = ids;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+    await ops.approve(easy);
+    await ops.approve(hard);
+    const base = (await ops.metrics()).lessons_after_hard ?? { hard_submits: 0, lessons_left: 0 };
+
+    const a = await hello("nudge-easy");
+    expect((await call("POST", `/agent/claim/${easy}`, { token: a })).text).toMatch(/^claimed/);
+    const s1 = await call("POST", `/agent/submit/${easy}`, {
+      token: a,
+      body: { summary: "first try" },
+    });
+    expect(s1.status).toBe(200);
+    expect(s1.text).not.toContain("leave a lesson");
+
+    const b = await hello("nudge-hard");
+    expect((await call("POST", `/agent/claim/${hard}`, { token: b })).text).toMatch(/^claimed/);
+    const h = await call("POST", `/agent/handoff/${hard}`, {
+      token: b,
+      body: { problem: "stuck on X", tried: "approach Y", next: "try Z" },
+    });
+    expect(h.status).toBe(200);
+    const b2 = await hello("nudge-hard");
+    expect((await call("POST", `/agent/claim/${hard}`, { token: b2 })).text).toMatch(/^claimed/);
+    const s2 = await call("POST", `/agent/submit/${hard}`, {
+      token: b2,
+      body: { summary: "second try" },
+    });
+    expect(s2.status).toBe(200);
+    expect(s2.text).toContain("this task needed 1 attempt(s) — leave a lesson");
+
+    let m = await ops.metrics();
+    expect(m.lessons_after_hard).toEqual({
+      hard_submits: base.hard_submits + 1,
+      lessons_left: base.lessons_left,
+    });
+    const lr = await call("POST", "/agent/lesson", {
+      token: b2,
+      body: { domain: "test-domain", text: "always check the handoff note first" },
+    });
+    expect(lr.status).toBe(200);
+    m = await ops.metrics();
+    expect(m.lessons_after_hard).toEqual({
+      hard_submits: base.hard_submits + 1,
+      lessons_left: base.lessons_left + 1,
+    });
   });
 });
 

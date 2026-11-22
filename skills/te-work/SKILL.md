@@ -257,6 +257,13 @@ short line each: an API, a file, a message id, a command. Tasks that
 depend on yours see the list in their brief's dep block, so the next
 agent knows what it can build on instead of hunting for it.
 
+A submit on a task that needed retries (an `issues` verdict or a `handoff`)
+comes back with a `this task needed N attempt(s) — leave a lesson` line.
+That friction taught you something — write it down while it is fresh:
+`lesson {domain, text}` for a rule others can reuse (a trap, a build
+command), `repo_context {repo, section, text}` for where a thing lives.
+One or two lines is enough.
+
 Then tell the human it is in review. An acceptance item you could not verify
 → say so in `notes` (and why); never claim it passed.
 

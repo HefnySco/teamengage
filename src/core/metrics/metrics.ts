@@ -166,6 +166,45 @@ export function deriveMetrics(events: Event[], agentModels?: Record<string, stri
   return per;
 }
 
+/**
+ * TE-0198: submits that came after a failed attempt (issues verdict,
+ * bounce or handoff) — the "hard tasks" — and how many of them the same
+ * session followed with a `lesson` or `repo_context` event. Shown as
+ * `lessons after hard tasks: X of Y` in `te metrics`.
+ */
+export function deriveLessonNudges(events: Event[]): { hard_submits: number; lessons_left: number } {
+  const attempts = new Map<string, number>();
+  const learnedAt = new Map<string, number>();
+  const hard: { actor: string; ts: number }[] = [];
+  for (const e of events) {
+    if (!e.ts) continue;
+    switch (e.action) {
+      case "review":
+        if (e.item && (e.note ?? "").startsWith("issues")) {
+          attempts.set(e.item, (attempts.get(e.item) ?? 0) + 1);
+        }
+        break;
+      case "bounce":
+      case "handoff":
+        if (e.item) attempts.set(e.item, (attempts.get(e.item) ?? 0) + 1);
+        break;
+      case "submit":
+        if (e.item && (attempts.get(e.item) ?? 0) > 0) {
+          hard.push({ actor: e.actor, ts: Date.parse(e.ts) });
+        }
+        break;
+      case "lesson":
+      case "repo_context": {
+        const t = Date.parse(e.ts);
+        if (t > (learnedAt.get(e.actor) ?? 0)) learnedAt.set(e.actor, t);
+        break;
+      }
+    }
+  }
+  const lessons_left = hard.filter((s) => (learnedAt.get(s.actor) ?? 0) >= s.ts).length;
+  return { hard_submits: hard.length, lessons_left };
+}
+
 export function median(ns: number[]): number | undefined {
   if (!ns.length) return undefined;
   const s = [...ns].sort((a, b) => a - b);
