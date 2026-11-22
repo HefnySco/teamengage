@@ -419,6 +419,22 @@ describe("plain-HTTP agent API", () => {
         })
       ).text,
     ).toMatch(/^in_review/);
+    // DE-0251: the withdraw did not reset the send-back cap — this issues
+    // verdict is the fourth in a row (≥ cap), so the item stays in_review
+    // for the human instead of going back to the holder
+    const afterWithdraw = await call("POST", "/agent/review/WS-0005", {
+      token: reviewer,
+      body: { verdict: "issues", note: "red again", summary: "The tests fail again after the resubmit.", ask_human: {
+                problem: "tests are red after the change",
+                recommendation: "revert or fix the failing path, then resubmit",
+                options: ["send it back", "I will check"],
+              } },
+    });
+    expect(afterWithdraw.status).toBe(200);
+    expect(afterWithdraw.text).not.toContain("sent back to the holder");
+    expect((await call("GET", "/agent/brief/WS-0005", { token: reviewer })).text).toContain(
+      "in_review",
+    );
     await new Promise((r) => setTimeout(r, 300));
     expect(dirty()).toBe("");
   });

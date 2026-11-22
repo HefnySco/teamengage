@@ -2109,12 +2109,14 @@ export class WorkspaceOps {
         bounces++;
         continue;
       }
-      // the holder's own line of work between bounces
+      // the holder's own line of work between bounces — a withdraw +
+      // resubmit is still the same agent's attempt, not a human touch
       if (
         e.action === "submit" ||
         e.action === "log" ||
         e.action === "review" ||
-        e.action === "ask"
+        e.action === "ask" ||
+        e.action === "withdraw"
       ) {
         continue;
       }
