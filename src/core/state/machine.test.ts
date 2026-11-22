@@ -624,6 +624,37 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
     expect(r.events[0]).toMatchObject({ action: "review", from: "in_review", to: "in_review" });
   });
 
+  it("an issues verdict on a holder on another machine still counts as an attempt", () => {
+    const remote = { ...claimOf(), machine: "laptop" };
+    const r = transition(
+      item("in_review"),
+      { type: "review", verdict: "issues", note: "tests fail" },
+      agent2,
+      ctx({ claim: remote, holderAway: true }),
+    );
+    expect(r.meta.status).toBe("in_review");
+    expect(r.meta.attempts).toBe(1);
+    expect(r.effects).toEqual([]); // the remote claim stays — only the count moved
+    expect(r.log.some((l) => l.includes("attempt 1"))).toBe(true);
+    expect(r.log.some((l) => l.includes("another machine"))).toBe(true);
+  });
+
+  it("the second issues verdict on a remote holder escalates the tier, still in_review", () => {
+    const onceFailed = ItemMeta.parse({ id: "GL-0013", type: "task", title: "t", status: "in_review", attempts: 1, tier: "light" });
+    const remote = { ...claimOf(), machine: "laptop", tier: "light" as const };
+    const r = transition(
+      onceFailed,
+      { type: "review", verdict: "issues", note: "still red" },
+      agent2,
+      ctx({ claim: remote, holderAway: true, escalation: { after: 2, max: 5 } }),
+    );
+    expect(r.meta.attempts).toBe(2);
+    expect(r.meta.tier).toBe("standard"); // escalated at `after: 2`
+    expect(r.meta.status).toBe("in_review");
+    expect(r.effects).toEqual([]);
+    expect(r.log.some((l) => l.includes("escalated"))).toBe(true);
+  });
+
   it("an issues verdict with no claim, or an ok verdict, never releases", () => {
     const noClaim = transition(
       item("in_review"),

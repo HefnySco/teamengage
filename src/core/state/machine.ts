@@ -786,23 +786,34 @@ export function transition(
       const issues = action.verdict === "issues";
       const capped = issues && !humanBack && (ctx.priorBounces ?? 0) >= MAX_AI_BOUNCES;
       const otherMachine = issues && !!ctx.claim && ctx.claim.machine !== actor.machine;
-      if (issues && !capped && !otherMachine && ctx.claim) {
+      if (issues && !capped && ctx.claim) {
         const f = recordFailure(meta, out, ctx);
         const outgrown =
           !!f.escalated && !!ctx.claim.tier && tierRank(ctx.claim.tier) < tierRank(f.escalated);
-        if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.note ?? "issues"}`);
-        else if (outgrown || ctx.holderAway === true) set("ready", verdict);
-        else set("in_progress", verdict);
-        if (f.held || outgrown || ctx.holderAway === true) {
-          out.effects.push({ type: "delete_claim" });
-          out.effects.push({ type: "cleanup_work", keepBranches: true });
+        if (otherMachine) {
+          // DE-0250: the send-back counts as an attempt (attempts and the
+          // tier move, as the old bounce did) — but the synced remote claim
+          // is never touched: the item stays in_review for that machine
+          out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
+          out.log.push(`- ${stamp} ${who} sent the submission back with issues (attempt ${out.meta.attempts})`);
+          out.log.push(`- ${stamp} holder ${ctx.claim.holder}@${ctx.claim.machine} is on another machine — claim left for it`);
+          if (f.escalated) out.log.push(`- ${stamp} escalated → tier ${f.escalated}`);
+          if (f.held) out.log.push(`- ${stamp} ${out.meta.attempts} failed attempts — the item stays in review for the human`);
+        } else {
+          if (f.held) set("hold", `stuck after ${out.meta.attempts} attempts: ${action.note ?? "issues"}`);
+          else if (outgrown || ctx.holderAway === true) set("ready", verdict);
+          else set("in_progress", verdict);
+          if (f.held || outgrown || ctx.holderAway === true) {
+            out.effects.push({ type: "delete_claim" });
+            out.effects.push({ type: "cleanup_work", keepBranches: true });
+          }
+          out.log.push(`- ${stamp} ${who} sent the submission back with issues (attempt ${out.meta.attempts})`);
+          if (ctx.holderAway === true && !f.held && !outgrown)
+            out.log.push(`- ${stamp} claim released — holder ${ctx.claim.holder}@${ctx.claim.machine} can't act from here`);
+          if (f.escalated)
+            out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);
+          if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
         }
-        out.log.push(`- ${stamp} ${who} sent the submission back with issues (attempt ${out.meta.attempts})`);
-        if (ctx.holderAway === true && !f.held && !outgrown)
-          out.log.push(`- ${stamp} claim released — holder ${ctx.claim.holder}@${ctx.claim.machine} can't act from here`);
-        if (f.escalated)
-          out.log.push(`- ${stamp} escalated → tier ${f.escalated}${outgrown ? " (claim released for a stronger agent)" : ""}`);
-        if (f.held) out.log.push(`- ${stamp} on hold: ${out.meta.attempts} failed attempts — the human decides`);
       } else {
         out.events.push(ev(actor, stamp, meta.id, "review", from, from, verdict));
         if (capped) out.log.push(`- ${stamp} ${ctx.priorBounces} issues verdicts in a row — the item stays in review for the human`);
