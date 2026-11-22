@@ -514,6 +514,88 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
   });
 });
 
+describe("accept waits for dependencies (TE-0194)", () => {
+  it("B depends on A: accept refuses while A is open, --force lands it, auto-accept skips then takes it", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [
+        { type: "task", title: "Accept-order A" },
+        { type: "task", title: "Accept-order B", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [a, b] = ids;
+    await ops.approve(a);
+    await ops.approve(b);
+    const worker = ctx.sessions.hello("ad-agent");
+    const reviewer = ctx.sessions.hello("ad-reviewer");
+
+    // review_unblocks unchanged: B claims and submits while A is in_review
+    await ops.claim(a, worker);
+    await ops.submit(a, worker, { what: "task done", how: "ran the steps" });
+    expect(store.idx.get(a)!.meta.status).toBe("in_review");
+    expect(store.idx.get(b)!.blocked).toBe(false);
+    await ops.claim(b, worker);
+    await ops.submit(b, worker, { what: "task done", how: "ran the steps" });
+    await ops.review(b, reviewer, "ok", undefined, "verified the work");
+
+    // te accept B → refused, names the open dependency, changes nothing
+    await expect(ops.accept(b)).rejects.toThrow(new RegExp(`dependencies not done: ${a}`));
+    const refused = await api(`/api/items/${b}/accept`, { method: "POST" });
+    expect(refused.status).toBe(400);
+    expect(store.idx.get(b)!.meta.status).toBe("in_review");
+
+    // te status sees the wait
+    const inbox = (await (await api("/api/inbox")).json()) as {
+      accept_waiting: Array<{ id: string; deps: string[] }>;
+    };
+    expect(inbox.accept_waiting).toContainEqual({ id: b, deps: [a] });
+
+    // auto-accept skips B while A is open; after A is done the next sweep takes it
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.auto_accept_after = "30m";
+    try {
+      const future = Date.now() + 3_600_000;
+      expect(await ops.autoAccept(future)).not.toContain(b);
+      expect(store.idx.get(b)!.meta.status).toBe("in_review");
+      await ops.accept(a);
+      expect(store.idx.get(a)!.meta.status).toBe("done");
+      expect(await ops.autoAccept(future)).toContain(b);
+      expect(store.idx.get(b)!.meta.status).toBe("done");
+    } finally {
+      wsr.ws.config.autonomy = "strict";
+    }
+
+    // te accept --force accepts over an open dependency
+    const { ids: more } = await store.createItems(
+      [
+        { type: "task", title: "Accept-order C" },
+        { type: "task", title: "Accept-order D", depends_on: ["#0"] },
+      ],
+      human,
+    );
+    const [c, d] = more;
+    await ops.approve(c);
+    await ops.approve(d);
+    await ops.claim(c, worker);
+    await ops.submit(c, worker, { what: "task done", how: "ran the steps" });
+    await ops.claim(d, worker);
+    await ops.submit(d, worker, { what: "task done", how: "ran the steps" });
+    const forced = await api(`/api/items/${d}/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ force: true }),
+    });
+    expect(forced.status).toBe(200);
+    expect(store.idx.get(d)!.meta.status).toBe("done");
+    expect(store.idx.get(c)!.meta.status).toBe("in_review");
+  });
+});
+
 describe("per-task unblocks_on (key tasks)", () => {
   it("a key task holds its dependents until accepted, even with review_unblocks on; and the reverse", async () => {
     const { WorkspaceOps } = await import("./ops.js");

@@ -45,19 +45,26 @@ async function act(
 }
 
 /** `te approve A B C` — one call per id; stops at the first refusal. */
-async function each(action: string, args: string[], home?: string): Promise<number> {
+async function each(
+  action: string,
+  args: string[],
+  home?: string,
+  body: Record<string, unknown> = {},
+): Promise<number> {
   const ids = positional(args);
-  if (ids.length < 2) return act(action, args, {}, home);
+  if (ids.length < 2) return act(action, args, body, home);
   const flags = args.filter((a, i) => a.startsWith("--") || args[i - 1]?.startsWith("--"));
   for (const id of ids) {
-    const code = await act(action, [id, ...flags], {}, home);
+    const code = await act(action, [id, ...flags], body, home);
     if (code) return code;
   }
   return 0;
 }
 
 export const approveCmd = (args: string[], home?: string) => each("approve", args, home);
-export const acceptCmd = (args: string[], home?: string) => each("accept", args, home);
+/** `te accept <ID> [--force]` — --force accepts while dependencies are still open (TE-0194). */
+export const acceptCmd = (args: string[], home?: string) =>
+  each("accept", args, home, args.includes("--force") ? { force: true } : {});
 export const humanClaimCmd = (args: string[], home?: string) => act("claim", args, {}, home);
 
 export async function answerCmd(args: string[], home?: string): Promise<number> {

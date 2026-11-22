@@ -256,6 +256,26 @@ export class WorkspaceOps {
     });
   }
 
+  /**
+   * TE-0194: acceptance is stricter than starting work — a dependency must be
+   * done, not just in_review under review_unblocks, before the item lands.
+   * Returns the depends_on refs still open; an unparseable or unknown dep
+   * counts as open.
+   */
+  acceptBlockedDeps(it: IndexedItem): string[] {
+    return it.meta.depends_on.filter((ref) => {
+      let parsed;
+      try {
+        parsed = parseItemRef(ref);
+      } catch {
+        return true;
+      }
+      const local = parsed.workspace ? undefined : this.index.get(parsed.id);
+      const status = local?.meta.status ?? this.links?.statusOf(ref);
+      return status !== "done";
+    });
+  }
+
   // ---- reads ------------------------------------------------------------
 
   /**
@@ -2620,6 +2640,8 @@ export class WorkspaceOps {
   async autoAccept(now = Date.now()) {
     const done: string[] = [];
     for (const id of this.autoAcceptDue(now)) {
+      // TE-0194: an open dependency holds the accept — the next sweep retries
+      if (this.acceptBlockedDeps(this.item(id)).length) continue;
       const r = await this.accept(id, "daemon");
       if (!r.bounced?.length) {
         await this.store.annotate(id, {
@@ -3108,12 +3130,23 @@ export class WorkspaceOps {
   async accept(
     id: string,
     by: "human" | "daemon" = "human",
+    force = false,
   ): Promise<{ meta: unknown; merged: unknown[]; bounced?: string[] }> {
     const it = this.item(id);
     // refuse early — never merge work for an item that isn't in_review
     if (it.meta.status !== "in_review") {
       throw new InvalidTransitionError(
         `cannot accept from ${it.meta.status}`,
+        it.meta.status,
+        "accept",
+      );
+    }
+    // TE-0194: review_unblocks lets dependents start, but nothing lands
+    // before its dependencies are done — the human may force it.
+    const open_deps = this.acceptBlockedDeps(it);
+    if (by === "human" && !force && open_deps.length) {
+      throw new InvalidTransitionError(
+        `cannot accept — dependencies not done: ${open_deps.join(", ")} (te accept ${id} --force to accept anyway)`,
         it.meta.status,
         "accept",
       );

@@ -418,6 +418,7 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
     drafts: string[];
     questions: Array<{ id: string; question?: { text: string } }>;
     reviews: string[];
+    accept_waiting?: Array<{ id: string; deps: string[] }>;
     claims: Array<{ item: string }>;
     drop_flags: Array<{ id: string; by: string }>;
     findings: Array<{ severity: string }>;
@@ -435,6 +436,7 @@ export async function statusCmd(args: string[], home?: string): Promise<number> 
       `drafts: ${i.drafts.join(", ") || "-"}`,
       `questions: ${i.questions.map((q) => q.id).join(", ") || "-"}`,
       `reviews: ${i.reviews.join(", ") || "-"}`,
+      `accept waits: ${(i.accept_waiting ?? []).map((x) => `${x.id} (needs ${x.deps.join(", ")})`).join(", ") || "-"}`,
       `drop flags: ${(i.drop_flags ?? []).map((f) => `${f.id} (${f.by})`).join(", ") || "-"}`,
       `conflicted claims: ${i.claims.map((c) => c.item).join(", ") || "-"}`,
       `findings: ${i.findings.length}`,

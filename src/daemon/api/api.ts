@@ -418,6 +418,12 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           .filter((i) => i.meta.question?.to === "peer")
           .map((i) => ({ id: i.meta.id, question: i.meta.question })),
         reviews: items.filter((i) => i.meta.status === "in_review").map((i) => i.meta.id),
+        // TE-0194: an in_review item whose dependencies are not done yet
+        // refuses accept (unless --force); auto-accept skips it until they land
+        accept_waiting: items
+          .filter((i) => i.meta.status === "in_review")
+          .map((i) => ({ id: i.meta.id, deps: ops.acceptBlockedDeps(i) }))
+          .filter((x) => x.deps.length),
         claims: [...ops.index.claims.values()].filter((c) => c.conflicted),
         drop_flags: items
           .filter((i) => i.meta.drop_request)
@@ -994,7 +1000,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   // human as actor; no separate decide endpoint (review picks are gone)
   act("send_back", (ops, id, b) => ops.sendBack(id, b.reason ? String(b.reason) : undefined));
   act("change_answer", (ops, id, b) => ops.changeAnswer(id, String(b.text ?? "")));
-  act("accept", (ops, id) => ops.accept(id));
+  act("accept", (ops, id, b) => ops.accept(id, "human", b.force === true));
   act("withdraw", (ops, id) => ops.withdraw(id, "human"));
   act("reject", (ops, id, b) =>
     ops.reject(id, b.reason ? String(b.reason) : undefined, b.release === true),
