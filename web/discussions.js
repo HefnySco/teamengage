@@ -22,6 +22,21 @@ const StateChip = ({ st }) =>
   html`<span class=${`badge ${STATE_BADGE[st] ?? "text-bg-secondary"}`}>${st ?? "?"}</span>`;
 
 /** `## ` sections of a DISC/markdown file → [{heading, body}] in document order. */
+/** `- <path> — <caption>` lines in ## Artifacts → the filename is a link. */
+const ArtifactList = ({ text }) => {
+  const rows = (text ?? "")
+    .split("\n")
+    .map((l) => /^-\s+(\S+)\s+[—–]\s*(.*)$/.exec(l.trim()))
+    .filter(Boolean);
+  if (!rows.length)
+    return html`<div class="small md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(text || "—") }} />`;
+  return html`<ul class="small mb-0 ps-3">
+    ${rows.map((m, i) => html`<li key=${i}>
+      <a href=${`/api/artifacts/file?path=${encodeURIComponent(m[1])}`} target="_blank" rel="noopener">${m[1]}</a>${m[2] ? ` — ${m[2]}` : ""}
+    </li>`)}
+  </ul>`;
+};
+
 const sectionsOf = (text) => {
   const body = (text ?? "").replace(/^---\n[\s\S]*?\n---\n?/, "");
   const out = [];
@@ -173,13 +188,21 @@ const DiscussionView = ({ id }) => {
           })}
         </div>`}
       <div class="row g-3">
-        ${shown.map((s) => html`
-          <div key=${s.heading} class=${/^summary$/i.test(s.heading) ? "col-12" : "col-md-6 col-xl-4"}>
+        ${(() => {
+          // with 3+ side cards split thirds at xl; with 1-2 give each a half —
+          // two cards at a third leave a dead third of the row
+          const side = shown.filter((s) => !/^summary$/i.test(s.heading)).length;
+          const col = side >= 3 ? "col-md-6 col-xl-4" : "col-md-6";
+          return shown.map((s) => html`
+          <div key=${s.heading} class=${/^summary$/i.test(s.heading) ? "col-12" : col}>
             <div class="card h-100">
               <div class="card-header py-2 small fw-semibold">${s.heading}</div>
-              <div class="card-body py-2 small disc-section md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(s.body || "—") }} />
+              ${/^artifacts$/i.test(s.heading)
+                ? html`<div class="card-body py-2 disc-section"><${ArtifactList} text=${s.body} /></div>`
+                : html`<div class="card-body py-2 small disc-section md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(s.body || "—") }} />`}
             </div>
-          </div>`)}
+          </div>`);
+        })()}
       </div>
       <${TranscriptReader} id=${id} />
     </div>`;

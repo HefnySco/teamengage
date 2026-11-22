@@ -8,7 +8,7 @@ import { join, resolve, sep, isAbsolute, relative } from "node:path";
 import { resolveSource, stripFrontmatter, sectionBody } from "../../core/files/source.js";
 import { parseArtifacts, parseChecks } from "../../core/files/markdown.js";
 import { scanSecrets, redactSecrets } from "../../core/files/secrets.js";
-import { transcriptToMarkdown } from "../../core/files/transcript.js";
+import { normalizeSpeakerLines, transcriptToMarkdown } from "../../core/files/transcript.js";
 import {
   normalizeDomain,
   normalizeDomains,
@@ -1012,7 +1012,10 @@ export class WorkspaceOps {
     }
     const file = this.transcriptFileOf(it);
     if (!file) throw new NotFoundError(`${id}: no transcript saved yet`);
-    const lines = readFileSync(file, "utf8").split("\n");
+    // transcripts saved before the speaker-line rule (pasted `**name:**`
+    // chats) read back in the canonical ## turn format — the files stay
+    // as they were
+    const lines = normalizeSpeakerLines(readFileSync(file, "utf8")).split("\n");
     const pages = Math.max(1, Math.ceil(lines.length / TRANSCRIPT_PAGE_LINES));
     const p = Math.min(Math.max(1, page), pages);
     // every `## ` turn header over the whole file — the reader's jump dots

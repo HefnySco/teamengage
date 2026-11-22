@@ -6,7 +6,8 @@
  * name, first arguments, result size — so megabytes of tool output never
  * reach the plans git repo (TE-0181). Plain text and Markdown pass
  * through — except `## user` turns that carry <system-reminder> plumbing,
- * which refold the same way.
+ * which refold the same way. Pasted `**name:**` speaker lines normalize to
+ * `## human`/`## assistant` headers so every transcript shares one format.
  */
 
 export interface TranscriptResult {
@@ -218,8 +219,51 @@ function jsonlToMarkdown(text: string): string {
   return out.join("\n");
 }
 
+/**
+ * Pasted chats often mark turns as `**name:** text` — normalize those into
+ * the `## human`/`## assistant` headers the reader and the turns index
+ * understand, so every stored transcript uses one turn format. Only a
+ * `**name:**` at a line start, outside fences and after a blank line (or
+ * the file start) counts — bold prose inside a turn is left alone.
+ */
+const SPEAKER_HEAD = /^\*\*([A-Za-z][\w.-]{0,30}):\*\*\s*(.*)$/;
+const HUMAN_NAME = /^(human|user)$/i;
+const ASSISTANT_NAME = /^(assistant|agent|ai|claude|devin|gemini|codex|gpt|copilot)$/i;
+
+export function normalizeSpeakerLines(text: string): string {
+  const out: string[] = [];
+  let fence: string | null = null;
+  let prevBlank = true; // the file start counts
+  for (const line of text.split("\n")) {
+    const f = /^(```|~~~)/.exec(line.trim());
+    if (f) {
+      if (fence === null) fence = f[1];
+      else if (line.trim().startsWith(fence)) fence = null;
+      out.push(line);
+      prevBlank = false;
+      continue;
+    }
+    if (fence) {
+      out.push(line);
+      prevBlank = false;
+      continue;
+    }
+    const m = prevBlank ? SPEAKER_HEAD.exec(line) : null;
+    if (!m || (!HUMAN_NAME.test(m[1]) && !ASSISTANT_NAME.test(m[1]))) {
+      out.push(line);
+      prevBlank = line.trim() === "";
+      continue;
+    }
+    const name = m[1].toLowerCase();
+    out.push(HUMAN_NAME.test(name) ? "## human" : `## assistant${name === "assistant" ? "" : ` (${name})`}`, "");
+    if (m[2].trim()) out.push(m[2]);
+    prevBlank = false;
+  }
+  return out.join("\n");
+}
+
 /** Convert a chat export to the stored Markdown form. */
 export function transcriptToMarkdown(input: string): TranscriptResult {
   if (looksLikeJsonl(input)) return { text: jsonlToMarkdown(input), format: "jsonl" };
-  return { text: foldReminderTurns(input), format: "markdown" };
+  return { text: normalizeSpeakerLines(foldReminderTurns(input)), format: "markdown" };
 }

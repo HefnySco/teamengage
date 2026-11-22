@@ -2876,8 +2876,12 @@ const ArtThumb = ({ a, onOpen }) => {
 };
 
 /** Popup viewer: large view, caption, item id, domain chips, prev/next, Esc. */
+// text-ish extensions preview inside the viewer — fetched as text
+const ART_TEXT = new Set(["md", "markdown", "txt", "log", "json", "yaml", "yml", "csv", "ts", "tsx", "js", "jsx", "sh", "py", "ini", "toml", "xml", "css", "po", "diff"]);
+
 const ArtViewer = ({ arts, i, onClose, onNav }) => {
   const [unblur, setUnblur] = useState(false);
+  const [text, setText] = useState(null);
   useEffect(() => setUnblur(false), [i]);
   useEffect(() => {
     const f = (e) => {
@@ -2889,8 +2893,20 @@ const ArtViewer = ({ arts, i, onClose, onNav }) => {
     return () => removeEventListener("keydown", f);
   }, [i, arts.length]);
   const a = arts[i];
+  const ext = a ? artExt(a.path) : "";
+  useEffect(() => {
+    setText(null);
+    if (!a || !ART_TEXT.has(ext)) return;
+    let live = true;
+    fetch(artUrl(a.path))
+      .then((r) => (r.ok ? r.text() : null))
+      .then((t) => live && setText(t))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [a?.path, i]);
   if (!a) return null;
-  const ext = artExt(a.path);
   const blurred = a.sensitive && !unblur;
   return html`
     <div class="modal-backdrop show"></div>
@@ -2913,7 +2929,9 @@ const ArtViewer = ({ arts, i, onClose, onNav }) => {
                 ? html`<iframe sandbox="" src=${artUrl(a.path)} title=${a.caption}></iframe>`
                 : ext === "pdf"
                   ? html`<iframe src=${artUrl(a.path)} title=${a.caption}></iframe>`
-                  : html`<div class="art-ico-lg">${(ext || "?").toUpperCase()}</div>`}
+                  : ART_TEXT.has(ext) && text !== null
+                    ? html`<pre class="art-text small">${text}</pre>`
+                    : html`<div class="art-ico-lg">${(ext || "?").toUpperCase()}</div>`}
             ${a.sensitive && blurred && html`<div class="art-sens-hint">sensitive — click to reveal</div>`}
           </div>
           <div class="modal-footer py-1 d-flex align-items-center">

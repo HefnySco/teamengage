@@ -242,20 +242,38 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       ) {
         throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
       }
-      const root = join(ops.wsr.ws.root, ".artifacts");
-      let real: string, realRoot: string;
-      try {
-        real = realpathSync(join(root, rel));
-        realRoot = realpathSync(root);
-      } catch {
+      // declared artifact paths live in two places: attached files under
+      // .artifacts/ (path rel to it), and plans-tree files an item's
+      // ## Artifacts section names repo-relative (e.g. <project>/X.transcript.md).
+      // The first serves as before; the second only when the path is declared.
+      const wsRoot = ops.wsr.ws.root;
+      const bases = [join(wsRoot, ".artifacts")];
+      if (!rel.startsWith(".artifacts") && (await ops.allArtifacts()).some((a) => a.path === rel)) {
+        bases.push(wsRoot);
+      }
+      let real: string | undefined;
+      let escaped = false;
+      for (const base of bases) {
+        try {
+          const cand = realpathSync(join(base, rel));
+          const realBase = realpathSync(base);
+          if (cand === realBase || cand.startsWith(realBase + sep)) {
+            real = cand;
+            break;
+          }
+          escaped = true;
+        } catch {
+          // not under this base — try the next
+        }
+      }
+      if (!real) {
+        if (escaped) throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
         throw new NotFoundError(`artifact not found: ${rel}`);
       }
-      if (real !== realRoot && !real.startsWith(realRoot + sep)) {
-        throw new ForbiddenError(`artifact path escapes .artifacts/: ${rel}`);
-      }
       const ext = extname(real).toLowerCase();
+      // .md as text/plain so the browser displays it instead of downloading
       const r = reply
-        .type(MIME[ext] ?? "application/octet-stream")
+        .type(ext === ".md" ? "text/plain; charset=utf-8" : (MIME[ext] ?? "application/octet-stream"))
         .header("cache-control", "no-cache");
       if (ext === ".html" || ext === ".htm" || ext === ".svg")
         r.header("content-security-policy", "sandbox");

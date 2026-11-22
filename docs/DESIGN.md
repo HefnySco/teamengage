@@ -224,7 +224,8 @@ never claimed and never worked; tasks plan from it through `relates`
   `## Actions`, `## Artifacts`, `## Notes`). This is what `search` and
   `brief` read.
 - `DISC-NN-<slug>.transcript.md` — the **raw** layer: the chat as Markdown
-  turns, linked under `## Artifacts` and committed with the plans repo.
+  turns (`## human` / `## assistant` headers), linked under `## Artifacts`
+  and committed with the plans repo.
   Tool calls and tool results land as one-line summaries — name, first
   arguments, result size — so megabytes of tool output never reach the
   repo (TE-0181). `keep_raw: true` on capture also writes the untouched
@@ -242,7 +243,10 @@ related count covers that signal.
 **Capture** (`capture`, `POST /api/discussions`, `te discuss save`) takes
 the distilled sections plus the transcript as text or a file; a Claude
 Code JSONL export converts to Markdown turns (user / assistant turns in
-full, tool calls and results as one-line summaries). Before the write the
+full, tool calls and results as one-line summaries), and pasted
+`**name:**` speaker lines normalize to the same `##` turn headers —
+reading a transcript always returns that one format, whatever the file
+holds. Before the write the
 transcript is **secret-scanned**
 (API keys, tokens, passwords, private keys, JWTs): a hit refuses the call
 and names the lines, unless `redact: true` masks each with `[REDACTED]` or

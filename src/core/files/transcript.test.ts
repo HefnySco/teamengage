@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { looksLikeJsonl, transcriptToMarkdown, foldReminderTurns } from "./transcript.js";
+import { looksLikeJsonl, normalizeSpeakerLines, transcriptToMarkdown, foldReminderTurns } from "./transcript.js";
 
 const CLAUDE_JSONL = [
   JSON.stringify({ type: "summary", summary: "Talk about gates" }),
@@ -195,5 +195,30 @@ describe("foldReminderTurns", () => {
     const raw =
       "# Title\n\n## user — ts\n\nhi\n\n### tool result\n\nfolded\n\n## assistant\n\nyo\n";
     expect(foldReminderTurns(raw)).toBe(raw);
+  });
+});
+
+describe("normalizeSpeakerLines", () => {
+  it("turns pasted **name:** speaker lines into ## turn headers", () => {
+    const raw = "**human:** do MP-0287\n\n**claude:** claimed it\n\n**human:** why?\n\n**assistant:** because";
+    const out = normalizeSpeakerLines(raw);
+    expect(out).toContain("## human\n\ndo MP-0287");
+    expect(out).toContain("## assistant (claude)\n\nclaimed it");
+    expect(out).toContain("## assistant\n\nbecause");
+  });
+
+  it("only converts at a blank-line start — bold prose stays prose", () => {
+    const raw = "## human\n\nask\n\n## assistant\n\nfirst line\n**human:** not a turn, mid-paragraph\n\n**note:** not a speaker";
+    const out = normalizeSpeakerLines(raw);
+    expect(out).toContain("**human:** not a turn, mid-paragraph");
+    expect(out).toContain("**note:** not a speaker");
+    expect((out.match(/^## human/gm) ?? []).length).toBe(1);
+  });
+
+  it("leaves fenced code untouched", () => {
+    const raw = "**human:** show me\n\n```\n**claude:** example inside code\n```\n";
+    const out = normalizeSpeakerLines(raw);
+    expect(out).toContain("```\n**claude:** example inside code\n```");
+    expect((out.match(/^## /gm) ?? []).length).toBe(1);
   });
 });
