@@ -217,6 +217,7 @@ EXAMPLES
   curl -s -X POST ${base}/agent/log/MP-0002 -H "X-TE-Session: $T" -d '{"note":"tests green"}'
   curl -s -X POST ${base}/agent/ask/MP-0002 -H "X-TE-Session: $T" -d '{"question":"A or B?","options":["A","B"]}'
   curl -s -X POST ${base}/agent/attach/MP-0002 -H "X-TE-Session: $T" -d '{"path":"mockups/home.png","caption":"home tab mockup"}'
+  (attach: omit "domains" to inherit the item's tags — domains is for artifact-specific tags only)
   curl -s -X POST ${base}/agent/submit/MP-0002 -H "X-TE-Session: $T" -d '{"commits":["abc123"],"summary":"the link retries on timeout — added a retry loop in connect"}'
 
 Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.

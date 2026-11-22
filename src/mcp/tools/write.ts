@@ -216,6 +216,8 @@ export function registerWriteTools(
         "Attach a file to an item's ## Artifacts: copies it to <root>/.artifacts/<project>/<id-lowercase>-<basename> " +
         "(no copy when the file already sits under .artifacts/), adds '- <path> — <caption> [#domain …] [!sensitive]' " +
         "and a log entry. Any session may attach to any item — no claim needed (like ask); planners attach mockups to drafts. " +
+        "Omit domains to inherit the item's tags — domains is for artifact-specific tags only; a copy of the item's " +
+        "domains is written with no own tags anyway (it would freeze a stale snapshot). " +
         "Refused: a '..' path or a file outside the task folder, a name clash with different content, a file over " +
         "workspace.yaml artifacts.max_mb (default 5), a type outside png jpg webp gif svg pdf html md txt json csv. " +
         "sensitive: true tags the line !sensitive — the file still goes into the plans git repo, and the reply warns.",

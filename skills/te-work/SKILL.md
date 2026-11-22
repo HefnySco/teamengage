@@ -179,9 +179,12 @@ curl -s -X POST $B/attach/GL-0019 -H "$H" -d '{"path":"mockups/home.png","captio
 ```
 
 The file is copied to `.artifacts/<project>/<id>-<name>` and the line is
-added for you — no claim needed. `sensitive: true` marks `!sensitive` (the
-file still goes into the plans repo — check the warning). `detach` removes a
-line, keeps the file.
+added for you — no claim needed. Omit `domains` to inherit the item's
+tags; `domains` is for artifact-specific tags only — never echo the
+item's domains into it (a copied set goes stale when the item's domains
+change, and the line just inherits anyway). `sensitive: true` marks
+`!sensitive` (the file still goes into the plans repo — check the
+warning). `detach` removes a line, keeps the file.
 
 ## 6. Unsure? Ask — don't guess
 

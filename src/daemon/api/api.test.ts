@@ -1520,6 +1520,45 @@ describe("attach/detach artifacts", () => {
     expect(existsSync(join(root, ".artifacts", "_root", "ws-0001-shot.png"))).toBe(true);
     await expect(ops.detach("WS-0001", agent, "_root/ws-0001-shot.png")).rejects.toThrow(/no artifact/);
   });
+
+  it("domains equal to the item's write no #tags (the line inherits); specific tags stay (TE-0170)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const agent = ctx.sessions.hello("art-domains");
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems(
+      [{ type: "task", title: "artifact domains", domains: ["bug", "gpio"] }],
+      human,
+    );
+    const [id] = ids;
+    const root = join(home, "ws");
+    const itemText = () => readFileSync(join(plans, store.idx.get(id)!.path), "utf8");
+    const domainsOf = (p: string) =>
+      store.idx.get(id)!.artifacts.find((x) => x.path === p)!.domains;
+
+    // an echo of the item's domains (any order) writes no own #tags — the
+    // line inherits the live item domains in parseArtifacts
+    writeFileSync(join(root, "eq.png"), Buffer.from([1]));
+    const eq = await ops.attach(id, agent, {
+      path: "eq.png",
+      caption: "same",
+      domains: ["gpio", "bug"],
+    });
+    expect(itemText()).toContain(`- ${eq.path} — same\n`);
+    expect(domainsOf(eq.path)).toEqual(["bug", "gpio"]);
+
+    // artifact-specific tags are written as own #tags
+    writeFileSync(join(root, "spec.png"), Buffer.from([2]));
+    const sp = await ops.attach(id, agent, {
+      path: "spec.png",
+      caption: "specific",
+      domains: ["ui"],
+    });
+    expect(itemText()).toContain(`- ${sp.path} — specific #ui\n`);
+    expect(domainsOf(sp.path)).toEqual(["ui"]);
+  });
 });
 
 describe("artifact file serving and lists", () => {

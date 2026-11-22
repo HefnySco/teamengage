@@ -1217,7 +1217,8 @@ export class PlansStore {
    * name clash with different content are refused. The list line is written
    * to the task file (overlay) or the item file (standard); attaching the
    * same path twice is a no-op. Any actor may attach — no claim, no state
-   * change.
+   * change. `domains` equal to the item's own write no #tags, so the line
+   * inherits the item's live domains instead of freezing a stale copy.
    */
   attachArtifact(
     id: string,
@@ -1277,14 +1278,19 @@ export class PlansStore {
         }
       }
 
-      const tags = normalizeDomains(a.domains ?? [])
-        .map((d) => `#${d}`)
-        .join(" ");
-      const line = `- ${rel} — ${caption}${tags ? ` ${tags}` : ""}${a.sensitive ? " !sensitive" : ""}`;
       const now = new Date().toISOString();
       const who = actor.kind === "human" ? "human" : actor.session;
       const absItem = join(this.ws.plansDir, it.path);
       const doc = parseItemFile(await readFile(absItem, "utf8"), absItem);
+      // a #tag copy of the item's domains freezes a stale snapshot on the
+      // line — write no own tags so the line inherits the live domains in
+      // parseArtifacts (TE-0170); #tags are for artifact-specific domains
+      const own = normalizeDomains(a.domains ?? []);
+      const itemDomains = normalizeDomains(doc.meta.domains);
+      const inherits =
+        own.length === itemDomains.length && own.every((d) => itemDomains.includes(d));
+      const tags = (inherits ? [] : own).map((d) => `#${d}`).join(" ");
+      const line = `- ${rel} — ${caption}${tags ? ` ${tags}` : ""}${a.sensitive ? " !sensitive" : ""}`;
       const meta = { ...doc.meta, version: doc.meta.version + 1, updated: now } as ItemMeta;
       const log = [`- ${now} ${who} attached .artifacts/${rel} — ${caption}`];
       if (this.ws.config.mode === "overlay" && doc.meta.source) {
