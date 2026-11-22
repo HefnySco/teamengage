@@ -1252,3 +1252,25 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .tier-chip.tier-light { color: var(--bs-success-text-emphasis); border-color: color-mix(in srgb, var(--bs-success) 50%, transparent); }
 .tier-chip.tier-standard { color: var(--bs-primary-text-emphasis); border-color: color-mix(in srgb, var(--bs-primary) 50%, transparent); }
 .tier-chip.tier-heavy { color: var(--bs-warning-text-emphasis); border-color: color-mix(in srgb, var(--bs-warning) 50%, transparent); }
+
+/* TE-0188 — top-down office on the team page: a room per machine, a desk
+   per session; the chair is filled, away, or empty */
+.office { border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .6rem .75rem; margin-bottom: 1rem; background: var(--bs-tertiary-bg); }
+.office-floor { display: flex; flex-wrap: wrap; gap: .75rem; align-items: stretch; }
+.office-room { border: 1px solid var(--bs-border-color); border-radius: .4rem; padding: .4rem .6rem .6rem; background: var(--bs-body-bg); min-width: 130px; }
+.office-room-name { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); margin-bottom: .4rem; }
+.office-desks { display: flex; flex-wrap: wrap; gap: .7rem; }
+.seat { width: 86px; text-align: center; animation: seat-in .35s ease; }
+@keyframes seat-in { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.seat-bubble { min-height: 1rem; font-size: .66rem; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; align-content: flex-start; }
+.seat-bubble .id { cursor: pointer; background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); border-radius: .25rem; padding: 0 .25rem; }
+.seat-bubble .id:hover { background: var(--bs-primary); color: #fff; }
+.seat-desk { height: 24px; margin: 3px 12px 0; border: 1px solid var(--bs-border-color); border-radius: .3rem; background: var(--bs-secondary-bg); }
+.seat-chair { width: 30px; height: 30px; margin: 5px auto 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .68rem; font-weight: 700; color: #fff; background: hsl(var(--seat-hue, 200) 45% 45%); }
+.seat-away .seat-chair { background: transparent; border: 2px solid hsl(var(--seat-hue, 200) 45% 45%); color: hsl(var(--seat-hue, 200) 40% 45%); }
+.seat-empty .seat-chair { border: 2px dashed var(--bs-border-color); background: transparent; }
+.seat-empty .seat-name, .seat-empty .seat-bubble { opacity: .45; }
+.seat-name { font-size: .66rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-chair-on { background: var(--bs-success); }
+.seat-chair-off { background: transparent; border: 2px solid var(--bs-secondary-color); color: var(--bs-secondary-color); }
+.office-ticker { margin-top: .5rem; padding-top: .4rem; border-top: 1px dashed var(--bs-border-color); font-size: .72rem; color: var(--bs-secondary-color); }

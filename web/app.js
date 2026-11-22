@@ -539,6 +539,110 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
     </div>`;
 };
 
+// TE-0188 — top-down office for the team page: one room per machine, one
+// desk per session. The API lists live sessions only, so a desk whose
+// session left keeps an empty chair for a while (client memory only) and a
+// live session gone quiet sits in a chair that looks away.
+const OFFICE_QUIET_MS = 15 * 60_000; // no call this long → the chair looks away
+const OFFICE_GONE_MS = 30 * 60_000; // an empty chair fades out after this
+const seatHue = (name) => {
+  let hue = 0;
+  for (const c of name) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  return hue;
+};
+
+const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
+  const known = useRef(new Map()); // session id → {s, gone: 0 | ms-left}
+  const live = sessions ?? [];
+  const liveIds = new Set(live.map((s) => s.id));
+  const now = Date.now();
+  useEffect(() => {
+    const k = known.current;
+    for (const s of live) {
+      const e = k.get(s.id);
+      if (e) {
+        e.s = s;
+        e.gone = 0;
+      } else k.set(s.id, { s, gone: 0 });
+    }
+    for (const [id, e] of k) {
+      if (!liveIds.has(id) && !e.gone) e.gone = Date.now();
+      if (e.gone && Date.now() - e.gone > OFFICE_GONE_MS) k.delete(id);
+    }
+  }, [live]);
+  // rooms: live sessions plus remembered empty chairs, grouped by machine
+  const rooms = new Map(); // machine → [{s, gone}]
+  const seat = (s, gone) => {
+    const r = rooms.get(s.machine) ?? rooms.set(s.machine, []).get(s.machine);
+    r.push({ s, gone });
+  };
+  for (const s of live) seat(s, 0);
+  for (const e of known.current.values())
+    if (e.gone && !liveIds.has(e.s.id) && now - e.gone <= OFFICE_GONE_MS) seat(e.s, e.gone);
+  const ev = dispatch?.events ?? [];
+  const last = ev[ev.length - 1];
+  return html`
+    <div class="office">
+      <div class="office-floor">
+        ${rooms.size === 0 && html`<div class="small text-secondary">the office is quiet — no live sessions</div>`}
+        ${[...rooms.keys()].sort().map(
+          (machine) => html`
+            <div class="office-room" key=${machine}>
+              <div class="office-room-name">${machine}</div>
+              <div class="office-desks">
+                ${rooms.get(machine).map(({ s, gone }) => {
+                  const quiet = !gone && now - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
+                  const hue = seatHue(s.agent);
+                  return html`
+                    <div
+                      class=${"seat" + (gone ? " seat-empty" : quiet ? " seat-away" : "")}
+                      key=${s.id}
+                      title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""} — ${gone ? `left ${ago(gone)} ago` : quiet ? `quiet — seen ${ago(s.last_seen)} ago` : `at the desk — seen ${ago(s.last_seen)} ago`}`}
+                    >
+                      <div class="seat-bubble">
+                        ${(s.holding ?? []).map((id) => html`<a class="id" onClick=${() => onOpen(id)}>${id}</a>`)}
+                      </div>
+                      <div class="seat-desk"></div>
+                      <div class="seat-chair" style=${`--seat-hue:${hue}`}>
+                        <span>${gone ? "" : s.agent.slice(0, 2).toUpperCase()}</span>
+                      </div>
+                      <div class="seat-name">${s.agent}${s.label ? ` · ${s.label}` : ""}</div>
+                    </div>`;
+                })}
+              </div>
+            </div>`,
+        )}
+        ${dispatch &&
+        html`
+          <div class="office-room office-frontdesk" key="dispatch">
+            <div class="office-room-name">front desk · dispatch</div>
+            <div class="office-desks">
+              <div class="seat" title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? " · running: " + dispatch.running.join(", ") : ""}`}>
+                <div class="seat-bubble">
+                  ${(dispatch.running ?? []).slice(0, 2).map((r) => html`<span class="id">${r}</span>`)}
+                </div>
+                <div class="seat-desk"></div>
+                <div class=${"seat-chair " + (dispatch.enabled ? "seat-chair-on" : "seat-chair-off")}><span>D</span></div>
+                <div class="seat-name">
+                  ${dispatch.enabled ? `on · ${dispatch.live_sessions}/${dispatch.max_sessions}` : "off"}
+                </div>
+                <button
+                  class=${"btn btn-sm py-0 mt-1 " + (dispatch.enabled ? "btn-outline-secondary" : "btn-primary")}
+                  disabled=${!dispatch.enabled && !dispatch.agents?.length}
+                  title=${!dispatch.enabled && !dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""}
+                  onClick=${() => onDispatch(!dispatch.enabled)}
+                >
+                  ${dispatch.enabled ? "off" : "on"}
+                </button>
+              </div>
+            </div>
+          </div>`}
+      </div>
+      ${last &&
+      html`<div class="office-ticker">${ago(last.at)} ago — ${last.kind}${last.data.role ? ` · ${last.data.role}` : ""}${last.data.command ? ` · ${last.data.command}` : ""}${last.data.error ? ` · ${last.data.error}` : ""}${last.data.reason ? ` · ${last.data.reason}` : ""}</div>`}
+    </div>`;
+};
+
 // GL-0329 — the live team page: sessions with what they hold, plus the
 // daemon's dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
 const Team = ({ onOpen }) => {
@@ -553,6 +657,7 @@ const Team = ({ onOpen }) => {
       <${RefreshBtn} refresh=${() => Promise.all([reloadSessions(), reloadDispatch()])} />
       <span class="small text-secondary">${ss.length} session(s) · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}</span>
     </div>
+    <${Office} sessions=${ss} dispatch=${dispatch} onOpen=${onOpen} onDispatch=${set} />
     <div class="triage-group">sessions <span class="n">${ss.length}</span></div>
     <div class="d-flex flex-column gap-1 mt-1 mb-3">
       ${ss.length === 0 && html`<div class="small text-secondary">no live sessions — agents appear here when they say hello</div>`}
