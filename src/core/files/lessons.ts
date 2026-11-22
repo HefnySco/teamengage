@@ -178,3 +178,12 @@ export async function settlePendingLesson(
 export async function pendingLesson(plansDir: string, n: number): Promise<PendingLesson | undefined> {
   return (await readAllPending(plansDir)).find((x) => x.n === n && x.state === "pending");
 }
+
+/** Refresh one pending candidate's `at` in place (TE-0186). */
+export async function touchPendingLesson(plansDir: string, n: number, at: string): Promise<void> {
+  const all = await readAllPending(plansDir);
+  const p = all.find((x) => x.n === n && x.state === "pending");
+  if (!p) return;
+  p.at = at;
+  await writeAllPending(plansDir, all);
+}

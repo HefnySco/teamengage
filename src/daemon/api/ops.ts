@@ -67,6 +67,7 @@ import {
   recordPendingLesson,
   removeLesson,
   settlePendingLesson,
+  touchPendingLesson,
   updateLesson,
 } from "../../core/files/lessons.js";
 import { readRepoContext, writeRepoContext } from "../../core/files/repo-context.js";
@@ -406,7 +407,7 @@ export class WorkspaceOps {
       (p) => p.domain === d && lessonKey(p.text) === lessonKey(body),
     );
     if (dup) {
-      await this.touchPendingLesson(plansDir, dup.n, now);
+      await touchPendingLesson(plansDir, dup.n, now);
       return { domain: d, pending: dup.n };
     }
     const n = await recordPendingLesson(plansDir, {
@@ -416,24 +417,6 @@ export class WorkspaceOps {
       at: now,
     });
     return { domain: d, pending: n };
-  }
-
-  /**
-   * Refresh one pending candidate's `at` in place (TE-0186). lessons.ts is
-   * outside this change's Touches, so this mirrors its read/write of
-   * lessons/.pending.json — keep the two in step.
-   */
-  private async touchPendingLesson(plansDir: string, n: number, at: string): Promise<void> {
-    const file = join(plansDir, "lessons", ".pending.json");
-    try {
-      const list = JSON.parse(await readFile(file, "utf8")) as Array<{ n: number; at: string; state: string }>;
-      const p = list.find((x) => x.n === n && x.state === "pending");
-      if (!p) return;
-      p.at = at;
-      writeFileSync(file, `${JSON.stringify(list, null, 1)}\n`);
-    } catch {
-      // a missing or half-written pending file — nothing to refresh
-    }
   }
 
   /** Pending lesson candidates, newest first — the inbox lists them. */
