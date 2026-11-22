@@ -22,6 +22,26 @@ export const Session = z
   .passthrough();
 export type Session = z.infer<typeof Session>;
 
+/**
+ * The name part of a session id. Ids mint as `<name>@<machine>#<hex>`; a
+ * client that sends a previous session id, or a name already carrying
+ * "@<machine>", gets it cut at the first "@" or "#" (TE-0193).
+ */
+export function normalizeAgentName(agent: string): string {
+  const cut = agent.search(/[@#]/);
+  return (cut === -1 ? agent : agent.slice(0, cut)) || "agent";
+}
+
+/**
+ * Does session id `holder` belong to `agent` on `machine`? Ids minted before
+ * TE-0193 can repeat the machine part (`devin@box@box#1a2b`); they still
+ * count as that agent's on that machine.
+ */
+export function sessionIdMatches(holder: string, agent: string, machine: string): boolean {
+  const parts = holder.split("#", 1)[0].split("@");
+  return parts[0] === normalizeAgentName(agent) && parts.length > 1 && parts.slice(1).every((p) => p === machine);
+}
+
 /** A host running a daemon (`desktop`, `laptop`). */
 export const Machine = z
   .object({

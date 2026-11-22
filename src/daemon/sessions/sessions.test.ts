@@ -30,6 +30,25 @@ describe("SessionRegistry", () => {
     expect(Date.parse(r.get(s.id)!.last_seen)).toBeGreaterThanOrEqual(Date.parse(s.last_seen));
   });
 
+  it("hello normalizes a name that already carries @<machine> or #hex (TE-0193)", () => {
+    const r = new SessionRegistry("mhefnyDT");
+    expect(r.hello("devin-desktop@mhefnyDT").id).toMatch(/^devin-desktop@mhefnyDT#[0-9a-f]{4}$/);
+    expect(r.hello("devin@mhefnyDT#828f").id).toMatch(/^devin@mhefnyDT#[0-9a-f]{4}$/);
+    expect(r.hello("devin@mhefnyDT@mhefnyDT").id).toMatch(/^devin@mhefnyDT#[0-9a-f]{4}$/);
+  });
+
+  it("resume still finds claims whose ids repeat the machine part", () => {
+    const r = new SessionRegistry("mhefnyDT");
+    const claims = [
+      claim("devin@mhefnyDT#828f"),
+      claim("devin@mhefnyDT@mhefnyDT#1944"),
+      claim("devin@laptop#9999"),
+      claim("devin2@mhefnyDT#0000"),
+    ];
+    const back = r.resumeClaims("devin@mhefnyDT#828f", claims);
+    expect(back.map((c) => c.holder).sort()).toEqual(["devin@mhefnyDT#828f", "devin@mhefnyDT@mhefnyDT#1944"]);
+  });
+
   it("resume returns claims this agent held on this machine", () => {
     const r = new SessionRegistry("desktop");
     const claims = [

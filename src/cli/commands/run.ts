@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { daemonApi, ensureDaemon } from "../client.js";
 import { loadMachineConfig, teHome } from "../../core/config/config.js";
 import { RunConfig } from "../../core/model/workspace.js";
+import { normalizeAgentName, sessionIdMatches } from "../../core/model/session.js";
 
 /**
  * `te run` — the foreman. Starts this machine's configured agent CLIs on
@@ -91,21 +92,13 @@ export function pickNext(
   if (f) return { id: f.id, mode: "fix" };
   // a coder of ours stopped mid-task (asked and the human answered, or it
   // died): start it again on the same claim — hello rebinds a dead session's claims
-  const prefix = `${coderName}@${machine}#`;
-  const r = items.find(
-    (i) => i.status === "in_progress" && i.claim?.holder.startsWith(prefix) && free(i.id) && !st.tried.has(i.id),
-  );
+  const ours = (i: RunItem) => i.claim != null && sessionIdMatches(i.claim.holder, coderName, machine);
+  const r = items.find((i) => i.status === "in_progress" && ours(i) && free(i.id) && !st.tried.has(i.id));
   if (r) return { id: r.id, mode: "resume" };
   // a claim whose holder session ended on this machine strands the item —
   // any agent can claim-take it over; the worktree/branch come with it
   const d = items.find(
-    (i) =>
-      i.status === "in_progress" &&
-      i.claim?.dead === true &&
-      here(i) &&
-      !i.claim.holder.startsWith(prefix) &&
-      free(i.id) &&
-      !st.tried.has(i.id),
+    (i) => i.status === "in_progress" && i.claim?.dead === true && here(i) && !ours(i) && free(i.id) && !st.tried.has(i.id),
   );
   if (d) return { id: d.id, mode: "takeover" };
   if (st.pendingClaim || st.started >= maxTasks) return undefined;
@@ -116,7 +109,9 @@ export function pickNext(
 export function agentName(cmd: string): string {
   const first = cmd.trim().split(/\s+/)[0] ?? "agent";
   const base = (first.split("/").pop() ?? "agent").replace(/\.[A-Za-z0-9]+$/, "");
-  return base.replace(/[^A-Za-z0-9_-]/g, "") || "agent";
+  // normalize before the charset cut: "devin@box" must become "devin",
+  // not "devinbox" (TE-0193)
+  return normalizeAgentName(base).replace(/[^A-Za-z0-9_-]/g, "") || "agent";
 }
 
 export function promptFor(mode: Mode, id: string, name: string, base: string, token?: string): string {

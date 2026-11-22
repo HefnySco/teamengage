@@ -68,6 +68,9 @@ describe("helpers", () => {
     expect(agentName("devin -p --model swe-2-high --")).toBe("devin");
     expect(agentName("/usr/local/bin/claude -p")).toBe("claude");
     expect(agentName("~/bin/swift.sh 1")).toBe("swift");
+    // a configured name carrying @<machine> or #hex is cut, not merged (TE-0193)
+    expect(agentName("devin@mhefnyDT")).toBe("devin");
+    expect(agentName("devin@mhefnyDT#828f -p")).toBe("devin");
   });
 
   it("prompts carry the id, the protocol url and the one-line reply", () => {

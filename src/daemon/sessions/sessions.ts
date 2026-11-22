@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { Session } from "../../core/model/session.js";
+import { normalizeAgentName, sessionIdMatches, type Session } from "../../core/model/session.js";
 import type { Claim } from "../../core/model/claim.js";
 
 /**
@@ -34,9 +34,10 @@ export class SessionRegistry {
     opts: { pid?: number; tier?: Session["tier"]; role?: Session["role"]; model?: string; label?: string } = {},
   ): Session {
     const now = new Date().toISOString();
+    const name = normalizeAgentName(agent);
     const session: Session = {
-      id: `${agent}@${this.machine}#${randomBytes(2).toString("hex")}`,
-      agent,
+      id: `${name}@${this.machine}#${randomBytes(2).toString("hex")}`,
+      agent: name,
       machine: this.machine,
       connected_at: now,
       last_seen: now,
@@ -100,11 +101,11 @@ export class SessionRegistry {
 
   /**
    * Claims this agent previously held on this machine — resume after
-   * reconnect/restart. Matches on the `<agent>@<machine>` prefix of holders.
+   * reconnect/restart. Matches holders by `<agent>@<machine>(@<machine>)*#`
+   * so ids minted before TE-0193 (machine part repeated) still rebind.
    */
   resumeClaims(agent: string, claims: Iterable<Claim>): Claim[] {
-    const prefix = `${agent}@${this.machine}#`;
-    return [...claims].filter((c) => c.holder.startsWith(prefix) && !c.conflicted);
+    return [...claims].filter((c) => sessionIdMatches(c.holder, agent, this.machine) && !c.conflicted);
   }
 
   /**
