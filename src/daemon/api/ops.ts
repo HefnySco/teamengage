@@ -2005,8 +2005,8 @@ export class WorkspaceOps {
 
   /**
    * Compat alias, one release only: a bounce is a `review` with an
-   * `issues` verdict now — same claim rules, same cap. Old callers have
-   * no summary, so it bypasses the new required-summary gate.
+   * `issues` verdict — it routes through review so it gets the same
+   * required-field gates (summary, ask_human card), claim rules and cap.
    */
   async bounce(
     id: string,
@@ -2016,22 +2016,7 @@ export class WorkspaceOps {
     findings?: ReviewFinding[],
     askHuman?: AskHuman,
   ) {
-    const it = this.item(id);
-    const claim = it.claim;
-    const r = await this.store.perform(
-      id,
-      it.meta.version,
-      this.actorFor(session),
-      { type: "review", verdict: "issues", note: reason, summary, findings, ask_human: askHuman },
-      {
-        priorBounces: () => this.aiBouncesSinceHumanTouch(id),
-        holderAway: () => this.holderAway(this.item(id)),
-      },
-    );
-    if (claim && r.meta.status !== "in_review" && r.meta.status !== "in_progress") {
-      await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
-    }
-    return r;
+    return this.review(id, session, "issues", reason, summary, undefined, undefined, findings, askHuman);
   }
 
   /**

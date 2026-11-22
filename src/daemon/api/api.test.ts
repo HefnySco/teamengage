@@ -1825,6 +1825,35 @@ describe("review_models: which model may review which tier (GL-0361)", () => {
   });
 });
 
+describe("bounce compat routes through review (TE-0187)", () => {
+  it("a bounce without ask_human refuses like a review issues; with it the verdict records", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "Bounce gate" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const holder = ctx.sessions.hello(`h-${id}`);
+    const reviewer = ctx.sessions.hello(`r-${id}`);
+    await ops.claim(id, holder);
+    await ops.submit(id, holder, { notes: "done", what: "did the work", how: "ran the steps" });
+    // same refusal a review issues gets: the ask_human card is required
+    await expect(ops.bounce(id, reviewer, "tests are red", "broken work")).rejects.toThrow(/ask_human/);
+    await expect(
+      ops.review(id, reviewer, "issues", "tests are red", "broken work"),
+    ).rejects.toThrow(/ask_human/);
+    // with the card the bounce records the issues verdict as before
+    const r = await ops.bounce(id, reviewer, "tests are red", "broken work", undefined, {
+      problem: "the submission is broken",
+      recommendation: "send it back",
+      options: ["send it back", "I will check"],
+    });
+    expect(r.meta.ai_review?.verdict).toBe("issues");
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("in_progress");
+  });
+});
+
 describe("auto-accept follows the model rule (GL-0362)", () => {
   it("a review without reviewer_model never arms auto-accept; batch accept skips it", async () => {
     const { WorkspaceOps } = await import("./ops.js");
