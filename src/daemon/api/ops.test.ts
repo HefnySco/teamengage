@@ -308,6 +308,8 @@ describe("capture: the caller owns the ready transition (TE-0180)", () => {
     });
     expect(r.raw_store).toBeDefined();
     expect(r.raw_store!.startsWith(plans)).toBe(false);
+    // DE-0248: the raw export lands under the temp home, never the real one
+    expect(r.raw_store!.startsWith(join(home, ".teamengage", "transcripts"))).toBe(true);
     expect(gunzipSync(readFileSync(r.raw_store!)).toString()).toBe(
       "user: hi\nassistant: hello\n",
     );
