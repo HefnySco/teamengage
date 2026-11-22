@@ -2502,26 +2502,32 @@ export class WorkspaceOps {
     // approve: it lands ready. Epics and free-standing items stay drafts.
     const ready: string[] = [];
     if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
+      const knownRef = (ref: string) => {
+        try {
+          const dep = this.index.items.get(parseItemRef(ref).id);
+          return dep !== undefined && dep.meta.status !== "dropped";
+        } catch {
+          return false;
+        }
+      };
       for (const id of r.ids) {
         const it = this.index.items.get(id);
         if (
           !it ||
           it.meta.type === "epic" ||
           it.meta.type === "idea" ||
-          it.meta.type === "discussion" ||
-          !it.meta.depends_on.length
+          it.meta.type === "discussion"
         )
           continue;
         if (it.meta.authored_tier === "light") continue; // a stronger session vets it first
-        const known = it.meta.depends_on.every((ref) => {
-          try {
-            const dep = this.index.items.get(parseItemRef(ref).id);
-            return dep !== undefined && dep.meta.status !== "dropped";
-          } catch {
-            return false;
-          }
-        });
-        if (!known) continue;
+        // TE-0199: a bug named in found_by of known work is a follow-up too —
+        // found_by stays reference-only (no ordering, no dep gate)
+        const isBug = it.meta.type === "bug" || it.meta.domains.includes("bug");
+        const foundBy = it.meta.found_by ?? [];
+        const followUp =
+          (it.meta.depends_on.length > 0 && it.meta.depends_on.every(knownRef)) ||
+          (isBug && foundBy.length > 0 && foundBy.every(knownRef));
+        if (!followUp) continue;
         await this.store.perform(id, it.meta.version, this.daemonActor(), { type: "approve_plan" });
         await this.store.annotate(id, {
           heading: "Log",

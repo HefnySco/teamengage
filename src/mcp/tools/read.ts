@@ -48,7 +48,7 @@ export const HELLO_RULES =
 
 /** Extra line under `autonomy: solo` (one human / small team). */
 export const SOLO_RULES =
-  "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); an ok peer review is auto-accepted after a delay unless the human acts (a reviewer's needs_human flag keeps it the human's call); key tasks, drop/delete and pushing stay the human's";
+  "autonomy: solo — a follow-up you propose with depends_on an existing task lands ready (no approve wait); a bug whose found_by names an existing item lands ready too (reference only — no ordering); an ok peer review is auto-accepted after a delay unless the human acts (a reviewer's needs_human flag keeps it the human's call); key tasks, drop/delete and pushing stay the human's";
 
 /** Session roles: what a session declares at hello, and what `next` picks. */
 export const ROLE_RULES =

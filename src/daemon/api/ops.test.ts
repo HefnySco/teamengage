@@ -539,3 +539,65 @@ describe("claim files on finished items (TE-0192)", () => {
     expect(ops.index.get("WS-0073")!.meta.status).toBe("done");
   });
 });
+
+describe("solo: a bug found in known work lands ready (TE-0199)", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+
+  it("found_by an existing item lands ready under solo; light-tier and strict stay drafts; found_by adds no ordering", async () => {
+    const { ids } = await wsr.store.createItems(
+      [{ type: "task", title: "Solo base" }],
+      human,
+    );
+    const [base] = ids;
+    await ops.approve(base);
+    const agent = sessions.hello("fb-agent");
+
+    // strict (default): the bug stays a draft
+    const strict = await ops.propose(
+      [{ type: "bug", title: "Bug in base", found_by: [base] }],
+      agent,
+    );
+    expect(strict.ready).toEqual([]);
+    expect(ops.index.get(strict.ids[0])!.meta.status).toBe("draft");
+
+    const prevAutonomy = wsr.ws.config.autonomy;
+    wsr.ws.config.autonomy = "solo";
+    try {
+      // a light-authored proposal is vetted first — stays a draft
+      const light = sessions.hello("fb-light", { tier: "light" });
+      const lp = await ops.propose(
+        [{ type: "bug", title: "Light bug in base", found_by: [base] }],
+        light,
+      );
+      expect(lp.ready).toEqual([]);
+      expect(ops.index.get(lp.ids[0])!.meta.status).toBe("draft");
+
+      // found_by a dropped item is not "known work" — stays a draft
+      const dp = await ops.propose(
+        [{ type: "bug", title: "Bug in dropped work", found_by: ["WS-0003"] }],
+        agent,
+      );
+      expect(dp.ready).toEqual([]);
+      expect(ops.index.get(dp.ids[0])!.meta.status).toBe("draft");
+
+      // the bug lands ready and the reply lists it — while its source is
+      // still in_progress (found_by orders nothing)
+      const holder = sessions.hello("fb-holder");
+      await ops.claim(base, holder);
+      const p = await ops.propose(
+        [{ type: "bug", title: "Solo bug in base", found_by: [base] }],
+        agent,
+      );
+      expect(p.ready).toEqual(p.ids);
+      const bug = p.ids[0];
+      expect(ops.index.get(bug)!.meta.status).toBe("ready");
+
+      // found_by adds no gate: claimable while the source is in_progress
+      const worker = sessions.hello("fb-worker");
+      await ops.claim(bug, worker);
+      expect(ops.index.get(bug)!.claim).toBeTruthy();
+    } finally {
+      wsr.ws.config.autonomy = prevAutonomy;
+    }
+  });
+});

@@ -116,7 +116,8 @@ curl -s -X POST $B/claim/GL-0019 -H "$H"
   once — the propose reply lists it under `ready`; it is still a separate
   task, never folded into this one.) A task for a problem you found on the
   way gets `found_by` = this task, not `depends_on`: `found_by` is
-  reference only.
+  reference only — it adds no ordering. Under `autonomy: solo` such a bug
+  lands `ready` too, so it can be fixed at once.
 
 ## 5. Work
 
