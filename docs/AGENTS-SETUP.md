@@ -26,6 +26,10 @@ curl -s -X POST http://127.0.0.1:4747/agent/claim/MP-0002 -H "X-TE-Session: $T"
 Keep the token for the whole task. `POST /agent/bye` ends the session (claims
 stay); after a daemon restart, `hello` again and held claims are rebound.
 
+`GET /agent/overview?role=coder|reviewer|planner|ops` gives the role's queue
+in a few lines — counts, the top 5 ids `next` would hand out, and the call to
+make next — so an agent need not parse the full guide to find its work.
+
 ## MCP server registration
 
 | Tool | Where | Config |

@@ -660,6 +660,50 @@ describe("peer questions (GL-0324)", () => {
   });
 });
 
+describe("role overview (TE-0196)", () => {
+  it("overview?role= gives the role's pool, counts and top ids — compact, filtered like next", async () => {
+    const viewer = await hello("ov-agent");
+
+    // coder pool: ready tasks the session can claim (epic excluded, free targets)
+    const coder = await call("GET", "/agent/overview?role=coder", { token: viewer });
+    expect(coder.status).toBe(200);
+    expect(coder.text.split("\n").filter(Boolean).length).toBeLessThanOrEqual(15);
+    expect(coder.text).toContain("claimable:");
+    expect(coder.text).toMatch(/^top: /m);
+
+    // reviewer pool: a submission by this session never lists for it
+    const wsr = ctx.workspaces.get("ws")!;
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems([{ type: "task", title: "overview review me" }], human);
+    const reviewable = ids[0];
+    const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+    await ops.approve(reviewable);
+    const sub = await hello("ov-submitter");
+    expect((await call("POST", `/agent/claim/${reviewable}`, { token: sub })).text).toMatch(/^claimed/);
+    const sub_r = await call("POST", `/agent/submit/${reviewable}`, {
+      token: sub,
+      body: { summary: "made the change" },
+    });
+    expect(sub_r.status).toBe(200);
+    const own = await call("GET", "/agent/overview?role=reviewer", { token: sub });
+    expect(own.text).not.toContain(reviewable);
+    const rev = await call("GET", "/agent/overview?role=reviewer", { token: viewer });
+    expect(rev.text).toMatch(/^reviewable: \d+ \(light \d+, standard \d+, heavy \d+, untiered \d+\)$/m);
+    expect(rev.text).toContain(reviewable);
+    expect(rev.text.split("\n").filter(Boolean).length).toBeLessThanOrEqual(15);
+
+    // planner pool: sources + drafts to vet
+    const plan = await call("GET", "/agent/overview?role=planner", { token: viewer });
+    expect(plan.text).toContain("to plan:");
+
+    // rules endpoint: the protocol lines hello prints
+    const rules = await call("GET", "/agent/rules", { token: viewer });
+    expect(rules.status).toBe(200);
+    expect(rules.text).toContain("claim before code");
+    expect(rules.text).toContain("never push");
+  });
+});
+
 describe("fixed port", () => {
   it("falls back to a random port when the preferred one is taken", async () => {
     const blocker: Server = createServer();

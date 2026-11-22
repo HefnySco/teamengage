@@ -473,4 +473,74 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
       }
     },
   );
+
+  server.registerTool(
+    "overview",
+    {
+      description:
+        "Your role's queue at a glance — the counts that matter for the role, the top 5 ids " +
+        "next would hand you, and the one call to make next. role overrides your session role " +
+        "for this report; tier and own-submission filters still apply.",
+      inputSchema: { role: z.enum(["planner", "coder", "reviewer", "ops"]).optional() },
+    },
+    ({ role }) => {
+      try {
+        const ops = opsFor(binding, ctx);
+        if ("content" in ops) return ops;
+        const sess = binding.session;
+        const eff_role = role ?? sess?.role;
+        const for_pool = sess && eff_role && eff_role !== sess.role ? { ...sess, role: eff_role } : sess;
+        // the same pool next() draws from — tier, free targets, own
+        // submissions and review_models all respected (TE-0196)
+        const pool = ops.next(10_000, undefined, for_pool);
+        const top = pool.slice(0, 5).map((i) => i.meta.id);
+        const lines = [`overview ${eff_role ?? "any"} — ${ops.wsr.ws.name}`];
+        if (eff_role === "reviewer") {
+          const count = (t?: string) => pool.filter((i) => (i.meta.tier ?? "any") === t).length;
+          lines.push(
+            `reviewable: ${pool.length} (light ${count("light")}, standard ${count("standard")}, heavy ${count("heavy")}, untiered ${count()})`,
+          );
+        } else if (eff_role === "planner") {
+          const sources = pool.filter((i) => i.meta.type === "idea" || i.meta.type === "discussion").length;
+          lines.push(`to plan: ${sources} source(s) + ${pool.length - sources} draft(s) to vet`);
+        } else {
+          lines.push(`claimable: ${pool.length} ready item(s)${sess?.tier ? ` for tier ${sess.tier}` : ""}`);
+        }
+        lines.push(`top: ${top.join(", ") || "-"}`);
+        lines.push(
+          `next: next — then ${
+            eff_role === "reviewer"
+              ? "brief <id>, review <id> {verdict:ok|issues, summary}"
+              : eff_role === "planner"
+                ? "brief <id>; vet a draft or propose"
+                : eff_role === "ops"
+                  ? "claim <id>, or ops <playbook>"
+                  : "brief <id>, claim <id>"
+          }`,
+        );
+        return okText(lines.join("\n"));
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "rules",
+    {
+      description: "The protocol rules hello prints — claims, scope, reviews, tiers, roles, autonomy.",
+      inputSchema: {},
+    },
+    () => {
+      try {
+        const ops = opsFor(binding, ctx);
+        if ("content" in ops) return ops;
+        const lines = [HELLO_RULES, TIER_RULES, ROLE_RULES];
+        if (ops.wsr.ws.config.autonomy === "solo") lines.push(SOLO_RULES);
+        return okText(lines.join("\n"));
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
 }

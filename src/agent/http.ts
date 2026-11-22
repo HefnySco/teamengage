@@ -117,6 +117,7 @@ export function agentGuide(base: string, tools: Map<string, Tool>): string {
   return `TeamEngage — agent interface (plain HTTP)
 =========================================
 Base URL: ${base}/agent        (loopback only; no MCP needed — use curl)
+GET ${base}/agent/overview?role=coder|reviewer|planner|ops — your queue: counts, top ids, next step
 
 RULES
   1. Read freely: GET endpoints, or the plan files themselves.
