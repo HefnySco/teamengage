@@ -2442,7 +2442,9 @@ export class WorkspaceOps {
       );
     }
     const r = await this.store.createItems(
-      enriched.map((d) => ({ type: d.type ?? "task", ...d })),
+      // `type` after the spread: a caller may send the key with undefined
+      // (the REST route does), which would otherwise erase the default
+      enriched.map((d) => ({ ...d, type: d.type ?? "task" })),
       this.actorFor(actor),
     );
     // autonomy: solo — an agent's follow-up/fix of known work needs no

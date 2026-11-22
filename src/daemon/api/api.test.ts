@@ -2461,6 +2461,48 @@ describe("review card actions are real (TE-0176)", () => {
     expect(wsr.store.idx.claims.get(id)).toBeUndefined();
   });
 
+  it("the Accept button moves an in_review item to done and writes no D-record (DE-0249)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const { id } = await submitted(ops, "Accept through the card");
+    const decisionDir = join(wsr.ws.plansDir, "decisions");
+    const { readdirSync, existsSync } = await import("node:fs");
+    const decisionFiles = () =>
+      existsSync(decisionDir) ? readdirSync(decisionDir).filter((f) => f.startsWith("D-")) : [];
+    const before = decisionFiles();
+    const res = await api(`/api/items/${id}/accept`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("done");
+    expect(decisionFiles()).toEqual(before);
+  });
+
+  it("Create follow-up: POST /api/propose with found_by lands a draft that names the item (DE-0249)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const { id } = await submitted(ops, "Follow-up source");
+    const res = await api("/api/propose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          {
+            title: "Fix the red tests the review found",
+            found_by: [id],
+            domains: ["teamengage"],
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const created = (await res.json()) as { ids: string[] };
+    expect(created.ids).toHaveLength(1);
+    const followUp = wsr.store.idx.get(created.ids[0])!;
+    expect(followUp.meta.status).toBe("draft");
+    expect(followUp.meta.found_by).toContain(id);
+  });
+
   it("review-card-picks lists legacy card decisions; domain_decisions excludes them", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
