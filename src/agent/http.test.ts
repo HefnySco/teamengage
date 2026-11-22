@@ -134,6 +134,19 @@ beforeAll(async () => {
       `---\nid: ${id}\ntype: task\ntitle: overlap ${n}\nstatus: ${status}\nversion: 1\n${n === "0010" ? 'targets: ["@self:src/t10.ts"]\n' : ""}---\n\n**Touches:** ${touches}\n\n## Summary\nx\n`,
     );
   }
+  // TE-0197: an open bug and six done items on the shared path — the brief
+  // shows the bug and caps history at 5 rows until more=history
+  writeFileSync(
+    join(plans, "items", "WS", "WS-0030.md"),
+    `---\nid: WS-0030\ntype: bug\ntitle: shared path is broken\nstatus: ready\nversion: 1\n---\n\n**Touches:** self: src/shared.ts\n\n## Summary\nx\n`,
+  );
+  for (const n of [20, 21, 22, 23, 24, 25]) {
+    const id = `WS-00${n}`;
+    writeFileSync(
+      join(plans, "items", "WS", `${id}.md`),
+      `---\nid: ${id}\ntype: task\ntitle: past ${n}\nstatus: done\nversion: 1\n---\n\n**Touches:** self: src/shared.ts\n\n## Summary\nx\n`,
+    );
+  }
   for (const a of [
     ["init", "-b", "main"],
     ["config", "user.email", "t@t"],
@@ -701,6 +714,31 @@ describe("role overview (TE-0196)", () => {
     expect(rules.status).toBe(200);
     expect(rules.text).toContain("claim before code");
     expect(rules.text).toContain("never push");
+  });
+});
+
+describe("brief context (TE-0197)", () => {
+  it("brief shows open bugs on the item's paths, history capped at 5, more= expands", async () => {
+    const t = await hello("brief-ctx");
+
+    const b = await call("GET", "/agent/brief/WS-0010", { token: t });
+    expect(b.status).toBe(200);
+    expect(b.text).toContain("open bugs on these paths");
+    expect(b.text).toContain('WS-0030 ready "shared path is broken"');
+    // history: 7 done items share the path — the default brief caps at 5
+    const histRows = (text: string) =>
+      text.split("\n").filter((l) => /^  WS-\d{4} /.test(l) && !l.startsWith("  WS-0030 "));
+    expect(histRows(b.text).length).toBe(5);
+
+    const full = await call("GET", "/agent/brief/WS-0010?more=history", { token: t });
+    expect(histRows(full.text).length).toBe(7);
+    const fullBugs = await call("GET", "/agent/brief/WS-0010?more=bugs", { token: t });
+    expect(fullBugs.text).toContain("WS-0030");
+
+    // an item with no path overlap shows neither section
+    const clean = await call("GET", "/agent/brief/WS-0006", { token: t });
+    expect(clean.text).not.toContain("open bugs on these paths");
+    expect(clean.text).not.toContain("history (done items");
   });
 });
 

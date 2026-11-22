@@ -773,11 +773,27 @@ export class WorkspaceOps {
       .map((d) => ({ id: d.meta.id, title: d.meta.title }));
     const myTouches = await this.touchesOf(it);
     const histAll: HistoryRow[] = [];
+    // TE-0197: open bugs on the same paths — a coder must see them before it
+    // repeats a known failure or undoes a fix.
+    const open_bugs: { id: string; title: string; status: string }[] = [];
     for (const d of this.index.items.values()) {
-      if (d.meta.id === it.meta.id || d.meta.status !== "done") continue;
-      if (touchesOverlap(myTouches, await this.touchesOf(d)).length) histAll.push(historyRow(d));
+      if (d.meta.id === it.meta.id) continue;
+      const overlapping = touchesOverlap(myTouches, await this.touchesOf(d)).length > 0;
+      if (!overlapping) continue;
+      if (d.meta.status === "done") {
+        histAll.push(historyRow(d));
+        continue;
+      }
+      if (
+        d.meta.status !== "dropped" &&
+        !d.meta.archived &&
+        (d.meta.type === "bug" || d.meta.domains.includes("bug"))
+      ) {
+        open_bugs.push({ id: d.meta.id, title: d.meta.title, status: d.meta.status });
+      }
     }
     histAll.sort((a, b) => b.date.localeCompare(a.date) || compareIds(b.id, a.id));
+    open_bugs.sort((a, b) => compareIds(b.id, a.id));
 
     const wsName = this.wsr.ws.config.name;
     const referenced_by = [...this.index.items.values()]
@@ -811,7 +827,8 @@ export class WorkspaceOps {
       plan,
       submission,
       domain_decisions,
-      history: histAll.slice(0, 3),
+      open_bugs,
+      history: histAll,
       history_total: histAll.length,
       source,
       checks: (await this.checksOf(it)).checks,

@@ -149,7 +149,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         "evidence and latest review. " +
         "The default brief stays under 120 lines — a block that does not fit shows its count and " +
         "the call for more: `brief <id> more=<block>` (blocks: lessons, decisions, " +
-        "domain_decisions, history, repo_context). A discussion's brief also names its transcript; " +
+        "domain_decisions, bugs, history, repo_context). A discussion's brief also names its transcript; " +
         "`brief <id> more=transcript page=N` pages the raw chat ~200 lines at a time.",
       inputSchema: { id: z.string(), more: z.string().optional(), page: z.number().int().min(1).optional() },
     },
@@ -311,13 +311,29 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
           count: (b.domain_decisions ?? []).length,
           lines: (b.domain_decisions ?? []).map((d) => `domain decision ${d.id}: ${d.title}`),
         });
+        // TE-0197: open bugs and past work on this item's paths — 5 lines
+        // each in the default brief, the full lists behind more=bugs/history
+        const bugRows = b.open_bugs ?? [];
+        const bugShown = more === "bugs" ? bugRows : bugRows.slice(0, 5);
+        blocks.push({
+          name: "bugs",
+          count: bugRows.length,
+          lines: bugRows.length
+            ? [
+                `open bugs on these paths${more !== "bugs" && bugRows.length > 5 ? ` (${bugRows.length} — brief ${it.meta.id} more=bugs)` : ""}:`,
+                ...bugShown.map((x) => `  ${x.id} ${x.status} "${x.title}"`),
+              ]
+            : [],
+        });
+        const histRows = b.history ?? [];
+        const histShown = more === "history" ? histRows : histRows.slice(0, 5);
         blocks.push({
           name: "history",
           count: b.history_total ?? 0,
-          lines: (b.history ?? []).length
+          lines: histRows.length
             ? [
                 `history (done items on the same paths — \`history <path>\` for all ${b.history_total}):`,
-                ...(b.history ?? []).map((r) => `  ${historyLine(r)}`),
+                ...histShown.map((r) => `  ${historyLine(r)}`),
               ]
             : [],
         });

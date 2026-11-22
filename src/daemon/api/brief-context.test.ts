@@ -65,6 +65,16 @@ beforeAll(async () => {
   }
   // a done item on other paths — must not appear
   writeItem("WS-0199", "done", `## Summary\nelsewhere\n\n**Touches:** teamengage: web/**\n`);
+  // TE-0197: open bugs on the same paths; dropped and non-overlapping excluded
+  const bugItem = (id: string, status: string, touches: string, extra = "type: bug") =>
+    writeFileSync(
+      join(plans, "items", "WS", `${id}.md`),
+      `---\nid: ${id}\n${extra}\ntitle: "${id} bug"\nstatus: ${status}\npriority: 2\nversion: 1\ncreated: 2026-10-01\n---\n\n**Touches:** ${touches}\n\n## Summary\nx\n`,
+    );
+  bugItem("WS-0200", "ready", "teamengage: src/daemon/**");
+  bugItem("WS-0201", "ready", "teamengage: src/daemon/**", "type: task\ndomains: [bug]");
+  bugItem("WS-0202", "dropped", "teamengage: src/daemon/**");
+  bugItem("WS-0203", "ready", "teamengage: web/**");
   // decision on the item itself → in `decisions`, not domain_decisions
   writeFileSync(
     join(plans, "decisions", "D-0007.md"),
@@ -98,11 +108,22 @@ describe("brief: context from past work (GL-0356)", () => {
     expect(b.domain_decisions[0].title).toBe("same-domain call");
   });
 
-  it("top-3 history rows for the item's Touches, newest first + total", async () => {
+  it("history rows for the item's Touches, newest first + total (TE-0197: all rows, the renderer caps at 5)", async () => {
     const b = await ops.brief("WS-0002");
     expect(b.history_total).toBe(4);
-    expect(b.history.map((r) => r.id)).toEqual(["WS-0104", "WS-0103", "WS-0102"]);
+    expect(b.history.map((r) => r.id)).toEqual(["WS-0104", "WS-0103", "WS-0102", "WS-0101"]);
     expect(b.history[0].what).toContain("did WS-0104");
+  });
+
+  it("open bugs overlapping the item's Touches (TE-0197): bug type or #bug domain, open only", async () => {
+    const b = await ops.brief("WS-0002");
+    expect(b.open_bugs.map((x) => x.id)).toEqual(["WS-0201", "WS-0200"]);
+    expect(b.open_bugs[0]).toMatchObject({ status: "ready", title: "WS-0201 bug" });
+    // dropped and non-overlapping bugs are absent
+    expect(b.open_bugs.map((x) => x.id)).not.toContain("WS-0202");
+    expect(b.open_bugs.map((x) => x.id)).not.toContain("WS-0203");
+    // an item whose paths nothing buggy touches gets an empty list
+    expect((await ops.brief("WS-0001")).open_bugs).toEqual([]);
   });
 });
 
