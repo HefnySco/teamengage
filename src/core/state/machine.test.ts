@@ -333,17 +333,22 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
     expect(r.meta.ai_review?.summary).toBe("The work is good.");
     expect(r.meta.ai_review?.note).toBe("unverifiable: flight test");
     expect(r.meta.ai_review?.report).toBe(report);
+    // DE-0252: no reviewWithReport block — the summary line is standard and
+    // each non-empty report line becomes a numbered item, the note once
     expect(r.sectionWrites).toEqual([
       {
         heading: "Review",
-        text:
-          `- ${NOW} ${agent2.session} ok — needs your call — The work is good.\n\n` +
-          `  Verdict: OK.\n\n  What the reviewer checked:\n  1. The tests pass.\n\n  Bottom line: You can accept it.\n` +
-          `\n  Technical note: unverifiable: flight test\n`,
+        text: `- ${NOW} ${agent2.session} ok — needs your call — The work is good.\n`,
       },
       {
         heading: "Review",
-        text: `  findings:\n  1. [note] unverifiable: flight test\n`,
+        text:
+          `  findings:\n` +
+          `  1. [report] Verdict: OK.\n` +
+          `  2. [report] What the reviewer checked:\n` +
+          `  3. [report] 1. The tests pass.\n` +
+          `  4. [report] Bottom line: You can accept it.\n` +
+          `  5. [note] unverifiable: flight test\n`,
       },
     ]);
   });
@@ -356,8 +361,9 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
       ctx({ claim: claimOf() }),
     );
     expect(r.meta.ai_review?.report).toBeUndefined();
+    // DE-0252: the note shows once — in the findings list, not the summary line
     expect(r.sectionWrites).toEqual([
-      { heading: "Review", text: `- ${NOW} ${agent2.session} ok — The work is good. (checked)\n` },
+      { heading: "Review", text: `- ${NOW} ${agent2.session} ok — The work is good.\n` },
       { heading: "Review", text: `  findings:\n  1. [note] checked\n` },
     ]);
   });
@@ -414,7 +420,7 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
     expect(r.sectionWrites).toEqual([
       {
         heading: "Review",
-        text: `- ${NOW} ${agent2.session} issues — The restart flag is ignored — it goes back for fixes. (acceptance 2 fails locally)\n`,
+        text: `- ${NOW} ${agent2.session} issues — The restart flag is ignored — it goes back for fixes.\n`,
       },
       { heading: "Review", text: `  findings:\n  1. [note] acceptance 2 fails locally\n` },
     ]);
@@ -428,7 +434,7 @@ describe("review — the one flow (ok advisory, issues sends back)", () => {
       ctx({ claim: claimOf() }),
     );
     expect(r.meta.ai_review?.summary).toBe("The tests are failing.");
-    expect(r.sectionWrites[0].text).toContain("issues — The tests are failing. (tests red)");
+    expect(r.sectionWrites[0].text).toContain("issues — The tests are failing.");
   });
 
   it("submit clears a stale review — a fresh submission starts unreviewed", () => {

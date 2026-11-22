@@ -2353,10 +2353,13 @@ describe("For the human — what/how on submit (GL-0343)", () => {
       "Verdict: OK.\n\nBottom line: You can accept it.",
     );
     const review = wsr.store.idx.get(id)!.sections.find((s) => s.heading.toLowerCase() === "review")?.body ?? "";
-    expect(review).toContain("Verdict: OK.");
-    expect(review).toContain("Technical note: traced acceptance 1 to code");
-    // the note folds into the numbered findings list for one release
-    expect(review).toContain("1. [note] traced acceptance 1 to code");
+    // DE-0252: the report's lines become numbered findings, not the old block
+    expect(review).toContain("1. [report] Verdict: OK.");
+    expect(review).toContain("2. [report] Bottom line: You can accept it.");
+    expect(review).not.toContain("Technical note:");
+    // and the note shows exactly once — as a findings item
+    expect(review).toContain("3. [note] traced acceptance 1 to code");
+    expect(review.split("traced acceptance 1 to code").length - 1).toBe(1);
   });
 
   it("an old item with only a walkthrough loads with no error", async () => {

@@ -365,26 +365,6 @@ function ev(
  * Apply `action` to `meta`. Returns the new meta (status, question, updated)
  * plus log lines, event records and daemon effects — or throws a typed error.
  */
-/** ## Review entry with a report: the report first, the agents' note last. */
-function reviewWithReport(
-  stamp: string,
-  who: string,
-  verdict: string,
-  needsHuman: boolean,
-  summary: string | undefined,
-  report: string,
-  note: string | undefined,
-): string {
-  const indent = (s: string) =>
-    s
-      .trim()
-      .split("\n")
-      .map((l) => (l ? `  ${l}` : ""))
-      .join("\n");
-  const head = `- ${stamp} ${who} ${verdict}${needsHuman ? " — needs your call" : ""}${summary ? ` — ${summary}` : ""}`;
-  return `${head}\n\n${indent(report)}\n${note ? `\n  Technical note: ${note}\n` : ""}`;
-}
-
 export function transition(
   meta: ItemMeta,
   action: Action,
@@ -848,18 +828,22 @@ export function transition(
       // the Review section reads for the human first: summary, detail after
       out.sectionWrites.push({
         heading: "Review",
-        text: action.report
-          ? reviewWithReport(stamp, who, action.verdict, flagHuman, action.summary, action.report, action.note)
-          : action.summary
-            ? `- ${stamp} ${who} ${action.verdict}${flagHuman ? " — needs your call" : ""} — ${action.summary}${action.note ? ` (${action.note})` : ""}\n`
-            : `- ${stamp} ${who} ${verdict}${flagHuman ? " (needs the human's call)" : ""}\n`,
+        text: action.summary
+          ? `- ${stamp} ${who} ${action.verdict}${flagHuman ? " — needs your call" : ""} — ${action.summary}\n`
+          : `- ${stamp} ${who} ${verdict}${flagHuman ? " (needs the human's call)" : ""}\n`,
       });
       // GL-0321: a new review replaces the findings checklist; a review
       // without findings clears the old list (it was already answered).
-      // TE-0178 compat: an old-style note and ask_human options render
-      // inside the same numbered list for one release — only real
-      // findings land on meta.findings (the holder answers those).
+      // TE-0178 compat: an old-style report, note and ask_human options
+      // render inside the same numbered list for one release — only real
+      // findings land on meta.findings (the holder answers those). The
+      // report's non-empty lines become numbered items, the note shows
+      // once, here (DE-0252).
       const compatFindings: string[] = [];
+      for (const line of action.report?.split("\n") ?? []) {
+        const t = line.trim();
+        if (t) compatFindings.push(`[report] ${t}`);
+      }
       if (action.note?.trim()) compatFindings.push(`[note] ${action.note.trim()}`);
       for (const o of action.ask_human?.options ?? []) compatFindings.push(`[option] ${o}`);
       if (action.findings?.length || compatFindings.length) {
