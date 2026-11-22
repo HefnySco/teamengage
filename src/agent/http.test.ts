@@ -571,6 +571,27 @@ describe("shared lessons per domain (GL-0322)", () => {
     const brief = await call("GET", "/agent/brief/WS-0007", { token: t });
     expect(brief.text).toContain("run npm build before npm test");
   });
+
+  it("a lesson may name its source item — the inbox links to it; an unknown source is refused", async () => {
+    const t = await hello("src-lesson");
+    const ok = await call("POST", "/agent/lesson", {
+      token: t,
+      body: { domain: "test-domain", text: "names the item it came out of", source: "ws-0007" },
+    });
+    expect(ok.status).toBe(200);
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home);
+    const pending = await ops.pendingLessons();
+    const p = pending.find((x) => x.text.includes("names the item"));
+    expect(p?.source).toBe("WS-0007");
+
+    const bad = await call("POST", "/agent/lesson", {
+      token: t,
+      body: { domain: "test-domain", text: "x", source: "WS-9999" },
+    });
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect(bad.text).toContain("USAGE");
+  });
 });
 
 describe("publish task outputs (GL-0325)", () => {

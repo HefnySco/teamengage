@@ -788,7 +788,7 @@ const Inbox = ({ onOpen }) => {
     digest_finished: sortRows("digest_finished", digestFinished.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_stuck: sortRows("digest_stuck", digestStuck.filter((x) => hit(x.id, x.title, x.what, x.why))),
     digest_waits: sortRows("digest_waits", digestWaits.filter((x) => hit(x.id, x.title, x.what, x.why))),
-    pending_lessons: sortRows("pending_lessons", (data.pending_lessons ?? []).filter((x) => hit(x.domain, x.text, x.by))),
+    pending_lessons: sortRows("pending_lessons", (data.pending_lessons ?? []).filter((x) => hit(x.domain, x.text, x.by, x.source))),
   };
   const total = data.questions.length + data.drafts.length + data.reviews.length + (data.drop_flags?.length ?? 0) + data.claims.length + data.findings.length + (data.peer_questions?.length ?? 0) + (data.promotions?.length ?? 0) + (data.pending_lessons?.length ?? 0) + (data.decisions?.length ?? 0);
   const shown = Object.values(view).reduce((n, a) => n + a.length, 0);
@@ -959,7 +959,7 @@ const Inbox = ({ onOpen }) => {
       ).concat(
         (view.pending_lessons ?? []).map((x) =>
           html`<div class="triage-li" key=${"lesson-" + x.n}>
-            <span class="id-cell d-flex align-items-center gap-1"><span class="item id text-secondary">#${x.domain}</span></span>
+            <span class="id-cell d-flex align-items-center gap-1">${x.source ? html`<a class="item id" onClick=${() => onOpen(x.source)}>${x.source}</a>` : html`<span class="item id text-secondary">#${x.domain}</span>`}</span>
             <${InboxStatus} s="ready" />
             <span class="t" title=${x.text}>${x.text.length > 120 ? `${x.text.slice(0, 120)}…` : x.text}
               <span class="text-secondary"> · lesson — offered by <b class=${whoCls(x.by)}>${x.by}</b> ${ago(x.at)} ago</span></span>

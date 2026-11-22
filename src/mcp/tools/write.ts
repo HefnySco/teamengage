@@ -727,16 +727,17 @@ export function registerWriteTools(
         "lessons/<domain>.md that brief shows to whoever works that domain next. A repeat of " +
         "a line already there just updates its date. The domain must already exist — an " +
         "unknown one is refused. " +
+        "Pass source when the lesson came out of a specific item — the inbox row links to it. " +
         "Lost time on a trap? Leave the lesson, don't make the next agent lose it too.",
-      inputSchema: { domain: z.string(), text: z.string() },
+      inputSchema: { domain: z.string(), text: z.string(), source: z.string().optional() },
     },
-    async ({ domain, text }) => {
+    async ({ domain, text, source }) => {
       try {
         const s = session();
         if (isToolResult(s)) return s;
         const o = ops();
         if (isToolResult(o)) return o;
-        const r = await o.lesson(s, domain, text);
+        const r = await o.lesson(s, domain, text, source);
         return okText(
           r.merged
             ? `lesson for #${r.domain} already there — refreshed line ${r.merged}`

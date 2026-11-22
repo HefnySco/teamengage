@@ -404,9 +404,13 @@ export class WorkspaceOps {
    * into it and updates its date instead; it needs no gate. Unknown
    * domains are refused — a lesson under a typo teaches nobody.
    */
-  async lesson(session: Session, domain: string, text: string) {
+  async lesson(session: Session, domain: string, text: string, source?: string) {
     const d = normalizeDomain(domain);
     if (!d || !text.trim()) throw new TeError("USAGE", "lesson needs a domain and a text");
+    const src = source?.trim().toUpperCase();
+    if (src && !this.index.items.get(src)) {
+      throw new TeError("USAGE", `lesson: source '${src}' is not a known item`);
+    }
     if (!(await this.knownDomains()).has(d)) {
       throw new InvalidTransitionError(
         `lesson: unknown domain '${d}' — define it first (domains page or a domains: tag on an item)`,
@@ -447,6 +451,7 @@ export class WorkspaceOps {
       text: body,
       by: session.id,
       at: now,
+      ...(src ? { source: src } : {}),
     });
     await logLesson();
     return { domain: d, pending: n };

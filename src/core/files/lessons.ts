@@ -124,6 +124,8 @@ export interface PendingLesson {
   text: string;
   by: string;
   at: string;
+  /** the item the lesson was learned on — the inbox row links to it */
+  source?: string;
   state: "pending" | "approved" | "rejected";
 }
 
