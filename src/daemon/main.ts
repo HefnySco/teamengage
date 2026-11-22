@@ -288,6 +288,12 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_release", { workspace: name, message: `auto-released ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_release", { workspace: name, message: `auto-release failed: ${err.message}` }));
+      // TE-0192: claim files on finished items are orphaned locks — drop them
+      ops.dropOrphanedClaims()
+        .then((ids) => {
+          if (ids.length) ctx.bus.notify("claim_orphans", { workspace: name, message: `removed claims on finished items: ${ids.join(", ")}` });
+        })
+        .catch((err: Error) => ctx.bus.notify("claim_orphans", { workspace: name, message: `orphan-claim sweep failed: ${err.message}` }));
       // GL-0324: a peer question unanswered past peer_answer_after becomes the human's → waiting
       ops.peerAnswerSweep()
         .then((ids) => {

@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { PlansStore } from "../store/store.js";
 import { resolveWorkspace } from "../../core/config/config.js";
 import { SessionRegistry } from "../sessions/sessions.js";
+import { parseClaimFile } from "../../core/claims/claims.js";
 import { WorkspaceOps } from "./ops.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 
@@ -146,6 +147,13 @@ beforeAll(async () => {
   item("WS-0061", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/locked.ts\n");
   item("WS-0062", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/b.ts\n");
   item("WS-0063", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/c.ts\n");
+
+  // TE-0192: finished items must not keep claim files — one per path plus a
+  // done item that gets a leftover claim file written by hand in the test
+  item("WS-0070", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/o1.ts\n");
+  item("WS-0071", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/o2.ts\n");
+  item("WS-0072", "ready", "task", "", "## Summary\nx\n\n**Touches:** self: src/o3.ts\n");
+  item("WS-0073", "done", "task", "", "## Summary\nx\n\n**Touches:** self: src/o4.ts\n");
 
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
@@ -459,5 +467,75 @@ describe("extra_touches on submit (TE-0183)", () => {
         extra_touches_reason: "needed",
       }),
     ).rejects.toThrow(/WS-0061.*live claim/);
+  });
+});
+
+describe("claim files on finished items (TE-0192)", () => {
+  const claimFile = (id: string) => join(plans, "claims", `${id}.yaml`);
+
+  it("accept, auto-accept and drop each leave no claim file", async () => {
+    // accept: claim → submit → ok review → human accept
+    const a = sessions.hello("orph-a");
+    await ops.claim("WS-0070", a);
+    expect(existsSync(claimFile("WS-0070"))).toBe(true);
+    await ops.submit("WS-0070", a, { summary: "did the work" });
+    const rev = sessions.hello("orph-rev");
+    await ops.review("WS-0070", rev, "ok", undefined, "verified the work");
+    await ops.accept("WS-0070");
+    expect(ops.index.get("WS-0070")!.meta.status).toBe("done");
+    expect(existsSync(claimFile("WS-0070"))).toBe(false);
+
+    // auto-accept under autonomy: solo
+    const prevAutonomy = wsr.ws.config.autonomy;
+    const prevDelay = wsr.ws.config.auto_accept_after;
+    wsr.ws.config.autonomy = "solo";
+    wsr.ws.config.auto_accept_after = "30m";
+    try {
+      const b = sessions.hello("orph-b");
+      await ops.claim("WS-0071", b);
+      await ops.submit("WS-0071", b, { summary: "did the work" });
+      await ops.review("WS-0071", rev, "ok", undefined, "verified the work");
+      const accepted = await ops.autoAccept(Date.now() + 3_600_000);
+      expect(accepted).toContain("WS-0071");
+      expect(ops.index.get("WS-0071")!.meta.status).toBe("done");
+      expect(existsSync(claimFile("WS-0071"))).toBe(false);
+    } finally {
+      wsr.ws.config.autonomy = prevAutonomy;
+      wsr.ws.config.auto_accept_after = prevDelay;
+    }
+
+    // drop on a claimed in_progress item
+    const c = sessions.hello("orph-c");
+    await ops.claim("WS-0072", c);
+    await ops.drop("WS-0072", "not needed");
+    expect(ops.index.get("WS-0072")!.meta.status).toBe("dropped");
+    expect(existsSync(claimFile("WS-0072"))).toBe(false);
+  });
+
+  it("the sweep removes a claim file left on a done item", async () => {
+    const yaml = [
+      "item: WS-0073",
+      "holder: old@otherbox#aa11",
+      "actor: agent",
+      "machine: otherbox",
+      "targets: []",
+      "claimed_at: '2026-01-01T00:00:00Z'",
+      "last_seen: '2026-01-01T00:00:00Z'",
+      "",
+    ].join("\n");
+    writeFileSync(claimFile("WS-0073"), yaml);
+    // the file watcher is what loads claims in production; the test feeds the
+    // index the same parsed claim
+    const claim = parseClaimFile(yaml);
+    wsr.store.index.setClaim(claim);
+    expect(ops.index.get("WS-0073")!.claim).toBeTruthy();
+
+    expect(ops.orphanedClaims()).toContain("WS-0073");
+    const dropped = await ops.dropOrphanedClaims();
+    expect(dropped).toContain("WS-0073");
+    expect(existsSync(claimFile("WS-0073"))).toBe(false);
+    expect(ops.index.get("WS-0073")!.claim).toBeUndefined();
+    // item itself untouched
+    expect(ops.index.get("WS-0073")!.meta.status).toBe("done");
   });
 });

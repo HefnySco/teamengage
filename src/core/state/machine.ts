@@ -186,7 +186,13 @@ export type Action =
    */
   | { type: "source_ready" }
   /** Internal: merge on accept hit conflicts — bounce back to the agent. */
-  | { type: "merge_conflict"; conflicts: string[] };
+  | { type: "merge_conflict"; conflicts: string[] }
+  /**
+   * Internal (daemon only): the item is done or dropped but a claim file
+   * survived (synced from another machine, a path that missed the delete) —
+   * remove it and clean up; branches stay (TE-0192).
+   */
+  | { type: "drop_orphan_claim" };
 
 export interface TransitionCtx {
   /** ISO timestamp for updated/log lines. */
@@ -366,6 +372,29 @@ function ev(
  * plus log lines, event records and daemon effects — or throws a typed error.
  */
 export function transition(
+  meta: ItemMeta,
+  action: Action,
+  actor: Actor,
+  ctx: TransitionCtx,
+): TransitionResult {
+  const out = apply(meta, action, actor, ctx);
+  // TE-0192: a finished item never keeps its claim file. A path that misses
+  // the delete (an auto-done sweep, a file synced from another machine)
+  // leaves a lock that keeps paths busy and makes the bank lie — drop it
+  // here, keep the branches.
+  if (
+    TERMINAL.includes(out.meta.status) &&
+    ctx.claim &&
+    !out.effects.some((e) => e.type === "delete_claim")
+  ) {
+    out.effects.push({ type: "delete_claim" });
+    out.effects.push({ type: "cleanup_work", keepBranches: true });
+    out.log.push(`- ${ctx.now} removed the claim — the item is ${out.meta.status}`);
+  }
+  return out;
+}
+
+function apply(
   meta: ItemMeta,
   action: Action,
   actor: Actor,
@@ -1166,6 +1195,20 @@ export function transition(
       if (from !== "dropped") fail(from, action.type);
       set("draft");
       out.log.push(`- ${stamp} ${who} restored from dropped`);
+      return out;
+    }
+
+    case "drop_orphan_claim": {
+      if (actor.kind !== "daemon")
+        throw new ForbiddenError("drop_orphan_claim is a daemon-only action");
+      if (!TERMINAL.includes(from)) fail(from, action.type);
+      if (!ctx.claim) {
+        throw new InvalidTransitionError(`cannot drop_orphan_claim: ${meta.id} has no claim`, from, action.type);
+      }
+      out.events.push(ev(actor, stamp, meta.id, action.type, from, from));
+      out.log.push(`- ${stamp} daemon removed the claim on the finished item`);
+      out.effects.push({ type: "delete_claim" });
+      out.effects.push({ type: "cleanup_work", keepBranches: true });
       return out;
     }
   }

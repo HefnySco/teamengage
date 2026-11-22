@@ -2802,6 +2802,40 @@ export class WorkspaceOps {
     return done;
   }
 
+  /**
+   * Claim files on finished (done/dropped) items — orphaned locks a sync or
+   * a missed delete left behind (TE-0192). `te validate` reports them as
+   * claim_on_done; the sweep removes them. Machine does not matter: a lock
+   * on a finished item is garbage on every machine.
+   */
+  orphanedClaims(): string[] {
+    return [...this.index.claims.values()]
+      .filter((c) => {
+        const st = this.index.items.get(c.item)?.meta.status;
+        return st === "done" || st === "dropped";
+      })
+      .map((c) => c.item);
+  }
+
+  async dropOrphanedClaims() {
+    const done: string[] = [];
+    for (const id of this.orphanedClaims()) {
+      try {
+        const it = this.item(id);
+        const claim = it.claim;
+        await this.store.perform(id, it.meta.version, this.daemonActor(), {
+          type: "drop_orphan_claim",
+        });
+        // the work stays: branches kept, only the lock and its worktree go
+        if (claim) await cleanupWork(this.wsr.ws, id, claim, { keepBranches: true, home: this.home });
+        done.push(id);
+      } catch {
+        // one failing item must not stall the sweep
+      }
+    }
+    return done;
+  }
+
   // ---- human writes -------------------------------------------------------
 
   /**
