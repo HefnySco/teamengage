@@ -2111,6 +2111,46 @@ describe("shared lessons per domain (GL-0322)", () => {
     for (const s of sessions) expect(Array.isArray(s.holding)).toBe(true);
   });
 
+  it("/api/sessions holding lists in_progress claims only — an in_review claim stays parked", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, undefined, home);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "hold-work" },
+        { type: "task", title: "hold-review" },
+      ],
+      human,
+    );
+    const [workId, reviewId] = ids;
+    await ops.approve(workId);
+    await ops.approve(reviewId);
+    const worker = ctx.sessions.hello("hold-worker");
+    const submitter = ctx.sessions.hello("hold-submitter");
+    await ops.claim(workId, worker);
+    await ops.claim(reviewId, submitter);
+    await ops.submit(reviewId, submitter, {
+      summary: "submitted",
+      what: "task done",
+      how: "ran the steps",
+    });
+    try {
+      const sessions = (await (await api("/api/sessions")).json()) as Array<{
+        id: string;
+        holding: string[];
+      }>;
+      expect(sessions.find((s) => s.id === worker.id)?.holding).toEqual([workId]);
+      expect(sessions.find((s) => s.id === submitter.id)?.holding).toEqual([]);
+    } finally {
+      await ops.release(workId, worker, "test done");
+      await ops.withdraw(reviewId, submitter);
+      await ops.release(reviewId, submitter, "test done");
+      ctx.sessions.disconnect(worker.id);
+      ctx.sessions.disconnect(submitter.id);
+    }
+  });
+
   it("ops.lessonsFor merges the item's domains newest-first, capped at 10", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
@@ -2277,14 +2317,18 @@ describe("ask_human decision card (GL-0344)", () => {
     await ops.review(b, reviewer, "issues", "n", "goes back for fixes", undefined, undefined, undefined, AH);
   });
 
-  it("an ok review with a 26-word summary stands and warns (TE-0177)", async () => {
+  it("an ok review summary warns only past the limit + 30% slack (TE-0177)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const ops = new WorkspaceOps(ctx.workspaces.get("ws")!, ctx.sessions);
     const reviewer = ctx.sessions.hello("r-344b");
-    const id = await submitted(ops, "Summary length");
-    const long = Array.from({ length: 26 }, (_, i) => `w${i}`).join(" ");
-    const r = await ops.review(id, reviewer, "ok", undefined, long);
-    expect(r.warnings).toEqual(["summary is 26 words — max 25"]);
+    const a = await submitted(ops, "Summary inside slack");
+    const inside = Array.from({ length: 32 }, (_, i) => `w${i}`).join(" ");
+    const ok = await ops.review(a, reviewer, "ok", undefined, inside);
+    expect(ok.warnings).toEqual([]);
+    const b = await submitted(ops, "Summary over slack");
+    const long = Array.from({ length: 33 }, (_, i) => `w${i}`).join(" ");
+    const r = await ops.review(b, reviewer, "ok", undefined, long);
+    expect(r.warnings).toEqual(["summary is 33 words — max 25 (+30% slack: 32)"]);
     expect(r.meta.ai_review?.summary).toBe(long);
   });
 
@@ -2314,13 +2358,13 @@ describe("ask_human decision card (GL-0344)", () => {
     const q = wsr.store.idx.get(id)!.meta.question!;
     expect(q.text).toBe("keep the old path or take the new one?");
     expect(q.context).toContain("long detail");
-    // a 41-word question stands and warns (TE-0177) — fresh item, the
-    // first one's question is still open
+    // a 53-word question stands and warns (TE-0177, past the 30% slack) —
+    // fresh item, the first one's question is still open
     const { ids: ids2 } = await wsr.store.createItems([{ type: "task", title: "Long question" }], human);
     await ops.approve(ids2[0]);
     await ops.claim(ids2[0], holder);
-    const long = await ops.ask(ids2[0], holder, Array.from({ length: 41 }, (_, i) => `w${i}`).join(" "));
-    expect(long.warnings).toEqual(["question is 41 words — max 40"]);
+    const long = await ops.ask(ids2[0], holder, Array.from({ length: 53 }, (_, i) => `w${i}`).join(" "));
+    expect(long.warnings).toEqual(["question is 53 words — max 40 (+30% slack: 52)"]);
   });
 
   it("a review record made before ask_human loads with no error", async () => {
@@ -2379,7 +2423,7 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     expect(it.meta.status).toBe("in_review");
   });
 
-  it("a what of 45 words submits and warns with what, 45 and 40 (TE-0177)", async () => {
+  it("a what of 53 words submits and warns past the 30% slack (TE-0177)", async () => {
     const { WorkspaceOps } = await import("./ops.js");
     const wsr = ctx.workspaces.get("ws")!;
     const ops = new WorkspaceOps(wsr, ctx.sessions);
@@ -2389,12 +2433,12 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     await ops.approve(id);
     const holder = ctx.sessions.hello(`h-${id}`);
     await ops.claim(id, holder);
-    const long = Array.from({ length: 45 }, (_, i) => `w${i}`).join(" ");
+    const long = Array.from({ length: 53 }, (_, i) => `w${i}`).join(" ");
     const r = await ops.submit(id, holder, { what: long, how: "ran the steps" });
     expect(r.meta.status).toBe("in_review");
     expect(r.warnings).toEqual([
-      "summary is 48 words — max 25",
-      "what is 45 words — max 40",
+      "summary is 56 words — max 25 (+30% slack: 32)",
+      "what is 53 words — max 40 (+30% slack: 52)",
       "no commits listed — name the commit(s) the work made",
     ]);
   });

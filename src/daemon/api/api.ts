@@ -362,11 +362,13 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
 
   app.get("/api/sessions", async (_req, reply) => {
     try {
-      // GL-0329: the team panel shows what each live session holds
+      // GL-0329: the team panel shows what each live session holds —
+      // in_progress only; an in_review claim is parked for review, not worked
       const holding = new Map<string, string[]>();
       for (const wsr of ctx.workspaces.values()) {
         const index = new WorkspaceOps(wsr, ctx.sessions, wsr.links, ctx.home).index;
         for (const c of index.claims.values()) {
+          if (index.get(c.item)?.meta.status !== "in_progress") continue;
           holding.set(c.holder, [...(holding.get(c.holder) ?? []), c.item]);
         }
       }
