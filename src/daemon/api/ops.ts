@@ -126,6 +126,9 @@ const WORD_LIMITS = {
 } as const;
 type WordField = keyof typeof WORD_LIMITS;
 
+/** A limit is the target — the warning fires only past it plus the slack. */
+const WORD_LIMIT_SLACK = 1.3;
+
 function wordLimitWarn(field: WordField, text: string | undefined, required = false): string | undefined {
   const t = text?.trim() ?? "";
   if (!t) {
@@ -133,7 +136,8 @@ function wordLimitWarn(field: WordField, text: string | undefined, required = fa
     return;
   }
   const n = t.split(/\s+/).filter(Boolean).length;
-  if (n > WORD_LIMITS[field]) return `${field} is ${n} words — max ${WORD_LIMITS[field]}`;
+  const max = Math.floor(WORD_LIMITS[field] * WORD_LIMIT_SLACK);
+  if (n > max) return `${field} is ${n} words — max ${WORD_LIMITS[field]} (+30% slack: ${max})`;
   return undefined;
 }
 
