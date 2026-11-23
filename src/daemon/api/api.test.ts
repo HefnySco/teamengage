@@ -2106,6 +2106,48 @@ describe("shared lessons per domain (GL-0322)", () => {
     expect(status.events).toEqual([]);
   });
 
+  it("dispatch matched preview shows per-candidate admission reasons (TE-0208)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, undefined, home);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await wsr.store.createItems(
+      [
+        { type: "task", title: "admit-ok" },
+        { type: "task", title: "admit-blocked" },
+      ],
+      human,
+    );
+    const [okId, blockedId] = ids;
+    await ops.approve(okId);
+    await ops.approve(blockedId);
+    const it = wsr.store.idx.get(blockedId)!;
+    await wsr.store.perform(
+      blockedId,
+      it.meta.version,
+      { kind: "daemon", session: "daemon", machine: "test" },
+      { type: "dispatch_block", reason: "two failed dispatch runs" },
+    );
+    const prev = wsr.ws.config.dispatch;
+    wsr.ws.config.dispatch = {
+      enabled: true,
+      agents: [{ role: "coder", command: "sleep 30" }],
+    } as typeof prev;
+    try {
+      const status = (await (await api("/api/dispatch")).json()) as {
+        matched: Array<{ id: string; mode: string; admission?: { ok: boolean; reasons: string[] } }>;
+      };
+      const ok = status.matched.find((c) => c.id === okId);
+      const blocked = status.matched.find((c) => c.id === blockedId);
+      expect(ok?.admission?.ok).toBe(true);
+      expect(ok?.admission?.reasons.length).toBeGreaterThan(0);
+      expect(blocked?.admission?.ok).toBe(false);
+      expect(blocked?.admission?.reasons.join(" ")).toContain("dispatch_blocked");
+    } finally {
+      wsr.ws.config.dispatch = prev;
+    }
+  });
+
   it("sessions list each live session's held items (GL-0329)", async () => {
     const sessions = (await (await api("/api/sessions")).json()) as Array<{
       id: string;

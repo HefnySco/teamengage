@@ -241,6 +241,11 @@ export const ItemMeta = z
     tier: Tier.optional(),
     /** failed attempts so far — AI bounces + handoffs (drives escalation) */
     attempts: z.number().int().min(0).optional(),
+    /**
+     * Dispatch breaker (TE-0208): set after two failed dispatch runs on this
+     * item — the dispatcher never picks it until an unblock clears the flag.
+     */
+    dispatch_blocked: z.object({ reason: z.string(), at: DateStr }).optional(),
     /** model id of the session that submitted the current submission (GL-0360) */
     submitted_model: z.string().optional(),
     /** tier of the agent session that proposed it (light-authored drafts need vetting) */

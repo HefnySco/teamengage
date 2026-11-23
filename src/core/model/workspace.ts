@@ -221,6 +221,12 @@ export const WorkspaceConfig = z
      */
     live_claim_window: z.string().default("30m"),
     /**
+     * Dispatch takeover grace (TE-0208): an in_progress item whose claim
+     * just went dead waits this long before dispatch may take it over — an
+     * exited child gets time to finalize first.
+     */
+    takeover_grace_after: z.string().default("15m"),
+    /**
      * Failed attempts (AI bounces + handoffs) after which an item's tier is
      * raised one step, so a stronger model takes it (light → standard → heavy).
      */

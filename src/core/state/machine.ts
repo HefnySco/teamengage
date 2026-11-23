@@ -172,6 +172,8 @@ export type Action =
    * plan_state. Forward only: work added later shows `ready` again until
    * the human re-drafts the epic.
    */
+  | { type: "dispatch_block"; reason: string }
+  | { type: "dispatch_unblock" }
   | { type: "plan_auto_done" }
   /**
    * Internal (daemon only): the sweep found every live referrer of this
@@ -1137,6 +1139,29 @@ function apply(
       out.meta.updated = meta.updated; // a bookmark isn't an edit — keeps the card's place in date-sorted views
       out.events.push(ev(actor, stamp, meta.id, "unstar", from, from));
       out.log.push(`- ${stamp} ${who} unstarred (status ${from})`);
+      return out;
+    }
+
+    case "dispatch_block": {
+      // TE-0208: the daemon's per-item breaker (two failed runs) or the
+      // human blocks an item from dispatch — status untouched
+      if (actor.kind !== "daemon" && actor.kind !== "human")
+        throw new ForbiddenError("dispatch_block is a daemon/human action");
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      out.meta.dispatch_blocked = { reason: action.reason, at: stamp };
+      out.events.push(ev(actor, stamp, meta.id, "dispatch_block", from, from, action.reason));
+      out.log.push(`- ${stamp} ${who} blocked dispatch: ${action.reason}`);
+      return out;
+    }
+
+    case "dispatch_unblock": {
+      if (actor.kind !== "daemon" && actor.kind !== "human")
+        throw new ForbiddenError("dispatch_unblock is a daemon/human action");
+      if (!meta.dispatch_blocked)
+        throw new InvalidTransitionError("not dispatch_blocked", from, action.type);
+      delete out.meta.dispatch_blocked;
+      out.events.push(ev(actor, stamp, meta.id, "dispatch_unblock", from, from));
+      out.log.push(`- ${stamp} ${who} unblocked dispatch`);
       return out;
     }
 

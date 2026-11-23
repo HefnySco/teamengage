@@ -1,5 +1,6 @@
 import { normalizeDomain } from "../domains/domains.js";
 import { ValidationError } from "../model/errors.js";
+import { tierRank, type Tier } from "../model/item.js";
 import { normalizeAgentName, sessionIdMatches } from "../model/session.js";
 import type { RunConfig } from "../model/workspace.js";
 
@@ -12,7 +13,21 @@ export interface RunItem {
   type?: string;
   parent?: string;
   domains?: string[];
-  claim?: { holder: string; machine: string; dead?: boolean } | null;
+  tier?: Tier;
+  /** failed attempts so far — drives the max_attempts admission check (TE-0208) */
+  attempts?: number;
+  /** persisted dispatch breaker — set after two failed runs (TE-0208) */
+  dispatch_blocked?: { reason: string; at: string };
+  /** structured findings the latest issues review carries (TE-0208 fix check) */
+  findings?: number;
+  claim?: {
+    holder: string;
+    machine: string;
+    dead?: boolean;
+    last_seen?: string;
+    /** when the dispatcher first saw the claim dead — takeover grace base */
+    dead_since?: string;
+  } | null;
   ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string; needs_human?: boolean };
   question?: { text: string };
 }
@@ -28,6 +43,8 @@ export interface RunState {
 export interface Pick {
   id: string;
   mode: Mode;
+  /** why this item qualified — carried into dispatch_start (TE-0208) */
+  reasons?: string[];
 }
 
 export type DispatchStatusFilter = "ready" | "in_review" | "in_progress";
@@ -53,6 +70,122 @@ export interface MatchedCandidate {
   mode: Mode;
   status: string;
   title: string;
+  /** TE-0208: why the item qualifies — or why admission refused it */
+  admission?: Admission;
+}
+
+/**
+ * Everything admit() needs that the item alone cannot say — caller feeds
+ * live dispatcher state so the predicate stays pure (TE-0208).
+ */
+export interface AdmissionContext {
+  machine: string;
+  now: number;
+  maxAttempts: number;
+  fixRounds: number;
+  fixes: ReadonlyMap<string, number>;
+  coderName: string;
+  /** session ids this dispatcher opened itself — resume trusts only these */
+  mintedSessions: ReadonlySet<string>;
+  isLive: (sessionId: string) => boolean;
+  takeoverGraceMs: number;
+  /** GL-0361 rule — the reviewer command's parsed model must satisfy it */
+  reviewModels?: { deep?: string; quick?: string; deep_from_tier: Tier };
+  reviewerModel?: string;
+}
+
+export interface Admission {
+  ok: boolean;
+  /** refused: why it failed · admitted: which checks qualified it */
+  reasons: string[];
+}
+
+/**
+ * TE-0208: no assignment without admission checks. Every refusal is a
+ * reason the preview and the dispatcher can show; an admitted item carries
+ * the checks it passed.
+ */
+export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admission {
+  const failed: string[] = [];
+  const passed: string[] = [];
+  const attempts = item.attempts ?? 0;
+  if (attempts >= ctx.maxAttempts) {
+    failed.push(`attempts ${attempts} ≥ max_attempts ${ctx.maxAttempts}`);
+  } else {
+    passed.push(`attempts ${attempts} < max_attempts ${ctx.maxAttempts}`);
+  }
+  if (item.dispatch_blocked) {
+    failed.push(`dispatch_blocked: ${item.dispatch_blocked.reason}`);
+  }
+  switch (mode) {
+    case "work": {
+      if (item.status !== "ready") failed.push(`status ${item.status}, expected ready`);
+      else if (item.claim) failed.push(`claimed by ${item.claim.holder}`);
+      else passed.push("ready and unclaimed");
+      break;
+    }
+    case "fix": {
+      const fixes = ctx.fixes.get(item.id) ?? 0;
+      if (fixes >= ctx.fixRounds) {
+        failed.push(`fix rounds used up (${fixes}/${ctx.fixRounds})`);
+      } else if (!item.ai_review?.note && !(item.findings ?? 0)) {
+        failed.push("the issues review carries no note or findings");
+      } else {
+        passed.push(`fix ${fixes + 1}/${ctx.fixRounds} with an issues note`);
+      }
+      break;
+    }
+    case "resume": {
+      const holder = item.claim?.holder;
+      if (!holder) {
+        failed.push("not claimed");
+      } else if (!ctx.mintedSessions.has(holder)) {
+        // a same-named session the dispatcher never opened is the
+        // phantom-resume hole — name match alone never qualifies
+        failed.push(`holder ${holder} was not minted by this dispatcher`);
+      } else if (!ctx.isLive(holder)) {
+        failed.push(`holder ${holder} is not live`);
+      } else {
+        passed.push(`holder ${holder} minted and live`);
+      }
+      break;
+    }
+    case "takeover": {
+      const deadSince = Date.parse(item.claim?.dead_since ?? item.claim?.last_seen ?? "");
+      const deadForMs = Number.isFinite(deadSince) ? ctx.now - deadSince : Infinity;
+      if (deadForMs < ctx.takeoverGraceMs) {
+        failed.push(
+          `claim dead ${Math.max(0, Math.round(deadForMs / 60_000))}m < takeover_grace_after ${Math.round(ctx.takeoverGraceMs / 60_000)}m`,
+        );
+      } else {
+        passed.push(`claim dead ${Math.round(deadForMs / 60_000)}m ≥ grace`);
+      }
+      break;
+    }
+    case "review": {
+      const rm = ctx.reviewModels;
+      if (rm) {
+        if (!ctx.reviewerModel) {
+          failed.push("the reviewer command declares no model and review_models is set");
+        } else {
+          const needsDeep = tierRank(item.tier) >= tierRank(rm.deep_from_tier);
+          const pool = [rm.quick, rm.deep].filter(Boolean);
+          const allowed = needsDeep
+            ? ctx.reviewerModel === rm.deep
+            : pool.length === 0 || pool.includes(ctx.reviewerModel);
+          if (!allowed) {
+            failed.push(`reviewer model ${ctx.reviewerModel} may not review this item`);
+          } else {
+            passed.push(`reviewer model ${ctx.reviewerModel} allowed`);
+          }
+        }
+      } else {
+        passed.push("no review_models rule");
+      }
+      break;
+    }
+  }
+  return { ok: failed.length === 0, reasons: failed.length ? failed : passed };
 }
 
 const ALL_MODES: ReadonlySet<Mode> = new Set<Mode>([
@@ -317,6 +450,7 @@ export function listDispatchCandidates(
   machine: string,
   coderName = cfg.coder ? agentName(cfg.coder) : "",
   filter?: DispatchFilter,
+  admission?: AdmissionContext,
 ): MatchedCandidate[] {
   const itemsById = buildItemsById(items);
   const candidates: MatchedCandidate[] = [];
@@ -326,7 +460,13 @@ export function listDispatchCandidates(
     if (seenIds.has(entry.id)) return;
     if (!matchesDispatchFilter(filter, entry, mode, itemsById)) return;
     seenIds.add(entry.id);
-    candidates.push({ id: entry.id, mode, status: entry.status, title: entry.title });
+    candidates.push({
+      id: entry.id,
+      mode,
+      status: entry.status,
+      title: entry.title,
+      ...(admission ? { admission: admit(entry, mode, admission) } : {}),
+    });
   };
 
   if (cfg.reviewer) {
@@ -385,67 +525,93 @@ export function pickNext(
   maxTasks = Infinity,
   coderName = cfg.coder ? agentName(cfg.coder) : "",
   filter?: DispatchFilter,
+  admission?: AdmissionContext,
 ): Pick | undefined {
   if (st.running.size >= cfg.concurrency) return undefined;
   const itemsById = buildItemsById(items);
   const free = (id: string) => !st.running.has(id);
   const here = (entry: RunItem) => entry.claim?.machine === machine;
   const allowed = (entry: RunItem, mode: Mode) => matchesDispatchFilter(filter, entry, mode, itemsById);
+  // TE-0208: when the caller gives admission context, a candidate must pass
+  // admit() — the returned pick carries the checks it qualified on
+  const admitted = (entry: RunItem, mode: Mode): Admission | undefined => {
+    if (!admission) return { ok: true, reasons: [] };
+    const result = admit(entry, mode, admission);
+    return result.ok ? result : undefined;
+  };
 
   if (cfg.reviewer) {
-    const reviewItem = items.find(
-      (entry) =>
-        entry.status === "in_review" &&
-        !entry.ai_review &&
-        here(entry) &&
-        free(entry.id) &&
-        allowed(entry, "review"),
-    );
-    if (reviewItem) return { id: reviewItem.id, mode: "review" };
+    for (const entry of items) {
+      if (
+        entry.status !== "in_review" ||
+        entry.ai_review ||
+        !here(entry) ||
+        !free(entry.id) ||
+        !allowed(entry, "review")
+      ) {
+        continue;
+      }
+      const a = admitted(entry, "review");
+      if (a) return { id: entry.id, mode: "review", ...(admission ? { reasons: a.reasons } : {}) };
+    }
   }
   if (!cfg.coder) return undefined;
 
-  const fixItem = items.find(
-    (entry) =>
-      entry.status === "in_review" &&
-      entry.ai_review?.verdict === "issues" &&
-      !entry.ai_review.needs_human &&
-      here(entry) &&
-      free(entry.id) &&
-      (st.fixes.get(entry.id) ?? 0) < cfg.fix_rounds &&
-      allowed(entry, "fix"),
-  );
-  if (fixItem) return { id: fixItem.id, mode: "fix" };
+  for (const entry of items) {
+    if (
+      entry.status !== "in_review" ||
+      entry.ai_review?.verdict !== "issues" ||
+      entry.ai_review.needs_human ||
+      !here(entry) ||
+      !free(entry.id) ||
+      (st.fixes.get(entry.id) ?? 0) >= cfg.fix_rounds ||
+      !allowed(entry, "fix")
+    ) {
+      continue;
+    }
+    const a = admitted(entry, "fix");
+    if (a) return { id: entry.id, mode: "fix", ...(admission ? { reasons: a.reasons } : {}) };
+  }
 
   const ours = (entry: RunItem) =>
     entry.claim != null && sessionIdMatches(entry.claim.holder, coderName, machine);
-  const resumeItem = items.find(
-    (entry) =>
-      entry.status === "in_progress" &&
-      ours(entry) &&
-      free(entry.id) &&
-      !st.tried.has(entry.id) &&
-      allowed(entry, "resume"),
-  );
-  if (resumeItem) return { id: resumeItem.id, mode: "resume" };
+  for (const entry of items) {
+    if (
+      entry.status !== "in_progress" ||
+      !ours(entry) ||
+      !free(entry.id) ||
+      st.tried.has(entry.id) ||
+      !allowed(entry, "resume")
+    ) {
+      continue;
+    }
+    const a = admitted(entry, "resume");
+    if (a) return { id: entry.id, mode: "resume", ...(admission ? { reasons: a.reasons } : {}) };
+  }
 
-  const takeoverItem = items.find(
-    (entry) =>
-      entry.status === "in_progress" &&
-      entry.claim?.dead === true &&
-      here(entry) &&
-      !ours(entry) &&
-      free(entry.id) &&
-      !st.tried.has(entry.id) &&
-      allowed(entry, "takeover"),
-  );
-  if (takeoverItem) return { id: takeoverItem.id, mode: "takeover" };
+  for (const entry of items) {
+    if (
+      entry.status !== "in_progress" ||
+      entry.claim?.dead !== true ||
+      !here(entry) ||
+      ours(entry) ||
+      !free(entry.id) ||
+      st.tried.has(entry.id) ||
+      !allowed(entry, "takeover")
+    ) {
+      continue;
+    }
+    const a = admitted(entry, "takeover");
+    if (a) return { id: entry.id, mode: "takeover", ...(admission ? { reasons: a.reasons } : {}) };
+  }
 
   if (st.pendingClaim || st.started >= maxTasks) return undefined;
-  const workId = ready.find((id) => {
-    if (!free(id) || st.tried.has(id)) return false;
+  for (const id of ready) {
+    if (!free(id) || st.tried.has(id)) continue;
     const entry = itemsById.get(id.toUpperCase()) ?? { id, status: "ready", title: id };
-    return allowed(entry, "work");
-  });
-  return workId ? { id: workId, mode: "work" } : undefined;
+    if (!allowed(entry, "work")) continue;
+    const a = admitted(entry, "work");
+    if (a) return { id, mode: "work", ...(admission ? { reasons: a.reasons } : {}) };
+  }
+  return undefined;
 }

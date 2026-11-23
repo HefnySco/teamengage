@@ -551,8 +551,19 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   plan subtrees (`Plan PL-1032:ready`, `plan:PL-1032`, `in:PL-1032`), and
   domains (`#webclient:ready`), with optional `:ready`, `:inreview`, or
   `:inprogress` suffixes. When all matched items finish, dispatch stays `on`
-  and watches for new matches. Each start writes `dispatch_start`; three
-  consecutive failures for a role switch dispatch off (`dispatch_off`).
+  and watches for new matches. Every pick first passes `admit()` — the item
+  must sit below `max_attempts`, carry no `dispatch_blocked` flag, and meet
+  its mode's checks (`fix` needs a spare round plus an issues note or
+  findings, `resume` a holder session this dispatcher minted and still live,
+  `takeover` a claim dead longer than `takeover_grace_after`, `review` a
+  reviewer command whose declared model satisfies `review_models`). The
+  matched preview and `dispatch_start` carry these admission reasons. Two
+  failed runs on one item write `dispatch_blocked` with the reason in its
+  Log — the human's `unblock` clears it. A `dispatch.agents` entry filtered
+  as a legacy `te run` command warns through `dispatch_config` and the
+  status `warnings` lines instead of dropping silently. Each start writes
+  `dispatch_start`; three consecutive failures for a role switch dispatch
+  off (`dispatch_off`).
   `te dispatch on|set|off|status [--max <n>] [--filter <expr>]` controls it;
   changes are human-only. Commands run in the workspace root with `TE_PROMPT`,
   `TE_ITEM`, `TE_MODE`, and `TE_SESSION`, and log to `~/.teamengage/runs/<ws>/`.

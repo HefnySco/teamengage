@@ -13,6 +13,7 @@ import {
   parseDispatchFilter,
   pickNext,
   promptFor,
+  type AdmissionContext,
   type DispatchFilter,
   type MatchedCandidate,
   type Mode,
@@ -54,6 +55,11 @@ export function isLegacyTeRunCommand(command: string): boolean {
   return LEGACY_TE_RUN_RE.test(command.trim());
 }
 
+/** The model id a dispatch command declares (`--model x` or `--model=x`). */
+export function commandModel(cmd: string): string | undefined {
+  return /(?:^|\s)--?model(?:=|\s+)(\S+)/.exec(cmd)?.[1];
+}
+
 function buildSpawnScript(command: string, source: "dispatch" | "run"): string {
   if (command.includes("TE_PROMPT")) return command;
   if (source === "run" || PROMPT_ARG_TAIL_RE.test(command)) {
@@ -67,6 +73,12 @@ export class Dispatcher {
   private failures = new Map<string, number>();
   private fixes = new Map<string, number>();
   private triedVersions = new Map<string, number>();
+  /** failed runs per item — two in a row set dispatch_blocked (TE-0208) */
+  private itemFailures = new Map<string, number>();
+  /** session ids this dispatcher opened — resume trusts only these (TE-0208) */
+  private mintedIds = new Set<string>();
+  /** dispatch.agents entries filtered as legacy te run commands (TE-0208) */
+  private configWarnings: string[] = [];
   private pendingClaim?: string;
   /** set by the pause lever (TE-0209) — reported through status().why_idle */
   pausedReason?: string;
@@ -90,6 +102,14 @@ export class Dispatcher {
       this.filter = parseDispatchFilter(cfg?.filter ?? "");
     } catch {
       this.filter = parseDispatchFilter("");
+    }
+    // TE-0208: a legacy te run command in dispatch.agents is filtered — never
+    // silently. One event and a status warning name every dropped entry.
+    for (const agent of cfg?.agents ?? []) {
+      if (!isLegacyTeRunCommand(agent.command)) continue;
+      const warning = `dispatch.agents ${agent.role} command '${agent.command}' is a legacy te run — ignored`;
+      this.configWarnings.push(warning);
+      this.emit("dispatch_config", { warning });
     }
   }
 
@@ -227,6 +247,10 @@ export class Dispatcher {
         type: indexed.meta.type,
         parent: indexed.meta.parent,
         domains: indexed.meta.domains,
+        tier: indexed.meta.tier,
+        attempts: indexed.meta.attempts,
+        dispatch_blocked: indexed.meta.dispatch_blocked,
+        findings: indexed.meta.findings?.length,
         claim: indexed.claim ? { ...indexed.claim, dead } : null,
         ai_review: indexed.meta.ai_review,
         question: indexed.meta.question,
@@ -235,6 +259,23 @@ export class Dispatcher {
 
     const ready = ops.next(500).map((entry) => entry.meta.id);
     return { items, ready, onlineIds, tried };
+  }
+
+  /** TE-0208: the live state admit() needs — rebuilt per tick, never cached. */
+  private admissionCtx(resolved: ResolvedCommands, now: number): AdmissionContext {
+    return {
+      machine: this.wsr.store.machine,
+      now,
+      maxAttempts: this.wsr.ws.config.max_attempts,
+      fixRounds: resolved.fixRounds,
+      fixes: this.fixes,
+      coderName: resolved.coder ? agentName(resolved.coder.command) : "",
+      mintedSessions: this.mintedIds,
+      isLive: (id) => this.sessions.isLive(id),
+      takeoverGraceMs: parseDuration(this.wsr.ws.config.takeover_grace_after),
+      reviewModels: this.wsr.ws.config.review_models,
+      reviewerModel: resolved.reviewer ? commandModel(resolved.reviewer.command) : undefined,
+    };
   }
 
   status() {
@@ -248,6 +289,7 @@ export class Dispatcher {
       concurrency: this.maxIssues,
       fix_rounds: resolved.fixRounds,
     });
+    const admission = this.admissionCtx(resolved, Date.now());
     const matched: MatchedCandidate[] =
       resolved.coder || resolved.reviewer
         ? listDispatchCandidates(
@@ -258,6 +300,7 @@ export class Dispatcher {
             this.wsr.store.machine,
             undefined,
             this.filter,
+            admission,
           )
         : [];
     const running: RunningDispatch[] = [...this.children.values()].map((entry) => ({
@@ -285,6 +328,9 @@ export class Dispatcher {
         undefined,
       );
       whyIdle = unfiltered.length ? "filter" : "no_match";
+    } else if (!matched.some((c) => c.admission?.ok !== false)) {
+      // candidates exist but admission refused every one — the board names why
+      whyIdle = "admission";
     } else if (this.pendingClaim) whyIdle = "backlog";
     return {
       enabled: this.enabled,
@@ -296,6 +342,7 @@ export class Dispatcher {
       why_idle: whyIdle,
       live_sessions: this.sessions.list().length,
       filter: this.filter.raw,
+      warnings: this.configWarnings,
       matched,
       running,
       agents,
@@ -347,6 +394,7 @@ export class Dispatcher {
       pendingClaim: this.pendingClaim,
       started: 0,
     };
+    const admission = this.admissionCtx(resolved, Date.now());
 
     while (this.enabled && onlineIds.size < this.maxIssues) {
       const pick = pickNext(
@@ -358,6 +406,7 @@ export class Dispatcher {
         Infinity,
         undefined,
         this.filter,
+        admission,
       );
       if (!pick) break;
       const cmdSpec = pick.mode === "review" ? resolved.reviewer : resolved.coder;
@@ -397,7 +446,11 @@ export class Dispatcher {
     // TE-0206: mark the minted session on the shared registry — ops.claim
     // hard-caps claims from sessions the dispatcher opened
     const sessionId = /^session (\S+)/m.exec(text)?.[1];
-    if (sessionId) this.sessions.markDispatchMinted(sessionId);
+    if (sessionId) {
+      this.sessions.markDispatchMinted(sessionId);
+      // TE-0208: resume admits only holders this dispatcher minted itself
+      this.mintedIds.add(sessionId);
+    }
     return { token, resume };
   }
 
@@ -519,6 +572,8 @@ export class Dispatcher {
       command: cmdSpec.command,
       pid: child.pid ?? 0,
       log,
+      // TE-0208: the admission checks this pick qualified on
+      reasons: pick.reasons ?? [],
     });
 
     const finalizeExit = (errOrCode: Error | number | null) => {
@@ -530,6 +585,7 @@ export class Dispatcher {
       void cleanup.finally(() => {
         if (errOrCode instanceof Error) {
           this.recordFailure(role, pick.id, errOrCode.message);
+          this.recordItemFailure(pick.id, errOrCode.message);
           return;
         }
         if (errOrCode === 0) {
@@ -547,9 +603,14 @@ export class Dispatcher {
             (current.meta.status === "ready" || current.meta.status === "in_progress")
           ) {
             this.triedVersions.set(pick.id, startVersion);
+            // TE-0208: a clean exit with no progress counts as a failed run
+            this.recordItemFailure(pick.id, "finished with no status change");
+          } else {
+            this.itemFailures.delete(pick.id);
           }
         } else {
           this.recordFailure(role, pick.id, `exit ${errOrCode}`);
+          this.recordItemFailure(pick.id, `exit ${errOrCode}`);
         }
       });
     };
@@ -566,5 +627,30 @@ export class Dispatcher {
       this.enabled = false;
       this.emit("dispatch_off", { reason: `${role} command failed ${count} times in a row` });
     }
+  }
+
+  /**
+   * TE-0208 per-item breaker: two failed runs on one item (nonzero exit or a
+   * clean exit with no progress) write dispatch_blocked on the item — admit
+   * refuses it until a human unblocks. The Log line names the last reason.
+   */
+  private recordItemFailure(itemId: string, why: string): void {
+    const count = (this.itemFailures.get(itemId) ?? 0) + 1;
+    this.itemFailures.set(itemId, count);
+    if (count < 2) return;
+    this.itemFailures.delete(itemId);
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(itemId);
+    if (!it || it.meta.dispatch_blocked) return;
+    void ops.store
+      .perform(it.meta.id, it.meta.version, this.daemonActor(), {
+        type: "dispatch_block",
+        reason: `two failed dispatch runs — last: ${why}`,
+      })
+      .catch(() => {});
+  }
+
+  private daemonActor() {
+    return { kind: "daemon" as const, session: "daemon", machine: this.wsr.store.machine };
   }
 }
