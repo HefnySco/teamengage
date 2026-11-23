@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickNext, agentName, promptFor, inboxEntries, type RunState, type RunItem } from "./run.js";
+import { pickNext, agentName, promptFor, inboxEntries, parseDispatchFilter, runCmd, type RunState, type RunItem } from "./run.js";
 import { RunConfig } from "../../core/model/workspace.js";
 
 const cfg = (over: Partial<RunConfig> = {}) => RunConfig.parse({ coder: "devin -p --", reviewer: "claude -p", ...over });
@@ -60,6 +60,61 @@ describe("pickNext", () => {
     expect(pickNext(cfg(), st({ tried: new Set(["A-1"]) }), [], ready, "work")).toEqual({ id: "A-2", mode: "work" });
     expect(pickNext(cfg(), st({ started: 1 }), [], ready, "work", 1)).toBeUndefined();
     expect(pickNext(cfg({ concurrency: 3 }), st({ pendingClaim: "A-9" }), [], ready, "work")).toBeUndefined();
+  });
+
+  it("filters candidates by ID wildcard, plan subtree, and status suffix", () => {
+    const plan = item("PL-1032", "ready", { type: "epic" });
+    const planTask = item("MP-0005", "ready", { type: "task", parent: "PL-1032" });
+    const seReview = item("SE-0102", "in_review", { claim: here });
+    const seFix = item("SE-0103", "in_review", { claim: here, ai_review: { verdict: "issues" } });
+    const otherReview = item("GL-0099", "in_review", { claim: here });
+    const all = [plan, planTask, otherReview, seReview, seFix];
+    const ready = ["GL-0001", "MP-0005"];
+
+    const reviewFilter = parseDispatchFilter("SE-01xx:inreview");
+    expect(pickNext(cfg(), st(), all, ready, "work", Infinity, undefined, reviewFilter)).toEqual({
+      id: "SE-0102",
+      mode: "review",
+    });
+    expect(
+      pickNext(
+        cfg({ concurrency: 2 }),
+        st({ running: new Map([["SE-0102", "review"]]) }),
+        [plan, planTask, otherReview, seFix],
+        ready,
+        "work",
+        Infinity,
+        undefined,
+        reviewFilter,
+      ),
+    ).toEqual({
+      id: "SE-0103",
+      mode: "fix",
+    });
+
+    const planFilter = parseDispatchFilter("Plan PL-1032:ready");
+    expect(pickNext(cfg(), st(), all, ready, "work", Infinity, undefined, planFilter)).toEqual({
+      id: "MP-0005",
+      mode: "work",
+    });
+  });
+
+  it("runCmd rejects invalid --filter syntax with exit code 2", async () => {
+    const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tempHome = mkdtempSync(join(tmpdir(), "te-run-filter-"));
+    try {
+      mkdirSync(join(tempHome, ".teamengage"), { recursive: true });
+      writeFileSync(
+        join(tempHome, ".teamengage", "machine.yaml"),
+        'name: test\nrun:\n  coder: "echo"\n',
+      );
+      const code = await runCmd(["--dry-run", "--filter", "SE-01*:done"], tempHome);
+      expect(code).toBe(2);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 });
 

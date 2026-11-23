@@ -4,7 +4,29 @@ import { join } from "node:path";
 import { daemonApi, ensureDaemon } from "../client.js";
 import { loadMachineConfig, teHome } from "../../core/config/config.js";
 import { RunConfig } from "../../core/model/workspace.js";
-import { normalizeAgentName, sessionIdMatches } from "../../core/model/session.js";
+import {
+  agentName,
+  parseDispatchFilter,
+  pickNext,
+  promptFor,
+  type DispatchFilter,
+  type Mode,
+  type Pick,
+  type RunItem,
+  type RunState,
+} from "../../core/dispatch/selector.js";
+
+export {
+  agentName,
+  parseDispatchFilter,
+  pickNext,
+  promptFor,
+  type DispatchFilter,
+  type Mode,
+  type Pick,
+  type RunItem,
+  type RunState,
+};
 
 /**
  * `te run` — the foreman. Starts this machine's configured agent CLIs on
@@ -28,130 +50,6 @@ const wsQ = (args: string[]) => {
   return w ? `ws=${encodeURIComponent(w)}` : "";
 };
 
-export type Mode = "work" | "fix" | "resume" | "review" | "takeover";
-
-export interface RunItem {
-  id: string;
-  status: string;
-  title: string;
-  claim?: { holder: string; machine: string; dead?: boolean } | null;
-  ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string; needs_human?: boolean };
-  question?: { text: string };
-}
-
-export interface RunState {
-  /** items an agent is working on right now */
-  running: Map<string, Mode>;
-  /** fix rounds already spent per item in this run */
-  fixes: Map<string, number>;
-  /** items whose coder ended without the item moving — not retried this run */
-  tried: Set<string>;
-  /** a coder was started and has not claimed yet — wait before the next one (target locks) */
-  pendingClaim?: string;
-  started: number;
-}
-
-export interface Pick {
-  id: string;
-  mode: Mode;
-}
-
-/**
- * What to start next, given the board. Pure — `te run`'s whole policy:
- * reviews first (they unblock the human), then fixes, then new work.
- */
-export function pickNext(
-  cfg: RunConfig,
-  st: RunState,
-  items: RunItem[],
-  ready: string[],
-  machine: string,
-  maxTasks = Infinity,
-  coderName = cfg.coder ? agentName(cfg.coder) : "",
-): Pick | undefined {
-  if (st.running.size >= cfg.concurrency) return undefined;
-  const free = (id: string) => !st.running.has(id);
-  const here = (i: RunItem) => i.claim?.machine === machine; // the branch is on this machine
-  if (cfg.reviewer) {
-    const r = items.find((i) => i.status === "in_review" && !i.ai_review && here(i) && free(i.id));
-    if (r) return { id: r.id, mode: "review" };
-  }
-  if (!cfg.coder) return undefined;
-  // an issues verdict on a locally-held item that stayed in review — the
-  // review came from another machine, or the holder could not take it.
-  // needs_human ones (the cap) wait for the human, never a fix coder.
-  const f = items.find(
-    (i) =>
-      i.status === "in_review" &&
-      i.ai_review?.verdict === "issues" &&
-      !i.ai_review.needs_human &&
-      here(i) &&
-      free(i.id) &&
-      (st.fixes.get(i.id) ?? 0) < cfg.fix_rounds,
-  );
-  if (f) return { id: f.id, mode: "fix" };
-  // a coder of ours stopped mid-task (asked and the human answered, or it
-  // died): start it again on the same claim — hello rebinds a dead session's claims
-  const ours = (i: RunItem) => i.claim != null && sessionIdMatches(i.claim.holder, coderName, machine);
-  const r = items.find((i) => i.status === "in_progress" && ours(i) && free(i.id) && !st.tried.has(i.id));
-  if (r) return { id: r.id, mode: "resume" };
-  // a claim whose holder session ended on this machine strands the item —
-  // any agent can claim-take it over; the worktree/branch come with it
-  const d = items.find(
-    (i) => i.status === "in_progress" && i.claim?.dead === true && here(i) && !ours(i) && free(i.id) && !st.tried.has(i.id),
-  );
-  if (d) return { id: d.id, mode: "takeover" };
-  if (st.pendingClaim || st.started >= maxTasks) return undefined;
-  const w = ready.find((id) => free(id) && !st.tried.has(id));
-  return w ? { id: w, mode: "work" } : undefined;
-}
-
-export function agentName(cmd: string): string {
-  const first = cmd.trim().split(/\s+/)[0] ?? "agent";
-  const base = (first.split("/").pop() ?? "agent").replace(/\.[A-Za-z0-9]+$/, "");
-  // normalize before the charset cut: "devin@box" must become "devin",
-  // not "devinbox" (TE-0193)
-  return normalizeAgentName(base).replace(/[^A-Za-z0-9_-]/g, "") || "agent";
-}
-
-export function promptFor(mode: Mode, id: string, name: string, base: string, token?: string): string {
-  const session = token
-    ? `You are already registered — do NOT call hello; send the header "X-TE-Session: ${token}" on every call.`
-    : `Say hello as {"agent":"${name}${mode === "review" ? "-review" : ""}"}.`;
-  const common =
-    `The TeamEngage daemon is at ${base}/agent (plain HTTP; GET it once for the protocol). ` +
-    `Never edit .teamengage/ files or te: lines, never git push, never approve or accept — the human does.`;
-  if (mode === "review") {
-    return (
-      `Use the te-review skill to review ${id}. ${session} You did not write this code. ` +
-      `Check every acceptance item of ${id} against its branch diff and run its tests. ` +
-      `Record review ok, or review issues with one sentence naming the failed acceptance item and a note a coder can act on. ` +
-      `Also give report, the decision report for the human that the te-review skill describes. ` +
-      `Ok but not yours to call (risky area, an unverifiable step, unclear acceptance)? Set needs_human so it never auto-accepts. ` +
-      `${common}\nFinal reply: exactly one line — "${id} ok" or "${id} issues: <summary>".`
-    );
-  }
-  const how =
-    mode === "fix"
-      ? `${id} is in review with an issues verdict: claim it (takeover), read ## Review, fix exactly that, and submit again. `
-      : mode === "takeover"
-        ? `${id} is in progress but its holder's session ended: claim it — the claim, worktree and branch become yours — read brief ${id} (## Handoff / ## Review say where it stopped), continue the work already there, then submit. `
-        : mode === "resume"
-          ? `You already hold ${id} (do not claim it again). Read brief ${id} — the human may have answered your question (decisions) — and continue from the work already on its branch in the worktree, then submit. `
-          : `If brief shows a ## Review or ## Handoff from an earlier attempt, read it first — that is what to fix. `;
-  return (
-    `Use the te-work skill to implement ${id}. ${session} ${how}` +
-    `Do only this task, within its Touches and acceptance. If the task is unclear, ask instead of guessing, then stop. ` +
-    `When stuck (same error twice, no progress) call handoff with problem/tried/state/next and stop. ${common}\n` +
-    `Final reply: exactly one line — "${id} in_review", "${id} waiting: <question>" or "${id} handed off: <problem>".`
-  );
-}
-
-function loadRunConfig(home?: string): RunConfig {
-  const m = loadMachineConfig(home);
-  return RunConfig.parse(m.run ?? {});
-}
-
 const RUN_HELP = `te run — start agents on ready tasks until only you can move things forward
 
 Configure the agents for this machine in ~/.teamengage/machine.yaml:
@@ -167,10 +65,11 @@ Each command gets the prompt as its last argument (or wherever it says
 and logs to ~/.teamengage/runs/<workspace>/.
 
 options:
-  --max <n>    start at most n new tasks
-  --watch      keep going when idle (pick up tasks as you approve them)
-  --dry-run    print what would start, start nothing
-  --ws <name>  pick a workspace
+  --max <n>         start at most n new tasks
+  --filter <expr>   restrict items (e.g. "SE-01xx:inreview, Plan PL-1032:ready")
+  --watch           keep going when idle (pick up tasks as you approve them)
+  --dry-run         print what would start, start nothing
+  --ws <name>       pick a workspace
 `;
 
 interface Workspace {
@@ -183,7 +82,7 @@ interface Workspace {
 async function board(args: string[], home?: string): Promise<{ items: RunItem[]; ready: string[] }> {
   const q = wsQ(args);
   const items = (await daemonApi("GET", `/api/items${q ? `?${q}` : ""}`, undefined, home)) as RunItem[];
-  const next = (await daemonApi("GET", `/api/next?limit=50${q ? `&${q}` : ""}`, undefined, home)) as Array<{
+  const next = (await daemonApi("GET", `/api/next?limit=500${q ? `&${q}` : ""}`, undefined, home)) as Array<{
     meta: { id: string };
   }>;
   return { items, ready: next.map((n) => n.meta.id) };
@@ -200,6 +99,11 @@ function lastLine(file: string): string {
 
 const stamp = () => new Date().toTimeString().slice(0, 8);
 
+function loadRunConfig(home?: string): RunConfig {
+  const m = loadMachineConfig(home);
+  return RunConfig.parse(m.run ?? {});
+}
+
 export async function runCmd(args: string[], home?: string): Promise<number> {
   if (flag(args, "--help") || flag(args, "-h")) {
     process.stdout.write(RUN_HELP);
@@ -214,6 +118,14 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   const dry = flag(args, "--dry-run");
   const watch = flag(args, "--watch");
   const maxTasks = opt(args, "--max") ? Number(opt(args, "--max")) : Infinity;
+  const filterExpr = opt(args, "--filter") ?? "";
+  let filter: DispatchFilter;
+  try {
+    filter = parseDispatchFilter(filterExpr);
+  } catch (e) {
+    process.stderr.write(`te run: ${(e as Error).message}\n`);
+    return 2;
+  }
   const { port } = await ensureDaemon(home);
   const base = `http://127.0.0.1:${port}`;
   const ws = (await daemonApi("GET", `/api/workspace?${wsQ(args)}`, undefined, home)) as Workspace;
@@ -323,7 +235,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       if (d.mode !== "review" && (now?.status === "ready" || now?.status === "in_progress")) st.tried.add(d.id);
     }
     let p: Pick | undefined;
-    while (!stopping && (p = pickNext(cfg, st, items, ready, ws.machine, maxTasks))) {
+    while (!stopping && (p = pickNext(cfg, st, items, ready, ws.machine, maxTasks, undefined, filter))) {
       await start(p, items);
       if (dry) continue;
       if (p.mode === "work") break; // let it claim before choosing the next (target locks)

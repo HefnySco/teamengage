@@ -2493,7 +2493,7 @@ describe("For the human — what/how on submit (GL-0343)", () => {
     const reviewer = ctx.sessions.hello(`r-${id}`);
     await ops.claim(id, holder);
     await ops.submit(id, holder, { commits: ["repo@abc1234"], summary: "work done" });
-    const r = await ops.review(
+    await ops.review(
       id,
       reviewer,
       "ok",

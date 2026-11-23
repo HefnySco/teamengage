@@ -755,7 +755,7 @@ describe("brief context (TE-0197)", () => {
     expect(b.text).toContain('WS-0030 ready "shared path is broken"');
     // history: 7 done items share the path — the default brief caps at 5
     const histRows = (text: string) =>
-      text.split("\n").filter((l) => /^  WS-\d{4} /.test(l) && !l.startsWith("  WS-0030 "));
+      text.split("\n").filter((l) => /^ {2}WS-\d{4} /.test(l) && !l.startsWith("  WS-0030 "));
     expect(histRows(b.text).length).toBe(5);
 
     const full = await call("GET", "/agent/brief/WS-0010?more=history", { token: t });
