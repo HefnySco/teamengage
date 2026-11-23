@@ -950,8 +950,8 @@ export class WorkspaceOps {
   /** Repo name → local checkout dir, built once — the shared resolver (git resources, `repos:` globs, the root). */
   private repoDirs?: Map<string, string>;
   private repoDir(name: string): string | undefined {
-    if (this.repoDirs === undefined) this.repoDirs = resolveRepoDirs(this.wsr.ws);
-    return resolveRepoDir(this.wsr.ws, name, this.repoDirs);
+    if (this.repoDirs === undefined) this.repoDirs = resolveRepoDirs(this.wsr.ws, this.home);
+    return resolveRepoDir(this.wsr.ws, name, this.repoDirs, this.home);
   }
 
   private commitFileCache = new Map<string, Promise<string[]>>();

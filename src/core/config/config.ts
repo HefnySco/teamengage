@@ -138,14 +138,14 @@ export function resolveWorkspace(
  * resolver shared by the daemon and `te verify` so a Checks `repo:` name
  * resolves the same way everywhere.
  */
-export function resolveRepoDirs(ws: LoadedWorkspace): Map<string, string> {
+export function resolveRepoDirs(ws: LoadedWorkspace, home?: string): Map<string, string> {
   const map = new Map<string, string>();
   for (const [n, r] of ws.resources) {
     if (r.config.kind === "git" && r.path) map.set(n, r.path);
   }
   map.set(basename(ws.root), ws.root);
   for (const pat of ws.config.repos ?? []) {
-    const abs = resolve(ws.root, pat);
+    const abs = resolve(ws.root, expandTilde(pat, home));
     try {
       if (abs.endsWith(`${sep}*`) || abs.endsWith("*")) {
         for (const d of readdirSync(dirname(abs), { withFileTypes: true })) {
@@ -167,8 +167,9 @@ export function resolveRepoDir(
   ws: LoadedWorkspace,
   name: string,
   dirs?: Map<string, string>,
+  home?: string,
 ): string | undefined {
-  const map = dirs ?? resolveRepoDirs(ws);
+  const map = dirs ?? resolveRepoDirs(ws, home);
   const direct = map.get(name);
   if (direct || !name.includes("/")) return direct;
   for (const dir of map.values()) {

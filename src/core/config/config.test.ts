@@ -8,6 +8,7 @@ import {
   resolveWorkspace,
   expandTilde,
   findPlansDir,
+  resolveRepoDirs,
 } from "./config.js";
 import { NotFoundError, ValidationError } from "../model/errors.js";
 
@@ -126,6 +127,26 @@ describe("plans at the workspace root", () => {
       expect(findPlansDir(root)).toBe(join(root, ".teamengage"));
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveRepoDirs", () => {
+  it("a repos: entry with ~ resolves against the home dir (TE-0196)", () => {
+    const wsroot = mkdtempSync(join(tmpdir(), "te-repos-"));
+    try {
+      const wplans = join(wsroot, ".teamengage");
+      mkdirSync(wplans, { recursive: true });
+      const tildeRepo = join(home, "out_gits", "mcp", "teamengage");
+      mkdirSync(tildeRepo, { recursive: true });
+      writeFileSync(
+        join(wplans, "workspace.yaml"),
+        "name: r\nprefix: R\nrepos: ['~/out_gits/mcp/teamengage']\n",
+      );
+      const ws = resolveWorkspace(wsroot, { home });
+      expect(resolveRepoDirs(ws, home).get("teamengage")).toBe(tildeRepo);
+    } finally {
+      rmSync(wsroot, { recursive: true, force: true });
     }
   });
 });
