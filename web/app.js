@@ -643,7 +643,7 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
                   <button
                     class=${"btn btn-sm py-0 mt-1 " + (dispatch.enabled ? "btn-outline-secondary" : "btn-primary")}
                     disabled=${!dispatch.enabled && !readyToStart}
-                    title=${!dispatch.enabled && !readyToStart ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : ""}
+                    title=${!dispatch.enabled && !readyToStart ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : `press to switch dispatch ${dispatch.enabled ? "off" : "on"}`}
                     onClick=${() => onDispatch({ enabled: !dispatch.enabled })}
                   >
                     ${dispatch.enabled ? "off" : "on"}
@@ -754,13 +754,14 @@ const Team = ({ onOpen }) => {
       ? html`
         <div class="dispatch-bar mt-2 mb-2">
           ${dispatch.enabled
-            ? html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => toggleEnabled(false)}>off</button>`
+            ? html`<button class="btn btn-sm btn-outline-secondary" title="press to switch dispatch off" onClick=${() => toggleEnabled(false)}>off</button>`
             : html`<button
                 class="btn btn-sm btn-primary"
                 disabled=${!agentsReady}
-                title=${!agentsReady ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : ""}
+                title=${!agentsReady ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : "press to switch dispatch on"}
                 onClick=${() => toggleEnabled(true)}
               >on</button>`}
+          ${dispatch.enabled && html`<span class="dispatch-live" title="dispatch is running"></span>`}
           <div class="input-group input-group-sm dispatch-max-group">
             <span class="input-group-text">max issues</span>
             <input

@@ -1285,3 +1285,11 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 @media (max-width: 575.98px) {
   .dispatch-filter-group { flex-basis: 100%; max-width: 100%; }
 }
+.dispatch-live { width: .55rem; height: .55rem; border-radius: 50%; background: var(--bs-danger); flex: none; animation: dispatch-live-pulse 1.2s ease-in-out infinite; }
+@keyframes dispatch-live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(220, 53, 69, .45); }
+  50% { opacity: .35; box-shadow: 0 0 0 .3rem rgba(220, 53, 69, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-live { animation: none; }
+}
