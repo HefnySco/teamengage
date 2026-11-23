@@ -1293,3 +1293,4 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 @media (prefers-reduced-motion: reduce) {
   .dispatch-live { animation: none; }
 }
+.dispatch-toggle { display: inline-flex; align-items: center; gap: .4rem; }

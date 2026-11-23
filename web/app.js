@@ -551,6 +551,20 @@ const seatHue = (name) => {
   return hue;
 };
 
+// the one dispatch on/off control — same on the dispatch bar and the
+// office front-desk seat: a button (red-outlined "off" when running) and a
+// pulsing red dot while dispatch is on
+const DispatchToggle = ({ enabled, ready, onToggle }) => html`
+  <span class="dispatch-toggle">
+    <button
+      class=${"btn btn-sm " + (enabled ? "btn-outline-danger" : "btn-primary")}
+      disabled=${!enabled && !ready}
+      title=${!enabled && !ready ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : `press to switch dispatch ${enabled ? "off" : "on"}`}
+      onClick=${() => onToggle(!enabled)}
+    >${enabled ? "off" : "on"}</button>
+    ${enabled && html`<span class="dispatch-live" title="dispatch is running"></span>`}
+  </span>`;
+
 const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
   const known = useRef(new Map()); // session id → {s, gone: 0 | ms-left}
   const live = sessions ?? [];
@@ -640,14 +654,11 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
                   <div class="seat-desk"></div>
                   <div class=${"seat-chair " + (dispatch.enabled ? "seat-chair-on" : "seat-chair-off")}><span>D</span></div>
                   <div class="seat-name">${dispatch.enabled ? "on" : "off"} · ${online}/${max}</div>
-                  <button
-                    class=${"btn btn-sm py-0 mt-1 " + (dispatch.enabled ? "btn-outline-secondary" : "btn-primary")}
-                    disabled=${!dispatch.enabled && !readyToStart}
-                    title=${!dispatch.enabled && !readyToStart ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : `press to switch dispatch ${dispatch.enabled ? "off" : "on"}`}
-                    onClick=${() => onDispatch({ enabled: !dispatch.enabled })}
-                  >
-                    ${dispatch.enabled ? "off" : "on"}
-                  </button>
+                  <div class="mt-1"><${DispatchToggle}
+                    enabled=${dispatch.enabled}
+                    ready=${readyToStart}
+                    onToggle=${(v) => onDispatch({ enabled: v })}
+                  /></div>
                 </div>
               </div>
             </div>`;
@@ -753,15 +764,7 @@ const Team = ({ onOpen }) => {
     ${dispatch
       ? html`
         <div class="dispatch-bar mt-2 mb-2">
-          ${dispatch.enabled
-            ? html`<button class="btn btn-sm btn-outline-secondary" title="press to switch dispatch off" onClick=${() => toggleEnabled(false)}>off</button>`
-            : html`<button
-                class="btn btn-sm btn-primary"
-                disabled=${!agentsReady}
-                title=${!agentsReady ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : "press to switch dispatch on"}
-                onClick=${() => toggleEnabled(true)}
-              >on</button>`}
-          ${dispatch.enabled && html`<span class="dispatch-live" title="dispatch is running"></span>`}
+          <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} onToggle=${toggleEnabled} />
           <div class="input-group input-group-sm dispatch-max-group">
             <span class="input-group-text">max issues</span>
             <input
