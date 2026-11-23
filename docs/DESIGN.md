@@ -119,10 +119,11 @@ peer_answer_after: 30m # a peer question unanswered this long becomes the human'
 brief_inherit_lines: 60 # brief: per-block cap on inherited text — parent plan, relates sources (§4)
 lessons_max: 25 # cap on the bullet lines in each lessons/<domain>.md — over it the inbox asks which to drop
 extra_touches_max: 2 # most files outside Touches a submit may declare — they show as 'outside scope'
-dispatch: # unset = off: the daemon starts agent commands when work exists (§5)
+dispatch: # unset = off: the daemon starts per-item agent runs when matched work exists (§5)
   enabled: false            # the human turns it on: te dispatch on (agents get FORBIDDEN)
-  max_sessions: 2           # live agent sessions on this machine the daemon fills up to
-  agents:                   # one command per role; ran in the workspace root
+  max_issues: 2             # active local issues (dispatches + live local in_progress claims)
+  filter: "SE-01xx:inreview, Plan PL-1032:ready" # optional selector; unset/empty matches all
+  agents:                   # optional override; falls back to ~/.teamengage/machine.yaml run:
     - { role: coder, command: "devin -p --model swe-2-high --" }
     - { role: reviewer, tier: standard, command: "claude -p \"$TE_PROMPT\"" }
 notify: # unset = off: alert the human on decision events (§5)
@@ -536,15 +537,23 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   `in_review` items and claims held on other machines are never released;
   each release lands in the event log and the item log with actor `daemon`.
 - `dispatch` (workspace.yaml, unset = off) makes the daemon the foreman:
-  while `enabled`, each sweep starts an agent's command when `next` sees
-  work for its role (a reviewer probe sees `in_review`, a planner probe
-  sees ready sources nothing references yet and unvetted light drafts, a coder or ops probe
-  sees ready items) and the live-session count is under `max_sessions` —
-  sessions it started count toward the cap. It stops no session; each
-  start writes a `dispatch_start` event, a role's command that fails three
-  times in a row switches dispatch off (`dispatch_off`). `te dispatch
-  on|off|status` controls it; on/off is human-only. Commands run in the
-  workspace root, log to `~/.teamengage/runs/<ws>/`, and get `TE_ROLE`.
+  while `enabled`, each 10s sweep picks matched items with `pickNext`
+  (`review` -> `fix` -> `resume` -> `takeover` -> `work`) and starts one
+  agent process per item (`coder` or `reviewer` from `dispatch.agents` or
+  `~/.teamengage/machine.yaml` `run:`) while `online_issues < max_issues`.
+  `online_issues` counts the union of active dispatched items and live local
+  `in_progress` manual claims; idle `hello` sessions do not consume slots.
+  An optional case-insensitive `filter` restricts candidates by space- or
+  comma-separated clauses: item ID wildcards (`SE-01xx:inreview`, `SE-01*`,
+  where `*` matches any text, `?` one character, and `x` after `-` one digit),
+  plan subtrees (`Plan PL-1032:ready`, `plan:PL-1032`, `in:PL-1032`), and
+  domains (`#webclient:ready`), with optional `:ready`, `:inreview`, or
+  `:inprogress` suffixes. When all matched items finish, dispatch stays `on`
+  and watches for new matches. Each start writes `dispatch_start`; three
+  consecutive failures for a role switch dispatch off (`dispatch_off`).
+  `te dispatch on|set|off|status [--max <n>] [--filter <expr>]` controls it;
+  changes are human-only. Commands run in the workspace root with `TE_PROMPT`,
+  `TE_ITEM`, `TE_MODE`, and `TE_SESSION`, and log to `~/.teamengage/runs/<ws>/`.
 - `peer_answer_after` (workspace.yaml, default `30m`) is how long a
   `to: "peer"` question waits for a peer before the daemon turns it into a
   normal human question: the item moves to `waiting` and shows in the
@@ -722,10 +731,12 @@ submissions; accept stays with the human."
   stale/conflicted claims, unresolved plan merge conflicts.
 - **Graph** — Mermaid render, status-coloured, filter by project/resource/epic.
 - **Board** — columns by status; who holds what claim on which machine, claim age.
-  The **Team** panel on top lists each live session (agent, role, tier, the
-  items it holds, time since last seen), the dispatch state with the human's
-  on/off buttons, and the last 10 dispatch events. Session and dispatch
-  notifications stream over SSE, so the panel updates without a reload.
+  The **Team** page (`#/team`) lists each live session (agent, role, tier, the
+  items it holds, time since last seen), the top-down office view, and the
+  dispatch bar (`online_issues/max_issues`, on/off button, `max_issues` and
+  selector `filter` inputs, clickable active runs, live matched preview, and
+  the last 10 dispatch events). Session and dispatch notifications stream over
+  SSE, so the panel updates without a reload.
 - **Item** — Simple/technical tabs, log, evidence, decisions, push state per resource.
 - **Metrics** — the `/api/metrics` scorecard as tables (per agent, per tier,
   with token/usd columns once cost is reported) plus plan health per open

@@ -613,51 +613,129 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
             </div>`,
         )}
         ${dispatch &&
-        html`
-          <div class="office-room office-frontdesk" key="dispatch">
-            <div class="office-room-name">front desk · dispatch</div>
-            <div class="office-desks">
-              <div class="seat" title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? " · running: " + dispatch.running.join(", ") : ""}`}>
-                <div class="seat-bubble">
-                  ${(dispatch.running ?? []).slice(0, 2).map((r) => html`<span class="id">${r}</span>`)}
-                </div>
-                <div class="seat-desk"></div>
-                <div class=${"seat-chair " + (dispatch.enabled ? "seat-chair-on" : "seat-chair-off")}><span>D</span></div>
-                <div class="seat-name">
-                  ${dispatch.enabled ? `on · ${dispatch.live_sessions}/${dispatch.max_sessions}` : "off"}
-                </div>
-                <button
-                  class=${"btn btn-sm py-0 mt-1 " + (dispatch.enabled ? "btn-outline-secondary" : "btn-primary")}
-                  disabled=${!dispatch.enabled && !dispatch.agents?.length}
-                  title=${!dispatch.enabled && !dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""}
-                  onClick=${() => onDispatch(!dispatch.enabled)}
+        (() => {
+          const online = dispatch.online_issues ?? 0;
+          const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
+          const running = (dispatch.running ?? []).map((entry) =>
+            typeof entry === "string" ? { id: entry, mode: "" } : entry,
+          );
+          const readyToStart = Boolean(dispatch.agents_ready ?? dispatch.agents?.length);
+          return html`
+            <div class="office-room office-frontdesk" key="dispatch">
+              <div class="office-room-name">front desk · dispatch</div>
+              <div class="office-desks">
+                <div
+                  class="seat"
+                  title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${online}/${max} active issues${dispatch.filter ? ` · filter: ${dispatch.filter}` : ""}${running.length ? " · active: " + running.map((r) => (r.mode ? `${r.id} (${r.mode})` : r.id)).join(", ") : ""}`}
                 >
-                  ${dispatch.enabled ? "off" : "on"}
-                </button>
+                  <div class="seat-bubble">
+                    ${running
+                      .slice(0, 3)
+                      .map((r) =>
+                        r.mode
+                          ? html`<a class="id" key=${r.id} title=${`${r.id} · ${r.mode}`} onClick=${() => onOpen(r.id)}>${r.id}</a>`
+                          : html`<span class="id" key=${r.id}>${r.id}</span>`,
+                      )}
+                  </div>
+                  <div class="seat-desk"></div>
+                  <div class=${"seat-chair " + (dispatch.enabled ? "seat-chair-on" : "seat-chair-off")}><span>D</span></div>
+                  <div class="seat-name">${dispatch.enabled ? "on" : "off"} · ${online}/${max}</div>
+                  <button
+                    class=${"btn btn-sm py-0 mt-1 " + (dispatch.enabled ? "btn-outline-secondary" : "btn-primary")}
+                    disabled=${!dispatch.enabled && !readyToStart}
+                    title=${!dispatch.enabled && !readyToStart ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : ""}
+                    onClick=${() => onDispatch({ enabled: !dispatch.enabled })}
+                  >
+                    ${dispatch.enabled ? "off" : "on"}
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>`}
+            </div>`;
+        })()}
       </div>
       ${last &&
-      html`<div class="office-ticker">${ago(last.at)} ago — ${last.kind}${last.data.role ? ` · ${last.data.role}` : ""}${last.data.command ? ` · ${last.data.command}` : ""}${last.data.error ? ` · ${last.data.error}` : ""}${last.data.reason ? ` · ${last.data.reason}` : ""}</div>`}
+      html`<div class="office-ticker">${ago(last.at)} ago — ${last.kind}${last.data.id ? html` · <a class="item id" onClick=${() => onOpen(last.data.id)}>${last.data.id}</a>` : ""}${last.data.mode ? ` (${last.data.mode})` : ""}${last.data.role ? ` · ${last.data.role}` : ""}${last.data.command ? ` · ${last.data.command}` : ""}${last.data.error ? ` · ${last.data.error}` : ""}${last.data.reason ? ` · ${last.data.reason}` : ""}</div>`}
     </div>`;
 };
 
-// GL-0329 — the live team page: sessions with what they hold, plus the
-// daemon's dispatcher (on/off is the human's, last 10 events). Refreshes over SSE.
+// GL-0329 / TE-0204 — the live team page: sessions with what they hold, plus
+// per-item dispatch controls (on/off, max online issues, wildcard selector,
+// matched preview, and last 10 events). Refreshes over SSE.
 const Team = ({ onOpen }) => {
   const { data: sessions, reload: reloadSessions } = useApi("/api/sessions");
   const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
-  const set = (enabled) => post("/api/dispatch", { enabled }).then(reloadDispatch, (e) => toast(e.message));
+  const serverMax = dispatch?.max_issues ?? dispatch?.max_sessions ?? 2;
+  const serverFilter = dispatch?.filter ?? "";
+  const [maxInput, setMaxInput] = useState(String(serverMax));
+  const [filterInput, setFilterInput] = useState(serverFilter);
+
+  useEffect(() => {
+    if (dispatch) setMaxInput(String(dispatch.max_issues ?? dispatch.max_sessions ?? 2));
+  }, [dispatch?.max_issues, dispatch?.max_sessions]);
+
+  useEffect(() => {
+    if (dispatch) setFilterInput(dispatch.filter ?? "");
+  }, [dispatch?.filter]);
+
+  const sendDispatch = (payload) =>
+    post("/api/dispatch", payload).then(reloadDispatch, (e) => toast(e.message));
+
+  const buildDraftPatch = () => {
+    const parsedMax = Number(maxInput);
+    if (!Number.isInteger(parsedMax) || parsedMax < 1) {
+      toast("max issues must be an integer >= 1");
+      return null;
+    }
+    return { max_issues: parsedMax, filter: filterInput.trim() };
+  };
+
+  const applyDraft = () => {
+    const patch = buildDraftPatch();
+    if (patch) sendDispatch(patch);
+  };
+
+  const toggleEnabled = (nextEnabled) => {
+    if (!nextEnabled) {
+      sendDispatch({ enabled: false });
+      return;
+    }
+    const patch = buildDraftPatch();
+    if (patch) sendDispatch({ ...patch, enabled: true });
+  };
+
+  const clearFilter = () => {
+    setFilterInput("");
+    const parsedMax = Number(maxInput);
+    const validMax = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : serverMax;
+    sendDispatch({ max_issues: validMax, filter: "" });
+  };
+
   const ss = sessions ?? [];
   const ev = dispatch?.events ?? [];
+  const onlineIssues = dispatch?.online_issues ?? 0;
+  const runningItems = (dispatch?.running ?? []).map((entry) =>
+    typeof entry === "string" ? { id: entry, mode: "" } : entry,
+  );
+  const matchedItems = dispatch?.matched ?? [];
+  const agentsReady = Boolean(dispatch?.agents_ready ?? dispatch?.agents?.length);
+  const draftDirty =
+    dispatch != null &&
+    (Number(maxInput) !== serverMax || filterInput.trim() !== serverFilter.trim());
+
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Team</h2>
       <${RefreshBtn} refresh=${() => Promise.all([reloadSessions(), reloadDispatch()])} />
-      <span class="small text-secondary">${ss.length} session(s) · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}</span>
+      <span class="small text-secondary">
+        ${ss.length} session(s) · ${dispatch ? `${onlineIssues}/${serverMax} online issue(s)` : "…"} · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}${serverFilter ? html` · <code class="small">${serverFilter}</code>` : ""}
+      </span>
     </div>
-    <${Office} sessions=${ss} dispatch=${dispatch} onOpen=${onOpen} onDispatch=${set} />
+    <${Office}
+      sessions=${ss}
+      dispatch=${dispatch}
+      onOpen=${onOpen}
+      onDispatch=${({ enabled }) => toggleEnabled(enabled)}
+    />
     <div class="triage-group">sessions <span class="n">${ss.length}</span></div>
     <div class="d-flex flex-column gap-1 mt-1 mb-3">
       ${ss.length === 0 && html`<div class="small text-secondary">no live sessions — agents appear here when they say hello</div>`}
@@ -671,19 +749,90 @@ const Team = ({ onOpen }) => {
           </span>
         </div>`)}
     </div>
-    <div class="triage-group">dispatch</div>
+    <div class="triage-group">dispatch <span class="n">${onlineIssues}/${serverMax}</span></div>
     ${dispatch
       ? html`
-        <div class="d-flex align-items-center gap-2 mt-1 mb-2">
+        <div class="dispatch-bar mt-2 mb-2">
           ${dispatch.enabled
-            ? html`<button class="btn btn-sm py-0 btn-outline-secondary" onClick=${() => set(false)}>off</button>`
-            : html`<button class="btn btn-sm py-0 btn-primary" disabled=${!dispatch.agents?.length} title=${!dispatch.agents?.length ? "no agents configured in workspace.yaml" : ""} onClick=${() => set(true)}>on</button>`}
-          <span class="small text-secondary">${dispatch.live_sessions}/${dispatch.max_sessions} sessions${dispatch.running?.length ? ` · running: ${dispatch.running.join(", ")}` : ""}</span>
+            ? html`<button class="btn btn-sm btn-outline-secondary" onClick=${() => toggleEnabled(false)}>off</button>`
+            : html`<button
+                class="btn btn-sm btn-primary"
+                disabled=${!agentsReady}
+                title=${!agentsReady ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : ""}
+                onClick=${() => toggleEnabled(true)}
+              >on</button>`}
+          <div class="input-group input-group-sm dispatch-max-group">
+            <span class="input-group-text">max issues</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              class="form-control"
+              aria-label="Max online issues"
+              value=${maxInput}
+              onInput=${(e) => setMaxInput(e.target.value)}
+              onKeyDown=${(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyDraft();
+                }
+              }}
+            />
+          </div>
+          <div class="input-group input-group-sm dispatch-filter-group">
+            <span class="input-group-text">filter</span>
+            <input
+              type="text"
+              class="form-control font-monospace"
+              placeholder="SE-01xx:inreview, Plan PL-1032:ready"
+              aria-label="Dispatch selector filter"
+              value=${filterInput}
+              onInput=${(e) => setFilterInput(e.target.value)}
+              onKeyDown=${(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyDraft();
+                }
+              }}
+            />
+            ${(filterInput || serverFilter) &&
+            html`<button class="btn btn-outline-secondary" type="button" title="clear filter — match all tasks" onClick=${clearFilter}>Clear</button>`}
+          </div>
+          <button
+            class=${"btn btn-sm " + (draftDirty ? "btn-primary" : "btn-outline-secondary")}
+            type="button"
+            onClick=${applyDraft}
+          >Apply</button>
+          <span class="small text-secondary">${onlineIssues}/${serverMax} active issues</span>
+        </div>
+        ${runningItems.length > 0 &&
+        html`
+          <div class="dispatch-strip small mb-1">
+            <span class="text-secondary">active:</span>
+            ${runningItems.map((r) =>
+              r.mode
+                ? html`<span class="dispatch-chip" key=${r.id}><a class="item id" onClick=${() => onOpen(r.id)}>${r.id}</a> <span class="triage-tag">${r.mode}</span></span>`
+                : html`<span class="id" key=${r.id}>${r.id}</span>`,
+            )}
+          </div>`}
+        <div class="dispatch-strip small mb-2">
+          ${matchedItems.length > 0
+            ? html`
+                <span class="text-secondary">matched ${matchedItems.length}:</span>
+                ${matchedItems.slice(0, 20).map(
+                  (m) =>
+                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.title ?? m.id}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span></span>`,
+                )}
+                ${matchedItems.length > 20 && html`<span class="text-secondary">+${matchedItems.length - 20} more</span>`}`
+            : html`<span class="text-secondary">${dispatch.enabled ? "0 matched — standby" : "0 matched"}</span>`}
         </div>
         ${ev.length > 0
           ? html`
             <div class="small text-secondary mt-1">
-              ${[...ev].reverse().map((e, i) => html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`)}
+              ${[...ev].reverse().map(
+                (e, i) =>
+                  html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.id ? html` · <a class="item id" onClick=${() => onOpen(e.data.id)}>${e.data.id}</a>` : ""}${e.data.mode ? ` (${e.data.mode})` : ""}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`,
+              )}
             </div>`
           : html`<div class="small text-secondary">no dispatch events yet</div>`}`
       : html`<div class="small text-secondary mt-1">loading…</div>`}`;
