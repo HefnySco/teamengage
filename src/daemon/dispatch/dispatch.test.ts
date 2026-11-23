@@ -410,6 +410,43 @@ describe("hard cap on live in-progress claims (TE-0206)", () => {
     expect(rebound.last_seen).toBe(stale);
   });
 
+  it("a dispatcher-opened session adopts only its own item's dead claim, never the others", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    // a devin session claimed two items, then died — its claims are dead
+    const first = await ops.hello("devin");
+    await ops.claim("WS-0001", first.session);
+    await ops.claim("WS-0002", first.session);
+    sessions.disconnect(first.session.id);
+
+    // the dispatcher opens a one-shot session for WS-0003: it must inherit
+    // nothing — before the fix it adopted every dead devin claim on the
+    // machine, counted them toward the dispatch cap and stranded them
+    const dispatched = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0003", true);
+    expect(dispatched.resume).toEqual([]);
+    expect(sessions.isDispatchMinted(dispatched.session.id)).toBe(true);
+    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(first.session.id);
+    expect(ops.index.get("WS-0002")!.claim!.holder).toBe(first.session.id);
+
+    // dispatched for its own item (resume flow): only that claim adopts
+    const resumed = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0001", true);
+    expect(resumed.resume.map((c) => c.item)).toEqual(["WS-0001"]);
+    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(resumed.session.id);
+    expect(ops.index.get("WS-0002")!.claim!.holder).toBe(first.session.id);
+
+    // an interactive hello still adopts every DEAD claim of its agent — no
+    // scoping (WS-0001's holder, `resumed`, is live, so only WS-0002 adopts)
+    const interactive = await ops.hello("devin");
+    expect(interactive.resume.map((c) => c.item).sort()).toEqual(["WS-0002"]);
+  });
+
   it("a stale last_seen claim with a live holder is not live capacity; a fresh one is", async () => {
     const wsr = await makeWs(
       `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,

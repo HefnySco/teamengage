@@ -215,6 +215,7 @@ export class WorkspaceOps {
     role?: Session["role"],
     model?: string,
     label?: string,
+    dispatch?: boolean,
   ): Promise<{ session: Session; resume: Claim[] }> {
     // GL-0360: the model id is stored lowercased — convert, never refuse
     const session = this.sessions.hello(agent, {
@@ -230,8 +231,14 @@ export class WorkspaceOps {
     // daemon restart.)
     const prior = this.sessions
       .resumeClaims(agent, this.index.claims.values())
-      .filter((c) => !this.sessions.isLive(c.holder));
+      .filter((c) => !this.sessions.isLive(c.holder))
+      // a dispatcher-opened session is a one-shot run for ONE item (its
+      // label): it must not adopt the machine's other dead claims — every
+      // dispatch would otherwise inherit them all, count them toward the
+      // dispatch cap and strand them on a session that never worked them.
+      .filter((c) => !dispatch || c.item === label);
     const resume = await this.store.rebindClaims(prior, session.id);
+    if (dispatch) this.sessions.markDispatchMinted(session.id);
     return { session, resume };
   }
 

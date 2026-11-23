@@ -514,7 +514,7 @@ export class Dispatcher {
     const res = await fetch(`${baseUrl}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent, role, label, workspace: this.wsr.ws.name }),
+      body: JSON.stringify({ agent, role, label, workspace: this.wsr.ws.name, dispatch: true }),
     });
     const text = await res.text();
     const token = /^token (\S+)/m.exec(text)?.[1];
