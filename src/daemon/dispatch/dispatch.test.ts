@@ -1,37 +1,65 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { Dispatcher } from "./dispatch.js";
+import { Dispatcher, isLegacyTeRunCommand } from "./dispatch.js";
 import { resolveWorkspace, type LoadedWorkspace } from "../../core/config/config.js";
 import { PlansStore } from "../store/store.js";
 import { SessionRegistry } from "../sessions/sessions.js";
+import { WorkspaceOps } from "../api/ops.js";
 import type { WorkspaceRuntime } from "../server/context.js";
-
-/**
- * GL-0328 — the daemon starts a role's command when work for it exists and
- * live sessions are under max_sessions; 3 failures in a row switch it off.
- */
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let home: string;
 let sessions: SessionRegistry;
 const events: Array<{ kind: string; data: Record<string, unknown> }> = [];
+const activeDispatchers: Dispatcher[] = [];
 
-async function makeWs(config: string): Promise<WorkspaceRuntime> {
+interface SeedItem {
+  id: string;
+  type?: string;
+  status?: string;
+  parent?: string;
+  domains?: string[];
+  aiReview?: { verdict: "ok" | "issues"; summary: string };
+}
+
+async function makeWs(
+  config: string,
+  seedItems: SeedItem[] = [{ id: "WS-0001", status: "ready" }],
+): Promise<WorkspaceRuntime> {
   const root = join(home, `ws-${Math.random().toString(36).slice(2, 7)}`);
   const plans = join(root, ".teamengage");
-  mkdirSync(join(plans, "items", "WS"), { recursive: true });
+  mkdirSync(join(plans, "items"), { recursive: true });
+  const prefixes = new Set<string>(["WS"]);
+  for (const item of seedItems) {
+    prefixes.add(item.id.split("-")[0]);
+  }
+  const extraProjects = [...prefixes]
+    .filter((prefix) => prefix !== "WS")
+    .map((prefix) => `  proj_${prefix.toLowerCase()}: { prefix: ${prefix} }`)
+    .join("\n");
+  const projectsYaml = extraProjects ? `projects:\n${extraProjects}\n` : "";
+
   writeFileSync(
     join(plans, "workspace.yaml"),
-    `name: ws\nprefix: WS\nresources:\n  self: { kind: git, path: ., worktree: false }\n${config}`,
+    `name: ws\nprefix: WS\n${projectsYaml}resources:\n  self: { kind: git, path: ., worktree: false }\n${config}`,
   );
-  writeFileSync(
-    join(plans, "items", "WS", "WS-0001.md"),
-    `---\nid: WS-0001\ntype: task\ntitle: t\nstatus: ready\nversion: 1\n---\n\n## Summary\nx\n`,
-  );
+  for (const item of seedItems) {
+    const prefix = item.id.split("-")[0];
+    mkdirSync(join(plans, "items", prefix), { recursive: true });
+    const parentYaml = item.parent ? `parent: ${item.parent}\n` : "";
+    const domainsYaml = item.domains?.length ? `domains: [${item.domains.join(", ")}]\n` : "";
+    const reviewYaml = item.aiReview
+      ? `ai_review:\n  verdict: ${item.aiReview.verdict}\n  summary: "${item.aiReview.summary}"\n  reviewed_by: rev@test#1111\n  reviewed_at: "2026-11-23T00:00:00.000Z"\n`
+      : "";
+    writeFileSync(
+      join(plans, "items", prefix, `${item.id}.md`),
+      `---\nid: ${item.id}\ntype: ${item.type ?? "task"}\ntitle: ${item.id}\nstatus: ${item.status ?? "ready"}\n${parentYaml}${domainsYaml}${reviewYaml}version: 1\n---\n\n## Summary\nx\n`,
+    );
+  }
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans });
   execFileSync("git", ["config", "user.name", "t"], { cwd: plans });
@@ -43,13 +71,16 @@ async function makeWs(config: string): Promise<WorkspaceRuntime> {
   return { ws, store };
 }
 
-const dispatcher = (wsr: WorkspaceRuntime) =>
-  new Dispatcher(wsr, sessions, home, (kind, data) => events.push({ kind, data }));
+const dispatcher = (wsr: WorkspaceRuntime) => {
+  const instance = new Dispatcher(wsr, sessions, home, (kind, data) => events.push({ kind, data }));
+  activeDispatchers.push(instance);
+  return instance;
+};
 
-const untilEvent = async (kind: string, n: number, ms = 8000) => {
-  const deadline = Date.now() + ms;
-  while (events.filter((e) => e.kind === kind).length < n && Date.now() < deadline) {
-    await sleep(50);
+const untilEvent = async (kind: string, count: number, timeoutMs = 8000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (events.filter((entry) => entry.kind === kind).length < count && Date.now() < deadline) {
+    await sleep(40);
   }
 };
 
@@ -57,51 +88,211 @@ beforeAll(() => {
   home = mkdtempSync(join(tmpdir(), "te-dispatch-"));
   sessions = new SessionRegistry("test");
 });
+
+afterEach(() => {
+  while (activeDispatchers.length) {
+    activeDispatchers.pop()?.stopAll();
+  }
+  for (const session of sessions.list()) {
+    sessions.disconnect(session.id);
+  }
+  rmSync(join(home, ".teamengage", "machine.yaml"), { force: true });
+  events.length = 0;
+});
+
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-describe("Dispatcher (GL-0328)", () => {
-  it("dispatch on + one ready item starts the coder command once", async () => {
+describe("Dispatcher per-item launch and online_issues cap (TE-0203)", () => {
+  it("dispatch on + one ready item starts the coder command once for that item", async () => {
     const wsr = await makeWs(
-      `dispatch:\n  enabled: true\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
     );
     const d = dispatcher(wsr);
     d.tick();
     d.tick();
     expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
-    expect(events[0].data.role).toBe("coder");
-    expect(d.status().running).toEqual(["coder"]);
-    // the team panel's last-10 feed (GL-0329)
+    expect(events[0].data).toMatchObject({ id: "WS-0001", mode: "work", role: "coder" });
+    expect(d.status().running.map((entry) => `${entry.id}:${entry.mode}`)).toEqual(["WS-0001:work"]);
+    expect(d.status().online_issues).toBe(1);
     expect(d.status().events.map((e) => e.kind)).toEqual(["dispatch_start"]);
   });
 
-  it("no start when live sessions reach max_sessions", async () => {
-    events.length = 0;
+  it("online_issues counts active dispatches plus live local in_progress claims and ignores idle, remote, and in_review claims", async () => {
     const wsr = await makeWs(
-      `dispatch:\n  enabled: true\n  max_sessions: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      `dispatch:\n  enabled: false\n  max_issues: 3\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+        { id: "WS-0004", status: "ready" },
+      ],
     );
-    sessions.hello("someone"); // 1 live session = at the cap
-    dispatcher(wsr).tick();
-    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
-    // free the seat — the next workspace's dispatcher may start again
-    for (const s of sessions.list()) sessions.disconnect(s.id);
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+
+    sessions.hello("idle-ide");
+    const manualLocal = sessions.hello("manual-coder");
+    await ops.claim("WS-0002", manualLocal);
+
+    const reviewHolder = sessions.hello("review-holder");
+    await ops.claim("WS-0003", reviewHolder);
+    await ops.submit("WS-0003", reviewHolder, { summary: "submitted work" });
+
+    ops.index.setClaim({
+      item: "WS-0004",
+      holder: "devin@other-box#9999",
+      machine: "other-box",
+      claimed_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+      targets: [],
+    });
+    const ws4 = ops.index.get("WS-0004");
+    if (ws4) ws4.meta.status = "in_progress";
+
+    const d = dispatcher(wsr);
+    expect(d.status().online_issues).toBe(1);
+    expect(d.status().live_sessions).toBe(3);
+
+    d.setEnabled(true);
+    d.tick();
+    expect(d.status().online_issues).toBe(2);
+    expect(d.status().running.map((entry) => entry.id)).toEqual(["WS-0001"]);
   });
 
-  it("live_sessions counts only sessions inside the idle limit (TE-0165)", async () => {
-    for (const s of sessions.list()) sessions.disconnect(s.id);
-    const wsr = await makeWs(`dispatch:\n  enabled: true\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`);
+  it("starts no new item when manual local in_progress claims fill max_issues, while idle hello sessions do not block", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+
+    sessions.hello("idle-one");
+    sessions.hello("idle-two");
+    const manualHolder = sessions.hello("manual-local");
+    await ops.claim("WS-0002", manualHolder);
+
+    const d = dispatcher(wsr);
+    d.tick();
+    expect(d.status().online_issues).toBe(1);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+
+    await ops.release("WS-0002", manualHolder, "done manual check");
+    d.tick();
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    expect(events[0].data.id).toBe("WS-0001");
+  });
+
+  it("live_sessions still counts only sessions inside the idle limit (TE-0165)", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
     sessions.idleAfterMs = 60_000;
     const old = sessions.hello("curl-old");
     old.last_seen = new Date(Date.now() - 120_000).toISOString();
     sessions.hello("curl-fresh");
     expect(dispatcher(wsr).status().live_sessions).toBe(1);
-    for (const s of sessions.list()) sessions.disconnect(s.id);
     sessions.idleAfterMs = 2 * 60 * 60_000;
   });
 
-  it("a command that fails 3 times in a row turns dispatch off and writes an event", async () => {
-    events.length = 0;
+  it("filter 'SE-01xx:inreview' dispatches reviewer on unreviewed SE-01xx and coder fix on SE-01xx issues verdicts", async () => {
     const wsr = await makeWs(
-      `dispatch:\n  enabled: true\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "exit 1" }\n`,
+      `dispatch:\n  enabled: true\n  max_issues: 3\n  filter: "SE-01xx:inreview"\n  agents:\n    - { role: coder, command: "sleep 30" }\n    - { role: reviewer, command: "sleep 30" }\n`,
+      [
+        { id: "SE-0101", status: "ready" },
+        { id: "SE-0102", status: "ready" },
+        {
+          id: "SE-0103",
+          status: "in_review",
+          aiReview: { verdict: "issues", summary: "missing check" },
+        },
+        { id: "WS-0001", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const subA = sessions.hello("author-a");
+    await ops.claim("SE-0102", subA);
+    await ops.submit("SE-0102", subA, { summary: "ready for review" });
+
+    ops.index.setClaim({
+      item: "SE-0103",
+      holder: "author-b@test#2222",
+      machine: "test",
+      claimed_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+      targets: [],
+    });
+
+    const subOther = sessions.hello("author-other");
+    await ops.claim("WS-0001", subOther);
+    await ops.submit("WS-0001", subOther, { summary: "unrelated project" });
+
+    const d = dispatcher(wsr);
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start").map((e) => `${e.data.id}:${e.data.mode}:${e.data.role}`);
+    expect(starts).toEqual(["SE-0102:review:reviewer", "SE-0103:fix:coder"]);
+  });
+
+  it("filter 'Plan PL-1032:ready' dispatches coder work only on ready descendant tasks of PL-1032", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  filter: "Plan PL-1032:ready"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "PL-1032", type: "epic", status: "ready" },
+        { id: "WS-0010", status: "ready", parent: "PL-1032" },
+        { id: "WS-0099", status: "ready" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    expect(d.status().matched.map((entry) => entry.id)).toEqual(["WS-0010"]);
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(1);
+    expect(starts[0].data).toMatchObject({ id: "WS-0010", mode: "work", role: "coder" });
+  });
+
+  it("stays enabled when matched queue empties and picks up a newly approved matching item on the next tick", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  filter: "SE-01xx:ready"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "SE-0105", status: "draft" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+
+    d.tick();
+    expect(d.isEnabled()).toBe(true);
+    expect(events).toHaveLength(0);
+
+    await ops.approve("SE-0105");
+    d.tick();
+    expect(d.isEnabled()).toBe(true);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    expect(events[0].data.id).toBe("SE-0105");
+  });
+
+  it("ignores legacy 'te run' commands in dispatch.agents and falls back to machine.yaml run config", async () => {
+    expect(isLegacyTeRunCommand("env -u ACP_BACKEND -u AI_AGENT te run")).toBe(true);
+    expect(isLegacyTeRunCommand("te run --watch")).toBe(true);
+    expect(isLegacyTeRunCommand("devin -p --model swe-2-high --")).toBe(false);
+
+    mkdirSync(join(home, ".teamengage"), { recursive: true });
+    writeFileSync(
+      join(home, ".teamengage", "machine.yaml"),
+      `name: test\nrun:\n  coder: 'true #'\n  reviewer: 'true #'\n  concurrency: 2\n`,
+    );
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "env -u ACP_BACKEND -u AI_AGENT te run" }\n`,
+    );
+    const d = dispatcher(wsr);
+    expect(d.status().agents_ready).toBe(true);
+    expect(d.status().agents.map((a) => a.command)).toEqual(["true #", "true #"]);
+    d.tick();
+    expect(events[0]?.data.command).toBe("true #");
+  });
+
+  it("a command that fails 3 times in a row turns dispatch off and writes an event", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "exit 1" }\n`,
     );
     const d = dispatcher(wsr);
     for (let i = 0; i < 3; i++) {
@@ -112,25 +303,77 @@ describe("Dispatcher (GL-0328)", () => {
     const off = events.find((e) => e.kind === "dispatch_off");
     expect(off?.data.reason).toContain("3 times");
     expect(d.isEnabled()).toBe(false);
-    // off now — a further tick starts nothing even though work exists
-    const n = events.filter((e) => e.kind === "dispatch_start").length;
+    const count = events.filter((e) => e.kind === "dispatch_start").length;
     d.tick();
-    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(n);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(count);
   });
 
-  it("with dispatch unset the daemon starts nothing", async () => {
-    events.length = 0;
-    const wsr = await makeWs("");
-    dispatcher(wsr).tick();
+  it("with dispatch unset or disabled the daemon starts nothing", async () => {
+    const wsrUnset = await makeWs("");
+    dispatcher(wsrUnset).tick();
     expect(events).toHaveLength(0);
-  });
 
-  it("disabled dispatch starts nothing even with agents configured", async () => {
-    events.length = 0;
-    const wsr = await makeWs(
-      `dispatch:\n  enabled: false\n  max_sessions: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    const wsrDisabled = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
     );
-    dispatcher(wsr).tick();
+    dispatcher(wsrDisabled).tick();
     expect(events).toHaveLength(0);
+  });
+
+  it("te dispatch on/set/status/off supports --max and --filter and prints issues, filter, matched, and running", async () => {
+    const { startDaemon } = await import("../server/server.js");
+    const { registerApiRoutes } = await import("../api/api.js");
+    const { EventBus } = await import("../api/events.js");
+    const { dispatchCmd } = await import("../../cli/commands/dispatch.js");
+
+    const cliHome = mkdtempSync(join(tmpdir(), "te-dispatch-cli-"));
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "SE-0101", status: "ready" },
+        { id: "SE-0102", status: "ready" },
+        { id: "WS-0001", status: "ready" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    const ctx = {
+      home: cliHome,
+      machine: "test",
+      workspaces: new Map([["ws", wsr]]),
+      sessions,
+      bus: new EventBus(),
+      dispatchers: new Map([["ws", d]]),
+    };
+    const handle = await startDaemon({
+      home: cliHome,
+      port: 0,
+      health: () => ({ machine: "test", workspaces: ["ws"] }),
+      register: async (app) => {
+        registerApiRoutes(app, ctx);
+      },
+    });
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      expect(await dispatchCmd(["set", "--max", "3", "--filter", "SE-01xx:ready"], cliHome)).toBe(0);
+      expect(await dispatchCmd(["on"], cliHome)).toBe(0);
+      chunks.length = 0;
+      expect(await dispatchCmd(["status"], cliHome)).toBe(0);
+      const out = chunks.join("");
+      expect(out).toContain("dispatch on · issues 1/3");
+      expect(out).toContain("filter: SE-01xx:ready");
+      expect(out).toContain("running: SE-0101 (work)");
+      expect(out).toContain("matched (2): SE-0101 (work), SE-0102 (work)");
+      expect(await dispatchCmd(["off"], cliHome)).toBe(0);
+    } finally {
+      process.stdout.write = origWrite;
+      d.stopAll();
+      await handle.close();
+      rmSync(cliHome, { recursive: true, force: true });
+    }
   });
 });

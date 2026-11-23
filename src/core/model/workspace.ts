@@ -136,8 +136,12 @@ export type DispatchAgent = z.infer<typeof DispatchAgent>;
 export const DispatchConfig = z.object({
   /** human turns it on with `te dispatch on` — off by default */
   enabled: z.boolean().default(false),
-  /** total live agent sessions on this machine the dispatcher fills up to */
+  /** active local issues (dispatches + live local in_progress claims) the dispatcher fills up to */
+  max_issues: z.number().int().min(1).optional(),
+  /** legacy alias for max_issues */
   max_sessions: z.number().int().min(1).default(2),
+  /** optional item selector filter (e.g. "SE-01xx:inreview, Plan PL-1032:ready") */
+  filter: z.string().optional(),
   agents: z.array(DispatchAgent).default([]),
 });
 export type DispatchConfig = z.infer<typeof DispatchConfig>;

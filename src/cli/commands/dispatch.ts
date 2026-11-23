@@ -1,32 +1,57 @@
 import { daemonApi, ensureDaemon } from "../client.js";
 
-/**
- * `te dispatch on|off|status` (GL-0328) — control the daemon's agent
- * launcher. `dispatch:` in workspace.yaml configures it; the human turns
- * it on here (agents get FORBIDDEN). Status shows live sessions, running
- * commands and consecutive failures.
- */
+const DISPATCH_HELP = `te dispatch — the daemon's per-item agent launcher
 
-const DISPATCH_HELP = `te dispatch — the daemon's agent launcher (GL-0328)
+  te dispatch on [--max <n>] [--filter <expr>]     start dispatching (human only)
+  te dispatch set [--max <n>] [--filter <expr>]    update max issues or filter
+  te dispatch off                                  stop starting new items
+  te dispatch status                               live state — issues, filter, matches, runs
 
-  te dispatch on       start dispatching (human only)
-  te dispatch off      stop starting agents
-  te dispatch status   live state — sessions, running roles, failures
+Options:
+  --max <n>        max active local issues (dispatches + live local in_progress claims)
+  --filter <expr>  item selector (e.g. "SE-01xx:inreview, Plan PL-1032:ready", "" clears)
+  --ws <name>      workspace name
 
-Configure in workspace.yaml:
+Configure defaults in workspace.yaml (falls back to ~/.teamengage/machine.yaml run:):
 
   dispatch:
     enabled: false
-    max_sessions: 2          # live agent sessions the daemon fills up to
-    agents:
-      - { role: coder, command: "devin -p --model swe-2-high --permission-mode accept-edits --" }
-      - { role: reviewer, tier: standard, command: "claude -p \\"$TE_PROMPT\\"" }
+    max_issues: 2
+    filter: "SE-01xx:inreview, Plan PL-1032:ready"
 
-While enabled, each minute the daemon starts a role's command when next
-sees work for it and live sessions are under max_sessions. It never stops
-a session. A command that fails 3 times in a row turns dispatch off.
-Logs: ~/.teamengage/runs/<workspace>/dispatch-<role>-*.log
+Logs: ~/.teamengage/runs/<workspace>/dispatch-<item>-<mode>-*.log
 `;
+
+interface DispatchStatusResponse {
+  enabled: boolean;
+  max_issues: number;
+  max_sessions: number;
+  online_issues: number;
+  live_sessions: number;
+  filter: string;
+  matched: Array<{ id: string; mode: string; status: string; title: string }>;
+  running: Array<{ id: string; mode: string; role: string; pid: number; started_at: string }>;
+  agents: Array<{ role: string; tier?: string; command: string }>;
+  agents_ready: boolean;
+  failures: Record<string, number>;
+}
+
+function readOption(args: string[], flagName: string): { present: boolean; value?: string } {
+  const index = args.indexOf(flagName);
+  if (index === -1) return { present: false };
+  return { present: true, value: args[index + 1] };
+}
+
+function formatStatusSummary(status: DispatchStatusResponse): string {
+  const runningText = status.running.length
+    ? ` · running: ${status.running.map((entry) => `${entry.id} (${entry.mode})`).join(", ")}`
+    : "";
+  const filterText = status.filter ? ` · filter: ${status.filter}` : "";
+  return (
+    `dispatch ${status.enabled ? "on" : "off"} · issues ${status.online_issues}/${status.max_issues}` +
+    ` · sessions ${status.live_sessions}${filterText}${runningText}\n`
+  );
+}
 
 export async function dispatchCmd(args: string[], home?: string): Promise<number> {
   const sub = args[0];
@@ -34,37 +59,77 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
     process.stdout.write(DISPATCH_HELP);
     return sub ? 0 : 2;
   }
-  const wsIdx = args.indexOf("--ws");
-  const ws = wsIdx === -1 ? "" : `?ws=${encodeURIComponent(args[wsIdx + 1] ?? "")}`;
+  const wsOpt = readOption(args, "--ws");
+  const wsQuery = wsOpt.present && wsOpt.value ? `?ws=${encodeURIComponent(wsOpt.value)}` : "";
   await ensureDaemon(home);
+
   if (sub === "status") {
-    const s = (await daemonApi("GET", `/api/dispatch${ws}`, undefined, home)) as {
-      enabled: boolean;
-      max_sessions: number;
-      agents: Array<{ role: string; tier?: string; command: string }>;
-      live_sessions: number;
-      running: string[];
-      failures: Record<string, number>;
-    };
+    const status = (await daemonApi(
+      "GET",
+      `/api/dispatch${wsQuery}`,
+      undefined,
+      home,
+    )) as DispatchStatusResponse;
+    process.stdout.write(formatStatusSummary(status));
     process.stdout.write(
-      `dispatch ${s.enabled ? "on" : "off"} · sessions ${s.live_sessions}/${s.max_sessions}` +
-        `${s.running.length ? ` · running: ${s.running.join(", ")}` : ""}\n`,
+      `  matched (${status.matched.length}): ${
+        status.matched.length
+          ? status.matched.map((entry) => `${entry.id} (${entry.mode})`).join(", ")
+          : "none"
+      }\n`,
     );
-    for (const a of s.agents) {
-      const f = s.failures[a.role];
+    for (const agent of status.agents) {
+      const failCount = status.failures[agent.role];
       process.stdout.write(
-        `  ${a.role}${a.tier ? ` (${a.tier})` : ""}: ${a.command}${f ? ` — ${f} consecutive failure(s)` : ""}\n`,
+        `  ${agent.role}${agent.tier ? ` (${agent.tier})` : ""}: ${agent.command}${
+          failCount ? ` — ${failCount} consecutive failure(s)` : ""
+        }\n`,
       );
     }
     return 0;
   }
-  if (sub === "on" || sub === "off") {
-    const s = (await daemonApi("POST", `/api/dispatch${ws}`, { enabled: sub === "on" }, home)) as {
-      enabled: boolean;
-    };
-    process.stdout.write(`dispatch ${s.enabled ? "on" : "off"}\n`);
-    return 0;
+
+  if (sub === "on" || sub === "off" || sub === "set") {
+    const maxOpt = readOption(args, "--max");
+    const filterOpt = readOption(args, "--filter");
+    const payload: Record<string, unknown> = {};
+    if (sub !== "set") {
+      payload.enabled = sub === "on";
+    }
+    if (maxOpt.present) {
+      const parsed = Number(maxOpt.value);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        process.stderr.write("te dispatch: --max must be an integer >= 1\n");
+        return 2;
+      }
+      payload.max_issues = parsed;
+    }
+    if (filterOpt.present) {
+      if (filterOpt.value === undefined) {
+        process.stderr.write("te dispatch: --filter needs an expression\n");
+        return 2;
+      }
+      payload.filter = filterOpt.value;
+    }
+    if (sub === "set" && Object.keys(payload).length === 0) {
+      process.stderr.write("te dispatch set: pass --max <n> and/or --filter <expr>\n");
+      return 2;
+    }
+    try {
+      const status = (await daemonApi(
+        "POST",
+        `/api/dispatch${wsQuery}`,
+        payload,
+        home,
+      )) as DispatchStatusResponse;
+      process.stdout.write(formatStatusSummary(status));
+      return 0;
+    } catch (e) {
+      process.stderr.write(`te dispatch: ${(e as Error).message}\n`);
+      return 2;
+    }
   }
+
   process.stderr.write(`te dispatch: unknown '${sub}'\n\n`);
   process.stdout.write(DISPATCH_HELP);
   return 2;

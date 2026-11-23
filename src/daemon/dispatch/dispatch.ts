@@ -4,23 +4,75 @@ import { join } from "node:path";
 import type { SessionRegistry } from "../sessions/sessions.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "../api/ops.js";
-import type { Session } from "../../core/model/session.js";
-import type { DispatchAgent } from "../../core/model/workspace.js";
+import { loadMachineConfig } from "../../core/config/config.js";
+import { ValidationError } from "../../core/model/errors.js";
+import { RunConfig, type DispatchAgent } from "../../core/model/workspace.js";
+import {
+  agentName,
+  listDispatchCandidates,
+  parseDispatchFilter,
+  pickNext,
+  promptFor,
+  type DispatchFilter,
+  type MatchedCandidate,
+  type Mode,
+  type Pick,
+  type RunItem,
+  type RunState,
+} from "../../core/dispatch/selector.js";
 
-/**
- * Daemon-side agent launcher (GL-0328). When `dispatch.enabled`, each sweep
- * starts a role's command while `next` finds work for that role and the
- * live-session count is under `max_sessions`. It never stops a session — a
- * started agent ends on its own. A role's command that fails three times in
- * a row switches dispatch off; every start and every switch-off writes an
- * event through `onEvent` (the daemon's bus).
- */
+export interface RunningDispatch {
+  id: string;
+  mode: Mode;
+  role: "coder" | "reviewer";
+  pid: number;
+  started_at: string;
+}
+
+export interface DispatchUpdate {
+  enabled?: boolean;
+  max_issues?: number;
+  filter?: string;
+}
+
+interface ActiveChild extends RunningDispatch {
+  child?: ChildProcess;
+  token?: string;
+}
+
+interface ResolvedCommands {
+  coder?: { command: string; source: "dispatch" | "run" };
+  reviewer?: { command: string; source: "dispatch" | "run" };
+  fixRounds: number;
+  defaultConcurrency: number;
+}
+
+const LEGACY_TE_RUN_RE = /(?:^|\s|\/)(?:te|teamengage)\s+run(?:\s|$)/;
+const PROMPT_ARG_TAIL_RE = /(?:^|\s)(?:--|-p|--prompt)\s*$/;
+
+export function isLegacyTeRunCommand(command: string): boolean {
+  return LEGACY_TE_RUN_RE.test(command.trim());
+}
+
+function buildSpawnScript(command: string, source: "dispatch" | "run"): string {
+  if (command.includes("TE_PROMPT")) return command;
+  if (source === "run" || PROMPT_ARG_TAIL_RE.test(command)) {
+    return `${command} "$TE_PROMPT"`;
+  }
+  return command;
+}
+
 export class Dispatcher {
-  private children = new Map<string, ChildProcess>();
+  private children = new Map<string, ActiveChild>();
   private failures = new Map<string, number>();
-  /** the team panel shows the last 10 (GL-0329) */
+  private fixes = new Map<string, number>();
+  private triedVersions = new Map<string, number>();
+  private pendingClaim?: string;
   private eventLog: Array<{ kind: string; at: string; data: Record<string, unknown> }> = [];
   private enabled: boolean;
+  private maxIssues: number;
+  private filter: DispatchFilter;
+  private baseUrl?: string;
 
   constructor(
     private wsr: WorkspaceRuntime,
@@ -28,7 +80,19 @@ export class Dispatcher {
     private home: string,
     private onEvent?: (kind: string, data: Record<string, unknown>) => void,
   ) {
-    this.enabled = wsr.ws.config.dispatch?.enabled ?? false;
+    const cfg = wsr.ws.config.dispatch;
+    const resolved = this.resolveCommands();
+    this.enabled = cfg?.enabled ?? false;
+    this.maxIssues = cfg?.max_issues ?? cfg?.max_sessions ?? resolved.defaultConcurrency;
+    try {
+      this.filter = parseDispatchFilter(cfg?.filter ?? "");
+    } catch {
+      this.filter = parseDispatchFilter("");
+    }
+  }
+
+  setBaseUrl(url: string): void {
+    this.baseUrl = url;
   }
 
   isEnabled(): boolean {
@@ -36,17 +100,171 @@ export class Dispatcher {
   }
 
   setEnabled(on: boolean): void {
+    if (on && !this.enabled) {
+      this.triedVersions.clear();
+    }
     this.enabled = on;
   }
 
+  update(patch: DispatchUpdate): void {
+    if (patch.max_issues !== undefined) {
+      if (!Number.isInteger(patch.max_issues) || patch.max_issues < 1) {
+        throw new ValidationError("max_issues must be an integer >= 1");
+      }
+      this.maxIssues = patch.max_issues;
+    }
+    if (patch.filter !== undefined) {
+      this.filter = parseDispatchFilter(patch.filter);
+      this.triedVersions.clear();
+    }
+    if (patch.enabled !== undefined) {
+      this.setEnabled(patch.enabled);
+    }
+  }
+
+  stopAll(): void {
+    for (const active of this.children.values()) {
+      active.child?.kill();
+    }
+    this.children.clear();
+    this.pendingClaim = undefined;
+  }
+
+  private resolveCommands(): ResolvedCommands {
+    let runCfg = RunConfig.parse({});
+    let hasRunBlock = false;
+    try {
+      const machineCfg = loadMachineConfig(this.home);
+      hasRunBlock = machineCfg.run !== undefined;
+      runCfg = RunConfig.parse(machineCfg.run ?? {});
+    } catch {
+      runCfg = RunConfig.parse({});
+    }
+    const configuredAgents = (this.wsr.ws.config.dispatch?.agents ?? []).filter(
+      (agent) => !isLegacyTeRunCommand(agent.command),
+    );
+    const dispatchCoder = configuredAgents.find((agent) => agent.role === "coder");
+    const dispatchReviewer = configuredAgents.find((agent) => agent.role === "reviewer");
+    return {
+      coder: dispatchCoder
+        ? { command: dispatchCoder.command, source: "dispatch" }
+        : runCfg.coder
+          ? { command: runCfg.coder, source: "run" }
+          : undefined,
+      reviewer: dispatchReviewer
+        ? { command: dispatchReviewer.command, source: "dispatch" }
+        : runCfg.reviewer
+          ? { command: runCfg.reviewer, source: "run" }
+          : undefined,
+      fixRounds: runCfg.fix_rounds,
+      defaultConcurrency: hasRunBlock ? runCfg.concurrency : 2,
+    };
+  }
+
+  private effectiveAgents(resolved: ResolvedCommands): DispatchAgent[] {
+    const out: DispatchAgent[] = [];
+    if (resolved.coder) out.push({ role: "coder", command: resolved.coder.command });
+    if (resolved.reviewer) out.push({ role: "reviewer", command: resolved.reviewer.command });
+    return out;
+  }
+
+  private collectBoard(ops: WorkspaceOps): {
+    items: RunItem[];
+    ready: string[];
+    onlineIds: Set<string>;
+    tried: Set<string>;
+  } {
+    const machine = this.wsr.store.machine;
+    const onlineIds = new Set<string>(this.children.keys());
+    const tried = new Set<string>();
+    const items: RunItem[] = [];
+
+    for (const indexed of ops.index.items.values()) {
+      if (indexed.meta.archived) continue;
+      const dead = indexed.claim ? ops.claimDead(indexed.claim) : false;
+      if (
+        indexed.meta.status === "in_progress" &&
+        indexed.claim &&
+        indexed.claim.machine === machine &&
+        !dead
+      ) {
+        onlineIds.add(indexed.meta.id);
+        tried.add(indexed.meta.id);
+      }
+      const triedAtVersion = this.triedVersions.get(indexed.meta.id);
+      if (triedAtVersion !== undefined) {
+        if (triedAtVersion === indexed.meta.version) {
+          tried.add(indexed.meta.id);
+        } else {
+          this.triedVersions.delete(indexed.meta.id);
+        }
+      }
+      if (
+        this.fixes.has(indexed.meta.id) &&
+        (indexed.meta.status === "done" ||
+          indexed.meta.status === "dropped" ||
+          indexed.meta.status === "draft")
+      ) {
+        this.fixes.delete(indexed.meta.id);
+      }
+      items.push({
+        id: indexed.meta.id,
+        status: indexed.meta.status,
+        title: indexed.meta.title,
+        type: indexed.meta.type,
+        parent: indexed.meta.parent,
+        domains: indexed.meta.domains,
+        claim: indexed.claim ? { ...indexed.claim, dead } : null,
+        ai_review: indexed.meta.ai_review,
+        question: indexed.meta.question,
+      });
+    }
+
+    const ready = ops.next(500).map((entry) => entry.meta.id);
+    return { items, ready, onlineIds, tried };
+  }
+
   status() {
-    const cfg = this.wsr.ws.config.dispatch;
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const resolved = this.resolveCommands();
+    const agents = this.effectiveAgents(resolved);
+    const { items, ready, onlineIds, tried } = this.collectBoard(ops);
+    const runCfg = RunConfig.parse({
+      ...(resolved.coder ? { coder: resolved.coder.command } : {}),
+      ...(resolved.reviewer ? { reviewer: resolved.reviewer.command } : {}),
+      concurrency: this.maxIssues,
+      fix_rounds: resolved.fixRounds,
+    });
+    const matched: MatchedCandidate[] =
+      resolved.coder || resolved.reviewer
+        ? listDispatchCandidates(
+            runCfg,
+            { fixes: this.fixes, tried },
+            items,
+            ready,
+            this.wsr.store.machine,
+            undefined,
+            this.filter,
+          )
+        : [];
+    const running: RunningDispatch[] = [...this.children.values()].map((entry) => ({
+      id: entry.id,
+      mode: entry.mode,
+      role: entry.role,
+      pid: entry.pid,
+      started_at: entry.started_at,
+    }));
     return {
       enabled: this.enabled,
-      max_sessions: cfg?.max_sessions ?? 0,
-      agents: cfg?.agents ?? [],
+      max_issues: this.maxIssues,
+      max_sessions: this.maxIssues,
+      online_issues: onlineIds.size,
       live_sessions: this.sessions.list().length,
-      running: [...this.children.keys()],
+      filter: this.filter.raw,
+      matched,
+      running,
+      agents,
+      agents_ready: Boolean(resolved.coder || resolved.reviewer),
       failures: Object.fromEntries(this.failures),
       events: this.eventLog.slice(-10),
     };
@@ -58,80 +276,246 @@ export class Dispatcher {
     this.onEvent?.(kind, data);
   }
 
-  /** One sweep — called from the daemon's timer. */
   tick(): void {
-    const cfg = this.wsr.ws.config.dispatch;
-    if (!this.enabled || !cfg?.agents.length) return;
+    if (!this.enabled) return;
+    const resolved = this.resolveCommands();
+    if (!resolved.coder && !resolved.reviewer) return;
+
     const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
-    for (const agent of cfg.agents) {
-      // spawned children count too — a started agent is a session in the
-      // making; counting it prevents a spawn per tick until it hellos
-      if (this.sessions.list().length + this.children.size >= cfg.max_sessions) break;
-      if (this.children.has(agent.role)) continue; // one running command per role
-      if (!this.workFor(ops, agent)) continue;
-      this.startRole(agent);
+    if (this.pendingClaim) {
+      const pendingItem = ops.index.get(this.pendingClaim);
+      if (
+        !this.children.has(this.pendingClaim) ||
+        pendingItem?.claim != null ||
+        pendingItem?.meta.status !== "ready"
+      ) {
+        this.pendingClaim = undefined;
+      }
+    }
+
+    const { items, ready, onlineIds, tried } = this.collectBoard(ops);
+    const runningModes = new Map<string, Mode>();
+    for (const [id, entry] of this.children) {
+      runningModes.set(id, entry.mode);
+    }
+
+    const runCfg = RunConfig.parse({
+      ...(resolved.coder ? { coder: resolved.coder.command } : {}),
+      ...(resolved.reviewer ? { reviewer: resolved.reviewer.command } : {}),
+      concurrency: Math.max(1, this.maxIssues),
+      fix_rounds: resolved.fixRounds,
+    });
+    const state: RunState = {
+      running: runningModes,
+      fixes: this.fixes,
+      tried,
+      pendingClaim: this.pendingClaim,
+      started: 0,
+    };
+
+    while (this.enabled && onlineIds.size < this.maxIssues) {
+      const pick = pickNext(
+        runCfg,
+        state,
+        items,
+        ready,
+        this.wsr.store.machine,
+        Infinity,
+        undefined,
+        this.filter,
+      );
+      if (!pick) break;
+      const cmdSpec = pick.mode === "review" ? resolved.reviewer : resolved.coder;
+      if (!cmdSpec) break;
+      const startVersion = ops.index.get(pick.id)?.meta.version ?? 0;
+      onlineIds.add(pick.id);
+      state.running.set(pick.id, pick.mode);
+      if (pick.mode === "work") {
+        this.pendingClaim = pick.id;
+        state.pendingClaim = pick.id;
+      }
+      if (pick.mode === "fix") {
+        this.fixes.set(pick.id, (this.fixes.get(pick.id) ?? 0) + 1);
+      }
+      this.startItem(pick, cmdSpec, startVersion);
+      if (pick.mode === "work") break;
     }
   }
 
-  /** Does `next` see work for this role's pool? A probe session asks. */
-  private workFor(ops: WorkspaceOps, agent: DispatchAgent): boolean {
-    const now = new Date().toISOString();
-    const probe: Session = {
-      id: `dispatch-probe-${agent.role}`,
-      agent: "dispatch",
-      machine: this.wsr.store.machine,
-      connected_at: now,
-      last_seen: now,
-      role: agent.role,
-      ...(agent.tier ? { tier: agent.tier } : {}),
-    };
-    return ops.next(1, undefined, probe).length > 0;
+  private async openRemoteSession(
+    baseUrl: string,
+    agent: string,
+    role: "coder" | "reviewer",
+    label: string,
+  ): Promise<{ token: string; resume: string[] }> {
+    const res = await fetch(`${baseUrl}/agent/hello`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent, role, label, workspace: this.wsr.ws.name }),
+    });
+    const text = await res.text();
+    const token = /^token (\S+)/m.exec(text)?.[1];
+    if (!res.ok || !token) {
+      throw new Error(`hello failed: ${text.split("\n")[0] ?? res.status}`);
+    }
+    const resume = /^resume: (.+)$/m.exec(text)?.[1]?.split(/,\s*/) ?? [];
+    return { token, resume };
   }
 
-  private startRole(agent: DispatchAgent): void {
+  private closeRemoteSession(baseUrl: string, token: string): Promise<void> {
+    return fetch(`${baseUrl}/agent/bye`, {
+      method: "POST",
+      headers: { "x-te-session": token },
+    }).then(
+      () => {},
+      () => {},
+    );
+  }
+
+  private startItem(
+    pick: Pick,
+    cmdSpec: { command: string; source: "dispatch" | "run" },
+    startVersion: number,
+  ): void {
+    const role: "coder" | "reviewer" = pick.mode === "review" ? "reviewer" : "coder";
+    const startedAt = new Date().toISOString();
+    const activeEntry: ActiveChild = {
+      id: pick.id,
+      mode: pick.mode,
+      role,
+      pid: 0,
+      started_at: startedAt,
+    };
+    this.children.set(pick.id, activeEntry);
+
+    if (!this.baseUrl) {
+      this.spawnChildProcess(pick, role, cmdSpec, startVersion, activeEntry, undefined);
+      return;
+    }
+
+    const baseUrl = this.baseUrl;
+    const baseAgent = agentName(cmdSpec.command);
+    const sessionAgent = role === "reviewer" ? `${baseAgent}-review` : baseAgent;
+    void this.openRemoteSession(baseUrl, sessionAgent, role, pick.id)
+      .then((opened) => {
+        if (!this.children.has(pick.id)) {
+          void this.closeRemoteSession(baseUrl, opened.token);
+          return;
+        }
+        if (pick.mode === "resume" && !opened.resume.includes(pick.id)) {
+          this.children.delete(pick.id);
+          this.triedVersions.set(pick.id, startVersion);
+          void this.closeRemoteSession(baseUrl, opened.token);
+          return;
+        }
+        activeEntry.token = opened.token;
+        this.spawnChildProcess(pick, role, cmdSpec, startVersion, activeEntry, opened.token);
+      })
+      .catch((err: Error) => {
+        this.children.delete(pick.id);
+        if (this.pendingClaim === pick.id) this.pendingClaim = undefined;
+        this.recordFailure(role, pick.id, err.message);
+      });
+  }
+
+  private spawnChildProcess(
+    pick: Pick,
+    role: "coder" | "reviewer",
+    cmdSpec: { command: string; source: "dispatch" | "run" },
+    startVersion: number,
+    activeEntry: ActiveChild,
+    token: string | undefined,
+  ): void {
     const logDir = join(this.home, "runs", this.wsr.ws.name);
     mkdirSync(logDir, { recursive: true });
-    const log = join(logDir, `dispatch-${agent.role}-${Date.now()}.log`);
+    const log = join(logDir, `dispatch-${pick.id}-${pick.mode}-${Date.now()}.log`);
     const out = createWriteStream(log);
+    const base = this.baseUrl ?? "http://127.0.0.1:4747";
+    const name = agentName(cmdSpec.command);
+    const prompt = promptFor(pick.mode, pick.id, name, base, token);
+    const script = buildSpawnScript(cmdSpec.command, cmdSpec.source);
+    const { ACP_BACKEND: _acp, AI_AGENT: _ai, ...cleanEnv } = process.env;
+
     let child: ChildProcess;
     try {
-      child = spawn("bash", ["-c", agent.command], {
+      child = spawn("bash", ["-c", script], {
         cwd: this.wsr.ws.root,
-        env: { ...process.env, TE_ROLE: agent.role },
+        env: {
+          ...cleanEnv,
+          TE_ROLE: role,
+          TE_ITEM: pick.id,
+          TE_MODE: pick.mode,
+          TE_PROMPT: prompt,
+          ...(token ? { TE_SESSION: token } : {}),
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) {
       out.close();
-      this.recordFailure(agent.role, `spawn failed: ${(e as Error).message}`);
+      this.children.delete(pick.id);
+      if (this.pendingClaim === pick.id) this.pendingClaim = undefined;
+      if (token && this.baseUrl) void this.closeRemoteSession(this.baseUrl, token);
+      this.recordFailure(role, pick.id, `spawn failed: ${(e as Error).message}`);
       return;
     }
+
+    activeEntry.child = child;
+    activeEntry.pid = child.pid ?? 0;
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
-    this.children.set(agent.role, child);
     this.emit("dispatch_start", {
-      role: agent.role,
-      command: agent.command,
+      id: pick.id,
+      mode: pick.mode,
+      role,
+      command: cmdSpec.command,
       pid: child.pid ?? 0,
       log,
     });
-    child.on("error", (err) => {
-      this.children.delete(agent.role);
-      this.recordFailure(agent.role, err.message);
-    });
-    child.on("exit", (code) => {
-      this.children.delete(agent.role);
-      if (code === 0) this.failures.set(agent.role, 0);
-      else this.recordFailure(agent.role, `exit ${code}`);
-    });
+
+    const finalizeExit = (errOrCode: Error | number | null) => {
+      if (!this.children.has(pick.id)) return;
+      this.children.delete(pick.id);
+      if (this.pendingClaim === pick.id) this.pendingClaim = undefined;
+      const cleanup =
+        token && this.baseUrl ? this.closeRemoteSession(this.baseUrl, token) : Promise.resolve();
+      void cleanup.finally(() => {
+        if (errOrCode instanceof Error) {
+          this.recordFailure(role, pick.id, errOrCode.message);
+          return;
+        }
+        if (errOrCode === 0) {
+          this.failures.set(role, 0);
+          const current = new WorkspaceOps(
+            this.wsr,
+            this.sessions,
+            this.wsr.links,
+            this.home,
+          ).index.get(pick.id);
+          if (
+            pick.mode !== "review" &&
+            current &&
+            current.meta.version === startVersion &&
+            (current.meta.status === "ready" || current.meta.status === "in_progress")
+          ) {
+            this.triedVersions.set(pick.id, startVersion);
+          }
+        } else {
+          this.recordFailure(role, pick.id, `exit ${errOrCode}`);
+        }
+      });
+    };
+
+    child.on("error", (err) => finalizeExit(err));
+    child.on("exit", (code) => finalizeExit(code));
   }
 
-  private recordFailure(role: string, why: string): void {
-    const n = (this.failures.get(role) ?? 0) + 1;
-    this.failures.set(role, n);
-    this.emit("dispatch_fail", { role, failures: n, error: why });
-    if (n >= 3) {
+  private recordFailure(role: string, itemId: string, why: string): void {
+    const count = (this.failures.get(role) ?? 0) + 1;
+    this.failures.set(role, count);
+    this.emit("dispatch_fail", { id: itemId, role, failures: count, error: why });
+    if (count >= 3) {
       this.enabled = false;
-      this.emit("dispatch_off", { reason: `${role} command failed ${n} times in a row` });
+      this.emit("dispatch_off", { reason: `${role} command failed ${count} times in a row` });
     }
   }
 }

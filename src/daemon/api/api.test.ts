@@ -2063,7 +2063,7 @@ describe("shared lessons per domain (GL-0322)", () => {
     expect((await post("/api/lessons/delete", { domain: "simulation", line: 9 })).status).toBe(404);
   });
 
-  it("dispatch: status is open, on/off is human-only — an agent gets FORBIDDEN (GL-0328)", async () => {
+  it("dispatch: status is open, on/off/max_issues/filter are human-only and validated (GL-0328, TE-0203)", async () => {
     const post = (body: unknown, headers: Record<string, string> = {}) =>
       api("/api/dispatch", {
         method: "POST",
@@ -2071,10 +2071,27 @@ describe("shared lessons per domain (GL-0322)", () => {
         body: JSON.stringify(body),
       });
     expect((await post({ enabled: true }, { "x-te-session": "agent-x" })).status).toBe(403);
-    const on = (await (await post({ enabled: true })).json()) as { enabled: boolean };
+    expect((await post({ max_issues: 0 })).status).toBe(400);
+    expect((await post({ filter: "SE-01*:done" })).status).toBe(400);
+
+    const on = (await (await post({ enabled: true, max_issues: 4, filter: "se-01xx:inreview" })).json()) as {
+      enabled: boolean;
+      max_issues: number;
+      filter: string;
+      online_issues: number;
+      matched: unknown[];
+      running: unknown[];
+    };
     expect(on.enabled).toBe(true);
-    const off = (await (await post({ enabled: false })).json()) as { enabled: boolean };
+    expect(on.max_issues).toBe(4);
+    expect(on.filter).toBe("se-01xx:inreview");
+    expect(typeof on.online_issues).toBe("number");
+    expect(Array.isArray(on.matched)).toBe(true);
+    expect(Array.isArray(on.running)).toBe(true);
+
+    const off = (await (await post({ enabled: false, filter: "" })).json()) as { enabled: boolean; filter: string };
     expect(off.enabled).toBe(false);
+    expect(off.filter).toBe("");
     const status = (await (await api("/api/dispatch")).json()) as {
       enabled: boolean;
       agents: unknown[];

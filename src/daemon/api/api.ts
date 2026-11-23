@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { DaemonCtx, WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "./ops.js";
 import { registerOpsApiRoutes } from "./opsapi.js";
-import { TeError, NotFoundError, ForbiddenError } from "../../core/model/errors.js";
+import { TeError, NotFoundError, ForbiddenError, ValidationError } from "../../core/model/errors.js";
 import { readTeTag, toSourcePath, globToRegExp } from "../../core/files/source.js";
 import { compareIds } from "../../core/address/refs.js";
 import { ItemType } from "../../core/model/item.js";
@@ -489,9 +489,44 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       if (req.headers["x-te-session"]) {
         throw new ForbiddenError("dispatch on/off is human-only");
       }
-      const body = (req.body ?? {}) as { enabled?: unknown };
+      const body = (req.body ?? {}) as {
+        enabled?: unknown;
+        max_issues?: unknown;
+        max_sessions?: unknown;
+        filter?: unknown;
+      };
       const d = dispatcherFor(wsOf(req.query));
-      d.setEnabled(body.enabled === true);
+      const rawMax = body.max_issues !== undefined ? body.max_issues : body.max_sessions;
+      let maxIssues: number | undefined;
+      if (rawMax !== undefined) {
+        const parsedMax = typeof rawMax === "number" ? rawMax : Number(rawMax);
+        if (!Number.isInteger(parsedMax) || parsedMax < 1) {
+          throw new ValidationError("max_issues must be an integer >= 1");
+        }
+        maxIssues = parsedMax;
+      }
+      let filter: string | undefined;
+      if (body.filter !== undefined) {
+        if (typeof body.filter !== "string") {
+          throw new ValidationError("filter must be a string");
+        }
+        filter = body.filter;
+      }
+      let enabled: boolean | undefined;
+      if (body.enabled !== undefined) {
+        if (typeof body.enabled !== "boolean") {
+          throw new ValidationError("enabled must be a boolean");
+        }
+        enabled = body.enabled;
+      }
+      d.update({
+        ...(enabled !== undefined ? { enabled } : {}),
+        ...(maxIssues !== undefined ? { max_issues: maxIssues } : {}),
+        ...(filter !== undefined ? { filter } : {}),
+      });
+      if (d.isEnabled()) {
+        d.tick();
+      }
       return d.status();
     } catch (e) {
       return sendErr(reply, e);
