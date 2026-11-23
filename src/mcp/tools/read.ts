@@ -514,7 +514,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         if (eff_role === "reviewer") {
           const count = (t?: string) => pool.filter((i) => (i.meta.tier ?? "any") === t).length;
           lines.push(
-            `reviewable: ${pool.length} (light ${count("light")}, standard ${count("standard")}, heavy ${count("heavy")}, untiered ${count()})`,
+            `reviewable: ${pool.length} (light ${count("light")}, standard ${count("standard")}, heavy ${count("heavy")}, untiered ${count("any")})`,
           );
         } else if (eff_role === "planner") {
           const sources = pool.filter((i) => i.meta.type === "idea" || i.meta.type === "discussion").length;

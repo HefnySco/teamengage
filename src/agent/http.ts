@@ -112,12 +112,13 @@ function describeArgs(shape: Record<string, ZodTypeAny>): string {
 
 export function agentGuide(base: string, tools: Map<string, Tool>): string {
   const rows = [...tools.entries()]
-    .filter(([name]) => name !== "hello")
+    // hello opens the session; overview and rules are named in the header line (TE-0196)
+    .filter(([name]) => name !== "hello" && name !== "overview" && name !== "rules")
     .map(([name, t]) => `  ${name.padEnd(8)} ${describeArgs(t.shape).padEnd(34)} ${t.description}`);
   return `TeamEngage — agent interface (plain HTTP)
 =========================================
 Base URL: ${base}/agent        (loopback only; no MCP needed — use curl)
-GET ${base}/agent/overview?role=coder|reviewer|planner|ops — your queue: counts, top ids, next step
+GET ${base}/agent/overview?role=coder|reviewer|planner|ops — your queue: counts, top ids, next step · GET ${base}/agent/rules — the rules hello prints
 
 RULES
   1. Read freely: GET endpoints, or the plan files themselves.

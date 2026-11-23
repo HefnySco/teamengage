@@ -723,6 +723,13 @@ describe("role overview (TE-0196)", () => {
     expect(own.text).not.toContain(reviewable);
     const rev = await call("GET", "/agent/overview?role=reviewer", { token: viewer });
     expect(rev.text).toMatch(/^reviewable: \d+ \(light \d+, standard \d+, heavy \d+, untiered \d+\)$/m);
+    // the four tier buckets must add up to the total
+    const counts = /^reviewable: (\d+) \(light (\d+), standard (\d+), heavy (\d+), untiered (\d+)\)$/m.exec(
+      rev.text,
+    )!;
+    expect(Number(counts[2]) + Number(counts[3]) + Number(counts[4]) + Number(counts[5])).toBe(
+      Number(counts[1]),
+    );
     expect(rev.text).toContain(reviewable);
     expect(rev.text.split("\n").filter(Boolean).length).toBeLessThanOrEqual(15);
 
