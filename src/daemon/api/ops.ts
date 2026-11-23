@@ -2870,19 +2870,22 @@ export class WorkspaceOps {
   }
 
   /**
-   * auto_release_after (workspace.yaml, unset = off): a claim stale longer
-   * than the duration whose holder session is not live on this machine is
-   * released to ready by the daemon — the worktree and the branch stay.
-   * Claims held on other machines and items already in review are kept.
+   * TE-0207: claims nobody handles — an agent claim on this machine whose
+   * last_seen is older than auto_release_after is due, whether the holder
+   * session is dead or just never touches the item. A claim held by a
+   * running dispatcher child (heldIds) is never due; claims on other
+   * machines and items already in review are kept. `auto_release_after`
+   * defaults to 2h; "0" (or 0ms) disables the sweep.
    */
-  autoReleaseDue(now = Date.now()): string[] {
+  autoReleaseDue(now = Date.now(), heldIds?: ReadonlySet<string>): string[] {
     const cfg = this.wsr.ws.config;
-    if (!cfg.auto_release_after) return [];
+    if (!cfg.auto_release_after || cfg.auto_release_after === "0") return [];
     const ms = parseDuration(cfg.auto_release_after);
+    if (ms <= 0) return [];
     return [...this.index.claims.values()]
       .filter((c) => {
+        if (heldIds?.has(c.item)) return false;
         if (c.actor !== "agent" || c.machine !== this.wsr.store.machine) return false;
-        if (this.sessions.isLive(c.holder)) return false;
         if (now - Date.parse(c.last_seen) <= ms) return false;
         const st = this.index.items.get(c.item)?.meta.status;
         return st === "in_progress" || st === "waiting";
@@ -2890,18 +2893,31 @@ export class WorkspaceOps {
       .map((c) => c.item);
   }
 
-  async autoRelease(now = Date.now()) {
-    const done: string[] = [];
-    for (const id of this.autoReleaseDue(now)) {
+  async autoRelease(now = Date.now(), heldIds?: ReadonlySet<string>) {
+    const done: Array<{ id: string; holder: string; why: string; ageMin: number }> = [];
+    for (const id of this.autoReleaseDue(now, heldIds)) {
       try {
         const it = this.item(id);
+        const claim = it.claim;
+        const holder = claim?.holder ?? "?";
+        const live = claim ? this.sessions.isLive(claim.holder) : false;
+        const ageMin = claim
+          ? Math.max(0, Math.round((now - Date.parse(claim.last_seen)) / 60_000))
+          : 0;
         // perform alone — unlike ops.release there is no cleanup_work: the
         // worktree and the branch stay for whoever claims the item next
         await this.store.perform(id, it.meta.version, this.daemonActor(), {
           type: "release",
-          note: "auto_release_after",
+          note: `claim swept — ${live ? "idle" : "dead"} holder ${holder}, last touch ${ageMin}m ago`,
         });
-        done.push(id);
+        await this.store.logEvent({
+          ts: new Date(now).toISOString(),
+          actor: "daemon",
+          item: id,
+          action: "claim_swept",
+          note: `${live ? "idle" : "dead"} holder ${holder}, last touch ${ageMin}m ago`,
+        });
+        done.push({ id, holder, why: live ? "idle" : "dead", ageMin });
       } catch {
         // one failing release must not stall the sweep
       }

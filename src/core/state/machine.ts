@@ -513,8 +513,8 @@ function apply(
     }
 
     case "release": {
-      // the daemon releases a dead holder's claim under auto_release_after —
-      // ops decides when; here it only needs an existing claim
+      // the daemon sweeps a stale claim under auto_release_after (dead or
+      // idle holder) — ops decides when; here it only needs an existing claim
       const claim =
         actor.kind === "daemon"
           ? ctx.claim ??

@@ -1201,19 +1201,24 @@ describe("auto_release_after", () => {
     });
     ctx.sessions.disconnect(deadAgent.id);
 
-    // rule unset — nothing is ever due
+    // TE-0207: the sweep defaults on (2h) — "0" is the disable
+    wsr.ws.config.auto_release_after = "0";
     expect(ops.autoReleaseDue(Date.now() + 30 * 86_400_000)).toEqual([]);
 
     wsr.ws.config.auto_release_after = "24h";
     try {
       const later = Date.now() + 25 * 3_600_000;
+      // TE-0207: a live holder does not protect a stale claim — keep this
+      // one's last_seen fresh at the check instant so it stays
+      const liveClaim = store.idx.claims.get(live)!;
+      store.idx.setClaim({ ...liveClaim, last_seen: new Date(later - 3_600_000).toISOString() });
       const due = ops.autoReleaseDue(later);
       expect(due).toContain(stuck);
-      expect(due).not.toContain(live); // live session
+      expect(due).not.toContain(live); // live session and a fresh claim
       expect(due).not.toContain(reviewId); // in_review
       expect(due).not.toContain(other); // another machine's claim
       const got = await ops.autoRelease(later);
-      expect(got).toEqual([stuck]);
+      expect(got.map((s) => s.id)).toContain(stuck);
       const st = store.idx.get(stuck)!;
       expect(st.meta.status).toBe("ready");
       expect(store.idx.claims.get(stuck)).toBeUndefined();

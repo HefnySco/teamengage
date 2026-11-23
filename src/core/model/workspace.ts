@@ -205,12 +205,13 @@ export const WorkspaceConfig = z
      */
     auto_archive_after: z.string().optional(),
     /**
-     * Routine sweep, unset = off: the daemon releases a claim stale longer
-     * than this duration whose holder session is not live on this machine —
-     * the worktree and the branch stay. in_review items and claims held on
-     * other machines are never released.
+     * Routine sweep (TE-0207): the daemon releases an agent claim whose
+     * last_seen is older than this duration — dead holder or a live holder
+     * that never touches the item (the adopted-phantom pile). "0" disables.
+     * The worktree and the branch stay; a claim held by a running dispatcher
+     * child, an in_review item or another machine's claim is never swept.
      */
-    auto_release_after: z.string().optional(),
+    auto_release_after: z.string().default("2h"),
     /**
      * Dispatch capacity window (TE-0206): an in_progress claim on this
      * machine counts as live capacity only while its holder session is live

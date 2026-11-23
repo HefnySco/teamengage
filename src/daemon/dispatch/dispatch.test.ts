@@ -484,3 +484,33 @@ describe("hard cap on live in-progress claims (TE-0206)", () => {
     expect(d2.status().why_idle).toBe("no_match");
   });
 });
+
+describe("dispatcher-held claims are never swept (TE-0207)", () => {
+  it("a claim held by a running dispatcher child stays past auto_release_after", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start");
+    expect(d.heldItemIds().has("WS-0001")).toBe(true);
+
+    // the dispatched child claims the item like a real agent would
+    const minted = sessions.hello("sleep");
+    sessions.markDispatchMinted(minted.id);
+    await ops.claim("WS-0001", minted);
+
+    // age the claim far past the default 2h window
+    const claim = ops.index.get("WS-0001")!.claim!;
+    ops.index.setClaim({ ...claim, last_seen: new Date(Date.now() - 3 * 3_600_000).toISOString() });
+
+    // without the held set it is due; with it, never
+    expect(ops.autoReleaseDue(Date.now())).toContain("WS-0001");
+    expect(ops.autoReleaseDue(Date.now(), d.heldItemIds())).not.toContain("WS-0001");
+    const swept = await ops.autoRelease(Date.now(), d.heldItemIds());
+    expect(swept.map((s) => s.id)).not.toContain("WS-0001");
+    expect(ops.index.get("WS-0001")!.claim?.holder).toBe(minted.id);
+    expect(ops.index.get("WS-0001")!.meta.status).toBe("in_progress");
+  });
+});

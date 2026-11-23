@@ -308,9 +308,17 @@ async function main(): Promise<number | undefined> {
           if (ids.length) ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archived ${ids.join(", ")}` });
         })
         .catch((err: Error) => ctx.bus.notify("auto_archive", { workspace: name, message: `auto-archive failed: ${err.message}` }));
-      ops.autoRelease()
-        .then((ids) => {
-          if (ids.length) ctx.bus.notify("auto_release", { workspace: name, message: `auto-released ${ids.join(", ")}` });
+      // TE-0207: sweep claims nobody handles — dispatcher-held items are
+      // passed so a running child's claim is never released under it
+      ops.autoRelease(Date.now(), ctx.dispatchers?.get(name)?.heldItemIds())
+        .then((swept) => {
+          for (const s of swept) {
+            ctx.bus.notify("claim_swept", {
+              workspace: name,
+              id: s.id,
+              message: `swept ${s.id} — ${s.why} holder ${s.holder}, last touch ${s.ageMin}m ago`,
+            });
+          }
         })
         .catch((err: Error) => ctx.bus.notify("auto_release", { workspace: name, message: `auto-release failed: ${err.message}` }));
       // TE-0192: claim files on finished items are orphaned locks — drop them

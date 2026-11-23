@@ -114,7 +114,7 @@ auto_accept_rules: # solo: ordered rules; first match sets the item's delay
   - { tier: light, after: 5m } #   conditions (all must match): tier, project, domains
   - { domains: [meta], after: never } #   never = the accept stays the human's
 auto_archive_after: 7d # unset = off: daemon archives items done/dropped longer than this (§5)
-auto_release_after: 24h # unset = off: daemon releases dead-session claims stale longer than this (§5)
+auto_release_after: 24h # default 2h; 0 = off: daemon sweeps claims stale longer than this (§5)
 peer_answer_after: 30m # a peer question unanswered this long becomes the human's (§5)
 brief_inherit_lines: 60 # brief: per-block cap on inherited text — parent plan, relates sources (§4)
 lessons_max: 25 # cap on the bullet lines in each lessons/<domain>.md — over it the inbox asks which to drop
@@ -530,10 +530,12 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   released. Each archive lands in the event log with actor `daemon`. With the
   key set, a plan the sweep marks done also has its finished parts archived
   in the same step.
-- `auto_release_after` (workspace.yaml, unset = off) releases a dead claim
-  without a click: when a claim is stale longer than the duration and its
-  holder session is not live on this machine, the daemon releases the item
-  to `ready` — the worktree and the branch stay for the next claimant.
+- `auto_release_after` (workspace.yaml, default 2h; `0` = off) sweeps a
+  claim nobody handles without a click: when a claim is stale longer than
+  the duration — dead holder or a live holder that never touches the item —
+  the daemon releases the item to `ready`, logs a `claim_swept` event, and
+  the worktree and the branch stay for the next claimant. A claim held by a
+  running dispatcher child is never swept.
   `in_review` items and claims held on other machines are never released;
   each release lands in the event log and the item log with actor `daemon`.
 - `dispatch` (workspace.yaml, unset = off) makes the daemon the foreman:

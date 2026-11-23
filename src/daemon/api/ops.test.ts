@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
@@ -599,5 +599,99 @@ describe("solo: a bug found in known work lands ready (TE-0199)", () => {
     } finally {
       wsr.ws.config.autonomy = prevAutonomy;
     }
+  });
+});
+
+describe("auto-sweep claims nobody handles (TE-0207)", () => {
+  const human = { kind: "human" as const, session: "human", machine: "test" };
+
+  async function freshClaimed(title: string, holder: Parameters<typeof ops.claim>[1]) {
+    const { ids } = await wsr.store.createItems([{ type: "task", title }], human);
+    const id = ids[0];
+    await ops.approve(id);
+    await ops.claim(id, holder);
+    return id;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-24T00:00:00Z"));
+    wsr.ws.config.auto_release_after = "2h";
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a dead-holder claim sweeps past the window — claim_swept event, Log line, item back to ready", async () => {
+    const dead = sessions.hello("sweep-dead");
+    const id = await freshClaimed("dead work", dead);
+    sessions.disconnect(dead.id);
+
+    // inside the window the claim stays
+    vi.setSystemTime(new Date("2026-11-24T01:59:00Z"));
+    expect(ops.autoReleaseDue()).not.toContain(id);
+
+    vi.setSystemTime(new Date("2026-11-24T02:01:00Z"));
+    const swept = await ops.autoRelease();
+    const hit = swept.find((s) => s.id === id);
+    expect(hit).toBeTruthy();
+    expect(hit!.why).toBe("dead");
+    expect(hit!.holder).toBe(dead.id);
+    expect(hit!.ageMin).toBeGreaterThanOrEqual(120);
+
+    const it2 = wsr.store.idx.get(id)!;
+    expect(it2.meta.status).toBe("ready");
+    expect(wsr.store.idx.claims.get(id)).toBeUndefined();
+    // the file stays put — release keeps the branch and the worktree
+    expect(existsSync(join(plans, it2.path))).toBe(true);
+    const logSec = it2.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logSec).toContain(`dead holder ${dead.id}`);
+    expect(logSec).toContain("last touch");
+
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const r = await readAllEvents(join(plans, "events"));
+    const ev = r.events.find((e) => e.item === id && e.action === "claim_swept");
+    expect(ev?.actor).toBe("daemon");
+    expect(ev?.note).toContain(dead.id);
+  });
+
+  it("a live holder with a stale claim sweeps — the adopted-phantom case", async () => {
+    const live = sessions.hello("sweep-live");
+    const id = await freshClaimed("phantom work", live);
+
+    vi.setSystemTime(new Date("2026-11-24T03:00:00Z"));
+    sessions.touch(live.id); // holder still live — only the claim went stale
+    expect(sessions.isLive(live.id)).toBe(true);
+
+    const swept = await ops.autoRelease();
+    const hit = swept.find((s) => s.id === id);
+    expect(hit?.why).toBe("idle");
+    expect(wsr.store.idx.get(id)!.meta.status).toBe("ready");
+    expect(wsr.store.idx.claims.get(id)).toBeUndefined();
+  });
+
+  it("a claim touched within the window is never swept", async () => {
+    const holder = sessions.hello("sweep-fresh");
+    const id = await freshClaimed("fresh work", holder);
+
+    vi.setSystemTime(new Date("2026-11-24T01:59:00Z"));
+    sessions.touch(holder.id);
+    expect(ops.autoReleaseDue()).not.toContain(id);
+    // a dead holder inside the window keeps the claim too — hello adoption
+    // after a daemon restart must not lose fresh work
+    sessions.disconnect(holder.id);
+    expect(ops.autoReleaseDue()).not.toContain(id);
+  });
+
+  it("auto_release_after defaults to 2h and '0' disables the sweep", async () => {
+    expect(wsr.ws.config.auto_release_after).toBe("2h");
+    const dead = sessions.hello("sweep-cfg");
+    const id = await freshClaimed("cfg work", dead);
+    sessions.disconnect(dead.id);
+
+    vi.setSystemTime(new Date("2026-11-24T03:00:00Z"));
+    expect(ops.autoReleaseDue()).toContain(id);
+    wsr.ws.config.auto_release_after = "0";
+    expect(ops.autoReleaseDue()).not.toContain(id);
   });
 });
