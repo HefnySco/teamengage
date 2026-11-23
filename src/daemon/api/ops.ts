@@ -1650,6 +1650,7 @@ export class WorkspaceOps {
     // checking it here raced with other claims mid-flight.
     await checkRemoteClaims(this.wsr, claim);
     const roots = resourceRoots(this.wsr.ws);
+    const overlapCheck = this.overlapGuard(it.meta.targets, roots, id);
     const r = await this.store.perform(
       id,
       it.meta.version,
@@ -1657,7 +1658,10 @@ export class WorkspaceOps {
       { type: "claim", claim },
       {
         depsDone: this.depsDone(it),
-        guard: this.overlapGuard(it.meta.targets, roots, id),
+        guard: () => {
+          this.dispatchCapGuard(session);
+          overlapCheck();
+        },
         holderAway: () => this.holderAway(this.item(id)),
         planHold: () => this.index.get(id)?.paused_by,
       },
@@ -1680,6 +1684,39 @@ export class WorkspaceOps {
     // open item's — advisory only, the claim already stands
     const overlap = await this.touchOverlaps(id);
     return { claim, version: r.meta.version, resumed, overlap };
+  }
+
+  /**
+   * TE-0206 hard cap: in_progress claims on this machine that are live
+   * capacity — holder session live AND last_seen fresher than
+   * live_claim_window. Adoption alone never refreshes last_seen.
+   */
+  liveInProgressClaims(now = Date.now()): Claim[] {
+    const machine = this.wsr.store.machine;
+    const windowMs = parseDuration(this.wsr.ws.config.live_claim_window);
+    return [...this.index.claims.values()].filter(
+      (c) =>
+        this.index.items.get(c.item)?.meta.status === "in_progress" &&
+        this.sessions.claimIsLiveCapacity(c, machine, windowMs, now),
+    );
+  }
+
+  /**
+   * TE-0206 hard cap: a claim from a dispatch-minted session that would push
+   * live in-progress claims to or past max_issues is refused. Manual and
+   * human claims are never refused — an existing overrun only pauses
+   * dispatch starts. Runs inside the store's serialized guard.
+   */
+  private dispatchCapGuard(session: Session): void {
+    if (!this.sessions.isDispatchMinted(session.id)) return;
+    const cfg = this.wsr.ws.config.dispatch;
+    const max = cfg?.max_issues ?? cfg?.max_sessions ?? 2;
+    const live = this.liveInProgressClaims().length;
+    if (live >= max) {
+      throw new ClaimRefusedError(
+        `dispatch cap: ${live} live in-progress claim(s) on ${this.wsr.store.machine} meets max_issues ${max} — a dispatch session may not claim past the cap`,
+      );
+    }
   }
 
   /** Overlap check that runs inside the store's serialized write queue. */

@@ -6,7 +6,7 @@ import type { WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "../api/ops.js";
 import { loadMachineConfig } from "../../core/config/config.js";
 import { ValidationError } from "../../core/model/errors.js";
-import { RunConfig, type DispatchAgent } from "../../core/model/workspace.js";
+import { RunConfig, parseDuration, type DispatchAgent } from "../../core/model/workspace.js";
 import {
   agentName,
   listDispatchCandidates,
@@ -68,6 +68,8 @@ export class Dispatcher {
   private fixes = new Map<string, number>();
   private triedVersions = new Map<string, number>();
   private pendingClaim?: string;
+  /** set by the pause lever (TE-0209) — reported through status().why_idle */
+  pausedReason?: string;
   private eventLog: Array<{ kind: string; at: string; data: Record<string, unknown> }> = [];
   private enabled: boolean;
   private maxIssues: number;
@@ -168,6 +170,15 @@ export class Dispatcher {
     return out;
   }
 
+  /**
+   * Live-capacity window (TE-0206): a claim counts while its holder session
+   * is live AND its last_seen is fresher than this. Active work keeps a
+   * claim fresh through throttled touches; adopted-but-idle claims go stale.
+   */
+  private liveWindowMs(): number {
+    return parseDuration(this.wsr.ws.config.live_claim_window);
+  }
+
   private collectBoard(ops: WorkspaceOps): {
     items: RunItem[];
     ready: string[];
@@ -175,7 +186,10 @@ export class Dispatcher {
     tried: Set<string>;
   } {
     const machine = this.wsr.store.machine;
+    const now = Date.now();
+    const windowMs = this.liveWindowMs();
     const onlineIds = new Set<string>(this.children.keys());
+    if (this.pendingClaim) onlineIds.add(this.pendingClaim);
     const tried = new Set<string>();
     const items: RunItem[] = [];
 
@@ -185,8 +199,7 @@ export class Dispatcher {
       if (
         indexed.meta.status === "in_progress" &&
         indexed.claim &&
-        indexed.claim.machine === machine &&
-        !dead
+        this.sessions.claimIsLiveCapacity(indexed.claim, machine, windowMs, now)
       ) {
         onlineIds.add(indexed.meta.id);
         tried.add(indexed.meta.id);
@@ -254,17 +267,39 @@ export class Dispatcher {
       pid: entry.pid,
       started_at: entry.started_at,
     }));
+    const agentsReady = Boolean(resolved.coder || resolved.reviewer);
+    // TE-0206: a starved dispatcher is never silent — name why nothing starts
+    let whyIdle: string | null = null;
+    if (!this.enabled) whyIdle = "disabled";
+    else if (!agentsReady) whyIdle = "no_agents";
+    else if (this.pausedReason) whyIdle = "paused";
+    else if (onlineIds.size >= this.maxIssues) whyIdle = "cap";
+    else if (!matched.length) {
+      const unfiltered = listDispatchCandidates(
+        runCfg,
+        { fixes: this.fixes, tried },
+        items,
+        ready,
+        this.wsr.store.machine,
+        undefined,
+        undefined,
+      );
+      whyIdle = unfiltered.length ? "filter" : "no_match";
+    } else if (this.pendingClaim) whyIdle = "backlog";
     return {
       enabled: this.enabled,
       max_issues: this.maxIssues,
       max_sessions: this.maxIssues,
       online_issues: onlineIds.size,
+      live_issues: onlineIds.size,
+      cap_over: onlineIds.size >= this.maxIssues,
+      why_idle: whyIdle,
       live_sessions: this.sessions.list().length,
       filter: this.filter.raw,
       matched,
       running,
       agents,
-      agents_ready: Boolean(resolved.coder || resolved.reviewer),
+      agents_ready: agentsReady,
       failures: Object.fromEntries(this.failures),
       events: this.eventLog.slice(-10),
     };
@@ -277,7 +312,7 @@ export class Dispatcher {
   }
 
   tick(): void {
-    if (!this.enabled) return;
+    if (!this.enabled || this.pausedReason) return;
     const resolved = this.resolveCommands();
     if (!resolved.coder && !resolved.reviewer) return;
 
@@ -359,7 +394,21 @@ export class Dispatcher {
       throw new Error(`hello failed: ${text.split("\n")[0] ?? res.status}`);
     }
     const resume = /^resume: (.+)$/m.exec(text)?.[1]?.split(/,\s*/) ?? [];
+    // TE-0206: mark the minted session on the shared registry — ops.claim
+    // hard-caps claims from sessions the dispatcher opened
+    const sessionId = /^session (\S+)/m.exec(text)?.[1];
+    if (sessionId) this.sessions.markDispatchMinted(sessionId);
     return { token, resume };
+  }
+
+  /**
+   * Item ids this dispatcher holds right now — running children plus the
+   * pending work claim. The claim sweep (TE-0207) must never touch them.
+   */
+  heldItemIds(): Set<string> {
+    const ids = new Set<string>(this.children.keys());
+    if (this.pendingClaim) ids.add(this.pendingClaim);
+    return ids;
   }
 
   private closeRemoteSession(baseUrl: string, token: string): Promise<void> {

@@ -212,6 +212,14 @@ export const WorkspaceConfig = z
      */
     auto_release_after: z.string().optional(),
     /**
+     * Dispatch capacity window (TE-0206): an in_progress claim on this
+     * machine counts as live capacity only while its holder session is live
+     * AND its last_seen is fresher than this window. Claim touches are
+     * throttled (~5 min), so active work keeps a claim fresh; a claim that
+     * was adopted at hello but never worked goes stale here.
+     */
+    live_claim_window: z.string().default("30m"),
+    /**
      * Failed attempts (AI bounces + handoffs) after which an item's tier is
      * raised one step, so a stronger model takes it (light → standard → heavy).
      */

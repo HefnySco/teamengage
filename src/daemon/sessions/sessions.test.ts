@@ -102,3 +102,37 @@ describe("idle limit (TE-0165)", () => {
     expect(r.isLive(s.id)).toBe(true);
   });
 });
+
+describe("dispatch-minted sessions and live claim capacity (TE-0206)", () => {
+  it("marks a live session dispatch-minted; disconnect and the idle prune unmark it", () => {
+    const r = new SessionRegistry("test");
+    const s = r.hello("worker");
+    r.markDispatchMinted(s.id);
+    expect(r.isDispatchMinted(s.id)).toBe(true);
+    r.markDispatchMinted("ghost@test#0000"); // unknown id — no-op
+    expect(r.isDispatchMinted("ghost@test#0000")).toBe(false);
+    r.disconnect(s.id);
+    expect(r.isDispatchMinted(s.id)).toBe(false);
+  });
+
+  it("unmarks a session pruned by the idle limit", () => {
+    const r = new SessionRegistry("test");
+    r.idleAfterMs = 1_000;
+    const s = r.hello("worker");
+    r.markDispatchMinted(s.id);
+    expect(r.isLive(s.id, Date.parse(s.last_seen) + 2_000)).toBe(false);
+    expect(r.isDispatchMinted(s.id)).toBe(false);
+  });
+
+  it("claimIsLiveCapacity: live holder plus fresh last_seen counts; stale, remote and dead do not", () => {
+    const r = new SessionRegistry("test");
+    const live = r.hello("worker");
+    const windowMs = 30 * 60_000;
+    const fresh = { ...claim(live.id), last_seen: new Date().toISOString() };
+    expect(r.claimIsLiveCapacity(fresh, "test", windowMs)).toBe(true);
+    const stale = { ...fresh, last_seen: new Date(Date.now() - 60 * 60_000).toISOString() };
+    expect(r.claimIsLiveCapacity(stale, "test", windowMs)).toBe(false);
+    expect(r.claimIsLiveCapacity({ ...fresh, machine: "other-box" }, "test", windowMs)).toBe(false);
+    expect(r.claimIsLiveCapacity({ ...fresh, holder: "gone@test#0000" }, "test", windowMs)).toBe(false);
+  });
+});

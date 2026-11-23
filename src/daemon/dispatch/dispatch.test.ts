@@ -377,3 +377,110 @@ describe("Dispatcher per-item launch and online_issues cap (TE-0203)", () => {
     }
   });
 });
+
+describe("hard cap on live in-progress claims (TE-0206)", () => {
+  it("hello adoption rebinds the holder but does not refresh the claim's last_seen", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const first = await ops.hello("devin");
+    await ops.claim("WS-0001", first.session);
+    const stale = new Date(Date.now() - 60 * 60_000).toISOString();
+    const claim = ops.index.get("WS-0001")!.claim!;
+    ops.index.setClaim({ ...claim, last_seen: stale });
+    sessions.disconnect(first.session.id);
+
+    const second = await ops.hello("devin");
+    expect(second.resume.map((c) => c.item)).toEqual(["WS-0001"]);
+    const rebound = ops.index.get("WS-0001")!.claim!;
+    expect(rebound.holder).toBe(second.session.id);
+    expect(rebound.last_seen).toBe(stale);
+  });
+
+  it("a stale last_seen claim with a live holder is not live capacity; a fresh one is", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const holder = sessions.hello("manual-local");
+    await ops.claim("WS-0002", holder);
+    const d = dispatcher(wsr);
+
+    // fresh claim counts — cap is full
+    expect(d.status().live_issues).toBe(1);
+    d.tick();
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+
+    // age it past live_claim_window — the idle holder stops blocking
+    const claim = ops.index.get("WS-0002")!.claim!;
+    ops.index.setClaim({ ...claim, last_seen: new Date(Date.now() - 60 * 60_000).toISOString() });
+    expect(d.status().live_issues).toBe(0);
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(1);
+    expect(starts[0].data.id).toBe("WS-0001");
+  });
+
+  it("a dispatch-minted session claim past the cap is refused; a manual claim is never refused", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const manual = sessions.hello("manual-coder");
+    await ops.claim("WS-0001", manual); // live in_progress — fills the cap
+
+    const minted = sessions.hello("sleep");
+    sessions.markDispatchMinted(minted.id);
+    await expect(ops.claim("WS-0002", minted)).rejects.toThrow(/dispatch cap|CLAIM_REFUSED/);
+    await expect(ops.claim("WS-0003", manual)).resolves.toBeDefined();
+  });
+
+  it("status reports live_issues, cap_over and why_idle", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    expect(d.status().why_idle).toBe("disabled");
+
+    d.setEnabled(true);
+    expect(d.status().why_idle).toBe(null);
+
+    const holder = sessions.hello("manual-local");
+    await ops.claim("WS-0001", holder);
+    const st = d.status();
+    expect(st.live_issues).toBe(1);
+    expect(st.cap_over).toBe(true);
+    expect(st.why_idle).toBe("cap");
+  });
+
+  it("why_idle names no_match for an empty board and filter for filtered-out work", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const d = dispatcher(wsr);
+    expect(d.status().why_idle).toBe(null);
+    d.update({ filter: "SE-01xx" });
+    expect(d.status().why_idle).toBe("filter");
+
+    const empty = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "done" }],
+    );
+    const d2 = dispatcher(empty);
+    expect(d2.status().why_idle).toBe("no_match");
+  });
+});

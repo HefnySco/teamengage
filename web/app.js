@@ -554,7 +554,7 @@ const seatHue = (name) => {
 // the one dispatch on/off control — same on the dispatch bar and the
 // office front-desk seat: a button (red-outlined "off" when running) and a
 // pulsing red dot while dispatch is on
-const DispatchToggle = ({ enabled, ready, onToggle }) => html`
+const DispatchToggle = ({ enabled, ready, onToggle, whyIdle }) => html`
   <span class="dispatch-toggle">
     <button
       class=${"btn btn-sm " + (enabled ? "btn-outline-danger" : "btn-primary")}
@@ -562,7 +562,7 @@ const DispatchToggle = ({ enabled, ready, onToggle }) => html`
       title=${!enabled && !ready ? "no coder or reviewer configured in machine.yaml or workspace.yaml" : `press to switch dispatch ${enabled ? "off" : "on"}`}
       onClick=${() => onToggle(!enabled)}
     >${enabled ? "off" : "on"}</button>
-    ${enabled && html`<span class="dispatch-live" title="dispatch is running"></span>`}
+    ${enabled && html`<span class="dispatch-live" title=${whyIdle ? `idle — ${whyIdle}` : "dispatch is running"}></span>`}
   </span>`;
 
 const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
@@ -640,7 +640,7 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
               <div class="office-desks">
                 <div
                   class="seat"
-                  title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${online}/${max} active issues${dispatch.filter ? ` · filter: ${dispatch.filter}` : ""}${running.length ? " · active: " + running.map((r) => (r.mode ? `${r.id} (${r.mode})` : r.id)).join(", ") : ""}`}
+                  title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${online}/${max} active issues${dispatch.why_idle ? ` · idle: ${dispatch.why_idle}` : ""}${dispatch.filter ? ` · filter: ${dispatch.filter}` : ""}${running.length ? " · active: " + running.map((r) => (r.mode ? `${r.id} (${r.mode})` : r.id)).join(", ") : ""}`}
                 >
                   <div class="seat-bubble">
                     ${running
@@ -657,6 +657,7 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
                   <div class="mt-1"><${DispatchToggle}
                     enabled=${dispatch.enabled}
                     ready=${readyToStart}
+                    whyIdle=${dispatch.why_idle}
                     onToggle=${(v) => onDispatch({ enabled: v })}
                   /></div>
                 </div>
@@ -764,7 +765,7 @@ const Team = ({ onOpen }) => {
     ${dispatch
       ? html`
         <div class="dispatch-bar mt-2 mb-2">
-          <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} onToggle=${toggleEnabled} />
+          <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} whyIdle=${dispatch.why_idle} onToggle=${toggleEnabled} />
           <div class="input-group input-group-sm dispatch-max-group">
             <span class="input-group-text">max issues</span>
             <input

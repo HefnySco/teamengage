@@ -640,7 +640,6 @@ export class PlansStore {
   rebindClaims(claims: Claim[], holder: string): Promise<Claim[]> {
     return this.enqueue(async () => {
       await this.assertReady();
-      const now = new Date().toISOString();
       const rebound: Claim[] = [];
       const touched: string[] = [];
       for (const c of claims) {
@@ -648,7 +647,10 @@ export class PlansStore {
           rebound.push(c);
           continue;
         }
-        const next = { ...c, holder, last_seen: now };
+        // TE-0206: adoption rebinds the holder only — it must not refresh
+        // last_seen, or dead claims would look freshly worked and block
+        // dispatch capacity
+        const next = { ...c, holder };
         const rel = join("claims", `${c.item}.yaml`);
         const abs = join(this.ws.plansDir, rel);
         const yaml = claimToYaml(next);

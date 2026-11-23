@@ -12,6 +12,12 @@ export class SessionRegistry {
   private sessions = new Map<string, Session>();
   private lastClaimWrite = new Map<string, number>();
   /**
+   * Dispatch-minted sessions (TE-0206): the dispatcher marks the session ids
+   * it opens in openRemoteSession. ops.claim hard-caps their claims at
+   * max_issues; manual sessions are never marked and never refused.
+   */
+  private mintedByDispatch = new Set<string>();
+  /**
    * Idle limit (TE-0165): a session with no pid whose last_seen is older than
    * this many ms is not live. A session with a pid keeps the pid rule only.
    */
@@ -76,11 +82,13 @@ export class SessionRegistry {
     if (!s) return false;
     if (s.pid !== undefined && !pidAlive(s.pid)) {
       this.sessions.delete(id);
+      this.mintedByDispatch.delete(id);
       return false;
     }
     if (s.pid === undefined && now - Date.parse(s.last_seen) > this.idleAfterMs) {
       // TE-0165: a curl session that never said bye is gone after the idle limit
       this.sessions.delete(id);
+      this.mintedByDispatch.delete(id);
       this.onChange?.("end", s);
       return false;
     }
@@ -91,7 +99,28 @@ export class SessionRegistry {
   disconnect(id: string): void {
     const s = this.sessions.get(id);
     this.sessions.delete(id);
+    this.mintedByDispatch.delete(id);
     if (s) this.onChange?.("end", s);
+  }
+
+  markDispatchMinted(id: string): void {
+    if (this.sessions.has(id)) this.mintedByDispatch.add(id);
+  }
+
+  isDispatchMinted(id: string): boolean {
+    return this.mintedByDispatch.has(id);
+  }
+
+  /**
+   * TE-0206 live capacity: a claim on this machine consumes a dispatch slot
+   * only while its holder session is live AND the claim's last_seen is
+   * fresher than windowMs. Adoption never refreshes last_seen, so an
+   * adopted-but-idle claim goes stale and stops counting.
+   */
+  claimIsLiveCapacity(c: Claim, machine: string, windowMs: number, now = Date.now()): boolean {
+    if (c.machine !== machine) return false;
+    if (!this.isLive(c.holder)) return false;
+    return now - Date.parse(c.last_seen) <= windowMs;
   }
 
   touch(id: string): void {
