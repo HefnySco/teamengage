@@ -50,6 +50,24 @@ describe("UI serving (UI-0001)", () => {
     const t = await fetch(`${daemon.url}/assets/..%2Fapp.js?token=${daemon.token}`);
     expect(t.status).toBe(404);
   });
+
+  it("the team page carries the dispatch levers and the pause reason on the dot (TE-0209)", async () => {
+    const res = await fetch(`${daemon.url}/assets/app.js`, {
+      headers: { cookie: `te_token=${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    const js = await res.text();
+    for (const marker of [
+      "dispatch-pause",
+      "dispatch-resume",
+      "dispatch-block",
+      "dispatch-unblock",
+      "dispatch-reset",
+      "paused",
+    ]) {
+      expect(js).toContain(marker);
+    }
+  });
 });
 
 // the Ops pages read /api/ops/* under the same te_token cookie as every

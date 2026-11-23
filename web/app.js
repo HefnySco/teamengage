@@ -722,6 +722,23 @@ const Team = ({ onOpen }) => {
     sendDispatch({ max_issues: validMax, filter: "" });
   };
 
+  // TE-0209 forced levers: pause stops new starts, block parks one item,
+  // unblock frees it, reset clears its tried/fix/failure memory
+  const pauseDispatch = () => {
+    const reason = window.prompt("pause dispatch — reason (optional):", "");
+    if (reason === null) return;
+    const kill = window.confirm("also stop the running children?");
+    sendDispatch({ pause: { ...(reason ? { reason } : {}), kill } });
+  };
+  const resumeDispatch = () => sendDispatch({ resume: true });
+  const blockItem = (id) => {
+    const reason = window.prompt(`block ${id} from dispatch — reason:`, "");
+    if (!reason) return;
+    sendDispatch({ block: { id, reason } });
+  };
+  const unblockItem = (id) => sendDispatch({ unblock: { id } });
+  const resetItem = (id) => sendDispatch({ reset: { id } });
+
   const ss = sessions ?? [];
   const ev = dispatch?.events ?? [];
   const onlineIssues = dispatch?.online_issues ?? 0;
@@ -766,6 +783,9 @@ const Team = ({ onOpen }) => {
       ? html`
         <div class="dispatch-bar mt-2 mb-2">
           <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} whyIdle=${dispatch.why_idle} onToggle=${toggleEnabled} />
+          ${dispatch.paused != null
+            ? html`<button class="btn btn-sm btn-outline-warning dispatch-resume" title="lift the pause" onClick=${resumeDispatch}>resume</button><span class="small text-warning">paused${dispatch.paused ? `: ${dispatch.paused}` : ""}</span>`
+            : html`<button class="btn btn-sm btn-outline-secondary dispatch-pause" title="stop new starts now" onClick=${pauseDispatch}>pause</button>`}
           <div class="input-group input-group-sm dispatch-max-group">
             <span class="input-group-text">max issues</span>
             <input
@@ -826,7 +846,9 @@ const Team = ({ onOpen }) => {
                 <span class="text-secondary">matched ${matchedItems.length}:</span>
                 ${matchedItems.slice(0, 20).map(
                   (m) =>
-                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.title ?? m.id}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span></span>`,
+                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
+                      ? html`<span class="triage-tag dispatch-blocked-tag">blocked</span><button class="btn btn-link btn-sm p-0 dispatch-unblock" title="unblock — let dispatch start it again" onClick=${() => unblockItem(m.id)}>unblock</button><button class="btn btn-link btn-sm p-0 dispatch-reset" title="reset — clear tried/fix/failure memory" onClick=${() => resetItem(m.id)}>reset</button>`
+                      : html`<button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
                 )}
                 ${matchedItems.length > 20 && html`<span class="text-secondary">+${matchedItems.length - 20} more</span>`}`
             : html`<span class="text-secondary">${dispatch.enabled ? "0 matched — standby" : "0 matched"}</span>`}

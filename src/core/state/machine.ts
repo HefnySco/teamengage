@@ -174,6 +174,7 @@ export type Action =
    */
   | { type: "dispatch_block"; reason: string }
   | { type: "dispatch_unblock" }
+  | { type: "dispatch_reset" }
   | { type: "plan_auto_done" }
   /**
    * Internal (daemon only): the sweep found every live referrer of this
@@ -1162,6 +1163,17 @@ function apply(
       delete out.meta.dispatch_blocked;
       out.events.push(ev(actor, stamp, meta.id, "dispatch_unblock", from, from));
       out.log.push(`- ${stamp} ${who} unblocked dispatch`);
+      return out;
+    }
+
+    case "dispatch_reset": {
+      // TE-0209: the human cleared the dispatcher's in-memory state for the
+      // item (tried versions, fix count, failure count) — Log line only
+      if (actor.kind !== "daemon" && actor.kind !== "human")
+        throw new ForbiddenError("dispatch_reset is a daemon/human action");
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      out.events.push(ev(actor, stamp, meta.id, "dispatch_reset", from, from));
+      out.log.push(`- ${stamp} ${who} reset dispatch state`);
       return out;
     }
 

@@ -627,3 +627,146 @@ describe("admission checks before a dispatch (TE-0208)", () => {
     expect(d.status().matched.find((c) => c.id === "WS-0001")?.admission?.ok).toBe(true);
   });
 });
+
+describe("forced correction levers (TE-0209)", () => {
+  it("pause stops new starts and names the reason in why_idle; resume restarts them", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.pause("maintenance");
+    d.tick();
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    expect(d.status().why_idle).toBe("paused: maintenance");
+    expect(d.status().paused).toBe("maintenance");
+    expect(events.some((e) => e.kind === "dispatch_pause")).toBe(true);
+    // resume ticks — the ready item starts
+    d.unpause();
+    await untilEvent("dispatch_start", 1);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    expect(d.status().paused).toBeNull();
+  });
+
+  it("pause --kill stops the running child", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    expect(d.status().running).toHaveLength(1);
+    d.pause("emergency", true);
+    expect(d.status().running).toHaveLength(0);
+    expect(d.status().why_idle).toBe("paused: emergency");
+  });
+
+  it("a blocked item is never started until the unblock lever clears it", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    await d.blockItem("WS-0001", "env broken");
+    expect(ops.index.get("WS-0001")!.meta.dispatch_blocked?.reason).toBe("env broken");
+    const logBody =
+      ops.index.get("WS-0001")!.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("blocked dispatch: env broken");
+    d.tick();
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    expect(d.status().matched.find((c) => c.id === "WS-0001")?.blocked).toBe(true);
+    await d.unblockItem("WS-0001");
+    expect(ops.index.get("WS-0001")!.meta.dispatch_blocked).toBeUndefined();
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    expect(events[0].data).toMatchObject({ id: "WS-0001" });
+  });
+
+  it("reset lets dispatch retry an item it had marked tried", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "exit 0" }\n`,
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    d.tick();
+    // a clean exit with no status change marks the item tried at this version
+    const deadline = Date.now() + 8000;
+    while (d.status().running.length > 0 && Date.now() < deadline) await sleep(40);
+    await untilEvent("dispatch_start", 1);
+    // tried: a plain tick starts nothing
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    // reset clears the tried marker — the next tick starts it again and the
+    // item Log records the lever
+    await d.resetItem("WS-0001");
+    const logBody =
+      ops.index.get("WS-0001")!.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("reset dispatch state");
+    d.tick();
+    await untilEvent("dispatch_start", 2);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(2);
+  });
+});
+
+describe("forced lever CLI (TE-0209)", () => {
+  it("te dispatch pause/resume/block/unblock/reset print clear confirmations", async () => {
+    const { startDaemon } = await import("../server/server.js");
+    const { registerApiRoutes } = await import("../api/api.js");
+    const { EventBus } = await import("../api/events.js");
+    const { dispatchCmd } = await import("../../cli/commands/dispatch.js");
+
+    const cliHome = mkdtempSync(join(tmpdir(), "te-dispatch-cli-"));
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    const ctx = {
+      home: cliHome,
+      machine: "test",
+      workspaces: new Map([["ws", wsr]]),
+      sessions,
+      bus: new EventBus(),
+      dispatchers: new Map([["ws", d]]),
+    };
+    const handle = await startDaemon({
+      home: cliHome,
+      port: 0,
+      health: () => ({ machine: "test", workspaces: ["ws"] }),
+      register: async (app) => {
+        registerApiRoutes(app, ctx);
+      },
+    });
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      expect(await dispatchCmd(["pause", "maintenance"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("dispatch paused: maintenance");
+      chunks.length = 0;
+      expect(await dispatchCmd(["block", "WS-0001", "env", "broken"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("WS-0001 blocked from dispatch: env broken");
+      chunks.length = 0;
+      expect(await dispatchCmd(["unblock", "WS-0001"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("WS-0001 unblocked");
+      chunks.length = 0;
+      expect(await dispatchCmd(["reset", "WS-0001"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("WS-0001 dispatch memory cleared");
+      chunks.length = 0;
+      expect(await dispatchCmd(["resume"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("dispatch resumed");
+      // status names the pause
+      expect(await dispatchCmd(["pause"], cliHome)).toBe(0);
+      chunks.length = 0;
+      expect(await dispatchCmd(["status"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("paused");
+    } finally {
+      process.stdout.write = origWrite;
+      d.stopAll();
+      await handle.close();
+      rmSync(cliHome, { recursive: true, force: true });
+    }
+  });
+});

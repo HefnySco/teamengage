@@ -5,7 +5,7 @@ import type { SessionRegistry } from "../sessions/sessions.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "../api/ops.js";
 import { loadMachineConfig } from "../../core/config/config.js";
-import { ValidationError } from "../../core/model/errors.js";
+import { NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { RunConfig, parseDuration, type DispatchAgent } from "../../core/model/workspace.js";
 import {
   agentName,
@@ -125,6 +125,8 @@ export class Dispatcher {
     if (on && !this.enabled) {
       this.triedVersions.clear();
     }
+    // TE-0209: "on" also lifts a pause — one obvious way to resume
+    if (on) this.pausedReason = undefined;
     this.enabled = on;
   }
 
@@ -150,6 +152,80 @@ export class Dispatcher {
     }
     this.children.clear();
     this.pendingClaim = undefined;
+  }
+
+  // ---- forced correction levers (TE-0209) — the human's hand on dispatch --
+
+  private persistLever(action: string, note: string, item?: string): void {
+    void this.wsr.store
+      .logEvent({
+        ts: new Date().toISOString(),
+        actor: "human",
+        action,
+        ...(item ? { item } : {}),
+        note,
+      })
+      .catch(() => {});
+  }
+
+  /** Stop new starts at once; kill also stops the running children. */
+  pause(reason?: string, kill = false): void {
+    this.pausedReason = reason || "";
+    this.emit("dispatch_pause", { reason: this.pausedReason, kill });
+    this.persistLever("dispatch_pause", reason ? `paused: ${reason}` : "paused");
+    if (kill) this.stopAll();
+  }
+
+  unpause(): void {
+    if (this.pausedReason === undefined) return;
+    this.pausedReason = undefined;
+    this.emit("dispatch_resume", {});
+    this.persistLever("dispatch_resume", "resumed");
+    if (this.enabled) this.tick();
+  }
+
+  /** Persisted block — the human's version of the per-item breaker. */
+  async blockItem(id: string, reason: string): Promise<void> {
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    if (!it) throw new NotFoundError(`no item '${id}'`);
+    await ops.store.perform(it.meta.id, it.meta.version, this.humanActor(), {
+      type: "dispatch_block",
+      reason,
+    });
+    this.emit("dispatch_block", { id, reason });
+  }
+
+  async unblockItem(id: string): Promise<void> {
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    if (!it) throw new NotFoundError(`no item '${id}'`);
+    await ops.store.perform(it.meta.id, it.meta.version, this.humanActor(), {
+      type: "dispatch_unblock",
+    });
+    this.emit("dispatch_unblock", { id });
+  }
+
+  /**
+   * Clear the in-memory triedVersions, fix count and per-item failure count
+   * for one item so a repaired environment can retry clean. A persisted
+   * dispatch_blocked stays — that is the unblock lever's job.
+   */
+  async resetItem(id: string): Promise<void> {
+    this.triedVersions.delete(id);
+    this.fixes.delete(id);
+    this.itemFailures.delete(id);
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    if (!it) throw new NotFoundError(`no item '${id}'`);
+    await ops.store.perform(it.meta.id, it.meta.version, this.humanActor(), {
+      type: "dispatch_reset",
+    });
+    this.emit("dispatch_reset", { id });
+  }
+
+  private humanActor() {
+    return { kind: "human" as const, session: "human", machine: this.wsr.store.machine };
   }
 
   private resolveCommands(): ResolvedCommands {
@@ -290,7 +366,8 @@ export class Dispatcher {
       fix_rounds: resolved.fixRounds,
     });
     const admission = this.admissionCtx(resolved, Date.now());
-    const matched: MatchedCandidate[] =
+    const blockedIds = new Set(items.filter((i) => i.dispatch_blocked).map((i) => i.id));
+    const matched: Array<MatchedCandidate & { blocked?: boolean }> =
       resolved.coder || resolved.reviewer
         ? listDispatchCandidates(
             runCfg,
@@ -301,7 +378,7 @@ export class Dispatcher {
             undefined,
             this.filter,
             admission,
-          )
+          ).map((c) => ({ ...c, blocked: blockedIds.has(c.id) }))
         : [];
     const running: RunningDispatch[] = [...this.children.values()].map((entry) => ({
       id: entry.id,
@@ -313,9 +390,10 @@ export class Dispatcher {
     const agentsReady = Boolean(resolved.coder || resolved.reviewer);
     // TE-0206: a starved dispatcher is never silent — name why nothing starts
     let whyIdle: string | null = null;
-    if (!this.enabled) whyIdle = "disabled";
+    if (this.pausedReason !== undefined)
+      whyIdle = `paused${this.pausedReason ? `: ${this.pausedReason}` : ""}`;
+    else if (!this.enabled) whyIdle = "disabled";
     else if (!agentsReady) whyIdle = "no_agents";
-    else if (this.pausedReason) whyIdle = "paused";
     else if (onlineIds.size >= this.maxIssues) whyIdle = "cap";
     else if (!matched.length) {
       const unfiltered = listDispatchCandidates(
@@ -340,6 +418,7 @@ export class Dispatcher {
       live_issues: onlineIds.size,
       cap_over: onlineIds.size >= this.maxIssues,
       why_idle: whyIdle,
+      paused: this.pausedReason !== undefined ? this.pausedReason : null,
       live_sessions: this.sessions.list().length,
       filter: this.filter.raw,
       warnings: this.configWarnings,
@@ -359,7 +438,7 @@ export class Dispatcher {
   }
 
   tick(): void {
-    if (!this.enabled || this.pausedReason) return;
+    if (!this.enabled || this.pausedReason !== undefined) return;
     const resolved = this.resolveCommands();
     if (!resolved.coder && !resolved.reviewer) return;
 
@@ -532,6 +611,8 @@ export class Dispatcher {
     mkdirSync(logDir, { recursive: true });
     const log = join(logDir, `dispatch-${pick.id}-${pick.mode}-${Date.now()}.log`);
     const out = createWriteStream(log);
+    // an unhandled stream error (e.g. home removed mid-run) must not crash the daemon
+    out.on("error", () => {});
     const base = this.baseUrl ?? "http://127.0.0.1:4747";
     const name = agentName(cmdSpec.command);
     const prompt = promptFor(pick.mode, pick.id, name, base, token);

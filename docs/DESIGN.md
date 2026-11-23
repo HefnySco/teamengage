@@ -567,6 +567,14 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   `te dispatch on|set|off|status [--max <n>] [--filter <expr>]` controls it;
   changes are human-only. Commands run in the workspace root with `TE_PROMPT`,
   `TE_ITEM`, `TE_MODE`, and `TE_SESSION`, and log to `~/.teamengage/runs/<ws>/`.
+  The forced levers are human-only too (`POST /api/dispatch`, the CLI and the
+  team page): `te dispatch pause [--kill] [reason]` stops new starts at once
+  and names the reason in `status.why_idle` as `paused: <reason>`; `resume`
+  or `on` lifts it. `te dispatch block <id> <reason>` sets `dispatch_blocked`
+  like the breaker does; `unblock` clears it. `te dispatch reset <id>`
+  clears the in-memory tried/fix/failure counters so a repaired item retries
+  clean. The team page puts pause/resume beside the toggle and
+  block/unblock/reset on matched candidates.
 - `peer_answer_after` (workspace.yaml, default `30m`) is how long a
   `to: "peer"` question waits for a peer before the daemon turns it into a
   normal human question: the item moves to `waiting` and shows in the

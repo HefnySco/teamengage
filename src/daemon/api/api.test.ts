@@ -2148,6 +2148,62 @@ describe("shared lessons per domain (GL-0322)", () => {
     }
   });
 
+  it("dispatch forced levers: pause/block/unblock/reset work for the human, 403 for agents (TE-0209)", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const ops = new WorkspaceOps(wsr, ctx.sessions, undefined, home);
+    const post = (body: unknown, headers: Record<string, string> = {}) =>
+      api("/api/dispatch", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+    const agent = { "x-te-session": "agent-x" };
+    for (const body of [
+      { pause: { reason: "x" } },
+      { resume: true },
+      { block: { id: "WS-0001", reason: "x" } },
+      { unblock: { id: "WS-0001" } },
+      { reset: { id: "WS-0001" } },
+    ]) {
+      expect((await post(body, agent)).status).toBe(403);
+    }
+
+    // pause shows the reason on status; resume lifts it
+    const paused = (await (await post({ pause: { reason: "maintenance" } })).json()) as {
+      paused: string | null;
+      why_idle: string | null;
+    };
+    expect(paused.paused).toBe("maintenance");
+    expect(paused.why_idle).toBe("paused: maintenance");
+    const resumed = (await (await post({ resume: true })).json()) as { paused: string | null };
+    expect(resumed.paused).toBeNull();
+
+    // block persists dispatch_blocked with the reason in the item Log
+    const { ids } = await wsr.store.createItems(
+      [{ type: "task", title: "lever-item" }],
+      { kind: "human", session: "human", machine: "test" },
+    );
+    const itemId = ids[0];
+    await ops.approve(itemId);
+    expect((await post({ block: { id: itemId } })).status).toBe(400);
+    expect((await post({ block: { id: itemId, reason: "env broken" } })).status).toBe(200);
+    expect(wsr.store.idx.get(itemId)!.meta.dispatch_blocked?.reason).toBe("env broken");
+    let logBody =
+      wsr.store.idx.get(itemId)!.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("blocked dispatch");
+    // unblock clears the flag
+    expect((await post({ unblock: { id: itemId } })).status).toBe(200);
+    expect(wsr.store.idx.get(itemId)!.meta.dispatch_blocked).toBeUndefined();
+    // reset writes its Log line and answers 200
+    expect((await post({ reset: { id: itemId } })).status).toBe(200);
+    logBody =
+      wsr.store.idx.get(itemId)!.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("reset dispatch state");
+    expect((await post({ reset: { id: "WS-9999" } })).status).toBe(404);
+    expect((await post({ unblock: { id: itemId } })).status).toBe(400);
+  });
+
   it("sessions list each live session's held items (GL-0329)", async () => {
     const sessions = (await (await api("/api/sessions")).json()) as Array<{
       id: string;

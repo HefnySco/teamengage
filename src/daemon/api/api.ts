@@ -496,6 +496,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         max_issues?: unknown;
         max_sessions?: unknown;
         filter?: unknown;
+        pause?: unknown;
+        resume?: unknown;
+        block?: unknown;
+        unblock?: unknown;
+        reset?: unknown;
       };
       const d = dispatcherFor(wsOf(req.query));
       const rawMax = body.max_issues !== undefined ? body.max_issues : body.max_sessions;
@@ -526,6 +531,54 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ...(maxIssues !== undefined ? { max_issues: maxIssues } : {}),
         ...(filter !== undefined ? { filter } : {}),
       });
+      // TE-0209: forced correction levers — human-only like on/off above
+      if (body.pause !== undefined) {
+        const p = body.pause;
+        if (p === true) {
+          d.pause();
+        } else if (p && typeof p === "object") {
+          const spec = p as { reason?: unknown; kill?: unknown };
+          if (spec.reason !== undefined && typeof spec.reason !== "string") {
+            throw new ValidationError("pause.reason must be a string");
+          }
+          if (spec.kill !== undefined && typeof spec.kill !== "boolean") {
+            throw new ValidationError("pause.kill must be a boolean");
+          }
+          d.pause(spec.reason, spec.kill ?? false);
+        } else if (p === false) {
+          d.unpause();
+        } else {
+          throw new ValidationError("pause must be true, false or {reason?, kill?}");
+        }
+      }
+      if (body.resume !== undefined) {
+        if (body.resume === true) d.unpause();
+        else if (body.resume !== false)
+          throw new ValidationError("resume must be a boolean");
+      }
+      for (const [field, action] of [
+        ["block", "block"],
+        ["unblock", "unblock"],
+        ["reset", "reset"],
+      ] as const) {
+        const spec = body[field];
+        if (spec === undefined) continue;
+        if (!spec || typeof spec !== "object" || typeof (spec as { id?: unknown }).id !== "string") {
+          throw new ValidationError(`${field} must be {id} — a string item id`);
+        }
+        const itemId = (spec as { id: string }).id;
+        if (action === "block") {
+          const reason = (spec as { reason?: unknown }).reason;
+          if (typeof reason !== "string" || !reason.trim()) {
+            throw new ValidationError("block.reason must be a non-empty string");
+          }
+          await d.blockItem(itemId, reason);
+        } else if (action === "unblock") {
+          await d.unblockItem(itemId);
+        } else {
+          await d.resetItem(itemId);
+        }
+      }
       if (d.isEnabled()) {
         d.tick();
       }
