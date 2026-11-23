@@ -68,7 +68,8 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         "role: what you're here to do — planner, coder, reviewer or ops; next picks its pool for it. " +
         "model: your model id (e.g. claude-sonnet-5-5) — recorded on your submits and reviews. " +
         "label: free text for this run — put the task id here, keep `agent` your stable name. " +
-        "dispatch: set only by the dispatcher — the session then adopts no dead claims except its label item's.",
+        "dispatch: set only by the dispatcher — the session then adopts no dead claims except its label item's. " +
+        "oneshot: set only by te run — the same label-only adoption, without the dispatch cap.",
       inputSchema: {
         agent: z.string(),
         workspace: z.string().optional(),
@@ -77,16 +78,17 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         model: z.string().optional(),
         label: z.string().optional(),
         dispatch: z.boolean().optional(),
+        oneshot: z.boolean().optional(),
       },
     },
-    async ({ agent, workspace, tier, role, model, label, dispatch }) => {
+    async ({ agent, workspace, tier, role, model, label, dispatch, oneshot }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
         // a repeat hello on this connection replaces the old session —
         // retire it so its claims rebind instead of looking "live"
         if (binding.session) ctx.sessions.disconnect(binding.session.id);
-        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role, model, label, dispatch);
+        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role, model, label, dispatch, oneshot);
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };

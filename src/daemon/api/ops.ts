@@ -216,6 +216,7 @@ export class WorkspaceOps {
     model?: string,
     label?: string,
     dispatch?: boolean,
+    oneshot?: boolean,
   ): Promise<{ session: Session; resume: Claim[] }> {
     // GL-0360: the model id is stored lowercased — convert, never refuse
     const session = this.sessions.hello(agent, {
@@ -232,11 +233,11 @@ export class WorkspaceOps {
     const prior = this.sessions
       .resumeClaims(agent, this.index.claims.values())
       .filter((c) => !this.sessions.isLive(c.holder))
-      // a dispatcher-opened session is a one-shot run for ONE item (its
-      // label): it must not adopt the machine's other dead claims — every
-      // dispatch would otherwise inherit them all, count them toward the
-      // dispatch cap and strand them on a session that never worked them.
-      .filter((c) => !dispatch || c.item === label);
+      // a one-shot run for ONE item (its label) — dispatcher-opened, or
+      // opened by `te run` (oneshot) — must not adopt the machine's other
+      // dead claims: every run would otherwise inherit them all, count them
+      // toward the cap and strand them on a session that never worked them.
+      .filter((c) => !(dispatch || oneshot) || c.item === label);
     const resume = await this.store.rebindClaims(prior, session.id);
     if (dispatch) this.sessions.markDispatchMinted(session.id);
     return { session, resume };

@@ -447,6 +447,33 @@ describe("hard cap on live in-progress claims (TE-0206)", () => {
     expect(interactive.resume.map((c) => c.item).sort()).toEqual(["WS-0002"]);
   });
 
+  it("a te run (oneshot) session adopts only its own item's dead claim and is not dispatch-capped", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const first = await ops.hello("devin");
+    await ops.claim("WS-0001", first.session);
+    await ops.claim("WS-0002", first.session);
+    sessions.disconnect(first.session.id);
+
+    // a te run child for WS-0003 inherits nothing and is not dispatch-minted
+    const run = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0003", undefined, true);
+    expect(run.resume).toEqual([]);
+    expect(sessions.isDispatchMinted(run.session.id)).toBe(false);
+    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(first.session.id);
+
+    // te run resume of WS-0002: only that claim adopts
+    const resumed = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0002", undefined, true);
+    expect(resumed.resume.map((c) => c.item)).toEqual(["WS-0002"]);
+    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(first.session.id);
+  });
+
   it("a stale last_seen claim with a live holder is not live capacity; a fresh one is", async () => {
     const wsr = await makeWs(
       `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,

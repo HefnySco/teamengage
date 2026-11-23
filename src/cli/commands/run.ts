@@ -159,11 +159,19 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   /** cuts the idle poll short when an agent exits */
   let wake: (() => void) | undefined;
   /** Open the agent's session for it, so it ends when the agent's process does. */
-  const hello = async (agent: string): Promise<{ token: string; resume: string[] }> => {
+  // oneshot + label: this run works ONE item, so its session adopts only that
+  // item's dead claim (resume), never the machine's other dead claims of the
+  // same agent name — those would count toward the cap and strand there
+  const hello = async (agent: string, item: string): Promise<{ token: string; resume: string[] }> => {
     const res = await fetch(`${base}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent, ...(opt(args, "--ws") ? { workspace: opt(args, "--ws") } : {}) }),
+      body: JSON.stringify({
+        agent,
+        label: item,
+        oneshot: true,
+        ...(opt(args, "--ws") ? { workspace: opt(args, "--ws") } : {}),
+      }),
     });
     const text = await res.text();
     const token = /^token (\S+)/m.exec(text)?.[1];
@@ -184,7 +192,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       if (p.mode === "work") st.started++;
       return;
     }
-    const s = await hello(p.mode === "review" ? `${name}-review` : name);
+    const s = await hello(p.mode === "review" ? `${name}-review` : name, p.id);
     if (p.mode === "resume" && !s.resume.includes(p.id)) {
       // its holder is still live (an interactive session of the same name?) — not ours to resume
       await bye(s.token);
