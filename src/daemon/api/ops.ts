@@ -90,7 +90,13 @@ import {
   itemSnapshots,
   cleanupSnapshots,
 } from "../effects/effects.js";
-import { checkRemoteClaims, fetchPlansRepo } from "../sync/sync.js";
+import {
+  checkRemoteClaims,
+  fetchPlansRepo,
+  pullBeforeMutation,
+  pushPlansAuto,
+  remotePlanIds,
+} from "../sync/sync.js";
 import { resourceRoots, resolveRepoDir, resolveRepoDirs } from "../../core/config/config.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import type { SessionRegistry } from "../sessions/sessions.js";
@@ -1586,6 +1592,31 @@ export class WorkspaceOps {
 
   // ---- agent writes -----------------------------------------------------
 
+  /**
+   * The claimed-item check: an existing claim refuses unless this is a
+   * same-machine takeover — an AI-flagged submission (in_review + issues)
+   * another session here may fix, or an in_progress item whose holder can't
+   * act from this daemon (dead session). The state machine makes the final
+   * call inside the write queue (holderAway via ctx).
+   */
+  private assertClaimable(it: IndexedItem, session: Session): void {
+    const mine = it.claim;
+    if (!mine) return;
+    const takeover =
+      (it.meta.status === "in_review" &&
+        it.meta.ai_review?.verdict === "issues" &&
+        !it.meta.ai_review.needs_human &&
+        mine.machine === session.machine) ||
+      (it.meta.status === "in_progress" && this.holderAway(it) && mine.machine === session.machine);
+    if (!takeover) {
+      throw new ClaimRefusedError(
+        `already claimed by ${mine.holder} on ${mine.machine} — release on ${mine.machine} or by the human here`,
+        mine.holder,
+        mine.machine,
+      );
+    }
+  }
+
   async claim(
     id: string,
     session: Session,
@@ -1594,8 +1625,10 @@ export class WorkspaceOps {
     version: number;
     resumed: Array<{ resource: string; branch: string }>;
     overlap: { id: string; paths: string[] }[];
+    /** sync:auto — why the claim commit is still local only */
+    warn?: string;
   }> {
-    const it = this.item(id);
+    let it = this.item(id);
     if (it.meta.type === "epic") {
       throw new ClaimRefusedError("epics are plans — claim their tasks");
     }
@@ -1607,31 +1640,7 @@ export class WorkspaceOps {
         "discussions are never claimed — a saved chat is a source; plan from it",
       );
     }
-    const mine = it.claim;
-    if (mine) {
-      // takeover: an AI-flagged submission (in_review + issues) stays
-      // claimed to its machine — another session here may pick the fix up.
-      // A needs_human card (the send-back cap) is the human's, never a
-      // takeover. An in_progress item whose holder can't act from here
-      // (dead session) is takeable the same way — it would strand
-      // otherwise. The state machine makes the final call (holderAway via
-      // ctx below).
-      const takeover =
-        (it.meta.status === "in_review" &&
-          it.meta.ai_review?.verdict === "issues" &&
-          !it.meta.ai_review.needs_human &&
-          mine.machine === session.machine) ||
-        (it.meta.status === "in_progress" &&
-          this.holderAway(it) &&
-          mine.machine === session.machine);
-      if (!takeover) {
-        throw new ClaimRefusedError(
-          `already claimed by ${mine.holder} on ${mine.machine} — release on ${mine.machine} or by the human here`,
-          mine.holder,
-          mine.machine,
-        );
-      }
-    }
+    this.assertClaimable(it, session);
     const now = new Date().toISOString();
     const claim: Claim = {
       item: id,
@@ -1645,10 +1654,15 @@ export class WorkspaceOps {
       ...(session.tier ? { tier: session.tier } : {}),
     };
     // SY-0001: shrink the double-claim race — fetch plans repo and check
-    // remote claims before writing ours (manual sync mode). The local
-    // overlap check runs inside the store's write queue via `guard` —
-    // checking it here raced with other claims mid-flight.
+    // remote claims before writing ours (manual sync mode). In auto mode
+    // the hook pulls instead (DE-0299): re-read the item after it — remote
+    // claims and edits now sit in the index and the checks below must see
+    // them, not what the agent had in hand.
     await checkRemoteClaims(this.wsr, claim);
+    it = this.item(id);
+    this.assertClaimable(it, session);
+    claim.targets = it.meta.targets;
+    claim.paths = await plannedPaths(this.wsr.ws, id, it.meta.targets);
     const roots = resourceRoots(this.wsr.ws);
     const overlapCheck = this.overlapGuard(it.meta.targets, roots, id);
     const r = await this.store.perform(
@@ -1683,7 +1697,19 @@ export class WorkspaceOps {
     // GL-0326: warn when the claimed item's Touches paths overlap another
     // open item's — advisory only, the claim already stands
     const overlap = await this.touchOverlaps(id);
-    return { claim, version: r.meta.version, resumed, overlap };
+    // DE-0299 sync:auto — publish the claim commit so the other machines see
+    // it within seconds. A failed push never breaks the claim: it is marked
+    // unsynced like a manual-mode offline claim and the next push carries it.
+    let warn: string | undefined;
+    if (!claim.unsynced) {
+      const push = await pushPlansAuto(this.wsr);
+      if (!push.pushed && push.reason) {
+        await this.store.markClaimUnsynced(id, claim).catch(() => {});
+        claim.unsynced = true;
+        warn = `claim kept local — ${push.reason}`;
+      }
+    }
+    return { claim, version: r.meta.version, resumed, overlap, warn };
   }
 
   /**
@@ -2531,6 +2557,16 @@ export class WorkspaceOps {
       return { ...d, domains };
     });
     void this.actorFor(actor);
+    // DE-0299: id allocation reads the plans upstream too. Auto mode pulls
+    // first so local and remote agree; manual mode fetches so the tracking
+    // ref at least shows what the other machines already took. The pull lands
+    // before validation too — refs the remote already holds resolve.
+    let autoSynced = false;
+    if (this.wsr.ws.config.sync === "auto") {
+      autoSynced = await pullBeforeMutation(this.wsr);
+    } else if (this.wsr.ws.config.sync === "manual") {
+      await fetchPlansRepo(this.wsr.ws.plansDir);
+    }
     // found_by refs: `#N` points into this batch (checked by the store); others must exist
     for (const d of drafts) {
       this.assertFoundBy(
@@ -2582,7 +2618,42 @@ export class WorkspaceOps {
         ready.push(id);
       }
     }
-    return { ...r, ready };
+    // DE-0299 sync:auto — publish the new items. A successful push is also
+    // the proof that no other machine took the same ids: a refused push
+    // means the remote moved — when it took our ids the items are
+    // renumbered to fresh ids and the push retried once.
+    let warn: string | undefined;
+    let ids = r.ids;
+    if (this.wsr.ws.config.sync === "auto" && autoSynced) {
+      let push = await pushPlansAuto(this.wsr);
+      if (!push.pushed && push.diverged) {
+        const remoteTaken = await remotePlanIds(this.wsr.ws.plansDir);
+        const collided = r.ids.filter((id) => remoteTaken.has(id));
+        if (collided.length) {
+          const { idPrefix } = await import("../../core/address/refs.js");
+          const taken = new Set([...this.index.items.keys(), ...remoteTaken]);
+          const renames = new Map<string, string>();
+          for (const oldId of collided) {
+            const fresh = allocateId(idPrefix(oldId), taken);
+            taken.add(fresh);
+            renames.set(oldId, fresh);
+          }
+          // fold the unpushed commits onto the remote tip with fresh ids —
+          // a refusal means human work stands in the way: report, keep local
+          try {
+            await this.store.repairIdCollision(renames);
+            void this.wsr.overlay?.rescan();
+            const renamed = Object.fromEntries(renames);
+            ids = r.ids.map((id) => renamed[id] ?? id);
+            push = await pushPlansAuto(this.wsr);
+          } catch (e) {
+            warn = `items kept local — ${(e as Error).message}`;
+          }
+        }
+      }
+      if (!warn && !push.pushed && push.reason) warn = `items kept local — ${push.reason}`;
+    }
+    return { ...r, ids, ready, ...(warn ? { warn } : {}) };
   }
 
   private daemonActor(): Actor {
@@ -3054,9 +3125,15 @@ export class WorkspaceOps {
     return r;
   }
 
+  /** Next free D-id, counting ids already pushed to the plans upstream (DE-0299). */
+  private async nextDecisionId(): Promise<string> {
+    const remote = await remotePlanIds(this.wsr.ws.plansDir);
+    return allocateId("D", [...this.index.decisions.keys(), ...remote]);
+  }
+
   async answer(id: string, decisionTitle: string) {
     const it = this.item(id);
-    const decisionId = allocateId("D", this.index.decisions.keys());
+    const decisionId = await this.nextDecisionId();
     return this.store.perform(id, it.meta.version, this.actorFor("human"), {
       type: "answer",
       decisionId,
@@ -3068,7 +3145,7 @@ export class WorkspaceOps {
    *  record for the human, the item's status never moves. */
   async recordDecision(id: string, decisionTitle: string, question?: Question) {
     const it = this.item(id);
-    const decisionId = allocateId("D", this.index.decisions.keys());
+    const decisionId = await this.nextDecisionId();
     return this.store.perform(id, it.meta.version, this.actorFor("human"), {
       type: "record_decision",
       decisionId,
@@ -3737,7 +3814,7 @@ export class WorkspaceOps {
         lessonAppended = true;
         result = `lesson for #${lessonDomain}`;
       } else {
-        decisionId = allocateId("D", this.index.decisions.keys());
+        decisionId = await this.nextDecisionId();
         result = `decision ${decisionId}`;
       }
     } else {

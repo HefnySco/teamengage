@@ -681,9 +681,25 @@ Machines share the **plans repo** through git; nothing else is shared.
     and checks the fetched `claims/` for overlaps; it refuses with "claimed on
     laptop by gemini-cli — pull first" instead of creating a double claim.
     Offline, the claim proceeds and is marked _unsynced_.
-  - `auto` — before `claim` the daemon pulls the plans repo; after it, it pushes
-    the plans repo **only** (never code repos). This shrinks the race window to
+  - `auto` — around every mutation that takes shared state, the daemon pulls
+    then pushes the plans repo **only** (never code repos): it pulls
+    (fast-forward only, task-folder edits stashed around it) before `claim`,
+    before `propose`, and before an ops job takes a target lock, and pushes
+    after each daemon-made plans commit. This shrinks the race window to
     seconds. Applies only to the plans repo, which is TeamEngage's own data.
+    A pull that finds the branch diverged is reported ("resolve it in a
+    terminal") — the plans repo is never merged by the daemon. Offline, or
+    with no remote, the mutation proceeds and is marked _unsynced_.
+- **Id allocation is remote-aware.** Next-id for items and `D-` decisions
+  counts ids on the fetched upstream too, so a stale local counter never
+  hands out an id another machine already pushed — in `auto` (fresh pull)
+  and in `manual` (the pre-mutation fetch updates the tracking ref) alike.
+  If a propose still loses the race — the remote took the same ids in the
+  seconds between pull and push — the colliding items are renumbered to
+  fresh ids, references and `te:` lines rewritten, and pushed once more;
+  the remote's ids always win. Any unpushed commit that is not the
+  daemon's own makes the repair stop and report instead — the daemon
+  never rebases a human's work and never merges diverged histories.
 - **Code travels too** (`te sync`). A task worked at the office continues
   at home from the same commits. Sync pushes and fast-forwards each git
   resource's base branch (accepted merges) and every `te/<ID>-*` branch of an

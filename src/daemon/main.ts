@@ -25,7 +25,7 @@ import { registerAgentRoutes } from "../agent/http.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
 import { parseDuration } from "../core/model/workspace.js";
-import { reconcile } from "./sync/sync.js";
+import { reconcile, pushPlansAuto } from "./sync/sync.js";
 import { WorkspaceOps } from "./api/ops.js";
 import { fireNotify, notifyKind } from "./effects/notify.js";
 
@@ -70,6 +70,36 @@ function acquireDaemonLock(lockPath: string): number | "acquired" {
   }
   return -1;
 }
+
+/** sync:auto trailing-edge push timers, one per workspace (DE-0299). */
+const autoPushTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * DE-0299 sync:auto — schedule a plans-repo push a moment after a daemon
+ * commit lands. Debounced so a burst of mutations pushes once; failures
+ * reach the human as an `auto_push` inbox line, never a thrown error.
+ */
+function autoPushSoon(ctx: DaemonCtx, workspace: string): void {
+  const wsr = ctx.workspaces.get(workspace);
+  if (!wsr || wsr.ws.config.sync !== "auto") return;
+  clearTimeout(autoPushTimers.get(workspace));
+  autoPushTimers.set(
+    workspace,
+    setTimeout(() => {
+      autoPushTimers.delete(workspace);
+      pushPlansAuto(wsr)
+        .then((p) => {
+          if (!p.pushed && p.reason) {
+            ctx.bus.notify("auto_push", { workspace, message: `sync:auto — ${p.reason}` });
+          }
+        })
+        .catch((err: Error) =>
+          ctx.bus.notify("auto_push", { workspace, message: `sync:auto push failed: ${err.message}` }),
+        );
+    }, 2_000),
+  );
+}
+
 /**
  * teamengaged — one instance per machine (DESIGN §6.1).
  * Loads every registered workspace, serializes all plan writes through each
@@ -191,6 +221,10 @@ async function main(): Promise<number | undefined> {
       }
       const wsr: WorkspaceRuntime = { ws, store, watcher, overlay, links };
       ctx.workspaces.set(name, wsr);
+      // DE-0299 sync:auto — every daemon commit to the plans repo is pushed
+      // promptly (debounced): claims, new items, ops locks and every other
+      // mutation reach the other machines without waiting for `te sync`.
+      store.onCommit = () => autoPushSoon(ctx, name);
       // TE-0165: the registry is shared; the shortest workspace limit wins
       const idle = parseDuration(ws.config.session_idle_after);
       ctx.sessions.idleAfterMs = seenIdle ? Math.min(ctx.sessions.idleAfterMs, idle) : idle;

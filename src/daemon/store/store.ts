@@ -55,6 +55,7 @@ import { DecisionMeta, type Check, type Event, type ItemMeta, type Question, Ver
 import type { Claim } from "../../core/model/claim.js";
 import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { git, mergeInProgress, isRepo } from "../../resources/git/git.js";
+import { remotePlanIds } from "../sync/sync.js";
 import { writeFileAtomic } from "./atomic.js";
 import type { LoadedWorkspace } from "../../core/config/config.js";
 
@@ -101,6 +102,13 @@ export class PlansStore {
    * aren't re-detected as human edits.
    */
   onFileWrite?: (absPath: string, content: string | null) => void;
+  /**
+   * Called after each commit the daemon writes to the plans repo — the
+   * daemon wires it to the sync:auto push so every commit is published
+   * promptly (DE-0299). Fired from inside the write queue; the listener
+   * must only schedule work, never await git itself.
+   */
+  onCommit?: () => void;
 
   constructor(
     readonly ws: LoadedWorkspace,
@@ -370,6 +378,9 @@ export class PlansStore {
       const { ItemMeta } = await import("../../core/model/item.js");
       const { allocateId, idPrefix, parseItemRef } = await import("../../core/address/refs.js");
       const overlay = this.ws.config.mode === "overlay";
+      // DE-0299: ids another machine pushed but this checkout has not pulled
+      // yet are taken too — a stale local counter must not hand one out again.
+      const remoteTaken = await remotePlanIds(this.ws.plansDir);
       const ids: string[] = [];
       const files: string[] = [];
       const writes: Array<{ rel: string; content: string }> = [];
@@ -416,7 +427,7 @@ export class PlansStore {
           ? this.ws.config.projects[project]?.prefix
           : this.ws.config.prefix;
         if (!prefix) throw new NotFoundError(`unknown project '${project}'`);
-        const id = allocateId(prefix, [...this.items().metaIds(), ...ids]);
+        const id = allocateId(prefix, [...this.items().metaIds(), ...ids, ...remoteTaken]);
         let source: string | undefined;
         if (overlay) {
           const folder = this.projectFolder(project);
@@ -664,6 +675,186 @@ export class PlansStore {
         await this.commitPaths(touched, `te: rebind ${touched.length} claim(s) to ${holder}`);
       }
       return rebound;
+    });
+  }
+
+  /**
+   * sync:auto (DE-0299): the claim commit was written but the push after it
+   * failed — mark the claim unsynced so the sync status keeps telling the
+   * truth until a later push carries it.
+   */
+  markClaimUnsynced(item: string, claim: Claim): Promise<void> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      const marked = { ...claim, unsynced: true };
+      const rel = join("claims", `${item}.yaml`);
+      const abs = join(this.ws.plansDir, rel);
+      const yaml = claimToYaml(marked);
+      await writeFileAtomic(abs, yaml);
+      this.onFileWrite?.(abs, yaml);
+      this.index.setClaim(marked);
+      await this.commitPaths([rel], `te: ${item} claim marked unsynced — auto push failed`);
+    });
+  }
+
+  /**
+   * sync:auto (DE-0299) repair: the remote won the race for these ids — the
+   * push after propose was refused and the ids exist on the upstream
+   * already. Fold the unpushed te-commits back to the merge base (never a
+   * human's commit), fast-forward to the remote tip, then re-apply the work
+   * with fresh ids in one commit: item files renamed, `te:` lines and
+   * in-batch references rewritten, the colliding files gone — so the result
+   * is a plain child of the remote tip and the push goes out.
+   * Throws ConflictError when the branch holds unpushed commits that are
+   * not ours, or the fast-forward is refused: that is reported, never
+   * resolved by merging on the daemon's own.
+   */
+  repairIdCollision(renames: ReadonlyMap<string, string>): Promise<void> {
+    return this.enqueue(async () => {
+      await this.assertReady();
+      if (!renames.size) return;
+      const { idPrefix, parseItemRef } = await import("../../core/address/refs.js");
+      const { unlink } = await import("node:fs/promises");
+      const plansDir = this.ws.plansDir;
+      const bare = (r: string): string => {
+        try {
+          return parseItemRef(r).id;
+        } catch {
+          return r;
+        }
+      };
+      const rewrite = (text: string): string => {
+        let out = text;
+        for (const [oldId, newId] of renames) {
+          out = out.replace(new RegExp(`\\b${oldId}\\b`, "g"), newId);
+        }
+        return out;
+      };
+      const origHead = (await git(plansDir, ["rev-parse", "HEAD"])).trim();
+      const remoteRef = (
+        await git(plansDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).catch(
+          () => "",
+        )
+      ).trim();
+      if (!remoteRef) throw new ConflictError("no upstream to repair against");
+      const base = (await git(plansDir, ["merge-base", "HEAD", remoteRef])).trim();
+      // only our own unpushed commits may be folded — a human's commit stays
+      // the human's to rebase, never the daemon's to rewrite
+      const subjects = (await git(plansDir, ["log", "--format=%s", `${base}..HEAD`]))
+        .split("\n")
+        .filter(Boolean);
+      if (subjects.some((s) => !s.startsWith("te:"))) {
+        throw new ConflictError(
+          "plans repo diverged with unpushed commits not made by te — resolve it in a terminal",
+        );
+      }
+      // remember the colliding items before the fold — after the fast-forward
+      // the index names the remote's item for the same id, so path, text and
+      // overlay source must come from our copy here
+      const saved = new Map<string, { path: string; text: string; sources: string[] }>();
+      for (const oldId of renames.keys()) {
+        const it = this.index.items.get(oldId);
+        if (!it) continue;
+        const abs = join(plansDir, it.path);
+        saved.set(oldId, {
+          path: it.path,
+          text: await readFile(abs, "utf8"),
+          sources: [it.meta.source, it.meta.simple_source].filter((s): s is string => !!s),
+        });
+      }
+      // fold the unpushed te-commits into the worktree: HEAD back to the
+      // merge base, then unstage the plans paths — the human's staged files
+      // outside the plans dir keep their staging either way
+      await git(plansDir, ["reset", "-q", "--soft", base]);
+      await git(plansDir, ["reset", "-q", "HEAD", "--", "."]);
+      // drop the colliding item files so the remote's same-named files land
+      for (const { path } of saved.values()) {
+        const abs = join(plansDir, path);
+        try {
+          await unlink(abs);
+          this.onFileWrite?.(abs, null);
+        } catch {
+          /* already gone */
+        }
+      }
+      // fast-forward to the remote tip — refused when a local file stands in
+      // the way of a remote one: put everything back and report
+      try {
+        await git(plansDir, ["merge", "--ff-only", remoteRef], { timeoutMs: 60_000 });
+      } catch {
+        await git(plansDir, ["reset", "-q", "--soft", origHead]).catch(() => {});
+        await git(plansDir, ["reset", "-q", "HEAD", "--", "."]).catch(() => {});
+        for (const { path, text } of saved.values()) {
+          const abs = join(plansDir, path);
+          await writeFileAtomic(abs, text).catch(() => {});
+          this.onFileWrite?.(abs, text);
+        }
+        throw new ConflictError(
+          "plans repo diverged — resolve it in a terminal; te never merges the plans repo",
+        );
+      }
+      await this.reindex();
+      // files of other items that reference a renamed id (depends_on lines
+      // in the batch's own task files, the matching frontmatter elsewhere).
+      // The colliding ids now name the remote's items — they are skipped,
+      // their files and sources belong to the remote's ids.
+      const relatedItems = new Set<string>();
+      const relatedSources = new Set<string>();
+      for (const it of this.index.items.values()) {
+        const m = it.meta;
+        if (renames.has(m.id)) continue;
+        const refs = [...m.depends_on, ...m.relates, ...(m.found_by ?? []), m.parent, m.feature].filter(
+          (r): r is string => !!r,
+        );
+        if (!refs.some((r) => renames.has(bare(r)))) continue;
+        relatedItems.add(it.path);
+        for (const s of [m.source, m.simple_source]) if (s) relatedSources.add(s);
+      }
+      for (const rel of relatedItems) {
+        const abs = join(plansDir, rel);
+        if (!existsSync(abs)) continue;
+        const text = rewrite(await readFile(abs, "utf8"));
+        await writeFileAtomic(abs, text);
+        this.onFileWrite?.(abs, text);
+      }
+      const stagedSources: string[] = [];
+      for (const [oldId, newId] of renames) {
+        const keep = saved.get(oldId);
+        if (!keep) continue;
+        const rel = join("items", idPrefix(newId), `${newId}.md`);
+        const abs = join(plansDir, rel);
+        const text = rewrite(keep.text);
+        await writeFileAtomic(abs, text);
+        this.onFileWrite?.(abs, text);
+        // the overlay task file: its `te:` frontmatter line carries the id —
+        // rewrite it like the other sources, staged not committed (it is the
+        // human's content, as at propose time)
+        for (const s of keep.sources) relatedSources.add(s);
+      }
+      for (const src of relatedSources) {
+        const abs = join(this.ws.root, src);
+        if (!existsSync(abs)) continue;
+        const text = rewrite(await readFile(abs, "utf8"));
+        await writeFileAtomic(abs, text);
+        this.onFileWrite?.(abs, text);
+        stagedSources.push(src);
+      }
+      // one commit for the whole repaired state: the folded work (still in
+      // the worktree) plus the renamed items — everything under the plans
+      // dir is daemon-owned, so `add -A`/`commit -- .` cannot sweep the
+      // human's files (task files live outside and stay staged only)
+      await git(plansDir, ["add", "-A", "--", "."]);
+      await git(plansDir, [
+        "commit",
+        "-q",
+        "-m",
+        `te: renumber ${[...renames].map(([o, n]) => `${o}→${n}`).join(", ")} — the remote claimed the id first`,
+        "--",
+        ".",
+      ]);
+      this.onCommit?.();
+      if (stagedSources.length) await this.stageTaskFiles(stagedSources);
+      await this.reindex();
     });
   }
 
@@ -1963,6 +2154,7 @@ export class PlansStore {
     if (!ours.length) return;
     // pathspec: never sweep unrelated staged files into a te: commit
     await git(this.ws.plansDir, ["commit", "-m", message, "--", ...ours]);
+    this.onCommit?.();
   }
 }
 

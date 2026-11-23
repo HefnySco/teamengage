@@ -83,15 +83,129 @@ export async function remoteClaims(plansDir: string, ref?: string): Promise<Clai
 }
 
 /**
+ * sync:auto — pull the plans repo before a mutation (claim, propose, ops
+ * lock; DE-0299). Fast-forward only, task-folder changes stashed around the
+ * merge — the same rules `te sync` plays by. A diverged repo or a pull that
+ * git refuses is reported (thrown), never merged on the daemon's own.
+ * Returns false when there is no remote or it is unreachable: the caller
+ * proceeds and marks the mutation unsynced, like manual mode offline.
+ */
+export async function pullBeforeMutation(wsr: WorkspaceRuntime): Promise<boolean> {
+  if (wsr.ws.config.sync !== "auto") return false;
+  const plansDir = wsr.ws.plansDir;
+  if (!(await isRepo(plansDir))) return false;
+  if ((await remotes(plansDir)).length === 0) return false;
+  if (!(await fetchPlansRepo(plansDir))) return false; // offline → unsynced
+  const upstream = await upstreamRef(plansDir);
+  if (!upstream) return false;
+  const ab = await aheadBehind(plansDir, upstream).catch(() => ({ ahead: 0, behind: 0 }));
+  if (ab.ahead > 0 && ab.behind > 0) {
+    throw new ClaimRefusedError(
+      `plans repo diverged from ${upstream} (${ab.ahead} local, ${ab.behind} remote) — resolve it in a terminal; te never merges the plans repo`,
+    );
+  }
+  if (ab.behind > 0) await pullPlans(wsr, undefined, { stash: true });
+  return true;
+}
+
+export interface AutoPush {
+  /** sync:auto is off, or the branch was published to its upstream. */
+  pushed: boolean;
+  /** Why it could not be pushed — offline, no upstream, diverged, git error. */
+  reason?: string;
+  /** The remote moved since the last pull — local is behind it now. */
+  diverged?: boolean;
+}
+
+/**
+ * sync:auto — publish the plans repo after a mutation (DE-0299). The
+ * mutation commit already exists (store.commitPaths); this pushes the
+ * branch to its upstream remote. Never throws — the report says what
+ * happened. A successful push also proves no other machine committed in
+ * between (git refuses a non-fast-forward), which is what lets propose
+ * trust freshly allocated ids.
+ */
+export async function pushPlansAuto(wsr: WorkspaceRuntime): Promise<AutoPush> {
+  if (wsr.ws.config.sync !== "auto") return { pushed: false };
+  return wsr.store.enqueue(async () => {
+    const plansDir = wsr.ws.plansDir;
+    if (!(await isRepo(plansDir))) return { pushed: false, reason: "the task folder is not a git repository" };
+    const branch = (await git(plansDir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
+    if (!branch || branch === "HEAD") return { pushed: false, reason: "the task folder is not on a branch" };
+    const upstream = await upstreamRef(plansDir);
+    const remote = upstream?.slice(0, upstream.indexOf("/"));
+    if (!remote) return { pushed: false, reason: "no upstream to push to" };
+    const fetched = await git(plansDir, ["fetch", "-q", remote, branch], { timeoutMs: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!fetched) return { pushed: false, reason: `could not fetch from ${remote} — offline?` };
+    const ref = `refs/remotes/${remote}/${branch}`;
+    const remoteHas = await git(plansDir, ["rev-parse", "--verify", "-q", ref])
+      .then(() => true)
+      .catch(() => false);
+    if (remoteHas) {
+      const ab = await aheadBehind(plansDir, `${remote}/${branch}`).catch(() => ({ ahead: 0, behind: 0 }));
+      if (ab.behind > 0) {
+        return {
+          pushed: false,
+          diverged: true,
+          reason: `behind ${remote}/${branch} by ${ab.behind} — another machine pushed; pull resolves it`,
+        };
+      }
+      if (ab.ahead === 0) return { pushed: true }; // nothing to publish
+    }
+    try {
+      // DESIGN §6.5: the one daemon-made push — plans repo only, sync:auto
+      // workspaces asked for it; the same humanPush lane `te sync` uses.
+      await git(plansDir, ["push", remote, `HEAD:refs/heads/${branch}`], { timeoutMs: 30_000, humanPush: true });
+    } catch (e) {
+      return { pushed: false, reason: `push to ${remote} failed: ${gitErrorSummary(e)}` };
+    }
+    await git(plansDir, ["fetch", "-q", remote, branch], { timeoutMs: 20_000 }).catch(() => {});
+    return { pushed: true };
+  });
+}
+
+/**
+ * Ids already taken on the plans repo's upstream (`items/<P>/<ID>.md`,
+ * `decisions/<ID>.md`), read from the last fetched tracking ref — no
+ * network. A stale local counter can never see an id another machine
+ * pushed; allocation adds these so it cannot hand one out again (DE-0299).
+ */
+export async function remotePlanIds(plansDir: string, ref?: string): Promise<Set<string>> {
+  if (!(await isRepo(plansDir))) return new Set();
+  const at = ref ?? (await upstreamRef(plansDir));
+  if (!at) return new Set();
+  let listing: string;
+  try {
+    listing = await git(plansDir, ["ls-tree", "-r", "--name-only", at, "items/", "decisions/"]);
+  } catch {
+    return new Set();
+  }
+  const out = new Set<string>();
+  for (const path of listing.split("\n")) {
+    const m = /([A-Z][A-Z0-9]*-[0-9]+)\.md$/.exec(path);
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+/**
  * fetch-before-claim hook (SY-0001, manual mode). When the plans repo has a
  * reachable remote, fetched claims/ are checked for the same item or
  * overlapping targets; a hit refuses the claim with "pull first" — the local
  * copy is stale by definition. When the remote claim was already released on
  * this machine (deleted locally, not pushed) the refusal instead tells the
  * agent to ask the human to commit+push. Offline → claim proceeds, marked
- * unsynced. In `auto` mode the pull/push policy replaces this hook entirely.
+ * unsynced. In `auto` mode the hook pulls instead (DE-0299): remote claims
+ * become local ones, so the claim transition's own claim+overlap checks do
+ * the refusing on fresh state.
  */
 export async function checkRemoteClaims(wsr: WorkspaceRuntime, claim: Claim): Promise<void> {
+  if (wsr.ws.config.sync === "auto") {
+    if (!(await pullBeforeMutation(wsr))) claim.unsynced = true;
+    return;
+  }
   if (wsr.ws.config.sync !== "manual") return;
   const fetched = await fetchPlansRepo(wsr.ws.plansDir);
   if (!fetched) {
@@ -160,12 +274,15 @@ export async function remoteOpsLocks(plansDir: string, ref?: string): Promise<Ta
  * fetch-before-claim pattern. In manual mode a reachable remote is fetched
  * and its pushed `ops/locks/` are read: a lock for the target from another
  * machine refuses the start with `target busy: job <id> on <machine>`.
- * Offline → the caller proceeds and marks the lock unsynced.
+ * Offline → the caller proceeds and marks the lock unsynced. In `auto`
+ * mode the hook pulls instead (DE-0299): the remote lock file lands on
+ * disk, so the job's own lock check refuses a busy target.
  */
 export async function checkRemoteTargetLock(
   wsr: WorkspaceRuntime,
   target: string,
 ): Promise<{ unsynced: boolean }> {
+  if (wsr.ws.config.sync === "auto") return { unsynced: !(await pullBeforeMutation(wsr)) };
   if (wsr.ws.config.sync !== "manual") return { unsynced: false };
   const fetched = await fetchPlansRepo(wsr.ws.plansDir);
   if (!fetched) return { unsynced: true };
@@ -359,6 +476,7 @@ export async function reconcile(
       await git(wsr.ws.plansDir, ["add", "--", ...touched]).catch(() => {});
       if (wsr.ws.config.commit) {
         await git(wsr.ws.plansDir, ["commit", "-m", `te: reconcile marked ${marked.size} conflicted`, "--", ...touched]).catch(() => {});
+        wsr.store.onCommit?.();
       }
     }
     return [...marked];
@@ -568,6 +686,7 @@ async function commitTaskFolder(wsr: WorkspaceRuntime, st: PlansGitStatus, messa
   const p = (n: number) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   await git(st.repo, ["commit", "-q", "-m", message.trim() || `Tasks: ${wsr.store.machine} — ${stamp}`, "--", st.scope]);
+  wsr.store.onCommit?.();
   return st.changes.length;
 }
 
