@@ -190,13 +190,15 @@ SESSION
   curl -s -X POST ${base}/agent/hello -d '{"agent":"<your-name>"}'
     → first line: "token <TOKEN>"; send it on every later call:
   -H "X-TE-Session: <TOKEN>"
-  Keep the token for the whole task. After a daemon restart, call hello again:
-  claims you held are rebound to your new session automatically.
+  Keep the token for the whole task. After a daemon restart, call hello again
+  with "label":"<task id>": only that task's claim is rebound to your new
+  session. Your other dead claims show as "resumable: …" — claim one only if
+  it is yours to continue (the claim takes it over).
 
 CALLS  (POST with a JSON body, or GET with query args; <id> may go in the path)
   ${"tool".padEnd(8)} ${"args".padEnd(34)} what it does
 ${rows.join("\n")}
-  bye      —                                  end this session (claims stay; hello again to resume)
+  bye      —                                  end this session (claims stay; hello with the task as label to resume)
 
 OPS — playbooks and jobs (repeatable deploys; the daemon never runs the commands)
   A job runs the steps of a playbook in order. A cursor points at the

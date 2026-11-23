@@ -315,7 +315,11 @@ describe("plain-HTTP agent API", () => {
     expect((await call("POST", "/agent/claim/WS-0003", { token: t1 })).text).toMatch(/^claimed/);
     expect((await call("POST", "/agent/bye", { token: t1 })).text.trim()).toBe("bye");
     expect((await call("GET", "/agent/next", { token: t1 })).status).toBe(401);
-    const h = await call("POST", "/agent/hello", { body: { agent: "devin" } });
+    // TE-0211: no label → nothing adopted, the dead claim is only listed
+    const bare = await call("POST", "/agent/hello", { body: { agent: "devin" } });
+    expect(bare.text).not.toContain("resume: WS-0003");
+    expect(bare.text).toContain("resumable: WS-0003");
+    const h = await call("POST", "/agent/hello", { body: { agent: "devin", label: "WS-0003" } });
     expect(h.text).toContain("resume: WS-0003");
     const t2 = /^token (\S+)/.exec(h.text)![1];
     expect(

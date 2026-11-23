@@ -147,7 +147,7 @@ describe("claim liveness through the real `te mcp` shim", () => {
     await a.client.close().catch(() => {});
 
     const b = await spawnAgent();
-    expect(await b.call("hello", { agent: "claude-code" })).toContain("resume: WS-0001");
+    expect(await b.call("hello", { agent: "claude-code", label: "WS-0001" })).toContain("resume: WS-0001");
     expect(await b.call("log", { id: "WS-0001", note: "after crash" })).toBe("logged WS-0001");
     await b.client.close();
   });
@@ -163,7 +163,7 @@ describe("claim liveness through the real `te mcp` shim", () => {
     expect(ctx.sessions.isLive(holder)).toBe(false);
 
     const b = await spawnAgent();
-    expect(await b.call("hello", { agent: "gemini-cli" })).toContain("resume: WS-0002");
+    expect(await b.call("hello", { agent: "gemini-cli", label: "WS-0002" })).toContain("resume: WS-0002");
     expect(await b.call("log", { id: "WS-0002", note: "after exit" })).toBe("logged WS-0002");
     await b.client.close();
   });

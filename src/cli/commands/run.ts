@@ -159,9 +159,8 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   /** cuts the idle poll short when an agent exits */
   let wake: (() => void) | undefined;
   /** Open the agent's session for it, so it ends when the agent's process does. */
-  // oneshot + label: this run works ONE item, so its session adopts only that
-  // item's dead claim (resume), never the machine's other dead claims of the
-  // same agent name — those would count toward the cap and strand there
+  // label: this run works ONE item — hello adopts only that item's dead
+  // claim (resume), never the machine's other dead claims of the agent name
   const hello = async (agent: string, item: string): Promise<{ token: string; resume: string[] }> => {
     const res = await fetch(`${base}/agent/hello`, {
       method: "POST",
@@ -169,7 +168,6 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       body: JSON.stringify({
         agent,
         label: item,
-        oneshot: true,
         ...(opt(args, "--ws") ? { workspace: opt(args, "--ws") } : {}),
       }),
     });

@@ -47,6 +47,7 @@ Read every line `hello` prints before going on:
 |---|---|
 | `plans behind … — STOP` | Stop. Ask the human to pull the Tasks repo, then `hello` again. |
 | `resume: GL-0019` | You already hold that task (earlier session) — continue it, don't claim another. |
+| `resumable: GL-0019, …` | Dead claims of your agent name, not given to you. Claim one only if it is the task you were working on (the claim takes it over); leave the others. |
 | `held on laptop: …` | That task is being worked on elsewhere — leave it. |
 | `rules: …` / `tiers: …` | The rules. They are enforced. |
 | `to vet (light-authored drafts): …` | Drafts a light-tier model wrote. If the human asked you to, check them with `vet` (see te-plan §8). |
@@ -57,8 +58,9 @@ way, a `brief` line `tier: … · N failed attempt(s)` means others already
 tried. Read `handoff notes:` and `## Review` **before** anything else, and
 don't repeat what they ruled out.
 
-Keep `$T` for the whole task. After a daemon restart, `hello` again — your
-claims come back to the new session.
+Keep `$T` for the whole task. After a daemon restart, `hello` again with the
+same `"label":"<task-id>"` — that task's claim comes back to the new session.
+Without the label nothing comes back; the task shows under `resumable:`.
 
 ## 2. Find the task
 

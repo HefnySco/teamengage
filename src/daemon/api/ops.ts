@@ -216,8 +216,8 @@ export class WorkspaceOps {
     model?: string,
     label?: string,
     dispatch?: boolean,
-    oneshot?: boolean,
-  ): Promise<{ session: Session; resume: Claim[] }> {
+    carryFrom?: string,
+  ): Promise<{ session: Session; resume: Claim[]; resumable: Claim[] }> {
     // GL-0360: the model id is stored lowercased — convert, never refuse
     const session = this.sessions.hello(agent, {
       pid,
@@ -226,21 +226,27 @@ export class WorkspaceOps {
       model: model?.toLowerCase(),
       label,
     });
-    // rebind only claims held by DEAD sessions — a second window of the same
-    // agent on this machine must not take over a live session's claims.
-    // (Dead = transport closed, client process gone, or minted before a
-    // daemon restart.)
-    const prior = this.sessions
+    // only claims held by DEAD sessions are candidates — a second window of
+    // the same agent on this machine must not take over a live session's
+    // claims. (Dead = transport closed, client process gone, or minted
+    // before a daemon restart.)
+    const dead = this.sessions
       .resumeClaims(agent, this.index.claims.values())
-      .filter((c) => !this.sessions.isLive(c.holder))
-      // a one-shot run for ONE item (its label) — dispatcher-opened, or
-      // opened by `te run` (oneshot) — must not adopt the machine's other
-      // dead claims: every run would otherwise inherit them all, count them
-      // toward the cap and strand them on a session that never worked them.
-      .filter((c) => !(dispatch || oneshot) || c.item === label);
+      .filter((c) => !this.sessions.isLive(c.holder));
+    // TE-0211 label-only adoption: many sessions share one agent name (every
+    // dispatch, every te run child, every interactive chat), so a hello may
+    // adopt only the claim of its own label item — plus, on a repeat hello
+    // over the same connection, the claims of the session it replaces.
+    // Adopting every dead claim of the name stranded claims on sessions that
+    // never worked them and filled the dispatch cap after each restart.
+    // The other dead claims are listed as resumable: claim one to take it over.
+    const prior = dead.filter(
+      (c) => (label !== undefined && c.item === label) || (carryFrom !== undefined && c.holder === carryFrom),
+    );
+    const resumable = dead.filter((c) => !prior.includes(c));
     const resume = await this.store.rebindClaims(prior, session.id);
     if (dispatch) this.sessions.markDispatchMinted(session.id);
-    return { session, resume };
+    return { session, resume, resumable };
   }
 
   private actorFor(session: Session | "human"): Actor {

@@ -403,7 +403,7 @@ describe("hard cap on live in-progress claims (TE-0206)", () => {
     ops.index.setClaim({ ...claim, last_seen: stale });
     sessions.disconnect(first.session.id);
 
-    const second = await ops.hello("devin");
+    const second = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0001");
     expect(second.resume.map((c) => c.item)).toEqual(["WS-0001"]);
     const rebound = ops.index.get("WS-0001")!.claim!;
     expect(rebound.holder).toBe(second.session.id);
@@ -441,37 +441,38 @@ describe("hard cap on live in-progress claims (TE-0206)", () => {
     expect(ops.index.get("WS-0001")!.claim!.holder).toBe(resumed.session.id);
     expect(ops.index.get("WS-0002")!.claim!.holder).toBe(first.session.id);
 
-    // an interactive hello still adopts every DEAD claim of its agent — no
-    // scoping (WS-0001's holder, `resumed`, is live, so only WS-0002 adopts)
+    // TE-0211: an interactive hello with no label adopts nothing — the dead
+    // WS-0002 claim is only listed as resumable (WS-0001's holder is live)
     const interactive = await ops.hello("devin");
-    expect(interactive.resume.map((c) => c.item).sort()).toEqual(["WS-0002"]);
+    expect(interactive.resume).toEqual([]);
+    expect(interactive.resumable.map((c) => c.item)).toEqual(["WS-0002"]);
+    expect(ops.index.get("WS-0002")!.claim!.holder).toBe(first.session.id);
+    // ...and it may take WS-0002 over explicitly with claim
+    await ops.claim("WS-0002", interactive.session);
+    expect(ops.index.get("WS-0002")!.claim!.holder).toBe(interactive.session.id);
   });
 
-  it("a te run (oneshot) session adopts only its own item's dead claim and is not dispatch-capped", async () => {
+  it("a repeat hello on the same connection carries the replaced session's claims (TE-0211)", async () => {
     const wsr = await makeWs(
       `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
       [
         { id: "WS-0001", status: "ready" },
         { id: "WS-0002", status: "ready" },
-        { id: "WS-0003", status: "ready" },
       ],
     );
     const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const other = await ops.hello("devin");
+    await ops.claim("WS-0002", other.session);
+    sessions.disconnect(other.session.id);
     const first = await ops.hello("devin");
     await ops.claim("WS-0001", first.session);
-    await ops.claim("WS-0002", first.session);
     sessions.disconnect(first.session.id);
-
-    // a te run child for WS-0003 inherits nothing and is not dispatch-minted
-    const run = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0003", undefined, true);
-    expect(run.resume).toEqual([]);
-    expect(sessions.isDispatchMinted(run.session.id)).toBe(false);
-    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(first.session.id);
-
-    // te run resume of WS-0002: only that claim adopts
-    const resumed = await ops.hello("devin", undefined, undefined, undefined, undefined, "WS-0002", undefined, true);
-    expect(resumed.resume.map((c) => c.item)).toEqual(["WS-0002"]);
-    expect(ops.index.get("WS-0001")!.claim!.holder).toBe(first.session.id);
+    // the connection says hello again: its own claim follows, the other
+    // dead devin claim does not
+    const again = await ops.hello("devin", undefined, undefined, undefined, undefined, undefined, undefined, first.session.id);
+    expect(again.resume.map((c) => c.item)).toEqual(["WS-0001"]);
+    expect(again.resumable.map((c) => c.item)).toEqual(["WS-0002"]);
+    expect(sessions.isDispatchMinted(again.session.id)).toBe(false);
   });
 
   it("a stale last_seen claim with a live holder is not live capacity; a fresh one is", async () => {

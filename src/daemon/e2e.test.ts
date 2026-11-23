@@ -122,7 +122,7 @@ describe("e2e daemon + watcher + MCP", () => {
 
     // reconnect: new MCP transport + new te session for the same agent
     const c2 = await mcpClient("second");
-    const h = await c2.client.callTool({ name: "hello", arguments: { agent: "claude" } });
+    const h = await c2.client.callTool({ name: "hello", arguments: { agent: "claude", label: "WS-0001" } });
     expect(text(h as never)).toContain("resume: WS-0001");
     // without rebinding this is FORBIDDEN: held by claude@test#<old-hex>
     const l = await c2.client.callTool({ name: "log", arguments: { id: "WS-0001", note: "resumed" } });

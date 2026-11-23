@@ -64,12 +64,12 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
     {
       description:
         "Register a session; returns session id, machine, workspace summary, claims to resume. " +
+        "Only the dead claim of your label item is adopted; your other dead claims are listed as resumable — claim one to take it over. " +
         "tier: your model class — light (Haiku-class), standard (Sonnet-class), heavy (Opus-class). " +
         "role: what you're here to do — planner, coder, reviewer or ops; next picks its pool for it. " +
         "model: your model id (e.g. claude-sonnet-5-5) — recorded on your submits and reviews. " +
         "label: free text for this run — put the task id here, keep `agent` your stable name. " +
-        "dispatch: set only by the dispatcher — the session then adopts no dead claims except its label item's. " +
-        "oneshot: set only by te run — the same label-only adoption, without the dispatch cap.",
+        "dispatch: set only by the dispatcher — marks the session dispatch-minted (the dispatch cap applies).",
       inputSchema: {
         agent: z.string(),
         workspace: z.string().optional(),
@@ -78,17 +78,19 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         model: z.string().optional(),
         label: z.string().optional(),
         dispatch: z.boolean().optional(),
-        oneshot: z.boolean().optional(),
       },
     },
-    async ({ agent, workspace, tier, role, model, label, dispatch, oneshot }) => {
+    async ({ agent, workspace, tier, role, model, label, dispatch }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
         // a repeat hello on this connection replaces the old session —
-        // retire it so its claims rebind instead of looking "live"
-        if (binding.session) ctx.sessions.disconnect(binding.session.id);
-        const { session, resume } = await ops.hello(agent, binding.clientPid, tier, role, model, label, dispatch, oneshot);
+        // retire it and carry its claims over: same connection, same agent
+        const replaced = binding.session?.id;
+        if (replaced) ctx.sessions.disconnect(replaced);
+        const { session, resume, resumable } = await ops.hello(
+          agent, binding.clientPid, tier, role, model, label, dispatch, replaced,
+        );
         binding.session = session;
         const ws = ops.wsr.ws;
         const counts = { ready: ops.index.readyItems().length, items: ops.index.items.size };
@@ -98,6 +100,11 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         ];
         if (resume.length) {
           lines.push(`resume: ${resume.map((c) => c.item).join(", ")}`);
+        }
+        if (resumable.length) {
+          lines.push(
+            `resumable: ${resumable.map((c) => c.item).join(", ")} — dead claims of your agent name, not adopted; claim one only if it is yours to continue`,
+          );
         }
         lines.push(...handoffLines(await handoffStatus(ops.wsr)));
         lines.push(HELLO_RULES);
