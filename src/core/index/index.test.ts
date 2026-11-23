@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import YAML from "yaml";
 import { Index } from "./index.js";
 
 let dir: string;
@@ -493,7 +494,7 @@ describe("discussion state", () => {
 });
 
 describe("500-item fixture", () => {
-  it("loads in < 300ms", async () => {
+  it("loads within a budget that scales with machine load", async () => {
     const big = mkdtempSync(join(tmpdir(), "te-big-"));
     const bp = join(big, ".teamengage", "items", "GL");
     mkdirSync(bp, { recursive: true });
@@ -505,6 +506,22 @@ describe("500-item fixture", () => {
         `---\nid: ${id}\ntype: task\ntitle: "item ${i}"\nstatus: ${i === 1 ? "done" : "ready"}\n${dep}priority: 2\nversion: 1\n---\n\n## Summary\nx\n`,
       );
     }
+    // Baseline probe: file-read + YAML-parse work like a small load, but
+    // independent of Index.load. Its wall time tracks how loaded this
+    // machine is right now, so the budget stretches under the parallel
+    // suite instead of flaking (a fixed 300ms bound failed under full-
+    // suite load). Measured before and after the loads: a contention
+    // spike that starts mid-run still raises the budget.
+    const probeDir = join(big, "probe");
+    mkdirSync(probeDir, { recursive: true });
+    const probeDoc = 'id: P-0001\ntitle: "probe"\nstatus: ready\n';
+    for (let i = 0; i < 40; i++) writeFileSync(join(probeDir, `p${i}.md`), probeDoc);
+    const probe = () => {
+      const p0 = performance.now();
+      for (let i = 0; i < 40; i++) YAML.parse(readFileSync(join(probeDir, `p${i}.md`), "utf8"));
+      return performance.now() - p0;
+    };
+    const probeBefore = probe();
     // best-of-3: file-cache warm, less sensitive to parallel-suite CPU contention
     let ms = Infinity;
     let idx!: Index;
@@ -513,10 +530,11 @@ describe("500-item fixture", () => {
       idx = await Index.load(join(big, ".teamengage"));
       ms = Math.min(ms, performance.now() - t0);
     }
+    const budget = Math.max(300, Math.max(probeBefore, probe()) * 30);
     expect(idx.items.size).toBe(500);
     expect(idx.get("GL-0002")!.blocked).toBe(false);
     expect(idx.get("GL-0500")!.blocked).toBe(true);
-    expect(ms).toBeLessThan(300);
+    expect(ms).toBeLessThan(budget);
     rmSync(big, { recursive: true, force: true });
   });
 });
