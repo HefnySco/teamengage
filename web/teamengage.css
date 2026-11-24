@@ -1476,12 +1476,9 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-doc:hover { transform: translateY(-2px); }
 .of-doc b { font: 600 10.5px/1.25 var(--bs-font-monospace); letter-spacing: 0.01em; }
 .of-doc span { font-size: 9px; color: var(--m); line-height: 1.2; }
-.of-doc.m-work { --m: var(--te-st-ready); }
-.of-doc.m-resume, .of-doc.m-takeover { --m: var(--te-st-in_progress); }
-.of-doc.m-review { --m: var(--te-st-in_review); }
-.of-doc.m-fix { --m: var(--te-st-dropped); }
+.of-doc.m-work, .of-doc.m-resume, .of-doc.m-takeover, .of-doc.m-fix { --m: var(--te-st-in_progress); }
+.of-doc.m-review, .of-doc.m-accept { --m: var(--te-st-in_review); }
 .of-doc.m-ask { --m: var(--te-st-waiting); border-style: dashed; }
-.of-doc.m-accept { --m: var(--te-st-done); }
 .of-doc.of-blocked { opacity: 0.45; }
 /* the flying clone while a card changes desk */
 .of-doc.of-ghost { position: fixed; z-index: 60; pointer-events: none; margin: 0; }

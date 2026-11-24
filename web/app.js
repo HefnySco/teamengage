@@ -646,8 +646,8 @@ const HoloStage = () => html`<div class="of-stage of-flick">
 </div>`;
 
 // one task card — colours come from the --te-st-* tokens via the m-<mode>
-// class: work ready, resume/takeover in_progress, review in_review, fix
-// dropped, ask waiting, accept done
+// class and name the item status like the inbox: work/resume/takeover/fix
+// in_progress, review/accept in_review, ask waiting
 const DocCard = ({ d, onOpen }) => html`<a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "")}
   data-doc=${d.id}
