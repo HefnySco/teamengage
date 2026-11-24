@@ -85,6 +85,9 @@ const untilEvent = async (kind: string, count: number, timeoutMs = 8000) => {
 };
 
 beforeAll(() => {
+  // a te run child inherits TE_SESSION — daemonApi would send it and the
+  // human-only routes answer 403; tests always call the daemon as the human
+  delete process.env.TE_SESSION;
   home = mkdtempSync(join(tmpdir(), "te-dispatch-"));
   sessions = new SessionRegistry("test");
 });

@@ -30,12 +30,12 @@ function mkRemote(tag: string): string {
   return remote;
 }
 
-function seedPlans(dir: string, sync: "manual" | "auto") {
+function seedPlans(dir: string, sync: "manual" | "auto", extra = "") {
   mkdirSync(join(dir, "items", "WS"), { recursive: true });
   mkdirSync(join(dir, "claims"), { recursive: true });
   writeFileSync(
     join(dir, "workspace.yaml"),
-    `name: ws\nprefix: WS\nsync: ${sync}\nresources:\n  self: { kind: git, path: . }\n`,
+    `name: ws\nprefix: WS\nsync: ${sync}\n${extra}resources:\n  self: { kind: git, path: . }\n`,
   );
   writeFileSync(
     join(dir, "items", "WS", "WS-0001.md"),
@@ -75,10 +75,10 @@ async function mkWsr(plans: string, machine: string) {
 }
 
 /** a pair of auto-sync machines sharing one bare remote */
-async function mkPair(tag: string) {
+async function mkPair(tag: string, extra = "") {
   const remote = mkRemote(tag);
   const seed = join(home, `${tag}-seed`);
-  seedPlans(seed, "auto");
+  seedPlans(seed, "auto", extra);
   execFileSync("git", ["remote", "add", "origin", remote], { cwd: seed });
   execFileSync("git", ["push", "-u", "origin", "main"], { cwd: seed });
   const plansA = join(home, `${tag}-a`, ".teamengage");
@@ -185,6 +185,42 @@ describe("sync:auto — propose", () => {
     const a = await mkWsr(plansA, "machine-man-a");
     const r = await a.ops.propose([{ title: "manual item", domains: ["sync"] }], "human");
     expect(r.ids[0]).toBe("WS-0004");
+  });
+
+  it("remaps the ready ids too when a refused push renumbers the items", async () => {
+    // A pulls, allocates WS-0003 — then the remote moves (B pushes its own
+    // WS-0003) before A's push. The collision repair renumbers A's item; the
+    // ready list must name the new id, not the dead one.
+    const { remote, plansB, a } = await mkPair("rdy", "autonomy: solo\n");
+    writeFileSync(
+      join(plansB, "items", "WS", "WS-0003.md"),
+      "---\nid: WS-0003\ntype: task\ntitle: remote wins\nstatus: draft\nversion: 1\n---\n",
+    );
+    execFileSync("git", ["add", "-A"], { cwd: plansB });
+    execFileSync("git", ["commit", "-m", "ws-0003"], { cwd: plansB });
+    // inject B's push right after A's items are written — the pull inside
+    // propose already ran, the push is still to come
+    const createItems = a.wsr.store.createItems.bind(a.wsr.store);
+    a.wsr.store.createItems = (async (
+      ...args: Parameters<typeof createItems>
+    ): Promise<Awaited<ReturnType<typeof createItems>>> => {
+      const r = await createItems(...args);
+      execFileSync("git", ["push"], { cwd: plansB });
+      return r;
+    }) as typeof createItems;
+    // the bug names known work — under autonomy: solo it lands ready
+    const { session } = await a.ops.hello("agent");
+    const r = await a.ops.propose(
+      [{ type: "bug", title: "bug in one", found_by: ["WS-0001"], domains: ["sync"] }],
+      session,
+    );
+    expect(r.ids).toEqual(["WS-0004"]);
+    expect(r.ready).toEqual(["WS-0004"]);
+    expect(a.wsr.store.idx.items.get("WS-0004")!.meta.status).toBe("ready");
+    // the remote keeps B's WS-0003 and A's renumbered item — nothing clashed
+    const tree = gitOk(["ls-tree", "-r", "--name-only", "main", "items/"], remote);
+    expect(tree).toContain("WS-0003.md");
+    expect(tree).toContain("WS-0004.md");
   });
 });
 

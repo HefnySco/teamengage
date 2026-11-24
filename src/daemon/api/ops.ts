@@ -2596,7 +2596,7 @@ export class WorkspaceOps {
     );
     // autonomy: solo — an agent's follow-up/fix of known work needs no
     // approve: it lands ready. Epics and free-standing items stay drafts.
-    const ready: string[] = [];
+    let ready: string[] = [];
     if (this.wsr.ws.config.autonomy === "solo" && actor !== "human") {
       const knownRef = (ref: string) => {
         try {
@@ -2659,6 +2659,7 @@ export class WorkspaceOps {
             void this.wsr.overlay?.rescan();
             const renamed = Object.fromEntries(renames);
             ids = r.ids.map((id) => renamed[id] ?? id);
+            ready = ready.map((id) => renamed[id] ?? id);
             push = await pushPlansAuto(this.wsr);
           } catch (e) {
             warn = `items kept local — ${(e as Error).message}`;
