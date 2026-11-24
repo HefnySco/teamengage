@@ -325,6 +325,33 @@ te hooks --install          # merges into ~/.claude/settings.json, keeps other s
 
 Takes effect in new Claude Code sessions. `te hooks --uninstall` removes it.
 
+### Dispatch: the daemon runs the team (optional)
+
+`te run` works from a terminal. **Dispatch** runs the same loop inside the
+daemon, so agents keep working with no terminal open. It is off by default.
+Ask the human before turning it on, because it starts agent processes.
+
+```bash
+te dispatch status                      # on/off, live limit, filter, pause
+te dispatch on                          # start the launcher
+te dispatch pause [--kill] [reason]     # stop new picks; --kill also stops running agents
+te dispatch block <ID> [reason]         # keep one item away from agents
+te dispatch unblock <ID>
+te dispatch reset <ID>                  # clear an item's failure and retry memory
+te discover                             # re-attach agents still running after a daemon restart
+```
+
+- The live limit is `max_issues`. A selector filter narrows what is picked
+  (`plan:TE-0212`, for example).
+- An item is refused after two failed runs, while it is blocked, or when no
+  reviewer model differs from the coder's. The reason shows on its card.
+- Dispatch state survives a daemon restart. Run `te discover` after one to
+  re-attach agents that are still running.
+- A claim with no live holder is released after `auto_release_after`
+  (default 2 h; `0` turns this off).
+- The web UI team page (`/ui#/team`) shows the floor plan: developers,
+  dispatch desk, reviewers, and the human's desk.
+
 ### Devin / Windsurf
 
 Add a short section to the global rules (`~/.codeium/windsurf/memories/global_rules.md`)
@@ -372,8 +399,20 @@ te sync --leave    # before leaving a machine: hand its tasks over, then sync
 - A repo whose submodule points at a commit no remote has is not pushed
   (the other machine couldn't fetch it). Push the submodule first.
 - `te sync --dry-run` fetches and reports what it would do, changing nothing.
+- **`sync: auto`** in `workspace.yaml`: the daemon pulls the plans repo before
+  each claim, propose or ops lock, and pushes it after each change. Use it on
+  a second machine so plan changes arrive without a manual sync. Code is still
+  synced only by `te sync`.
 - The web UI's **Sync → sync now** runs the same thing. Agents never sync or
   push; only the human does.
+
+## 7a. Solo autonomy (optional)
+
+For one human, set `autonomy: solo` in `workspace.yaml`. An `ok` review is
+then accepted by the daemon after `auto_accept_after` (30 min by default),
+unless an `auto_accept_rules` entry holds it back. Strict mode (the default)
+keeps every accept with the human. Tell the human before you change this,
+because it removes a review gate.
 
 ## Updating the tool later
 
