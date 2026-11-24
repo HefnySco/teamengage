@@ -1253,30 +1253,288 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .tier-chip.tier-standard { color: var(--bs-primary-text-emphasis); border-color: color-mix(in srgb, var(--bs-primary) 50%, transparent); }
 .tier-chip.tier-heavy { color: var(--bs-warning-text-emphasis); border-color: color-mix(in srgb, var(--bs-warning) 50%, transparent); }
 
-/* TE-0188 — top-down office on the team page: a room per machine, a desk
-   per session; the chair is filled, away, or empty */
-.office { border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .6rem .75rem; margin-bottom: 1rem; background: var(--bs-tertiary-bg); }
-.office-floor { display: flex; flex-wrap: wrap; gap: .75rem; align-items: stretch; }
-.office-room { border: 1px solid var(--bs-border-color); border-radius: .4rem; padding: .4rem .6rem .6rem; background: var(--bs-body-bg); min-width: 130px; }
-.office-room-name { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); margin-bottom: .4rem; }
-.office-desks { display: flex; flex-wrap: wrap; gap: .7rem; align-items: flex-end; }
-.seat { width: 86px; text-align: center; animation: seat-in .35s ease; display: flex; flex-direction: column; justify-content: flex-end; }
-@keyframes seat-in { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
-/* the held items pile on the desk — chips stacked in front of the chair,
-   bottom chip resting on the desk edge */
-.seat-bubble { min-height: 1rem; font-size: .66rem; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; margin-bottom: -3px; }
-.seat-bubble .id { cursor: pointer; background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); border-radius: .25rem; padding: 0 .25rem; line-height: 1.15; }
-.seat-bubble .id + .id { margin-top: -1px; }
-.seat-bubble .id:hover { background: var(--bs-primary); color: #fff; }
-.seat-desk { height: 24px; margin: 3px 12px 0; border: 1px solid var(--bs-border-color); border-radius: .3rem; background: var(--bs-secondary-bg); }
-.seat-chair { width: 30px; height: 30px; margin: 5px auto 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .68rem; font-weight: 700; color: #fff; background: hsl(var(--seat-hue, 200) 45% 45%); }
-.seat-away .seat-chair { background: transparent; border: 2px solid hsl(var(--seat-hue, 200) 45% 45%); color: hsl(var(--seat-hue, 200) 40% 45%); }
-.seat-empty .seat-chair { border: 2px dashed var(--bs-border-color); background: transparent; }
-.seat-empty .seat-name, .seat-empty .seat-bubble { opacity: .45; }
-.seat-name { font-size: .66rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seat-chair-on { background: var(--bs-success); }
-.seat-chair-off { background: transparent; border: 2px solid var(--bs-secondary-color); color: var(--bs-secondary-color); }
-.office-ticker { margin-top: .5rem; padding-top: .4rem; border-top: 1px dashed var(--bs-border-color); font-size: .72rem; color: var(--bs-secondary-color); }
+/* TE-0214 — ops floor on the team page (te-0212 concept v9.1): a developers
+   room and a reviewers room of hologram desks, a centre column with the
+   dispatch front desk and the human's desk. Accent vars follow the theme;
+   everything else rides bootstrap tokens so light and dark both read. */
+.ofloor {
+  --of-dev: #0284c7;
+  --of-rev: #7c3aed;
+  --of-dsp: #d97706;
+  --of-you: #334155;
+  --of-line: var(--bs-border-color);
+  --of-dim: var(--bs-secondary-color);
+  --of-faint: var(--bs-tertiary-color);
+  --of-glass: var(--bs-tertiary-bg);
+  --of-glass2: var(--bs-secondary-bg);
+  --of-docbg: var(--bs-body-bg);
+  --of-shadow: 0 18px 40px -22px rgba(15, 23, 42, 0.35);
+  margin-bottom: 1rem;
+}
+[data-bs-theme="dark"] .ofloor {
+  --of-dev: #38bdf8;
+  --of-rev: #a78bfa;
+  --of-dsp: #fbbf24;
+  --of-you: #e2e8f0;
+  --of-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.8);
+}
+.of-floor { display: grid; grid-template-columns: minmax(0, 1fr) 250px minmax(0, 1fr); gap: 14px; }
+@media (max-width: 1100px) {
+  .of-floor { grid-template-columns: 1fr; }
+  .of-floor .of-center { order: -1; }
+}
+.of-room {
+  position: relative;
+  border: 1px solid var(--of-line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--of-glass);
+  box-shadow: var(--of-shadow);
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+.of-room.of-dev { --ac: var(--of-dev); }
+.of-room.of-rev { --ac: var(--of-rev); }
+.of-room::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ac) 70%, transparent), transparent);
+}
+.of-rhead { display: flex; align-items: center; gap: 10px; padding: 14px 18px 4px; position: relative; z-index: 2; }
+.of-rhead h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--of-dim); margin: 0; }
+.of-rhead .of-orb { width: 8px; height: 8px; border-radius: 50%; background: var(--ac); box-shadow: 0 0 12px var(--ac); }
+.of-rhead .of-cnt { font-size: 11px; color: var(--of-faint); margin-left: auto; font-family: var(--bs-font-monospace); }
+.of-desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 14px 12px; padding: 6px 16px 14px; position: relative; z-index: 2; align-content: start; }
+.of-empty { grid-column: 1 / -1; text-align: center; color: var(--of-faint); font-size: 12px; padding: 60px 0 20px; }
+
+/* one workstation: hologram on a projector disc over a desk card */
+.of-seat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: opacity 0.9s ease, transform 0.9s ease, filter 0.9s;
+  animation: of-seat-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes of-seat-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); filter: blur(4px); }
+}
+.of-seat.of-vanish { opacity: 0; transform: scale(0.9); filter: blur(6px); }
+.of-stage { position: relative; width: 110px; height: 132px; color: var(--ac); }
+.of-fig {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  width: 62px;
+  height: 104px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, currentColor 45%, transparent));
+  animation: of-float 6s ease-in-out infinite;
+}
+.of-fig svg { width: 100%; height: 100%; overflow: visible; }
+@keyframes of-float {
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, -4px); }
+}
+.of-beam {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  width: 78px;
+  height: 112px;
+  transform: translateX(-50%);
+  background: linear-gradient(0deg, color-mix(in srgb, currentColor 22%, transparent), transparent 85%);
+  clip-path: polygon(32% 100%, 68% 100%, 100% 0, 0 0);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.of-disc {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 82px;
+  height: 20px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, currentColor 65%, transparent);
+  background: radial-gradient(closest-side, color-mix(in srgb, currentColor 40%, transparent), transparent);
+  box-shadow: 0 0 18px -2px color-mix(in srgb, currentColor 55%, transparent);
+}
+.of-disc::after {
+  content: "";
+  position: absolute;
+  inset: 4px 12px;
+  border-radius: 50%;
+  border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+  animation: of-spin 14s linear infinite;
+}
+@keyframes of-spin { to { transform: rotate(360deg); } }
+.of-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 3px);
+}
+.of-flick .of-fig { animation: of-float 6s ease-in-out infinite, of-flick 9s steps(1) infinite; }
+@keyframes of-flick {
+  0%, 95% { opacity: 1; }
+  96% { opacity: 0.55; }
+  97% { opacity: 1; }
+  98% { opacity: 0.75; }
+  99% { opacity: 1; }
+}
+/* quiet = projection dims; gone = only a dashed outline remains */
+.of-seat.of-quiet .of-stage { opacity: 0.38; filter: saturate(0.4); }
+.of-seat.of-quiet .of-fig, .of-seat.of-gone .of-fig { animation: none; }
+.of-seat.of-gone .of-stage { color: var(--of-faint); }
+.of-seat.of-gone .of-fig { filter: none; }
+.of-seat.of-gone .of-fig path, .of-seat.of-gone .of-fig circle { fill: none; stroke-dasharray: 3 4; }
+.of-seat.of-gone .of-beam { display: none; }
+.of-seat.of-gone .of-disc::after { animation: none; }
+
+/* desk card under the projection */
+.of-deskcard {
+  width: 100%;
+  margin-top: -6px;
+  border: 1px solid var(--of-line);
+  border-radius: 12px;
+  padding: 8px 9px 7px;
+  background: var(--of-glass2);
+  position: relative;
+  z-index: 3;
+  box-shadow: 0 10px 24px -16px color-mix(in srgb, var(--ac) 70%, transparent);
+  transition: border-color 0.3s, transform 0.3s;
+}
+.of-seat:not(.of-gone):hover .of-deskcard { border-color: color-mix(in srgb, var(--ac) 55%, transparent); transform: translateY(-2px); }
+.of-seat.of-gone .of-deskcard { border-style: dashed; background: transparent; box-shadow: none; }
+.of-who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.of-who .of-nm { font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+.of-who .of-lb { color: var(--of-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.of-who .of-model {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-family: var(--bs-font-monospace);
+  color: var(--ac);
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--ac) 35%, transparent);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+.of-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--of-dim); margin-top: 6px; white-space: nowrap; overflow: hidden; }
+.of-meta .of-st { width: 6px; height: 6px; border-radius: 50%; background: var(--te-st-done); flex: none; }
+.of-seat.of-quiet .of-meta .of-st { background: var(--te-st-in_progress); }
+.of-seat.of-gone .of-meta .of-st { background: var(--of-faint); }
+
+/* trays hold task cards */
+.of-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 26px;
+  margin-top: 7px;
+  align-items: center;
+  border-radius: 8px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--ac) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ac) 12%, transparent);
+}
+.of-tray:empty::before { content: "idle"; font-size: 10px; color: var(--of-faint); padding-left: 4px; }
+.of-seat.of-gone .of-tray:empty::before { content: "session left"; }
+.of-tray.of-fan .of-doc { margin-left: -34px; transition: margin 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.of-tray.of-fan .of-doc:first-child { margin-left: 0; }
+.of-seat:hover .of-tray.of-fan .of-doc, .of-deskctr:hover .of-tray.of-fan .of-doc { margin-left: 0; }
+.of-tray .of-count { font-size: 10px; font-family: var(--bs-font-monospace); color: var(--of-dim); margin-left: 4px; }
+.of-seat:hover .of-tray .of-count, .of-deskctr:hover .of-tray .of-count { display: none; }
+.of-tray .of-more { font-size: 10px; font-family: var(--bs-font-monospace); color: var(--of-dim); padding: 0 4px; }
+
+/* task card — the left stripe and the tint come from the --te-st-* status
+   token that its m-<mode> class picks */
+.of-doc {
+  --m: var(--te-st-ready);
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 58px;
+  padding: 2px 7px 2px 9px;
+  border-radius: 6px;
+  background: var(--of-docbg);
+  border: 1px solid color-mix(in srgb, var(--m) 40%, transparent);
+  position: relative;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--bs-body-color);
+  box-shadow: 0 4px 12px -6px color-mix(in srgb, var(--m) 60%, transparent);
+  transition: transform 0.2s;
+}
+.of-doc::before { content: ""; position: absolute; left: 3px; top: 3px; bottom: 3px; width: 2px; border-radius: 2px; background: var(--m); }
+.of-doc:hover { transform: translateY(-2px); }
+.of-doc b { font: 600 10.5px/1.25 var(--bs-font-monospace); letter-spacing: 0.01em; }
+.of-doc span { font-size: 9px; color: var(--m); line-height: 1.2; }
+.of-doc.m-work { --m: var(--te-st-ready); }
+.of-doc.m-resume, .of-doc.m-takeover { --m: var(--te-st-in_progress); }
+.of-doc.m-review { --m: var(--te-st-in_review); }
+.of-doc.m-fix { --m: var(--te-st-dropped); }
+.of-doc.m-ask { --m: var(--te-st-waiting); border-style: dashed; }
+.of-doc.m-accept { --m: var(--te-st-done); }
+.of-doc.of-blocked { opacity: 0.45; }
+/* the flying clone while a card changes desk */
+.of-doc.of-ghost { position: fixed; z-index: 60; pointer-events: none; margin: 0; }
+
+/* centre column — the dispatch front desk and the human's desk */
+.of-center { display: flex; flex-direction: column; gap: 14px; }
+.of-deskctr {
+  position: relative;
+  border: 1px solid var(--of-line);
+  border-radius: 18px;
+  padding: 14px 14px 16px;
+  background: var(--of-glass);
+  box-shadow: var(--of-shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.of-deskctr.of-dsp { --ac: var(--of-dsp); }
+.of-deskctr.of-you { --ac: var(--of-you); }
+.of-deskctr h3 { font-size: 10.5px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--of-dim); align-self: flex-start; }
+.of-deskctr .of-tray { width: 100%; min-height: 32px; justify-content: center; }
+.of-deskctr .of-tray:empty::before { content: "queue empty"; }
+.of-deskctr.of-you .of-tray:empty::before { content: "nothing waits for you"; }
+.of-deskctr .of-sub { font-size: 11px; color: var(--of-dim); margin-top: 6px; text-align: center; }
+.of-deskctr .of-sub b { color: var(--bs-body-color); font-weight: 600; }
+
+/* dispatcher: figure inside a capacity ring */
+.of-gauge { position: relative; width: 150px; height: 150px; margin: 6px 0 2px; color: var(--of-dsp); }
+.of-gauge > svg.of-ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+.of-gauge .of-trk { stroke: var(--of-line); }
+.of-gauge .of-val {
+  stroke: var(--of-dsp);
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  filter: drop-shadow(0 0 6px var(--of-dsp));
+}
+.of-gauge .of-stage { position: absolute; left: 50%; top: 6px; transform: translateX(-50%) scale(0.95); color: var(--of-dsp); }
+.of-gauge .of-num {
+  position: absolute;
+  right: -6px;
+  top: 4px;
+  font: 600 12px var(--bs-font-monospace);
+  color: var(--of-dsp);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  background: var(--of-glass2);
+}
+.of-deskctr.of-dsp.of-off .of-gauge, .of-deskctr.of-dsp.of-off .of-stage { color: var(--of-faint); }
+.of-deskctr.of-dsp.of-off .of-gauge .of-val { stroke: var(--of-faint); filter: none; }
+.of-deskctr.of-dsp.of-off .of-fig { animation: none; filter: none; }
+
+/* the human — a person, not a projection */
+.of-you .of-person { width: 96px; height: 118px; color: var(--of-you); margin: 4px 0 -4px; opacity: 0.92; }
+.of-you .of-person svg { width: 100%; height: 100%; }
 .dispatch-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .dispatch-max-group { width: 10.5rem; flex: none; }
 .dispatch-filter-group { flex: 1 1 20rem; max-width: 34rem; min-width: 14rem; }

@@ -2,9 +2,10 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
+import { derive } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "preact/hooks";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
 import htm from "htm";
 
 export const html = htm.bind(h);
@@ -539,17 +540,17 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
     </div>`;
 };
 
-// TE-0188 — top-down office for the team page: one room per machine, one
-// desk per session. The API lists live sessions only, so a desk whose
-// session left keeps an empty chair for a while (client memory only) and a
-// live session gone quiet sits in a chair that looks away.
-const OFFICE_QUIET_MS = 15 * 60_000; // no call this long → the chair looks away
+// TE-0214 — ops floor for the team page (replaces the TE-0188 top-down
+// office): a developers room and a reviewers room, a centre column with the
+// dispatch front desk and the human's desk. Placement — which item sits on
+// which desk — comes from derive() in web/ops-floor.js (TE-0213). The API
+// lists live sessions only, so a desk whose session left keeps an empty
+// chair for a while (client memory only) and a live session gone quiet has
+// a dimmed hologram.
+const OFFICE_QUIET_MS = 15 * 60_000; // no call this long → the hologram dims
 const OFFICE_GONE_MS = 30 * 60_000; // an empty chair fades out after this
-const seatHue = (name) => {
-  let hue = 0;
-  for (const c of name) hue = (hue * 31 + c.charCodeAt(0)) % 360;
-  return hue;
-};
+const OFFICE_VANISH_MS = 950; // matches the of-vanish CSS transition
+const isReviewerSession = (s) => /review/i.test(s?.role ?? "");
 
 // the one dispatch on/off control — same on the dispatch bar and the
 // office front-desk seat: a button (red-outlined "off" when running) and a
@@ -565,108 +566,358 @@ const DispatchToggle = ({ enabled, ready, onToggle, whyIdle }) => html`
     ${enabled && html`<span class="dispatch-live" title=${whyIdle ? `idle — ${whyIdle}` : "dispatch is running"}></span>`}
   </span>`;
 
-const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
-  const known = useRef(new Map()); // session id → {s, gone: 0 | ms-left}
+// a card that changed desk flies there on an arc: a fixed-position ghost
+// clone lifts, rotates and lands while the real card pops into place
+const flyDoc = (el, from, to) => {
+  const ghost = el.cloneNode(true);
+  ghost.classList.add("of-ghost");
+  ghost.style.left = from.x + "px";
+  ghost.style.top = from.y + "px";
+  document.body.appendChild(ghost);
+  el.style.visibility = "hidden";
+  const dx = to.left - from.x;
+  const dy = to.top - from.y;
+  const lift = Math.min(160, 50 + Math.abs(dx) * 0.16);
+  ghost
+    .animate(
+      [
+        { transform: "translate(0,0) rotate(0) scale(1)" },
+        {
+          transform: `translate(${dx * 0.5}px,${dy * 0.5 - lift}px) rotate(${dx > 0 ? 7 : -7}deg) scale(1.15)`,
+          offset: 0.5,
+        },
+        { transform: `translate(${dx}px,${dy}px) rotate(0) scale(1)` },
+      ],
+      { duration: 850 + Math.abs(dx) * 0.3, easing: "cubic-bezier(.3,.6,.25,1)" },
+    )
+    .finished.then(() => {
+      ghost.remove();
+      el.style.visibility = "";
+      el.animate([{ transform: "scale(1.18)" }, { transform: "none" }], {
+        duration: 300,
+        easing: "ease-out",
+      });
+    })
+    .catch(() => ghost.remove());
+};
+
+// one hologram figure: gradient silhouette + scan lines. useId keeps every
+// figure's <linearGradient> id unique across the floor
+const HoloFigure = () => {
+  const g = useId();
+  return html`<div class="of-fig">
+    <svg viewBox="0 0 100 160">
+      <defs>
+        <linearGradient id=${g} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="currentColor" stop-opacity=".95" />
+          <stop offset=".55" stop-color="currentColor" stop-opacity=".55" />
+          <stop offset="1" stop-color="currentColor" stop-opacity=".08" />
+        </linearGradient>
+      </defs>
+      <g fill="url(#${g})" stroke="currentColor" stroke-opacity=".55" stroke-width="1">
+        <circle cx="50" cy="18" r="11" />
+        <path
+          d="M50 31 C 36 33 32 48 35 62 C 36 70 42 74 41 84 L 39 118 C 39 130 43 146 50 146 C 57 146 61 130 61 118 L 59 84 C 58 74 64 70 65 62 C 68 48 64 33 50 31 Z"
+        />
+        <path
+          d="M37 40 C 30 52 29 66 33 78 L 38 76 C 35 66 36 54 41 46 Z M63 40 C 70 52 71 66 67 78 L 62 76 C 65 66 64 54 59 46 Z"
+          opacity=".8"
+        />
+      </g>
+    </svg>
+    <div class="of-scan"></div>
+  </div>`;
+};
+
+// the hologram projector: beam and spinning disc under the figure
+const HoloStage = () => html`<div class="of-stage of-flick">
+  <div class="of-beam"></div>
+  <div class="of-disc"></div>
+  <${HoloFigure} />
+</div>`;
+
+// one task card — colours come from the --te-st-* tokens via the m-<mode>
+// class: work ready, resume/takeover in_progress, review in_review, fix
+// dropped, ask waiting, accept done
+const DocCard = ({ d, onOpen }) => html`<a
+  class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "")}
+  data-doc=${d.id}
+  title=${(d.title ? d.title + " · " : "") + (d.mode || "")}
+  onClick=${() => onOpen(d.id)}
+  ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a>`;
+
+// a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
+// the first cap cards then "+N more"; uncapped seat trays fan their cards
+// past 3 and unfold on hover
+const DocTray = ({ loc, docs, cap = 0, onOpen }) => {
+  const more = cap && docs.length > cap ? docs.length - cap : 0;
+  const shown = more ? docs.slice(0, cap) : docs;
+  const fan = !cap && docs.length > 3;
+  return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} onOpen=${onOpen} />`)}
+    ${more > 0 && html`<span class="of-more">+${more} more</span>`}
+    ${fan && html`<span class="of-count">×${docs.length}</span>`}
+  </div>`;
+};
+
+// one workstation: hologram on a projector disc over a desk card with the
+// agent name, machine, model tag, its task tray and a status line
+const Seat = ({ e, docs, questionIds, onOpen }) => {
+  const { s, gone } = e;
+  const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
+  const waiting = !gone && questionIds.has(s.label);
+  const meta = gone
+    ? `left ${ago(gone)} ago`
+    : waiting
+      ? `waits on you · ${s.label}`
+      : quiet
+        ? `quiet ${ago(s.last_seen)}`
+        : `at desk · ${ago(s.last_seen)}`;
+  return html`<div
+    class=${"of-seat" + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
+    title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""}${s.label ? " · " + s.label : ""}`}
+  >
+    <${HoloStage} />
+    <div class="of-deskcard">
+      <div class="of-who">
+        <span class="of-nm">${s.agent}</span>
+        <span class="of-lb">${s.machine}</span>
+        ${s.model && html`<span class="of-model">${s.model}</span>`}
+      </div>
+      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onOpen=${onOpen} />
+      <div class="of-meta"><i class="of-st"></i>${s.role || "agent"} · ${meta}</div>
+    </div>
+  </div>`;
+};
+
+// one room of the floor: header with live/left counts over the desk grid
+const FloorRoom = ({ room, entries, seats, questionIds, onOpen }) => {
+  const live = entries.filter((e) => !e.gone).length;
+  return html`<section class=${"of-room of-" + room}>
+    <div class="of-rhead">
+      <i class="of-orb"></i>
+      <h2>${room === "dev" ? "developers" : "reviewers"}</h2>
+      <span class="of-cnt"
+        >${live} at desk${entries.length > live ? ` · ${entries.length - live} left` : ""}</span
+      >
+    </div>
+    <div class="of-desks">
+      ${entries.map(
+        (e) =>
+          html`<${Seat}
+            key=${e.s.id}
+            e=${e}
+            docs=${seats.get(e.s.id) ?? []}
+            questionIds=${questionIds}
+            onOpen=${onOpen}
+          />`,
+      )}
+    </div>
+    ${!entries.length &&
+    html`<div class="of-empty">no ${room === "dev" ? "coder" : "reviewer"} sessions</div>`}
+  </section>`;
+};
+
+// the dispatch front desk: dispatcher hologram inside a capacity ring
+// (online_issues of max_issues), the matched queue and the toggle
+const FrontDesk = ({ dispatch, queue, onOpen, onDispatch }) => {
+  const online = dispatch.online_issues ?? 0;
+  const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
+  const frac = max ? Math.min(1, online / max) : 0;
+  const C = 2 * Math.PI * 68;
+  const readyToStart = Boolean(dispatch.agents_ready ?? dispatch.agents?.length);
+  const sub = !dispatch.enabled
+    ? html`dispatch is <b>off</b>`
+    : dispatch.paused != null
+      ? html`<b>paused</b>${dispatch.paused ? " — " + dispatch.paused : ""}`
+      : html`${queue.length} matched · <b>${online}</b> of ${max} issues
+          live${dispatch.why_idle ? ` · idle: ${dispatch.why_idle}` : ""}`;
+  return html`<div class=${"of-deskctr of-dsp" + (dispatch.enabled ? "" : " of-off")}>
+    <h3>front desk · dispatch</h3>
+    <div class="of-gauge">
+      <svg class="of-ring" viewBox="0 0 150 150">
+        <circle class="of-trk" cx="75" cy="75" r="68" fill="none" stroke-width="2" />
+        <circle
+          class="of-val"
+          cx="75"
+          cy="75"
+          r="68"
+          fill="none"
+          stroke-width="3"
+          stroke-dasharray=${`${(C * frac).toFixed(1)} ${C.toFixed(1)}`}
+        />
+      </svg>
+      <${HoloStage} />
+      <div class="of-num">${online}/${max}</div>
+    </div>
+    <${DocTray} loc="dispatch" docs=${queue} cap=${6} onOpen=${onOpen} />
+    <div class="of-sub">${sub}</div>
+    <div class="mt-1">
+      <${DispatchToggle}
+        enabled=${dispatch.enabled}
+        ready=${readyToStart}
+        whyIdle=${dispatch.why_idle}
+        onToggle=${(v) => onDispatch({ enabled: v })}
+      />
+    </div>
+  </div>`;
+};
+
+// the human's desk: a person figure (not a projection) with the questions
+// and the in_review items that wait for an accept, with counts
+const YourDesk = ({ you, onOpen }) => {
+  const nq = you.filter((a) => a.mode === "ask").length;
+  const na = you.length - nq;
+  return html`<div class="of-deskctr of-you">
+    <h3>your desk</h3>
+    <div class="of-person">
+      <svg viewBox="0 0 100 160" fill="currentColor">
+        <ellipse cx="46" cy="154" rx="28" ry="4" opacity=".2" />
+        <rect x="0" y="82" width="46" height="4" rx="2" />
+        <rect x="6" y="86" width="3" height="58" rx="1.5" opacity=".5" />
+        <rect x="38" y="86" width="3" height="58" rx="1.5" opacity=".5" />
+        <path d="M19 58 L 40 30 L 40 46 L 19 74 Z" opacity=".12" />
+        <rect x="14" y="60" width="5" height="19" rx="1.5" />
+        <rect x="11" y="79" width="12" height="3" rx="1.5" />
+        <rect x="62" y="56" width="9" height="52" rx="4.5" opacity=".35" />
+        <rect x="30" y="98" width="38" height="9" rx="4.5" opacity=".35" />
+        <rect x="46" y="106" width="8" height="42" rx="4" opacity=".35" />
+        <rect x="38" y="146" width="28" height="6" rx="3" opacity=".35" />
+        <circle cx="44" cy="22" r="12" />
+        <path
+          d="M48 34 C 58 38 62 54 60 70 L 58 92 L 46 92 L 44 68 C 42 54 40 42 48 34 Z"
+        />
+        <rect x="22" y="86" width="36" height="11" rx="5.5" />
+        <rect x="22" y="96" width="10" height="50" rx="5" />
+        <rect x="18" y="142" width="18" height="7" rx="3.5" />
+        <path d="M50 42 L 34 58 L 26 74 L 33 78 L 42 64 L 55 52 Z" opacity=".9" />
+      </svg>
+    </div>
+    <${DocTray} loc="you" docs=${you} cap=${6} onOpen=${onOpen} />
+    <div class="of-sub">
+      ${you.length
+        ? html`<b>${nq}</b> question${nq === 1 ? "" : "s"} · <b>${na}</b> to accept`
+        : "all clear"}
+    </div>
+  </div>`;
+};
+
+const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
+  const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
+  const rootRef = useRef(null);
+  const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
+  const [, bump] = useState(0);
   const live = sessions ?? [];
   const liveIds = new Set(live.map((s) => s.id));
-  const now = Date.now();
   useEffect(() => {
     const k = known.current;
+    let needsRender = false;
     for (const s of live) {
       const e = k.get(s.id);
       if (e) {
         e.s = s;
         e.gone = 0;
-      } else k.set(s.id, { s, gone: 0 });
+        e.fading = false;
+      } else k.set(s.id, { s, gone: 0, fading: false });
     }
     for (const [id, e] of k) {
-      if (!liveIds.has(id) && !e.gone) e.gone = Date.now();
-      if (e.gone && Date.now() - e.gone > OFFICE_GONE_MS) k.delete(id);
+      if (!liveIds.has(id) && !e.gone) {
+        e.gone = Date.now();
+        needsRender = true;
+      }
+      if (e.gone && !e.fading && Date.now() - e.gone > OFFICE_GONE_MS) {
+        e.fading = true;
+        needsRender = true;
+        setTimeout(() => {
+          k.delete(id);
+          bump((x) => x + 1);
+        }, OFFICE_VANISH_MS);
+      }
     }
+    if (needsRender) bump((x) => x + 1);
   }, [live]);
-  // rooms: live sessions plus remembered empty chairs, grouped by machine
-  const rooms = new Map(); // machine → [{s, gone}]
-  const seat = (s, gone) => {
-    const r = rooms.get(s.machine) ?? rooms.set(s.machine, []).get(s.machine);
-    r.push({ s, gone });
+
+  // FLIP after every commit: a card that changed desk flies on an arc, a
+  // card that moved inside one tray slides, a new card pops in
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const prev = spots.current;
+    const next = new Map();
+    for (const el of root.querySelectorAll(".of-doc[data-doc]")) {
+      const id = el.getAttribute("data-doc");
+      const r = el.getBoundingClientRect();
+      const loc = el.closest("[data-loc]")?.getAttribute("data-loc") ?? "";
+      next.set(id, { x: r.left, y: r.top, loc });
+      const from = prev.get(id);
+      if (!from) {
+        el.animate([{ opacity: 0, transform: "scale(.7)" }, { opacity: 1, transform: "none" }], {
+          duration: 400,
+          easing: "ease-out",
+        });
+        continue;
+      }
+      const dx = from.x - r.left;
+      const dy = from.y - r.top;
+      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) continue;
+      if (from.loc === loc) {
+        el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], {
+          duration: 350,
+          easing: "cubic-bezier(.2,.8,.2,1)",
+        });
+        continue;
+      }
+      flyDoc(el, from, r);
+    }
+    spots.current = next;
+  });
+
+  const dsp = dispatch && {
+    ...dispatch,
+    running: (dispatch.running ?? []).map((r) =>
+      typeof r === "string" ? { id: r, mode: "work" } : r,
+    ),
   };
-  for (const s of live) seat(s, 0);
+  const { seats, queue, you } = derive(live, dsp, inbox);
+  const questionIds = new Set((inbox?.questions ?? []).map((q) => q.id));
+
+  // seats: live sessions plus remembered empty chairs, split by role —
+  // role "reviewer" sits in the reviewers room, everything else in developers
+  const entries = [];
+  for (const s of live) entries.push({ s, gone: 0, fading: false });
   for (const e of known.current.values())
-    if (e.gone && !liveIds.has(e.s.id) && now - e.gone <= OFFICE_GONE_MS) seat(e.s, e.gone);
-  const ev = dispatch?.events ?? [];
-  const last = ev[ev.length - 1];
+    if (e.gone && !liveIds.has(e.s.id)) entries.push(e);
+  const devEntries = entries.filter((e) => !isReviewerSession(e.s));
+  const revEntries = entries.filter((e) => isReviewerSession(e.s));
+
   return html`
-    <div class="office">
-      <div class="office-floor">
-        ${rooms.size === 0 && html`<div class="small text-secondary">the office is quiet — no live sessions</div>`}
-        ${[...rooms.keys()].sort().map(
-          (machine) => html`
-            <div class="office-room" key=${machine}>
-              <div class="office-room-name">${machine}</div>
-              <div class="office-desks">
-                ${rooms.get(machine).map(({ s, gone }) => {
-                  const quiet = !gone && now - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
-                  const hue = seatHue(s.agent);
-                  return html`
-                    <div
-                      class=${"seat" + (gone ? " seat-empty" : quiet ? " seat-away" : "")}
-                      key=${s.id}
-                      title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""} — ${gone ? `left ${ago(gone)} ago` : quiet ? `quiet — seen ${ago(s.last_seen)} ago` : `at the desk — seen ${ago(s.last_seen)} ago`}`}
-                    >
-                      <div class="seat-bubble">
-                        ${(s.holding ?? []).map((id) => html`<a class="id" onClick=${() => onOpen(id)}>${id}</a>`)}
-                      </div>
-                      <div class="seat-desk"></div>
-                      <div class="seat-chair" style=${`--seat-hue:${hue}`}>
-                        <span>${gone ? "" : s.agent.slice(0, 2).toUpperCase()}</span>
-                      </div>
-                      <div class="seat-name">${s.agent}${s.label ? ` · ${s.label}` : ""}</div>
-                    </div>`;
-                })}
-              </div>
-            </div>`,
-        )}
-        ${dispatch &&
-        (() => {
-          const online = dispatch.online_issues ?? 0;
-          const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
-          const running = (dispatch.running ?? []).map((entry) =>
-            typeof entry === "string" ? { id: entry, mode: "" } : entry,
-          );
-          const readyToStart = Boolean(dispatch.agents_ready ?? dispatch.agents?.length);
-          return html`
-            <div class="office-room office-frontdesk" key="dispatch">
-              <div class="office-room-name">front desk · dispatch</div>
-              <div class="office-desks">
-                <div
-                  class="seat"
-                  title=${`dispatcher — ${dispatch.enabled ? "on" : "off"} · ${online}/${max} active issues${dispatch.why_idle ? ` · idle: ${dispatch.why_idle}` : ""}${dispatch.filter ? ` · filter: ${dispatch.filter}` : ""}${running.length ? " · active: " + running.map((r) => (r.mode ? `${r.id} (${r.mode})` : r.id)).join(", ") : ""}`}
-                >
-                  <div class="seat-bubble">
-                    ${running
-                      .slice(0, 3)
-                      .map((r) =>
-                        r.mode
-                          ? html`<a class="id" key=${r.id} title=${`${r.id} · ${r.mode}`} onClick=${() => onOpen(r.id)}>${r.id}</a>`
-                          : html`<span class="id" key=${r.id}>${r.id}</span>`,
-                      )}
-                  </div>
-                  <div class="seat-desk"></div>
-                  <div class=${"seat-chair " + (dispatch.enabled ? "seat-chair-on" : "seat-chair-off")}><span>D</span></div>
-                  <div class="seat-name">${dispatch.enabled ? "on" : "off"} · ${online}/${max}</div>
-                  <div class="mt-1"><${DispatchToggle}
-                    enabled=${dispatch.enabled}
-                    ready=${readyToStart}
-                    whyIdle=${dispatch.why_idle}
-                    onToggle=${(v) => onDispatch({ enabled: v })}
-                  /></div>
-                </div>
-              </div>
-            </div>`;
-        })()}
+    <div class="ofloor" ref=${rootRef}>
+      <div class="of-floor">
+        <${FloorRoom}
+          room="dev"
+          entries=${devEntries}
+          seats=${seats}
+          questionIds=${questionIds}
+          onOpen=${onOpen}
+        />
+        <div class="of-center">
+          ${dsp &&
+          html`<${FrontDesk}
+            dispatch=${dsp}
+            queue=${queue}
+            onOpen=${onOpen}
+            onDispatch=${onDispatch}
+          />`}
+          <${YourDesk} you=${you} onOpen=${onOpen} />
+        </div>
+        <${FloorRoom}
+          room="rev"
+          entries=${revEntries}
+          seats=${seats}
+          questionIds=${questionIds}
+          onOpen=${onOpen}
+        />
       </div>
-      ${last &&
-      html`<div class="office-ticker">${ago(last.at)} ago — ${last.kind}${last.data.id ? html` · <a class="item id" onClick=${() => onOpen(last.data.id)}>${last.data.id}</a>` : ""}${last.data.mode ? ` (${last.data.mode})` : ""}${last.data.role ? ` · ${last.data.role}` : ""}${last.data.command ? ` · ${last.data.command}` : ""}${last.data.error ? ` · ${last.data.error}` : ""}${last.data.reason ? ` · ${last.data.reason}` : ""}</div>`}
     </div>`;
 };
 
@@ -799,6 +1050,7 @@ const filterSug = (q, tasks, plans) => {
 const Team = ({ onOpen }) => {
   const { data: sessions, reload: reloadSessions } = useApi("/api/sessions");
   const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
+  const { data: inbox } = useApi("/api/inbox"); // questions + reviews for the ops-floor "your desk"
   const { data: items } = useApi("/api/items");
   const serverMax = dispatch?.max_issues ?? dispatch?.max_sessions ?? 2;
   const serverFilter = dispatch?.filter ?? "";
@@ -968,9 +1220,10 @@ const Team = ({ onOpen }) => {
         ${ss.length} session(s) · ${dispatch ? `${onlineIssues}/${serverMax} online issue(s)` : "…"} · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}${serverFilter ? html` · <code class="small">${serverFilter}</code>` : ""}
       </span>
     </div>
-    <${Office}
+    <${OpsFloor}
       sessions=${ss}
       dispatch=${dispatch}
+      inbox=${inbox}
       onOpen=${onOpen}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
     />
