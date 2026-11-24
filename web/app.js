@@ -1214,16 +1214,24 @@ const Team = ({ onOpen }) => {
 
   // TE-0209 forced levers: pause stops new starts, block parks one item,
   // unblock frees it, reset clears its tried/fix/failure memory
-  const pauseDispatch = () => {
-    const reason = window.prompt("pause dispatch — reason (optional):", "");
+  const pauseDispatch = async () => {
+    const reason = await promptDialog("pause dispatch — reason (optional):");
     if (reason === null) return;
-    const kill = window.confirm("also stop the running children?");
+    const kill = await confirmDialog(
+      "also stop the running children?",
+      "pause stops new starts — stopping kills the agent sessions dispatch already started.",
+      { ok: "stop", danger: true },
+    );
     sendDispatch({ pause: { ...(reason ? { reason } : {}), kill } });
   };
   const resumeDispatch = () => sendDispatch({ resume: true });
-  const blockItem = (id) => {
-    const reason = window.prompt(`block ${id} from dispatch — reason:`, "");
-    if (!reason) return;
+  const blockItem = async (id) => {
+    const reason = await promptDialog(`block ${id} from dispatch — reason:`);
+    if (reason === null) return;
+    if (!reason) {
+      toast("a block needs a reason — nothing was sent");
+      return;
+    }
     sendDispatch({ block: { id, reason } });
   };
   const unblockItem = (id) => sendDispatch({ unblock: { id } });

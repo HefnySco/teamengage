@@ -69,6 +69,15 @@ describe("UI serving (UI-0001)", () => {
     }
   });
 
+  it("the team page uses the in-app dialogs — no native browser prompts (TE-0226)", async () => {
+    const res = await fetch(`${daemon.url}/assets/app.js`, {
+      headers: { cookie: `te_token=${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    const js = await res.text();
+    expect(js).not.toMatch(/window\.(prompt|confirm|alert)\s*\(/);
+  });
+
   it("the team page carries the admission refusal styles (TE-0224)", async () => {
     const res = await fetch(`${daemon.url}/assets/app.js`, {
       headers: { cookie: `te_token=${daemon.token}` },
