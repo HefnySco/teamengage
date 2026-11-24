@@ -2245,8 +2245,10 @@ describe("shared lessons per domain (GL-0322)", () => {
     const runDir = join(home, "runs", "ws");
     mkdirSync(runDir, { recursive: true });
     const hundred = Array.from({ length: 100 }, (_, i) => `line-${i + 1}`);
+    // work-100 must lose to the newer review-200 — a plain name compare
+    // would pick 'work' over 'review' and hide the current run (TE-0229)
     writeFileSync(join(runDir, "dispatch-WS-0777-work-100.log"), "stale\n");
-    writeFileSync(join(runDir, "dispatch-WS-0777-work-200.log"), `${hundred.join("\n")}\n`);
+    writeFileSync(join(runDir, "dispatch-WS-0777-review-200.log"), `${hundred.join("\n")}\n`);
     try {
       // an agent session never reads the log
       expect(
@@ -2259,7 +2261,7 @@ describe("shared lessons per domain (GL-0322)", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { id: string; file: string; lines: string[] };
       expect(body.id).toBe("WS-0777");
-      expect(body.file).toBe("dispatch-WS-0777-work-200.log");
+      expect(body.file).toBe("dispatch-WS-0777-review-200.log");
       expect(body.lines).toEqual(hundred.slice(-5));
 
       // no lines= → the 80-line default
@@ -2272,6 +2274,8 @@ describe("shared lessons per domain (GL-0322)", () => {
       expect((await api("/api/dispatch/log")).status).toBe(400);
       expect((await api("/api/dispatch/log?id=WS-0777&lines=0")).status).toBe(400);
       expect((await api("/api/dispatch/log?id=WS-0777&lines=nope")).status).toBe(400);
+      // a prefix id must not match a longer item's logs (exact id segment)
+      expect((await api("/api/dispatch/log?id=WS")).status).toBe(404);
       expect((await api("/api/dispatch/log?id=WS-9999")).status).toBe(404);
     } finally {
       rmSync(runDir, { recursive: true, force: true });

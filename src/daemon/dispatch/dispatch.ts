@@ -758,14 +758,23 @@ export class Dispatcher {
 
   /**
    * TE-0229: the newest dispatch-<id>-<mode>-<ts>.log under
-   * <home>/runs/<ws>/ — the millisecond suffix sorts by name.
+   * <home>/runs/<ws>/ — the numeric <ts> suffix after the last '-'
+   * decides, not the file name's text (the mode word sorts before the
+   * time stamp, so a text compare lets an old work log hide a newer
+   * review or fix log). The id segment must match exactly.
    */
   latestLogPath(id: string): string | undefined {
     let best: string | undefined;
+    let bestTs = -1;
     try {
       for (const name of readdirSync(this.runsDir())) {
-        if (!name.startsWith(`dispatch-${id}-`) || !name.endsWith(".log")) continue;
-        if (best === undefined || name > best) best = name;
+        const m = /^dispatch-(.+)-[a-z]+-(\d+)\.log$/.exec(name);
+        if (m === null || m[1] !== id) continue;
+        const ts = Number(m[2]);
+        if (ts > bestTs) {
+          best = name;
+          bestTs = ts;
+        }
       }
     } catch {
       return undefined;
