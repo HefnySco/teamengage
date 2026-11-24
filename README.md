@@ -37,6 +37,34 @@ te sync                     # at home: pull it all, then te run carries on
 `te wait --notify` blocks until something needs you, so you can leave
 `te run --watch` running and get pinged.
 
+### Dispatch and the team page
+
+`te run` runs in your terminal. **Dispatch** runs the same loop inside the
+daemon, so agents keep working when no terminal is open. It is off until
+you turn it on:
+
+```bash
+te dispatch on|off|status                  # start or stop the daemon's launcher
+te dispatch pause [--kill] [reason]        # stop new picks; --kill also stops running agents
+te dispatch block <ID> [reason]            # keep one item away from agents
+te dispatch unblock <ID>
+te dispatch reset <ID>                     # clear an item's failure and retry memory
+te discover                                # re-attach agents still running after a daemon restart
+```
+
+Dispatch honours a live limit (`max_issues`) and a selector filter
+(`--filter`, for example `plan:TE-0212`). It refuses a pick when the item
+has already failed twice, is blocked, or has no reviewer that differs from
+the coder. Dispatch state (on/off, limit, filter, pause, failures) survives
+daemon restarts. A claim with no live holder is released automatically after
+`auto_release_after` (default 2 h; `0` turns this off).
+
+The web UI's **team** page (`/ui#/team`) shows the same state as a floor
+plan: developers at their desks, the dispatch desk with its capacity ring,
+the reviewers, and your own desk, where you answer questions and accept
+work. Each item's card shows why admission refused it. The page updates
+live over one shared event stream per browser.
+
 ### Why it helps
 
 - **Agents get fed, you get asked.** `te run` starts the agent CLIs you
@@ -53,7 +81,14 @@ te sync                     # at home: pull it all, then te run carries on
 - **Two machines, one workbench.** `te sync` carries the plans *and* the
   code (accepted merges, open task branches) between home and work, using
   your own git remotes. It only fast-forwards and never merges behind your
-  back.
+  back. With `sync:auto`, the daemon also pushes plan commits as they happen.
+- **Solo mode.** With `autonomy: solo`, an `ok` review is accepted
+  automatically after `auto_accept_after` (30 min by default), unless an
+  accept rule holds it back. Strict mode keeps every accept with you.
+- **Playbooks for ops work.** `te ops` runs named playbooks with gates. An
+  agent runs the steps and records evidence, and stops at each gate for you.
+- **Searchable history.** `te search`, `te history`, `te digest` and
+  `te metrics` answer what was done, what changed a file, and what got stuck.
 
 ### Quick start
 
@@ -115,14 +150,16 @@ src/core        pure model: schema, parser, addressing, index, state machine,
                 claims, validation, mermaid, event log
 src/daemon      single-writer daemon: store, watcher, HTTP server, sessions,
                 human API, SSE
+src/daemon/dispatch  the daemon's agent launcher: admission checks, caps, persisted state
+src/daemon/sync te sync: plans repo + code repos between machines, claim reconciliation
 src/mcp         MCP Streamable HTTP server, tools, stdio shim
 src/cli         `te` commands
 src/resources   git / ssh / folder / url resource drivers
-src/daemon/sync te sync: plans repo + code repos between machines, claim reconciliation
 src/import      importer for existing Markdown task folders
-web/            human web UI, served by the daemon
+web/            human web UI, served by the daemon (board, graph, team page, ops floor)
 skills/         agent skills: te-work (execute), te-review (peer review), te-plan (plan),
-                te-tag (tag domains), te-analysis (triage), te-discuss (save chats)
+                te-tag (tag domains), te-analysis (triage), te-discuss (save chats),
+                te-ops (run playbooks)
 team/           te run setup: coder + reviewer agent CLIs
 ```
 
