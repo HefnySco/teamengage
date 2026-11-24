@@ -31,7 +31,7 @@ export function isReviewerSession(s) {
  * desk (inbox.questions, then inbox.reviews).
  * @param {Array<{id:string,label?:string,holding?:string[]}>} sessions
  * @param {{running?:Array<{id:string,mode?:string}>,matched?:Array<{id:string,admission?:{ok:boolean,reasons:string[]}}>}} dispatch
- * @param {{questions?:Array<{id:string,question?:{text?:string}}>,reviews?:string[]}} inbox
+ * @param {{questions?:Array<{id:string,question?:{text?:string,context?:string,options?:string[]}}>,reviews?:string[],accept_waiting?:Array<{id:string,deps:string[]}>}} inbox
  * @returns {{seats:Map<string,Array<object>>,queue:Array<object>,you:Array<object>,placed:Set<string>}}
  */
 export function derive(sessions, dispatch, inbox) {
@@ -39,6 +39,11 @@ export function derive(sessions, dispatch, inbox) {
   const questions = inbox?.questions ?? [];
   const reviews = inbox?.reviews ?? [];
   const questionIds = new Set(questions.map((q) => q.id));
+  // an in_review item whose deps are not done refuses accept — the ids ride
+  // on the desk card so its popover can hold the accept button off (TE-0231)
+  const acceptWaiting = new Map(
+    (inbox?.accept_waiting ?? []).map((x) => [x.id, x.deps ?? []]),
+  );
   const placed = new Set();
   const seats = new Map(); // session id → [{id, mode}]
   for (const s of sessions ?? []) {
@@ -71,6 +76,9 @@ export function derive(sessions, dispatch, inbox) {
         mode: "ask",
         label: "question",
         title: q.question?.text,
+        // the whole question — the card's popover renders text, context and
+        // the AnswerBox options straight off it (TE-0231)
+        question: q.question,
       })),
     ...reviews
       .filter((id) => !placed.has(id))
@@ -79,6 +87,7 @@ export function derive(sessions, dispatch, inbox) {
         mode: "accept",
         label: "accept",
         title: "in review — waits for your accept",
+        deps: acceptWaiting.get(id) ?? [],
       })),
   ];
   return { seats, queue, you, placed };

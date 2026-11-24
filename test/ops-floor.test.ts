@@ -56,7 +56,60 @@ describe("derive", () => {
     const { seats, you } = derive([s], dispatch, inbox);
     expect(seats.get(s.id)).toEqual([]);
     expect(you).toEqual([
-      { id: "WC-0118", mode: "ask", label: "question", title: "Which tile server?" },
+      {
+        id: "WC-0118",
+        mode: "ask",
+        label: "question",
+        title: "Which tile server?",
+        question: { text: "Which tile server?" },
+      },
+    ]);
+  });
+
+  it("attaches the full question — text, context, options — on an ask entry (TE-0231)", () => {
+    const inbox = {
+      ...emptyInbox,
+      questions: [
+        {
+          id: "TE-0231",
+          question: {
+            text: "Which storage engine?",
+            context: "the ledger outgrew the json file",
+            options: ["sqlite", "jsonl"],
+          },
+        },
+      ],
+    };
+    const { you } = derive([], emptyDispatch, inbox);
+    expect(you[0].question).toEqual({
+      text: "Which storage engine?",
+      context: "the ledger outgrew the json file",
+      options: ["sqlite", "jsonl"],
+    });
+  });
+
+  it("attaches blocked dep ids from accept_waiting on accept entries (TE-0231)", () => {
+    const inbox = {
+      ...emptyInbox,
+      reviews: ["TE-0231", "TE-0232"],
+      accept_waiting: [{ id: "TE-0231", deps: ["TE-0224", "TE-0226"] }],
+    };
+    const { you } = derive([], emptyDispatch, inbox);
+    expect(you).toEqual([
+      {
+        id: "TE-0231",
+        mode: "accept",
+        label: "accept",
+        title: "in review — waits for your accept",
+        deps: ["TE-0224", "TE-0226"],
+      },
+      {
+        id: "TE-0232",
+        mode: "accept",
+        label: "accept",
+        title: "in review — waits for your accept",
+        deps: [],
+      },
     ]);
   });
 

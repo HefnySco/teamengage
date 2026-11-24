@@ -703,25 +703,38 @@ const HoloStage = () => html`<div class="of-stage of-flick">
 // one task card — colours come from the --te-st-* tokens via the m-<mode>
 // class and name the item status like the inbox: work/resume/takeover/fix
 // in_progress, review/accept in_review, ask waiting. Every task link on the
-// floor is a real href into a new tab — a click never moves the team page
-const DocCard = ({ d }) => html`<a
+// floor is a real href into a new tab — a click never moves the team page.
+// onAct (your desk only, TE-0231) adds a corner ⚡ that toggles the card's
+// inline popover — the anchor stays the only clickable surface besides it
+const DocCard = ({ d, onAct, acting }) => html`<span class="of-docwrap"><a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
   title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
   href=${"#/item/" + d.id}
   target="_blank"
   rel="noopener"
-  ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a>`;
+  ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a
+>${onAct &&
+  html`<button
+    class=${"of-act" + (acting ? " on" : "")}
+    title=${d.mode === "ask" ? "answer here" : "accept or reject here"}
+    onClick=${(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onAct(d.id);
+    }}
+    >⚡</button
+  >`}</span>`;
 
 // a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
 // the first cap cards then "+N more"; uncapped seat trays fan their cards
 // past 3 and unfold on hover
-const DocTray = ({ loc, docs, cap = 0 }) => {
+const DocTray = ({ loc, docs, cap = 0, act, onAct }) => {
   const more = cap && docs.length > cap ? docs.length - cap : 0;
   const shown = more ? docs.slice(0, cap) : docs;
   const fan = !cap && docs.length > 3;
   return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
-    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} />`)}
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} />`)}
     ${more > 0 &&
     html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
       >+${more} more</span
@@ -853,11 +866,69 @@ const FrontDesk = ({ dispatch, queue, onDispatch }) => {
   </div>`;
 };
 
+// TE-0231 — a quick-action popover on a your-desk card: it opens inline
+// under the tray, acts on the item through the same /api/items/<id>/* calls
+// the item page uses, then onDone() reloads the floor
+const PopHead = ({ d, kind, onClose }) => html`<div class="of-phead">
+  <b>${d.id}</b><span class="of-kd">${kind}</span>
+  <a class="of-psrc" href=${"#/item/" + d.id} target="_blank" rel="noopener" title="open the item page in a new tab">↗</a>
+  <button class="of-popx" title="close" onClick=${onClose}>×</button>
+</div>`;
+
+// an ask card's popover: the question text, its context, and the AnswerBox
+// — the same confirm-then-post flow the item page runs
+const AskPop = ({ d, onDone, onClose }) => html`<div class="of-pop" data-pop=${d.id}>
+  <${PopHead} d=${d} kind="question" onClose=${onClose} />
+  <div class="my-2 md-view" dangerouslySetInnerHTML=${{ __html: markdownToHtml(d.question?.text ?? "") }} />
+  ${d.question?.context && html`<div class="of-pc">${d.question.context}</div>`}
+  <${AnswerBox} id=${d.id} opts=${d.question?.options} onAnswer=${async (text) => {
+    await post(`/api/items/${d.id}/answer`, { text }).catch((e) => toast(e.message));
+    onDone();
+  }} />
+</div>`;
+
+// an accept card's popover: title and AI review fetched with the item, the
+// unmet deps derive() attached, then confirmed accept / reject — accept
+// stays off while deps block it (the daemon would refuse it anyway)
+const AcceptPop = ({ d, onDone, onClose }) => {
+  const [b, setB] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    api(`/api/items/${d.id}`).then(setB, setErr);
+  }, [d.id]);
+  const it = b?.item;
+  const rev = it?.meta?.ai_review;
+  const deps = d.deps ?? [];
+  const act = async (action, body) => {
+    await post(`/api/items/${d.id}/${action}`, body).catch((e) => toast(e.message));
+    onDone();
+  };
+  return html`<div class="of-pop" data-pop=${d.id}>
+    <${PopHead} d=${d} kind="accept" onClose=${onClose} />
+    <div class="of-pt">${err ? "could not load the item" : it ? it.meta.title : "loading…"}</div>
+    ${rev && html`<div class=${"of-pv " + (rev.verdict === "ok" ? "of-pv-ok" : "of-pv-issues")}>AI review: <b>${rev.verdict}</b>${rev.summary ? " — " + rev.summary : ""}</div>`}
+    ${deps.length > 0 &&
+    html`<div class="of-pd">waits on ${deps.join(", ")} — accept is off until they land</div>`}
+    <div class="d-flex gap-2 mt-2">
+      <button class="btn btn-sm btn-success" disabled=${deps.length > 0} title=${deps.length ? "blocked — dependencies are not done" : "accept — merge the claim's worktrees"} onClick=${async () => {
+        if (await confirmDialog(`accept ${d.id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept");
+      }}>accept</button>
+      <button class="btn btn-sm btn-outline-danger" onClick=${async () => {
+        const reason = await promptDialog(`reject ${d.id} — reason:`);
+        if (reason !== null) act("reject", { reason });
+      }}>reject</button>
+    </div>
+  </div>`;
+};
+
 // the human's desk: a person figure (not a projection) with the questions
-// and the in_review items that wait for an accept, with counts
-const YourDesk = ({ you }) => {
+// and the in_review items that wait for an accept, with counts. A card's ⚡
+// toggles its popover; onDone reloads the floor after an action (TE-0231)
+const YourDesk = ({ you, onDone }) => {
   const nq = you.filter((a) => a.mode === "ask").length;
   const na = you.length - nq;
+  const [open, setOpen] = useState(null); // id of the card whose popover shows
+  const openDoc = you.find((d) => d.id === open);
   return html`<div class="of-deskctr of-you">
     <h3>your desk</h3>
     <div class="of-person">
@@ -883,7 +954,11 @@ const YourDesk = ({ you }) => {
         <path d="M50 42 L 34 58 L 26 74 L 33 78 L 42 64 L 55 52 Z" opacity=".9" />
       </svg>
     </div>
-    <${DocTray} loc="you" docs=${you} cap=${6} />
+    <${DocTray} loc="you" docs=${you} cap=${6} act=${open} onAct=${(id) => setOpen(open === id ? null : id)} />
+    ${openDoc &&
+    (openDoc.mode === "ask"
+      ? html`<${AskPop} d=${openDoc} onDone=${() => { setOpen(null); onDone?.(); }} onClose=${() => setOpen(null)} />`
+      : html`<${AcceptPop} d=${openDoc} onDone=${() => { setOpen(null); onDone?.(); }} onClose=${() => setOpen(null)} />`)}
     <div class="of-sub">
       ${you.length
         ? html`<b>${nq}</b> question${nq === 1 ? "" : "s"} · <b>${na}</b> to accept`
@@ -892,7 +967,7 @@ const YourDesk = ({ you }) => {
   </div>`;
 };
 
-const OpsFloor = ({ sessions, dispatch, inbox, onDispatch }) => {
+const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
   const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
@@ -1056,7 +1131,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch }) => {
             queue=${queue}
             onDispatch=${onDispatch}
           />`}
-          <${YourDesk} you=${you} />
+          <${YourDesk} you=${you} onDone=${onDone} />
         </div>
         <${FloorRoom}
           room="rev"
@@ -1441,6 +1516,7 @@ const Team = () => {
       dispatch=${dispatch}
       inbox=${inbox}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
+      onDone=${reloadFloor}
     />
     ${dispatch
       ? html`

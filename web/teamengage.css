@@ -1530,6 +1530,55 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 /* the flying clone while a card changes desk */
 .of-doc.of-ghost { position: fixed; z-index: 60; pointer-events: none; margin: 0; }
 
+/* TE-0231 — your-desk quick actions: a ⚡ corner button toggles the card's
+   inline popover; it stays a dim nub until the card is hovered or open */
+.of-docwrap { position: relative; display: inline-flex; }
+.of-act {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 3;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--of-line);
+  background: var(--of-docbg);
+  color: var(--of-dim);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.of-docwrap:hover .of-act, .of-act.on { opacity: 1; }
+.of-act.on { color: var(--bs-primary); border-color: var(--bs-primary); }
+
+/* the inline popover a ⚡ opens under your desk's tray */
+.of-pop {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 12px;
+  border: 1px solid var(--of-line);
+  border-radius: 10px;
+  background: var(--of-docbg);
+  box-shadow: var(--of-shadow);
+}
+.of-pop .of-phead { display: flex; align-items: center; gap: 8px; }
+.of-pop .of-phead b { font: 600 12px/1 var(--bs-font-monospace); }
+.of-pop .of-phead .of-kd { font-size: 10px; color: var(--of-dim); }
+.of-pop .of-psrc { margin-left: auto; color: var(--of-dim); text-decoration: none; }
+.of-pop .of-popx { border: 0; background: none; color: var(--of-dim); font-size: 14px; line-height: 1; padding: 0 2px; cursor: pointer; }
+.of-pop .of-psrc:hover, .of-pop .of-popx:hover { color: var(--bs-body-color); }
+.of-pop .of-pt { margin-top: 6px; }
+.of-pop .of-pc { margin-top: 4px; font-size: 11px; color: var(--of-dim); }
+.of-pop .of-pv { margin-top: 6px; font-size: 11px; }
+.of-pop .of-pv-ok { color: var(--bs-success); }
+.of-pop .of-pv-issues { color: var(--bs-danger); }
+.of-pop .of-pd { margin-top: 6px; font-size: 11px; color: var(--bs-warning); }
+
 /* centre column — the dispatch front desk and the human's desk */
 .of-center { display: flex; flex-direction: column; gap: 14px; }
 .of-deskctr {

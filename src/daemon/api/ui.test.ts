@@ -88,6 +88,17 @@ describe("UI serving (UI-0001)", () => {
       expect(js).toContain(marker);
     }
   });
+
+  it("your desk carries the inline answer and accept popovers (TE-0231)", async () => {
+    const res = await fetch(`${daemon.url}/assets/app.js`, {
+      headers: { cookie: `te_token=${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    const js = await res.text();
+    for (const marker of ["of-act", "of-docwrap", "of-pop", "ai_review", "accept_waiting"]) {
+      expect(js).toContain(marker);
+    }
+  });
 });
 
 // the Ops pages read /api/ops/* under the same te_token cookie as every
