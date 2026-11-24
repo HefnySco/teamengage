@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -100,6 +100,9 @@ afterEach(() => {
     sessions.disconnect(session.id);
   }
   rmSync(join(home, ".teamengage", "machine.yaml"), { force: true });
+  // TE-0223: every test workspace is named "ws" — the persisted state file
+  // would leak into the next test's Dispatcher without this
+  rmSync(join(home, "dispatch"), { recursive: true, force: true });
   events.length = 0;
 });
 
@@ -1226,5 +1229,177 @@ describe("te discover: reattach orphaned agent processes (TE-0219)", () => {
     } finally {
       rev.kill();
     }
+  });
+});
+
+describe("dispatch state persists across a restart (TE-0223)", () => {
+  const stateFile = () => join(home, "dispatch", "ws.json");
+  const readState = () =>
+    JSON.parse(readFileSync(stateFile(), "utf8")) as {
+      enabled: boolean;
+      max_issues: number;
+      filter: string;
+      paused: string | null;
+      fixes: Record<string, number>;
+      tried_versions: Record<string, number>;
+      item_failures: Record<string, number>;
+      minted_ids: string[];
+    };
+
+  it("enabled, max_issues, filter and a pause survive a new Dispatcher on the same home", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.update({ enabled: true, max_issues: 3, filter: "ws-*" });
+    d.pause("maintenance");
+    expect(readState()).toMatchObject({
+      enabled: true,
+      max_issues: 3,
+      filter: "ws-*",
+      paused: "maintenance",
+    });
+    // a restarted dispatcher reloads the saved state, not the yaml defaults
+    const d2 = dispatcher(wsr);
+    const st = d2.status();
+    expect(st.enabled).toBe(true);
+    expect(st.max_issues).toBe(3);
+    expect(st.filter).toBe("ws-*");
+    expect(st.paused).toBe("maintenance");
+    expect(st.why_idle).toBe("paused: maintenance");
+    // a lifted pause persists too — the next restart resumes clean
+    d2.unpause();
+    expect(readState().paused).toBeNull();
+  });
+
+  it("tried markers and per-item failure counts survive; resetItem clears them on disk", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "exit 0" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    // a clean exit with no status change marks the item tried and counts one failure
+    const deadline = Date.now() + 8000;
+    let saved: ReturnType<typeof readState> | undefined;
+    while (Date.now() < deadline) {
+      try {
+        saved = readState();
+      } catch {
+        saved = undefined;
+      }
+      if (saved?.tried_versions["WS-0001"] === 1 && saved?.item_failures["WS-0001"] === 1) break;
+      await sleep(40);
+    }
+    expect(saved?.tried_versions["WS-0001"]).toBe(1);
+    expect(saved?.item_failures["WS-0001"]).toBe(1);
+    // the restarted dispatcher still knows the item was tried — no restart
+    const d2 = dispatcher(wsr);
+    d2.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    // reset clears the entries in memory AND on disk — a retry is allowed
+    await d2.resetItem("WS-0001");
+    const after = readState();
+    expect(after.tried_versions["WS-0001"]).toBeUndefined();
+    expect(after.item_failures["WS-0001"]).toBeUndefined();
+    d2.tick();
+    await untilEvent("dispatch_start", 2);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(2);
+  });
+
+  it("minted session ids and the fix counter survive a restart", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "in_progress" },
+        {
+          id: "WS-0002",
+          status: "in_review",
+          aiReview: { verdict: "issues", summary: "broken", note: "fix it" },
+        },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    // WS-0001's holder died — the orphan carries its work marker
+    ops.index.setClaim({
+      item: "WS-0001",
+      holder: "sleep@test#dead1",
+      actor: "agent",
+      machine: "test",
+      targets: [],
+      claimed_at: new Date(Date.now() - 3_600_000).toISOString(),
+      last_seen: new Date(Date.now() - 3_600_000).toISOString(),
+    });
+    // WS-0002 sits in review under its submitter's claim on this machine
+    ops.index.setClaim({
+      item: "WS-0002",
+      holder: "devin@test#hold1",
+      actor: "agent",
+      machine: "test",
+      targets: [],
+      claimed_at: new Date(Date.now() - 3_600_000).toISOString(),
+      last_seen: new Date().toISOString(),
+    });
+    const d = dispatcher(wsr);
+    const orphan = spawn("bash", ["-c", "sleep 30"]);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          {
+            pid: orphan.pid!,
+            ppid: process.pid,
+            started_at: "",
+            item: "WS-0001",
+            mode: "work",
+            role: "coder",
+          },
+        ],
+      });
+      expect(report.reattached).toHaveLength(1);
+      const minted = report.reattached[0].session;
+      // the fix pick consumes the one fix round and starts a child
+      d.tick();
+      await untilEvent("dispatch_start", 1);
+      const saved = readState();
+      expect(saved.minted_ids).toContain(minted);
+      expect(saved.fixes["WS-0002"]).toBe(1);
+      // the minted session dies — its claim goes dead, adoptable by name only
+      // if the restarted dispatcher still knows the minted id (resume needs it)
+      sessions.disconnect(minted);
+      const d2 = dispatcher(wsr);
+      d2.tick();
+      await untilEvent("dispatch_start", 2);
+      const resume = events.find(
+        (e) => e.kind === "dispatch_start" && e.data.id === "WS-0001",
+      );
+      expect(resume?.data.mode).toBe("resume");
+      // the spent fix round refuses a second fix on WS-0002
+      await sleep(150);
+      expect(
+        events.filter((e) => e.kind === "dispatch_start" && e.data.id === "WS-0002"),
+      ).toHaveLength(1);
+    } finally {
+      orphan.kill();
+    }
+  });
+
+  it("a missing or corrupt state file falls back to workspace.yaml defaults", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    // no file at all — the defaults apply
+    const missing = dispatcher(wsr);
+    expect(missing.status().enabled).toBe(true);
+    expect(missing.status().max_issues).toBe(2);
+    // garbage bytes and valid-but-wrong json both fall back, never throw
+    mkdirSync(join(home, "dispatch"), { recursive: true });
+    writeFileSync(stateFile(), "{ not json");
+    const d2 = dispatcher(wsr);
+    expect(d2.status().enabled).toBe(true);
+    expect(d2.status().max_issues).toBe(2);
+    writeFileSync(stateFile(), "42");
+    const d3 = dispatcher(wsr);
+    expect(d3.status().enabled).toBe(true);
+    expect(d3.status().paused).toBeNull();
   });
 });

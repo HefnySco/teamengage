@@ -1,4 +1,5 @@
 import { open, rename, mkdir } from "node:fs/promises";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -24,5 +25,29 @@ export async function writeFileAtomic(path: string, content: string): Promise<vo
     await dh.sync();
   } finally {
     await dh.close();
+  }
+}
+
+/**
+ * Sync variant of writeFileAtomic — same temp → fsync → rename → dir-fsync
+ * order, for callers that cannot await (dispatch runtime state, TE-0223).
+ */
+export function writeFileAtomicSync(path: string, content: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(dir, `.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(tmp, "w");
+  try {
+    writeSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
+  const dfd = openSync(dir, "r");
+  try {
+    fsyncSync(dfd);
+  } finally {
+    closeSync(dfd);
   }
 }

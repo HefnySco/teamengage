@@ -2206,6 +2206,41 @@ describe("shared lessons per domain (GL-0322)", () => {
     expect((await post({ unblock: { id: itemId } })).status).toBe(400);
   });
 
+  it("dispatch runtime state persists — a new Dispatcher on the same home reloads it (TE-0223)", async () => {
+    const post = (body: unknown) =>
+      api("/api/dispatch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const res = await post({
+      enabled: true,
+      max_issues: 5,
+      filter: "ws-*",
+      pause: { reason: "maintenance" },
+    });
+    expect(res.status).toBe(200);
+    try {
+      // a restarted dispatcher reads <home>/dispatch/ws.json — all four
+      // values come back, not the workspace.yaml defaults
+      const { Dispatcher } = await import("../dispatch/dispatch.js");
+      const d2 = new Dispatcher(ctx.workspaces.get("ws")!, ctx.sessions, home);
+      const st = d2.status() as {
+        enabled: boolean;
+        max_issues: number;
+        filter: string;
+        paused: string | null;
+      };
+      expect(st.enabled).toBe(true);
+      expect(st.max_issues).toBe(5);
+      expect(st.filter).toBe("ws-*");
+      expect(st.paused).toBe("maintenance");
+    } finally {
+      // restore the fixture dispatcher (and its state file) for later tests
+      await post({ enabled: false, filter: "", pause: false });
+    }
+  });
+
   it("sessions list each live session's held items (GL-0329)", async () => {
     const sessions = (await (await api("/api/sessions")).json()) as Array<{
       id: string;

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pidAlive, type SessionRegistry } from "../sessions/sessions.js";
+import { writeFileAtomicSync } from "../store/atomic.js";
 import type { Session } from "../../core/model/session.js";
 import { agentTokens } from "../../agent/http.js";
 import type { WorkspaceRuntime } from "../server/context.js";
@@ -36,6 +37,19 @@ export interface DispatchUpdate {
   enabled?: boolean;
   max_issues?: number;
   filter?: string;
+}
+
+/** TE-0223: runtime state written to <home>/dispatch/<ws>.json on every change. */
+interface DispatchPersistedState {
+  enabled?: boolean;
+  max_issues?: number;
+  filter?: string;
+  /** pausedReason — null means "not paused"; "" is a pause with no reason */
+  paused?: string | null;
+  fixes?: Record<string, number>;
+  tried_versions?: Record<string, number>;
+  item_failures?: Record<string, number>;
+  minted_ids?: string[];
 }
 
 interface ActiveChild extends RunningDispatch {
@@ -178,6 +192,35 @@ export class Dispatcher {
     } catch {
       this.filter = parseDispatchFilter("");
     }
+    // TE-0223: runtime state saved on every change wins over the
+    // workspace.yaml defaults; an absent or corrupt file keeps them.
+    const saved = this.loadState();
+    if (saved) {
+      if (typeof saved.enabled === "boolean") this.enabled = saved.enabled;
+      if (Number.isInteger(saved.max_issues) && saved.max_issues! >= 1) {
+        this.maxIssues = saved.max_issues!;
+      }
+      if (typeof saved.filter === "string") {
+        try {
+          this.filter = parseDispatchFilter(saved.filter);
+        } catch {
+          // a filter the current parser rejects keeps the config one
+        }
+      }
+      if (typeof saved.paused === "string") this.pausedReason = saved.paused;
+      for (const [map, savedCounts] of [
+        [this.fixes, saved.fixes],
+        [this.triedVersions, saved.tried_versions],
+        [this.itemFailures, saved.item_failures],
+      ] as const) {
+        for (const [id, count] of Object.entries(savedCounts ?? {})) {
+          if (typeof count === "number" && Number.isFinite(count)) map.set(id, count);
+        }
+      }
+      for (const id of saved.minted_ids ?? []) {
+        if (typeof id === "string") this.mintedIds.add(id);
+      }
+    }
     // TE-0208: a legacy te run command in dispatch.agents is filtered — never
     // silently. One event and a status warning name every dropped entry.
     for (const agent of cfg?.agents ?? []) {
@@ -185,6 +228,49 @@ export class Dispatcher {
       const warning = `dispatch.agents ${agent.role} command '${agent.command}' is a legacy te run — ignored`;
       this.configWarnings.push(warning);
       this.emit("dispatch_config", { warning });
+    }
+  }
+
+  private stateFile(): string {
+    return join(this.home, "dispatch", `${this.wsr.ws.name}.json`);
+  }
+
+  private loadState(): DispatchPersistedState | undefined {
+    let raw: string;
+    try {
+      raw = readFileSync(this.stateFile(), "utf8");
+    } catch {
+      return undefined;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+      return parsed as DispatchPersistedState;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * TE-0223: every runtime-state change lands on disk at once — a restart
+   * must never lose enabled, pause, the filter or the retry counters.
+   * A failed write is reported, never thrown: dispatch keeps running.
+   */
+  private persist(): void {
+    const state: DispatchPersistedState = {
+      enabled: this.enabled,
+      max_issues: this.maxIssues,
+      filter: this.filter.raw,
+      paused: this.pausedReason ?? null,
+      fixes: Object.fromEntries(this.fixes),
+      tried_versions: Object.fromEntries(this.triedVersions),
+      item_failures: Object.fromEntries(this.itemFailures),
+      minted_ids: [...this.mintedIds],
+    };
+    try {
+      writeFileAtomicSync(this.stateFile(), `${JSON.stringify(state, null, 2)}\n`);
+    } catch (e) {
+      this.emit("dispatch_persist_error", { error: (e as Error).message });
     }
   }
 
@@ -203,6 +289,7 @@ export class Dispatcher {
     // TE-0209: "on" also lifts a pause — one obvious way to resume
     if (on) this.pausedReason = undefined;
     this.enabled = on;
+    this.persist();
   }
 
   update(patch: DispatchUpdate): void {
@@ -219,6 +306,7 @@ export class Dispatcher {
     if (patch.enabled !== undefined) {
       this.setEnabled(patch.enabled);
     }
+    this.persist();
   }
 
   stopAll(): void {
@@ -252,6 +340,7 @@ export class Dispatcher {
     this.emit("dispatch_pause", { reason: this.pausedReason, kill });
     this.persistLever("dispatch_pause", reason ? `paused: ${reason}` : "paused");
     if (kill) this.stopAll();
+    this.persist();
   }
 
   unpause(): void {
@@ -259,6 +348,7 @@ export class Dispatcher {
     this.pausedReason = undefined;
     this.emit("dispatch_resume", {});
     this.persistLever("dispatch_resume", "resumed");
+    this.persist();
     if (this.enabled) this.tick();
   }
 
@@ -293,6 +383,7 @@ export class Dispatcher {
     this.triedVersions.delete(id);
     this.fixes.delete(id);
     this.itemFailures.delete(id);
+    this.persist();
     const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
     const it = ops.index.get(id);
     if (!it) throw new NotFoundError(`no item '${id}'`);
@@ -370,23 +461,27 @@ export class Dispatcher {
           ? this.closeRemoteSession(this.baseUrl, entry.token)
           : Promise.resolve();
       void cleanup.finally(() => {
-        const current = new WorkspaceOps(
-          this.wsr,
-          this.sessions,
-          this.wsr.links,
-          this.home,
-        ).index.get(entry.id);
-        if (
-          entry.mode !== "review" &&
-          baseline !== undefined &&
-          current &&
-          current.meta.version === baseline &&
-          (current.meta.status === "ready" || current.meta.status === "in_progress")
-        ) {
-          this.triedVersions.set(entry.id, baseline);
-          this.recordItemFailure(entry.id, "discovered agent exited with no status change");
-        } else {
-          this.itemFailures.delete(entry.id);
+        try {
+          const current = new WorkspaceOps(
+            this.wsr,
+            this.sessions,
+            this.wsr.links,
+            this.home,
+          ).index.get(entry.id);
+          if (
+            entry.mode !== "review" &&
+            baseline !== undefined &&
+            current &&
+            current.meta.version === baseline &&
+            (current.meta.status === "ready" || current.meta.status === "in_progress")
+          ) {
+            this.triedVersions.set(entry.id, baseline);
+            this.recordItemFailure(entry.id, "discovered agent exited with no status change");
+          } else {
+            this.itemFailures.delete(entry.id);
+          }
+        } finally {
+          this.persist();
         }
       });
       this.emit("dispatch_reaped", { id: entry.id, pid: entry.pid });
@@ -618,6 +713,7 @@ export class Dispatcher {
       }
       if (pick.mode === "fix") {
         this.fixes.set(pick.id, (this.fixes.get(pick.id) ?? 0) + 1);
+        this.persist();
       }
       this.startItem(pick, cmdSpec, startVersion);
       if (pick.mode === "work") break;
@@ -656,6 +752,7 @@ export class Dispatcher {
       this.sessions.markDispatchMinted(sessionId);
       // TE-0208: resume admits only holders this dispatcher minted itself
       this.mintedIds.add(sessionId);
+      this.persist();
     }
     return { token, resume, sessionId };
   }
@@ -750,6 +847,7 @@ export class Dispatcher {
         !isReview,
       );
       this.mintedIds.add(session.id);
+      this.persist();
       if (p.token) rebind?.(p.token, session, this.wsr);
       this.children.set(item, {
         id: item,
@@ -821,6 +919,7 @@ export class Dispatcher {
         if (pick.mode === "resume" && !opened.resume.includes(pick.id)) {
           this.children.delete(pick.id);
           this.triedVersions.set(pick.id, startVersion);
+          this.persist();
           void this.closeRemoteSession(baseUrl, opened.token);
           return;
         }
@@ -906,34 +1005,38 @@ export class Dispatcher {
       const cleanup =
         token && this.baseUrl ? this.closeRemoteSession(this.baseUrl, token) : Promise.resolve();
       void cleanup.finally(() => {
-        if (errOrCode instanceof Error) {
-          this.recordFailure(role, pick.id, errOrCode.message);
-          this.recordItemFailure(pick.id, errOrCode.message);
-          return;
-        }
-        if (errOrCode === 0) {
-          this.failures.set(role, 0);
-          const current = new WorkspaceOps(
-            this.wsr,
-            this.sessions,
-            this.wsr.links,
-            this.home,
-          ).index.get(pick.id);
-          if (
-            pick.mode !== "review" &&
-            current &&
-            current.meta.version === startVersion &&
-            (current.meta.status === "ready" || current.meta.status === "in_progress")
-          ) {
-            this.triedVersions.set(pick.id, startVersion);
-            // TE-0208: a clean exit with no progress counts as a failed run
-            this.recordItemFailure(pick.id, "finished with no status change");
-          } else {
-            this.itemFailures.delete(pick.id);
+        try {
+          if (errOrCode instanceof Error) {
+            this.recordFailure(role, pick.id, errOrCode.message);
+            this.recordItemFailure(pick.id, errOrCode.message);
+            return;
           }
-        } else {
-          this.recordFailure(role, pick.id, `exit ${errOrCode}`);
-          this.recordItemFailure(pick.id, `exit ${errOrCode}`);
+          if (errOrCode === 0) {
+            this.failures.set(role, 0);
+            const current = new WorkspaceOps(
+              this.wsr,
+              this.sessions,
+              this.wsr.links,
+              this.home,
+            ).index.get(pick.id);
+            if (
+              pick.mode !== "review" &&
+              current &&
+              current.meta.version === startVersion &&
+              (current.meta.status === "ready" || current.meta.status === "in_progress")
+            ) {
+              this.triedVersions.set(pick.id, startVersion);
+              // TE-0208: a clean exit with no progress counts as a failed run
+              this.recordItemFailure(pick.id, "finished with no status change");
+            } else {
+              this.itemFailures.delete(pick.id);
+            }
+          } else {
+            this.recordFailure(role, pick.id, `exit ${errOrCode}`);
+            this.recordItemFailure(pick.id, `exit ${errOrCode}`);
+          }
+        } finally {
+          this.persist();
         }
       });
     };
@@ -950,6 +1053,7 @@ export class Dispatcher {
       this.enabled = false;
       this.emit("dispatch_off", { reason: `${role} command failed ${count} times in a row` });
     }
+    this.persist();
   }
 
   /**
