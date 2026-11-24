@@ -587,6 +587,31 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return sendErr(reply, e);
     }
   });
+  // TE-0229: the tail of an item's newest dispatch run log — the desk's
+  // log drawer reads it. Human-only like the other dispatch levers.
+  app.get("/api/dispatch/log", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("dispatch logs are human-only");
+      }
+      const q = req.query as { id?: string; lines?: string; ws?: string };
+      if (typeof q.id !== "string" || !q.id.trim()) {
+        throw new ValidationError("id is required");
+      }
+      let lines = 80;
+      if (q.lines !== undefined) {
+        const n = Number(q.lines);
+        if (!Number.isInteger(n) || n < 1) {
+          throw new ValidationError("lines must be an integer >= 1");
+        }
+        lines = n;
+      }
+      return dispatcherFor(wsOf(req.query)).dispatchLogTail(q.id.trim(), lines);
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
   // TE-0219: scan /proc and reattach orphaned agent processes (te discover)
   app.post("/api/dispatch/discover", async (req, reply) => {
     try {

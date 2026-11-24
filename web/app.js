@@ -700,21 +700,43 @@ const HoloStage = () => html`<div class="of-stage of-flick">
   <${HoloFigure} />
 </div>`;
 
+// TE-0229 — a ticking "running for" badge on a seat card; it re-renders
+// itself each second so the desk ages in place
+const Elapsed = ({ at }) => {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return html`\u23f1 ${ago(at)}`;
+};
+
 // one task card — colours come from the --te-st-* tokens via the m-<mode>
 // class and name the item status like the inbox: work/resume/takeover/fix
 // in_progress, review/accept in_review, ask waiting. Every task link on the
 // floor is a real href into a new tab — a click never moves the team page.
 // onAct (your desk only, TE-0231) adds a corner ⚡ that toggles the card's
 // inline popover — the anchor stays the only clickable surface besides it
-const DocCard = ({ d, onAct, acting }) => html`<span class="of-docwrap"><a
+const DocCard = ({ d, onAct, acting, onLog }) => html`<span class="of-docwrap"><a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
   title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
   href=${"#/item/" + d.id}
   target="_blank"
   rel="noopener"
-  ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a
->${onAct &&
+  ><b>${d.id}</b><span>${d.label ?? d.mode}</span>${d.started_at &&
+  html`<span class="of-elapsed" title=${`running since ${hhmm(d.started_at)}`}><${Elapsed} at=${d.started_at} /></span>`}</a
+>${d.has_log &&
+  html`<button
+    class="of-logpeek"
+    title="open the run log"
+    onClick=${(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onLog?.(d.id);
+    }}
+    >${d.last_line || "log"}</button
+  >`}${onAct &&
   html`<button
     class=${"of-act" + (acting ? " on" : "")}
     title=${d.mode === "ask" ? "answer here" : "accept or reject here"}
@@ -729,12 +751,12 @@ const DocCard = ({ d, onAct, acting }) => html`<span class="of-docwrap"><a
 // a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
 // the first cap cards then "+N more"; uncapped seat trays fan their cards
 // past 3 and unfold on hover
-const DocTray = ({ loc, docs, cap = 0, act, onAct }) => {
+const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog }) => {
   const more = cap && docs.length > cap ? docs.length - cap : 0;
   const shown = more ? docs.slice(0, cap) : docs;
   const fan = !cap && docs.length > 3;
   return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
-    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} />`)}
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} onLog=${onLog} />`)}
     ${more > 0 &&
     html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
       >+${more} more</span
@@ -745,7 +767,7 @@ const DocTray = ({ loc, docs, cap = 0, act, onAct }) => {
 
 // one workstation: hologram on a projector disc over a desk card with the
 // agent name, machine, model tag, its task tray and a status line
-const Seat = ({ e, docs, questionIds }) => {
+const Seat = ({ e, docs, questionIds, onLog }) => {
   const { s, gone } = e;
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
@@ -767,7 +789,7 @@ const Seat = ({ e, docs, questionIds }) => {
         <span class="of-lb">${s.machine}</span>
         ${s.model && html`<span class="of-model">${s.model}</span>`}
       </div>
-      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} />
+      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onLog=${onLog} />
       <div class="of-meta"><i class="of-st"></i>${s.role || "agent"} · ${meta}</div>
     </div>
   </div>`;
@@ -794,7 +816,7 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
 
 // one room of the floor: header with live/left counts over the desk grid and
 // the floor log pinned to the bottom
-const FloorRoom = ({ room, entries, seats, questionIds, logs }) => {
+const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog }) => {
   const live = entries.filter((e) => !e.gone).length;
   return html`<section class=${"of-room of-" + room}>
     <div class="of-rhead">
@@ -812,6 +834,7 @@ const FloorRoom = ({ room, entries, seats, questionIds, logs }) => {
             e=${e}
             docs=${seats.get(e.s.id) ?? []}
             questionIds=${questionIds}
+            onLog=${onLog}
           />`,
       )}
     </div>
@@ -967,6 +990,62 @@ const YourDesk = ({ you, onDone }) => {
   </div>`;
 };
 
+// TE-0229 — the desk log drawer: the tail of the item's newest run log in
+// <home>/runs/<ws>/, scrolled to the end; refresh refetches the same tail
+const RunLogModal = ({ id, onClose }) => {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const preRef = useRef(null);
+  const load = async () => {
+    setBusy(true);
+    try {
+      setData(await api(`/api/dispatch/log?id=${encodeURIComponent(id)}&lines=300`));
+      setErr(null);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    setData(null);
+    setErr(null);
+    void load();
+  }, [id]);
+  useLayoutEffect(() => {
+    const el = preRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [data]);
+  return html`
+    <div class="modal-backdrop show"></div>
+    <div class="modal d-block" tabindex="-1"
+      onKeyDown=${(e) => e.key === "Escape" && onClose()}
+      onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header py-2 d-flex align-items-center gap-2">
+            <b class="modal-title fs-6">${id} · run log</b>
+            ${data?.file && html`<span class="small text-secondary text-truncate">${data.file}</span>`}
+            <button type="button" class="btn-close ms-auto" title="close" onClick=${onClose}></button>
+          </div>
+          <div class="modal-body p-0">
+            <pre class="of-logview" ref=${preRef}>${err
+              ? `could not load the log — ${err.message}`
+              : data
+                ? data.lines.join("\n") || "(empty log)"
+                : "loading\u2026"}</pre>
+          </div>
+          <div class="modal-footer py-1">
+            <button class="btn btn-sm btn-outline-secondary me-auto" disabled=${busy}
+              title="fetch the newest tail" onClick=${load}>refresh</button>
+            <button class="btn btn-sm btn-primary" onClick=${onClose}>close</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+};
+
 const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
@@ -978,6 +1057,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
   // floor logs: history events, back-filled from the replay stream then fed
   // live by the shared store — dedupe covers the overlap and a reconnect
   const [hist, setHist] = useState([]);
+  const [logId, setLogId] = useState(null); // TE-0229: the card whose run log shows
   const seen = useRef(new Set());
   useEffect(() => {
     const push = (e) => {
@@ -1123,6 +1203,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
           seats=${seats}
           questionIds=${questionIds}
           logs=${roomLines("dev")}
+          onLog=${setLogId}
         />
         <div class="of-center">
           ${dsp &&
@@ -1139,6 +1220,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
           seats=${seats}
           questionIds=${questionIds}
           logs=${roomLines("rev")}
+          onLog=${setLogId}
         />
       </div>
       <div class="of-ticker">
@@ -1150,6 +1232,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
               : ""}${ticker.room === "you" ? " · by you" : ""}`
           : "waiting for events…"}
       </div>
+      ${logId && html`<${RunLogModal} id=${logId} onClose=${() => setLogId(null)} />`}
     </div>`;
 };
 

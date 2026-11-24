@@ -1532,7 +1532,42 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 
 /* TE-0231 — your-desk quick actions: a ⚡ corner button toggles the card's
    inline popover; it stays a dim nub until the card is hovered or open */
-.of-docwrap { position: relative; display: inline-flex; }
+.of-docwrap { position: relative; display: inline-flex; flex-direction: column; }
+
+/* TE-0229 — a running card carries the elapsed badge inside it and the
+   last log line as a peek under it; the peek opens the log drawer */
+.of-elapsed { font-size: 9px; color: var(--of-dim); font-family: var(--bs-font-monospace); }
+.of-logpeek {
+  max-width: 150px;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--of-line);
+  border-radius: 5px;
+  background: var(--of-docbg);
+  color: var(--of-dim);
+  font: 9px/1.4 var(--bs-font-monospace);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.of-logpeek:hover { color: var(--bs-body-color); border-color: var(--of-dim); }
+
+/* the log drawer a peek opens — tail of dispatch-<id>-*.log, newest at the bottom */
+.of-logview {
+  margin: 0;
+  padding: 10px 14px;
+  max-height: 60vh;
+  min-height: 120px;
+  overflow: auto;
+  font: 11px/1.45 var(--bs-font-monospace);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--bs-body-color);
+  background: var(--of-docbg);
+}
+
 .of-act {
   position: absolute;
   top: -6px;

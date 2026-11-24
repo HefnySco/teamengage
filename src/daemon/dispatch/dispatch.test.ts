@@ -113,6 +113,26 @@ afterEach(() => {
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 describe("Dispatcher per-item launch and online_issues cap (TE-0203)", () => {
+  it("a running entry carries has_log and the last non-empty log line, capped at 160 chars (TE-0229)", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "echo $(printf 'L%.0s' {1..200})TAIL; sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    // the echo must flush into the piped log before status sees it
+    const deadline = Date.now() + 5000;
+    let running = d.status().running;
+    while (!running[0]?.last_line && Date.now() < deadline) {
+      await sleep(40);
+      running = d.status().running;
+    }
+    expect(running[0].id).toBe("WS-0001");
+    expect(running[0].has_log).toBe(true);
+    expect(running[0].last_line).toHaveLength(160);
+    expect(running[0].last_line).toMatch(/^L+$/);
+  });
+
   it("dispatch on + one ready item starts the coder command once for that item", async () => {
     const wsr = await makeWs(
       `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
@@ -1133,6 +1153,8 @@ describe("te discover: reattach orphaned agent processes (TE-0219)", () => {
           role: "coder",
           pid: child.pid,
           started_at: expect.any(String),
+          has_log: expect.any(Boolean),
+          last_line: expect.any(String),
         },
       ]);
       expect(events.some((e) => e.kind === "dispatch_discover")).toBe(true);

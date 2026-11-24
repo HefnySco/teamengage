@@ -1,6 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+  closeSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { pidAlive, type SessionRegistry } from "../sessions/sessions.js";
 import { writeFileAtomicSync } from "../store/atomic.js";
 import type { Session } from "../../core/model/session.js";
@@ -8,7 +19,7 @@ import { agentTokens } from "../../agent/http.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "../api/ops.js";
 import { loadMachineConfig } from "../../core/config/config.js";
-import { NotFoundError, ValidationError } from "../../core/model/errors.js";
+import { ForbiddenError, NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { RunConfig, parseDuration, type DispatchAgent } from "../../core/model/workspace.js";
 import { tierRank, type Tier } from "../../core/model/item.js";
 import {
@@ -33,6 +44,10 @@ export interface RunningDispatch {
   role: "coder" | "reviewer";
   pid: number;
   started_at: string;
+  /** TE-0229: a dispatch-<id>-*.log exists under <home>/runs/<ws>/ */
+  has_log?: boolean;
+  /** TE-0229: the log's last non-empty line, capped at 160 chars */
+  last_line?: string;
 }
 
 export interface DispatchUpdate {
@@ -58,6 +73,8 @@ interface ActiveChild extends RunningDispatch {
   child?: ChildProcess;
   token?: string;
   sessionId?: string;
+  /** TE-0229: the run log this child's stdout/stderr is piped to */
+  log?: string;
   /** TE-0219: item version when an orphan was reattached — the reap baseline */
   baselineVersion?: number;
 }
@@ -164,6 +181,35 @@ export function scanProcesses(procRoot = "/proc"): ProcScan[] {
     out.push(scan);
   }
   return out;
+}
+
+/**
+ * TE-0229: the last n lines of a file, read in tail chunks so a large run
+ * log never loads whole. A trailing partial line (still being written)
+ * counts as a line.
+ */
+function tailLines(path: string, n: number): string[] {
+  const { size } = statSync(path);
+  if (size === 0) return [];
+  const fd = openSync(path, "r");
+  try {
+    let end = size;
+    let buf = Buffer.alloc(0);
+    let breaks = 0;
+    while (end > 0 && breaks <= n) {
+      const start = Math.max(0, end - 64 * 1024);
+      const chunk = Buffer.alloc(end - start);
+      readSync(fd, chunk, 0, chunk.length, start);
+      for (const byte of chunk) if (byte === 0x0a) breaks++;
+      buf = Buffer.concat([chunk, buf]);
+      end = start;
+    }
+    const lines = buf.toString("utf8").split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    return lines.slice(-n);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export class Dispatcher {
@@ -649,13 +695,19 @@ export class Dispatcher {
             admission,
           ).map((c) => ({ ...c, blocked: blockedIds.has(c.id) }))
         : [];
-    const running: RunningDispatch[] = [...this.children.values()].map((entry) => ({
-      id: entry.id,
-      mode: entry.mode,
-      role: entry.role,
-      pid: entry.pid,
-      started_at: entry.started_at,
-    }));
+    const running: RunningDispatch[] = [...this.children.values()].map((entry) => {
+      const known = entry.log ?? this.latestLogPath(entry.id);
+      const log = known !== undefined && existsSync(known) ? known : undefined;
+      return {
+        id: entry.id,
+        mode: entry.mode,
+        role: entry.role,
+        pid: entry.pid,
+        started_at: entry.started_at,
+        has_log: log !== undefined,
+        last_line: log === undefined ? "" : this.lastLogLine(log),
+      };
+    });
     const agentsReady = Boolean(resolved.coders.length || resolved.reviewers.length);
     // TE-0206: a starved dispatcher is never silent — name why nothing starts
     let whyIdle: string | null = null;
@@ -698,6 +750,59 @@ export class Dispatcher {
       failures: Object.fromEntries(this.failures),
       events: this.eventLog.slice(-10),
     };
+  }
+
+  private runsDir(): string {
+    return join(this.home, "runs", this.wsr.ws.name);
+  }
+
+  /**
+   * TE-0229: the newest dispatch-<id>-<mode>-<ts>.log under
+   * <home>/runs/<ws>/ — the millisecond suffix sorts by name.
+   */
+  latestLogPath(id: string): string | undefined {
+    let best: string | undefined;
+    try {
+      for (const name of readdirSync(this.runsDir())) {
+        if (!name.startsWith(`dispatch-${id}-`) || !name.endsWith(".log")) continue;
+        if (best === undefined || name > best) best = name;
+      }
+    } catch {
+      return undefined;
+    }
+    return best === undefined ? undefined : join(this.runsDir(), best);
+  }
+
+  /** The log's last non-empty line, trimmed and capped at 160 chars. */
+  private lastLogLine(path: string): string {
+    try {
+      const tail = tailLines(path, 20);
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const line = tail[i].trim();
+        if (line) return line.slice(0, 160);
+      }
+    } catch {
+      // gone between the dir scan and the read — treated as empty
+    }
+    return "";
+  }
+
+  /**
+   * TE-0229: the tail of the item's newest dispatch log, for the human's
+   * GET /api/dispatch/log. The resolved realpath must stay inside
+   * <home>/runs/<ws>/ — an id that escapes it is refused, a missing log
+   * answers 404.
+   */
+  dispatchLogTail(id: string, lines = 80): { id: string; file: string; lines: string[] } {
+    const path = this.latestLogPath(id);
+    if (path === undefined) throw new NotFoundError(`no dispatch log for '${id}'`);
+    const real = realpathSync(path);
+    const rel = relative(realpathSync(this.runsDir()), real);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      throw new ForbiddenError(`log for '${id}' is outside the runs dir`);
+    }
+    const capped = Math.min(500, Math.max(1, Math.trunc(lines)));
+    return { id, file: basename(real), lines: tailLines(real, capped) };
   }
 
   private emit(kind: string, data: Record<string, unknown>): void {
@@ -921,6 +1026,7 @@ export class Dispatcher {
         token: p.token,
         sessionId: session.id,
         baselineVersion: it.meta.version,
+        log: this.latestLogPath(item),
       });
       this.emit("dispatch_discover", {
         id: item,
@@ -1009,6 +1115,7 @@ export class Dispatcher {
     mkdirSync(logDir, { recursive: true });
     const log = join(logDir, `dispatch-${pick.id}-${pick.mode}-${Date.now()}.log`);
     const out = createWriteStream(log);
+    activeEntry.log = log;
     // an unhandled stream error (e.g. home removed mid-run) must not crash the daemon
     out.on("error", () => {});
     const base = this.baseUrl ?? "http://127.0.0.1:4747";

@@ -2241,6 +2241,43 @@ describe("shared lessons per domain (GL-0322)", () => {
     }
   });
 
+  it("dispatch log tail: human-only, tails the newest run log, 404 on none (TE-0229)", async () => {
+    const runDir = join(home, "runs", "ws");
+    mkdirSync(runDir, { recursive: true });
+    const hundred = Array.from({ length: 100 }, (_, i) => `line-${i + 1}`);
+    writeFileSync(join(runDir, "dispatch-WS-0777-work-100.log"), "stale\n");
+    writeFileSync(join(runDir, "dispatch-WS-0777-work-200.log"), `${hundred.join("\n")}\n`);
+    try {
+      // an agent session never reads the log
+      expect(
+        (await api("/api/dispatch/log?id=WS-0777&lines=5", { headers: { "x-te-session": "a" } }))
+          .status,
+      ).toBe(403);
+
+      // the newest file for the item wins, and lines= cuts the tail
+      const res = await api("/api/dispatch/log?id=WS-0777&lines=5");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { id: string; file: string; lines: string[] };
+      expect(body.id).toBe("WS-0777");
+      expect(body.file).toBe("dispatch-WS-0777-work-200.log");
+      expect(body.lines).toEqual(hundred.slice(-5));
+
+      // no lines= → the 80-line default
+      const dflt = (await (await api("/api/dispatch/log?id=WS-0777")).json()) as {
+        lines: string[];
+      };
+      expect(dflt.lines).toEqual(hundred.slice(-80));
+
+      // validation and the empty case
+      expect((await api("/api/dispatch/log")).status).toBe(400);
+      expect((await api("/api/dispatch/log?id=WS-0777&lines=0")).status).toBe(400);
+      expect((await api("/api/dispatch/log?id=WS-0777&lines=nope")).status).toBe(400);
+      expect((await api("/api/dispatch/log?id=WS-9999")).status).toBe(404);
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
   it("sessions list each live session's held items (GL-0329)", async () => {
     const sessions = (await (await api("/api/sessions")).json()) as Array<{
       id: string;

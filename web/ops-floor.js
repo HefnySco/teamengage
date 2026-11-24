@@ -30,7 +30,7 @@ export function isReviewerSession(s) {
  * a session desk, the dispatch queue (dispatch.matched), then the human's
  * desk (inbox.questions, then inbox.reviews).
  * @param {Array<{id:string,label?:string,holding?:string[]}>} sessions
- * @param {{running?:Array<{id:string,mode?:string}>,matched?:Array<{id:string,admission?:{ok:boolean,reasons:string[]}}>}} dispatch
+ * @param {{running?:Array<{id:string,mode?:string,started_at?:string,has_log?:boolean,last_line?:string}>,matched?:Array<{id:string,admission?:{ok:boolean,reasons:string[]}}>}} dispatch
  * @param {{questions?:Array<{id:string,question?:{text?:string,context?:string,options?:string[]}}>,reviews?:string[],accept_waiting?:Array<{id:string,deps:string[]}>}} inbox
  * @returns {{seats:Map<string,Array<object>>,queue:Array<object>,you:Array<object>,placed:Set<string>}}
  */
@@ -45,7 +45,7 @@ export function derive(sessions, dispatch, inbox) {
     (inbox?.accept_waiting ?? []).map((x) => [x.id, x.deps ?? []]),
   );
   const placed = new Set();
-  const seats = new Map(); // session id → [{id, mode}]
+  const seats = new Map(); // session id → [{id, mode, started_at?, has_log?, last_line?}]
   for (const s of sessions ?? []) {
     // a waiting item (open question) is on the human's desk, never on a seat
     const ids = (s.holding ?? []).filter((id) => !questionIds.has(id));
@@ -60,7 +60,19 @@ export function derive(sessions, dispatch, inbox) {
       ids.push(s.label);
     seats.set(
       s.id,
-      ids.map((id) => (placed.add(id), { id, mode: running.get(id)?.mode || "work" })),
+      ids.map((id) => {
+        placed.add(id);
+        const r = running.get(id);
+        // TE-0229: the card carries the run facts a seat shows — the
+        // elapsed badge reads started_at, the log peek has_log/last_line
+        return {
+          id,
+          mode: r?.mode || "work",
+          ...(r?.started_at !== undefined ? { started_at: r.started_at } : {}),
+          ...(r?.has_log !== undefined ? { has_log: r.has_log } : {}),
+          ...(r?.last_line ? { last_line: r.last_line } : {}),
+        };
+      }),
     );
   }
   const queue = (dispatch?.matched ?? [])

@@ -133,6 +133,32 @@ describe("derive", () => {
     expect([...placed].filter((id) => id === "SE-0009")).toHaveLength(1);
   });
 
+  it("passes started_at, has_log and last_line from dispatch.running onto the seat card (TE-0229)", () => {
+    const s = session({ label: "TE-0229" });
+    const dispatch = {
+      ...emptyDispatch,
+      running: [
+        {
+          id: "TE-0229",
+          mode: "work",
+          started_at: "2026-11-25T09:05:00.000Z",
+          has_log: true,
+          last_line: "writing the log drawer",
+        },
+      ],
+    };
+    const { seats } = derive([s], dispatch, emptyInbox);
+    expect(seats.get(s.id)).toEqual([
+      {
+        id: "TE-0229",
+        mode: "work",
+        started_at: "2026-11-25T09:05:00.000Z",
+        has_log: true,
+        last_line: "writing the log drawer",
+      },
+    ]);
+  });
+
   it("keeps the admission verdict on a matched queue entry (TE-0224)", () => {
     const dispatch = {
       ...emptyDispatch,
