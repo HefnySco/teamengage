@@ -2,15 +2,16 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { PlansStore } from "../store/store.js";
 import { resolveWorkspace } from "../../core/config/config.js";
 import { startDaemon, type DaemonHandle } from "../server/server.js";
 import type { DaemonCtx } from "../server/context.js";
-import type { WorkspaceOps } from "./ops.js";
+import { WorkspaceOps } from "./ops.js";
 import { SessionRegistry } from "../sessions/sessions.js";
 import { EventBus, registerEventRoutes, eventId } from "./events.js";
 import { registerApiRoutes } from "./api.js";
+import { registerAgentRoutes } from "../../agent/http.js";
 import type { Event } from "../../core/model/event.js";
 import { NotFoundError } from "../../core/model/errors.js";
 
@@ -65,6 +66,7 @@ beforeAll(async () => {
     register: (app) => {
       registerApiRoutes(app, ctx);
       registerEventRoutes(app, ctx.bus);
+      registerAgentRoutes(app, ctx);
     },
   });
   api = (path, init = {}) =>
@@ -2954,5 +2956,86 @@ describe("unprocessed decisions in the inbox (TE-0164)", () => {
     };
     expect(inbox2.decisions.some((x) => x.item === extId)).toBe(false);
     expect(inbox2.decisions.some((x) => x.item === workId)).toBe(false);
+  });
+});
+
+describe("POST /api/dispatch/discover — te discover (TE-0219)", () => {
+  it("reattaches an orphan over a real /proc scan — session live, claim adopted, old token answers again", async () => {
+    // a second workspace so the shared fixture items stay untouched
+    const root = join(home, "ws2");
+    const plans2 = join(root, ".teamengage");
+    mkdirSync(join(plans2, "items", "WS"), { recursive: true });
+    writeFileSync(
+      join(plans2, "workspace.yaml"),
+      "name: ws2\nprefix: WS\nresources:\n  self: { kind: git, path: . }\n",
+    );
+    writeFileSync(join(plans2, "items", "WS", "WS-1000.md"), item("WS-1000", "ready"));
+    execFileSync("git", ["init", "-b", "main"], { cwd: plans2 });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: plans2 });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: plans2 });
+    execFileSync("git", ["add", "-A"], { cwd: plans2 });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: plans2 });
+    const ws2 = resolveWorkspace(root, { home });
+    const store2 = new PlansStore(ws2, "test");
+    await store2.init();
+    const wsr2 = { ws: ws2, store: store2 };
+    ctx.workspaces.set("ws2", wsr2);
+    const { Dispatcher } = await import("../dispatch/dispatch.js");
+    const d2 = new Dispatcher(wsr2, ctx.sessions, home);
+    ctx.dispatchers!.set("ws2", d2);
+    const child = spawn("bash", ["-c", "sleep 60"], {
+      env: {
+        ...process.env,
+        TE_ITEM: "WS-1000",
+        TE_MODE: "work",
+        TE_ROLE: "coder",
+        TE_SESSION: "tok-e2e-discover",
+      },
+    });
+    try {
+      const ops2 = new WorkspaceOps(wsr2, ctx.sessions, undefined, home);
+      // the orphan's old session held WS-1000 and vanished with the restart
+      const gone = ctx.sessions.hello("devin");
+      await ops2.claim("WS-1000", gone);
+      ctx.sessions.disconnect(gone.id);
+
+      // agents never discover — the marker header is refused
+      const forbidden = await api("/api/dispatch/discover?ws=ws2", {
+        method: "POST",
+        headers: { "x-te-session": "tok-e2e-discover", "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(forbidden.status).toBe(403);
+
+      const res = await api("/api/dispatch/discover?ws=ws2", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(res.status).toBe(200);
+      const report = (await res.json()) as {
+        reattached: Array<{ pid: number; id: string; session: string; claim: string; token: boolean }>;
+      };
+      const hit = report.reattached.find((r) => r.id === "WS-1000");
+      expect(hit).toMatchObject({ pid: child.pid, claim: "adopted", token: true });
+      expect(ops2.index.get("WS-1000")!.claim!.holder).toBe(hit!.session);
+      expect(ctx.sessions.get(hit!.session)?.pid).toBe(child.pid);
+      expect(ctx.sessions.isLive(hit!.session)).toBe(true);
+
+      // the recovered token answers without a new hello — not NO_SESSION
+      const log = await fetch(`${daemon.url}/agent/log/WS-1000`, {
+        method: "POST",
+        headers: { "x-te-session": "tok-e2e-discover", "content-type": "application/json" },
+        body: JSON.stringify({ note: "still alive" }),
+      });
+      expect(log.status).toBe(200);
+      // and the rediscovered pid counts in dispatch
+      expect(d2.status().online_issues).toBe(1);
+    } finally {
+      child.kill();
+      ctx.workspaces.delete("ws2");
+      ctx.dispatchers!.delete("ws2");
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

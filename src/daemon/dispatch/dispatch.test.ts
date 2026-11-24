@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
-import { Dispatcher, isLegacyTeRunCommand } from "./dispatch.js";
+import { execFileSync, spawn } from "node:child_process";
+import { Dispatcher, isLegacyTeRunCommand, scanProcesses } from "./dispatch.js";
 import { resolveWorkspace, type LoadedWorkspace } from "../../core/config/config.js";
 import { PlansStore } from "../store/store.js";
 import { SessionRegistry } from "../sessions/sessions.js";
@@ -1036,6 +1036,164 @@ describe("a dispatch-minted session carries the spawned child's pid (TE-0218)", 
       d.stopAll();
       await handle.close();
       rmSync(srvHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("te discover: reattach orphaned agent processes (TE-0219)", () => {
+  const markedChild = (env: Record<string, string>) =>
+    spawn("bash", ["-c", "sleep 30"], { env: { ...process.env, ...env } });
+
+  it("scanProcesses finds a spawned child's TE_* markers in /proc", async () => {
+    const child = markedChild({
+      TE_ITEM: "WS-0001",
+      TE_MODE: "work",
+      TE_ROLE: "coder",
+      TE_SESSION: "tok-scan",
+    });
+    try {
+      const found = scanProcesses("/proc").find((p) => p.pid === child.pid);
+      expect(found).toMatchObject({
+        item: "WS-0001",
+        mode: "work",
+        role: "coder",
+        token: "tok-scan",
+      });
+      expect(found!.ppid).toBe(process.pid);
+      expect(found!.started_at).toBeTruthy();
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("an orphan gets a live pid session, the dead claim, its rebound token and a children entry that reaps on exit", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    // the orphan's old session once claimed the item, then vanished
+    const gone = await ops.hello("devin");
+    await ops.claim("WS-0001", gone.session);
+    sessions.disconnect(gone.session.id);
+
+    const child = markedChild({
+      TE_ITEM: "WS-0001",
+      TE_MODE: "work",
+      TE_ROLE: "coder",
+      TE_SESSION: "tok-orphan",
+    });
+    const rebound: Array<{ token: string; session: string }> = [];
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        rebind: (token, session) => rebound.push({ token, session: session.id }),
+        scan: () => [
+          {
+            pid: child.pid!,
+            ppid: process.pid,
+            started_at: new Date().toISOString(),
+            item: "WS-0001",
+            mode: "work",
+            role: "coder",
+            token: "tok-orphan",
+          },
+        ],
+      });
+      expect(report.reattached).toEqual([
+        {
+          pid: child.pid,
+          id: "WS-0001",
+          session: expect.any(String),
+          claim: "adopted",
+          token: true,
+        },
+      ]);
+      const sessionId = report.reattached[0].session;
+      // the minted session carries the process pid — the pid probe rules it
+      expect(sessions.get(sessionId)?.pid).toBe(child.pid);
+      expect(sessions.isLive(sessionId)).toBe(true);
+      // the item's dead claim is adopted — holder is the new session
+      expect(ops.index.get("WS-0001")!.claim!.holder).toBe(sessionId);
+      // the recovered token is re-bound to that session
+      expect(rebound).toEqual([{ token: "tok-orphan", session: sessionId }]);
+      // and the pid counts in online_issues and the running list
+      expect(d.status().online_issues).toBe(1);
+      expect(d.status().running).toEqual([
+        {
+          id: "WS-0001",
+          mode: "work",
+          role: "coder",
+          pid: child.pid,
+          started_at: expect.any(String),
+        },
+      ]);
+      expect(events.some((e) => e.kind === "dispatch_discover")).toBe(true);
+
+      // when the process exits the entry is reaped and the session ends
+      child.kill();
+      await new Promise((resolve) => child.once("exit", resolve));
+      expect(d.status().running).toEqual([]);
+      expect(d.status().online_issues).toBe(0);
+      expect(events.some((e) => e.kind === "dispatch_reaped")).toBe(true);
+      expect(sessions.isLive(sessionId)).toBe(false);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("lists unmarked, descendant, dead-pid, unknown-item, live-claim and already-running processes as skipped", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const live = sessions.hello("devin");
+    await ops.claim("WS-0001", live); // a live claim — the proc must not take it
+
+    const plain = spawn("bash", ["-c", "sleep 30"]);
+    const rootA = markedChild({ TE_ITEM: "WS-0001", TE_SESSION: "tok-a" });
+    const rootB = markedChild({ TE_ITEM: "WS-0002", TE_SESSION: "tok-b" });
+    const twin = markedChild({ TE_ITEM: "WS-0002", TE_SESSION: "tok-b2" });
+    const other = markedChild({ TE_ITEM: "WS-0099" });
+    const deadPid = 4_194_303; // past the usual pid_max — never alive
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          { pid: plain.pid!, ppid: process.pid, started_at: "" },
+          { pid: rootA.pid!, ppid: process.pid, started_at: "", item: "WS-0001", token: "tok-a" },
+          // a descendant: its parent carries the same TE_ITEM
+          { pid: 4_194_302, ppid: rootA.pid!, started_at: "", item: "WS-0001", token: "tok-a" },
+          { pid: rootB.pid!, ppid: process.pid, started_at: "", item: "WS-0002", token: "tok-b" },
+          { pid: twin.pid!, ppid: process.pid, started_at: "", item: "WS-0002", token: "tok-b2" },
+          { pid: deadPid, ppid: process.pid, started_at: "", item: "WS-0003" },
+          { pid: other.pid!, ppid: process.pid, started_at: "", item: "WS-0099" },
+        ],
+      });
+      const reason = (pid?: number) =>
+        report.skipped.find((s) => s.pid === pid)?.reason;
+      expect(reason(plain.pid)).toBe("no_marker");
+      expect(reason(4_194_302)).toBe("child_process");
+      expect(reason(rootA.pid)).toBe("claim_live");
+      expect(reason(deadPid)).toBe("exited");
+      expect(reason(other.pid)).toBe("unknown_item");
+      // WS-0002 has no claim — the first root reattaches, the second is a duplicate
+      expect(report.reattached.map((r) => r.id)).toEqual(["WS-0002"]);
+      expect(report.reattached[0].claim).toBe("none");
+      expect(report.reattached[0].token).toBe(true);
+      expect(reason(twin.pid)).toBe("already_running");
+      const minted = report.reattached[0].session;
+      expect(minted.startsWith("discovered@test#")).toBe(true);
+      expect(sessions.isDispatchMinted(minted)).toBe(true);
+      expect(ops.index.get("WS-0002")!.claim ?? null).toBeNull();
+      expect(ops.index.get("WS-0001")!.claim!.holder).toBe(live.id);
+    } finally {
+      for (const c of [plain, rootA, rootB, twin, other]) c.kill();
     }
   });
 });

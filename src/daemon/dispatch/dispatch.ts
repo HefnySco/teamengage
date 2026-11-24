@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { SessionRegistry } from "../sessions/sessions.js";
+import { pidAlive, type SessionRegistry } from "../sessions/sessions.js";
+import type { Session } from "../../core/model/session.js";
+import { agentTokens } from "../../agent/http.js";
 import type { WorkspaceRuntime } from "../server/context.js";
 import { WorkspaceOps } from "../api/ops.js";
 import { loadMachineConfig } from "../../core/config/config.js";
@@ -40,6 +42,8 @@ interface ActiveChild extends RunningDispatch {
   child?: ChildProcess;
   token?: string;
   sessionId?: string;
+  /** TE-0219: item version when an orphan was reattached — the reap baseline */
+  baselineVersion?: number;
 }
 
 interface ResolvedCommands {
@@ -67,6 +71,76 @@ function buildSpawnScript(command: string, source: "dispatch" | "run"): string {
     return `${command} "$TE_PROMPT"`;
   }
   return command;
+}
+
+/** A process found in /proc — TE_* markers identify a spawned agent. */
+export interface ProcScan {
+  pid: number;
+  ppid: number;
+  started_at: string;
+  item?: string;
+  mode?: Mode;
+  role?: "coder" | "reviewer";
+  token?: string;
+}
+
+export interface DiscoverReattached {
+  pid: number;
+  id: string;
+  session: string;
+  claim: "adopted" | "none";
+  token: boolean;
+}
+
+export interface DiscoverSkipped {
+  pid: number;
+  item?: string;
+  reason: string;
+}
+
+export interface DiscoverReport {
+  scanned: number;
+  reattached: DiscoverReattached[];
+  skipped: DiscoverSkipped[];
+}
+
+const SCAN_MODES = new Set(["work", "fix", "resume", "review", "takeover"]);
+
+/**
+ * TE-0219: read /proc for agent processes — a spawned child carries TE_ITEM,
+ * TE_MODE, TE_ROLE and its X-TE-Session token in TE_SESSION. Processes whose
+ * environ is unreadable (another uid, gone mid-scan) come back unmarked.
+ */
+export function scanProcesses(procRoot = "/proc"): ProcScan[] {
+  const out: ProcScan[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(procRoot);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const dir = join(procRoot, name);
+    const scan: ProcScan = { pid: Number(name), ppid: 0, started_at: "" };
+    try {
+      scan.started_at = statSync(dir).mtime.toISOString();
+      const env: Record<string, string> = {};
+      for (const part of readFileSync(join(dir, "environ")).toString("latin1").split("\0")) {
+        const eq = part.indexOf("=");
+        if (eq > 0) env[part.slice(0, eq)] = part.slice(eq + 1);
+      }
+      scan.ppid = Number(/^PPid:\s*(\d+)$/m.exec(readFileSync(join(dir, "status"), "utf8"))?.[1] ?? 0);
+      if (env.TE_ITEM) scan.item = env.TE_ITEM;
+      if (env.TE_MODE && SCAN_MODES.has(env.TE_MODE)) scan.mode = env.TE_MODE as Mode;
+      if (env.TE_ROLE === "coder" || env.TE_ROLE === "reviewer") scan.role = env.TE_ROLE;
+      if (env.TE_SESSION) scan.token = env.TE_SESSION;
+    } catch {
+      // unreadable or exited mid-scan — stays unmarked
+    }
+    out.push(scan);
+  }
+  return out;
 }
 
 export class Dispatcher {
@@ -279,12 +353,53 @@ export class Dispatcher {
     return parseDuration(this.wsr.ws.config.live_claim_window);
   }
 
+  /**
+   * TE-0219: a rediscovered orphan has no ChildProcess handle — the pid
+   * probe is its exit. Reaped like a normal exit: the token's session is
+   * closed, and "gone with no status change since adoption" counts as a
+   * failed run under the TE-0208 breaker.
+   */
+  private reapAdoptedChildren(): void {
+    for (const entry of [...this.children.values()]) {
+      if (entry.child !== undefined || entry.pid <= 0 || pidAlive(entry.pid)) continue;
+      this.children.delete(entry.id);
+      if (this.pendingClaim === entry.id) this.pendingClaim = undefined;
+      const baseline = entry.baselineVersion;
+      const cleanup =
+        entry.token && this.baseUrl
+          ? this.closeRemoteSession(this.baseUrl, entry.token)
+          : Promise.resolve();
+      void cleanup.finally(() => {
+        const current = new WorkspaceOps(
+          this.wsr,
+          this.sessions,
+          this.wsr.links,
+          this.home,
+        ).index.get(entry.id);
+        if (
+          entry.mode !== "review" &&
+          baseline !== undefined &&
+          current &&
+          current.meta.version === baseline &&
+          (current.meta.status === "ready" || current.meta.status === "in_progress")
+        ) {
+          this.triedVersions.set(entry.id, baseline);
+          this.recordItemFailure(entry.id, "discovered agent exited with no status change");
+        } else {
+          this.itemFailures.delete(entry.id);
+        }
+      });
+      this.emit("dispatch_reaped", { id: entry.id, pid: entry.pid });
+    }
+  }
+
   private collectBoard(ops: WorkspaceOps): {
     items: RunItem[];
     ready: string[];
     onlineIds: Set<string>;
     tried: Set<string>;
   } {
+    this.reapAdoptedChildren();
     const machine = this.wsr.store.machine;
     const now = Date.now();
     const windowMs = this.liveWindowMs();
@@ -553,6 +668,105 @@ export class Dispatcher {
     const ids = new Set<string>(this.children.keys());
     if (this.pendingClaim) ids.add(this.pendingClaim);
     return ids;
+  }
+
+  /**
+   * TE-0219 — reattach orphaned agent processes. A dispatch child outlives
+   * its session two ways: the session is idle-pruned while the agent stays
+   * quiet, or the daemon restarts (sessions, HTTP tokens and `children` are
+   * in-memory). For each marked orphan: mint a session carrying its pid,
+   * adopt the item's dead claim so the holder matches the new session,
+   * rebind its recovered TE_SESSION token so the next X-TE-Session call
+   * works without a new hello, and put the pid back in `children` so it
+   * counts toward `online_issues` and exits are reaped.
+   */
+  async discoverOrphans(
+    opts: {
+      scan?: () => ProcScan[];
+      rebind?: (token: string, session: Session, wsr: WorkspaceRuntime) => void;
+    } = {},
+  ): Promise<DiscoverReport> {
+    const rebind = opts.rebind ?? agentTokens.rebind;
+    const procs = (opts.scan ?? (() => scanProcesses()))();
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const report: DiscoverReport = { scanned: procs.length, reattached: [], skipped: [] };
+    // a marker tree shares one env — only the process whose parent does NOT
+    // carry the same TE_ITEM is the spawned root we track
+    const markedByItem = new Map<string, Set<number>>();
+    for (const p of procs) {
+      if (!p.item) continue;
+      let set = markedByItem.get(p.item);
+      if (!set) markedByItem.set(p.item, (set = new Set()));
+      set.add(p.pid);
+    }
+    const roots = procs
+      .filter((p) => p.item !== undefined && !markedByItem.get(p.item)!.has(p.ppid))
+      .sort((a, b) => a.pid - b.pid);
+    const rootPids = new Set(roots.map((p) => p.pid));
+    for (const p of procs) {
+      if (!p.item) report.skipped.push({ pid: p.pid, reason: "no_marker" });
+      else if (!rootPids.has(p.pid))
+        report.skipped.push({ pid: p.pid, item: p.item, reason: "child_process" });
+    }
+    for (const p of roots) {
+      const item = p.item!;
+      const skip = (reason: string) => report.skipped.push({ pid: p.pid, item, reason });
+      if (this.children.has(item)) {
+        skip("already_running");
+        continue;
+      }
+      if (!pidAlive(p.pid)) {
+        skip("exited");
+        continue;
+      }
+      const it = ops.index.get(item);
+      if (!it) {
+        skip("unknown_item");
+        continue;
+      }
+      if (it.claim && !ops.claimDead(it.claim)) {
+        skip("claim_live");
+        continue;
+      }
+      // adoption matches the holder's agent name — take it from the dead
+      // claim; an unclaimed item gets a plain "discovered" session
+      const agent = it.claim ? it.claim.holder.split("@")[0].split("#")[0] : "discovered";
+      const { session, resume } = await ops.hello(
+        agent,
+        p.pid,
+        undefined,
+        p.role,
+        undefined,
+        item,
+        true,
+      );
+      this.mintedIds.add(session.id);
+      if (p.token) rebind?.(p.token, session, this.wsr);
+      this.children.set(item, {
+        id: item,
+        mode: p.mode ?? "work",
+        role: p.role ?? "coder",
+        pid: p.pid,
+        started_at: p.started_at || new Date().toISOString(),
+        token: p.token,
+        sessionId: session.id,
+        baselineVersion: it.meta.version,
+      });
+      this.emit("dispatch_discover", {
+        id: item,
+        pid: p.pid,
+        session: session.id,
+        adopted: resume.length > 0,
+      });
+      report.reattached.push({
+        pid: p.pid,
+        id: item,
+        session: session.id,
+        claim: resume.length > 0 ? "adopted" : "none",
+        token: p.token !== undefined,
+      });
+    }
+    return report;
   }
 
   private closeRemoteSession(baseUrl: string, token: string): Promise<void> {

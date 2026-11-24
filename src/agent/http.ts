@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { z, type ZodTypeAny } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { DaemonCtx } from "../daemon/server/context.js";
+import type { DaemonCtx, WorkspaceRuntime } from "../daemon/server/context.js";
+import type { Session } from "../core/model/session.js";
 import type { AgentBinding } from "../mcp/server/mcp.js";
 import { registerReadTools } from "../mcp/tools/read.js";
 import { registerWriteTools } from "../mcp/tools/write.js";
@@ -59,6 +60,15 @@ interface HttpSession {
 }
 
 export const SESSION_HEADER = "x-te-session";
+
+/**
+ * TE-0219: filled by registerAgentRoutes so `te discover` can rebind an
+ * orphan's recovered TE_SESSION token to the session it re-mints — the
+ * token map itself lives in the route registrar's closure.
+ */
+export const agentTokens: {
+  rebind?: (token: string, session: Session, wsr: WorkspaceRuntime) => void;
+} = {};
 
 const STATUS: Record<string, number> = {
   NO_SESSION: 401,
@@ -230,6 +240,13 @@ Responses are compact text. Errors: "ERROR <CODE>: message" with HTTP 4xx/5xx.
 
 export function registerAgentRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
   const sessions = new Map<string, HttpSession>(); // token → session
+
+  // TE-0219: a rediscovered orphan keeps its old token — rebind it to the
+  // session discover re-minted so its next call skips a new hello
+  agentTokens.rebind = (token, session, wsr) => {
+    const binding: AgentBinding = { session, wsr };
+    sessions.set(token, { binding, tools: collectTools(binding, ctx) });
+  };
 
   void app.register(async (scope) => {
     // agents send JSON with whatever content-type curl picks (-d defaults to

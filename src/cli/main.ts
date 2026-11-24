@@ -28,6 +28,7 @@ import { opsCmd } from "./commands/ops.js";
 import { verifyCmd } from "./commands/verify.js";
 import { metricsCmd } from "./commands/metrics.js";
 import { dispatchCmd } from "./commands/dispatch.js";
+import { discoverCmd } from "./commands/discover.js";
 import { digestCmd } from "./commands/digest.js";
 import { machinesCmd, envCmd } from "./commands/machines.js";
 import {
@@ -147,6 +148,7 @@ const USAGE_ALL = `te — every command
   metrics [--plan <ID>] [--json]  scorecards derived from the event log
   digest [--since 24h]            finished / stuck / waits-for-you since your last action
   dispatch on|off|status          the daemon's agent launcher (GL-0328)
+  discover [--ws w]               reattach orphaned agent processes after a restart (TE-0219)
   approve | accept | claim | release <ID> [note]
   answer <ID> <text>
   reject | drop <ID> [reason]     (reject --release: claim freed → ready for another agent)
@@ -291,6 +293,8 @@ async function main(argv: string[]): Promise<number> {
       return digestCmd(rest, home);
     case "dispatch":
       return dispatchCmd(rest, home);
+    case "discover":
+      return discoverCmd(rest, home);
     case "sync":
       return syncCmd(rest, home);
     case "ops":

@@ -587,6 +587,35 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       return sendErr(reply, e);
     }
   });
+  // TE-0219: scan /proc and reattach orphaned agent processes (te discover)
+  app.post("/api/dispatch/discover", async (req, reply) => {
+    try {
+      if (req.headers["x-te-session"]) {
+        throw new ForbiddenError("discover is human-only");
+      }
+      const d = dispatcherFor(wsOf(req.query));
+      return await d.discoverOrphans();
+    } catch (e) {
+      return sendErr(reply, e);
+    }
+  });
+
+  // TE-0219: the daemon runs the same scan `te discover` exposes at start —
+  // a restart orphaned every running agent's session, token and child
+  // entry. Deferred until the route registrars finish so the token-rebind
+  // hook (agent/http.ts) is set first.
+  setImmediate(() => {
+    for (const name of ctx.workspaces.keys()) {
+      const d = ctx.dispatchers?.get(name);
+      if (!d) continue;
+      void d.discoverOrphans().catch((err: Error) =>
+        ctx.bus.notify("dispatch_discover", {
+          workspace: name,
+          message: `discover scan failed: ${err.message}`,
+        }),
+      );
+    }
+  });
 
   // ---- task folder git: human-pressed Pull / Commit & Push ----------------
   app.get("/api/metrics", async (req, reply) => {

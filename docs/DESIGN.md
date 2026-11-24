@@ -572,6 +572,17 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   `te dispatch on|set|off|status [--max <n>] [--filter <expr>]` controls it;
   changes are human-only. Commands run in the workspace root with `TE_PROMPT`,
   `TE_ITEM`, `TE_MODE`, and `TE_SESSION`, and log to `~/.teamengage/runs/<ws>/`.
+  Sessions, HTTP tokens and the children table are in-memory — a daemon
+  restart orphans every running agent (and before the pid attach, a quiet
+  agent's session was idle-pruned while it worked). `te discover`
+  (`POST /api/dispatch/discover`, human-only; the daemon runs the same scan
+  at start) reads `/proc` for `TE_ITEM`/`TE_SESSION` markers and reattaches
+  each orphan's root process: a session minted with the process pid (the
+  pid probe, not `session_idle_after`, governs it), the item's dead claim
+  adopted to that session, the recovered token rebound so the next
+  `X-TE-Session` call works without a new `hello`, and the pid back in the
+  children table so it counts in `online_issues` and its exit is reaped
+  (`dispatch_discover`, `dispatch_reaped` events).
   The forced levers are human-only too (`POST /api/dispatch`, the CLI and the
   team page): `te dispatch pause [--kill] [reason]` stops new starts at once
   and names the reason in `status.why_idle` as `paused: <reason>`; `resume`
