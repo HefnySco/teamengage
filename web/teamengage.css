@@ -1480,6 +1480,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-doc.m-review, .of-doc.m-accept { --m: var(--te-st-in_review); }
 .of-doc.m-ask { --m: var(--te-st-waiting); border-style: dashed; }
 .of-doc.of-blocked { opacity: 0.45; }
+/* admission refused the item — muted, a step above a block's fade (TE-0224) */
+.of-doc.of-refused { opacity: 0.6; filter: saturate(0.4); border-style: dashed; }
 /* the flying clone while a card changes desk */
 .of-doc.of-ghost { position: fixed; z-index: 60; pointer-events: none; margin: 0; }
 
@@ -1668,6 +1670,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-ftext::placeholder { color: var(--of-faint); }
 .dispatch-strip { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
 .dispatch-chip { display: inline-flex; align-items: center; gap: .2rem; }
+/* admission refusal tag on a matched chip — muted, the reason sits in the tooltip (TE-0224) */
+.dispatch-refused-tag { opacity: 0.75; font-style: italic; }
 @media (max-width: 575.98px) {
   .of-fbar { flex-basis: 100%; }
 }

@@ -79,6 +79,25 @@ describe("derive", () => {
     expect(you).toEqual([]);
     expect([...placed].filter((id) => id === "SE-0009")).toHaveLength(1);
   });
+
+  it("keeps the admission verdict on a matched queue entry (TE-0224)", () => {
+    const dispatch = {
+      ...emptyDispatch,
+      matched: [
+        {
+          id: "TE-0224",
+          mode: "work",
+          title: "show refusal reasons",
+          admission: { ok: false, reasons: ["max_attempts", "dispatch_blocked"] },
+        },
+      ],
+    };
+    const { queue } = derive([], dispatch, emptyInbox);
+    expect(queue[0].admission).toEqual({
+      ok: false,
+      reasons: ["max_attempts", "dispatch_blocked"],
+    });
+  });
 });
 
 describe("feed", () => {

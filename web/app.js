@@ -649,9 +649,9 @@ const HoloStage = () => html`<div class="of-stage of-flick">
 // class and name the item status like the inbox: work/resume/takeover/fix
 // in_progress, review/accept in_review, ask waiting
 const DocCard = ({ d, onOpen }) => html`<a
-  class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "")}
+  class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
-  title=${(d.title ? d.title + " · " : "") + (d.mode || "")}
+  title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
   onClick=${() => onOpen(d.id)}
   ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a>`;
 
@@ -1395,9 +1395,9 @@ const Team = ({ onOpen }) => {
                 <span class="text-secondary">matched ${matchedItems.length}:</span>
                 ${matchedItems.slice(0, 20).map(
                   (m) =>
-                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
+                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : m.admission?.ok === false ? `refused: ${m.admission.reasons.join("; ")} — ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
                       ? html`<span class="triage-tag dispatch-blocked-tag">blocked</span><button class="btn btn-link btn-sm p-0 dispatch-unblock" title="unblock — let dispatch start it again" onClick=${() => unblockItem(m.id)}>unblock</button><button class="btn btn-link btn-sm p-0 dispatch-reset" title="reset — clear tried/fix/failure memory" onClick=${() => resetItem(m.id)}>reset</button>`
-                      : html`<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
+                      : html`${m.admission?.ok === false ? html`<span class="triage-tag dispatch-refused-tag">refused</span>` : ""}<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
                 )}
                 ${matchedItems.length > 20 && html`<span class="text-secondary">+${matchedItems.length - 20} more</span>`}`
             : html`<span class="text-secondary">${dispatch.enabled ? "0 matched — standby" : "0 matched"}</span>`}

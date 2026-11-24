@@ -16,7 +16,7 @@ const isReviewerRole = (role) => /review/i.test(role ?? "");
  * a session desk, the dispatch queue (dispatch.matched), then the human's
  * desk (inbox.questions, then inbox.reviews).
  * @param {Array<{id:string,label?:string,holding?:string[]}>} sessions
- * @param {{running?:Array<{id:string,mode?:string}>,matched?:Array<{id:string}>}} dispatch
+ * @param {{running?:Array<{id:string,mode?:string}>,matched?:Array<{id:string,admission?:{ok:boolean,reasons:string[]}}>}} dispatch
  * @param {{questions?:Array<{id:string,question?:{text?:string}}>,reviews?:string[]}} inbox
  * @returns {{seats:Map<string,Array<object>>,queue:Array<object>,you:Array<object>,placed:Set<string>}}
  */
@@ -46,6 +46,8 @@ export function derive(sessions, dispatch, inbox) {
   }
   const queue = (dispatch?.matched ?? [])
     .filter((x) => !placed.has(x.id))
+    // the entry passes through whole — admission { ok, reasons } stays on it
+    // so the card and the chip can show why dispatch refused it (TE-0224)
     .map((x) => (placed.add(x.id), x));
   const you = [
     ...questions

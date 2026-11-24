@@ -68,6 +68,17 @@ describe("UI serving (UI-0001)", () => {
       expect(js).toContain(marker);
     }
   });
+
+  it("the team page carries the admission refusal styles (TE-0224)", async () => {
+    const res = await fetch(`${daemon.url}/assets/app.js`, {
+      headers: { cookie: `te_token=${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    const js = await res.text();
+    for (const marker of ["of-refused", "dispatch-refused-tag"]) {
+      expect(js).toContain(marker);
+    }
+  });
 });
 
 // the Ops pages read /api/ops/* under the same te_token cookie as every
