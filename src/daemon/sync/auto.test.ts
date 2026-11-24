@@ -11,7 +11,6 @@ import type { WorkspaceRuntime } from "../server/context.js";
 import { pullBeforeMutation, pushPlansAuto, remotePlanIds, checkRemoteTargetLock } from "./sync.js";
 import { claimToYaml } from "../../core/claims/claims.js";
 import { readLockFile } from "../../core/ops/lock.js";
-import { ClaimRefusedError } from "../../core/model/errors.js";
 import { allocateId, idPrefix } from "../../core/address/refs.js";
 
 /**
