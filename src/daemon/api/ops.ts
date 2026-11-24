@@ -217,6 +217,7 @@ export class WorkspaceOps {
     label?: string,
     dispatch?: boolean,
     carryFrom?: string,
+    adopt = true,
   ): Promise<{ session: Session; resume: Claim[]; resumable: Claim[] }> {
     // GL-0360: the model id is stored lowercased — convert, never refuse
     const session = this.sessions.hello(agent, {
@@ -240,9 +241,11 @@ export class WorkspaceOps {
     // Adopting every dead claim of the name stranded claims on sessions that
     // never worked them and filled the dispatch cap after each restart.
     // The other dead claims are listed as resumable: claim one to take it over.
-    const prior = dead.filter(
-      (c) => (label !== undefined && c.item === label) || (carryFrom !== undefined && c.holder === carryFrom),
-    );
+    const prior = adopt
+      ? dead.filter(
+          (c) => (label !== undefined && c.item === label) || (carryFrom !== undefined && c.holder === carryFrom),
+        )
+      : [];
     const resumable = dead.filter((c) => !prior.includes(c));
     const resume = await this.store.rebindClaims(prior, session.id);
     if (dispatch) this.sessions.markDispatchMinted(session.id);

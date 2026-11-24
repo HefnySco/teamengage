@@ -78,9 +78,10 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         model: z.string().optional(),
         label: z.string().optional(),
         dispatch: z.boolean().optional(),
+        adopt: z.boolean().optional(),
       },
     },
-    async ({ agent, workspace, tier, role, model, label, dispatch }) => {
+    async ({ agent, workspace, tier, role, model, label, dispatch, adopt }) => {
       try {
         const ops = opsFor(binding, ctx, workspace);
         if ("content" in ops) return ops;
@@ -89,7 +90,7 @@ export function registerReadTools(server: McpServer, binding: AgentBinding, ctx:
         const replaced = binding.session?.id;
         if (replaced) ctx.sessions.disconnect(replaced);
         const { session, resume, resumable } = await ops.hello(
-          agent, binding.clientPid, tier, role, model, label, dispatch, replaced,
+          agent, binding.clientPid, tier, role, model, label, dispatch, replaced, adopt,
         );
         binding.session = session;
         const ws = ops.wsr.ws;

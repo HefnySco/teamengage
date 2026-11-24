@@ -58,6 +58,8 @@ export interface DispatchClause {
   target: DispatchTarget;
   status?: DispatchStatusFilter;
   allowedModes: ReadonlySet<Mode>;
+  /** '-' prefix — a match disqualifies the item instead of admitting it */
+  negate?: boolean;
 }
 
 export interface DispatchFilter {
@@ -143,10 +145,10 @@ export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admissi
         // a same-named session the dispatcher never opened is the
         // phantom-resume hole — name match alone never qualifies
         failed.push(`holder ${holder} was not minted by this dispatcher`);
-      } else if (!ctx.isLive(holder)) {
-        failed.push(`holder ${holder} is not live`);
+      } else if (item.claim?.dead === false || ctx.isLive(holder)) {
+        failed.push(`holder ${holder} is still live`);
       } else {
-        passed.push(`holder ${holder} minted and live`);
+        passed.push(`holder ${holder} minted by this dispatcher`);
       }
       break;
     }
@@ -277,13 +279,15 @@ function tokenizeClauses(raw: string): string[] {
   for (let idx = 0; idx < words.length; idx++) {
     const word = words[idx];
     const lower = word.toLowerCase();
-    if (lower === "plan" || lower === "plan:" || lower === "in:") {
+    const dash = lower.startsWith("-") ? "-" : "";
+    const bare = dash ? lower.slice(1) : lower;
+    if (bare === "plan" || bare === "plan:" || bare === "in:") {
       const nextWord = words[idx + 1];
       if (!nextWord || nextWord.toLowerCase() === "plan") {
         throw new ValidationError(`missing plan id after '${word}'`);
       }
-      const prefix = lower === "in:" ? "in:" : "plan:";
-      clauses.push(`${prefix}${nextWord}`);
+      const prefix = bare === "in:" ? "in:" : "plan:";
+      clauses.push(`${dash}${prefix}${nextWord}`);
       idx++;
       continue;
     }
@@ -293,10 +297,20 @@ function tokenizeClauses(raw: string): string[] {
 }
 
 function parseClause(token: string): DispatchClause {
-  const lower = token.toLowerCase();
+  let body = token;
+  let negate = false;
+  if (body.startsWith("-")) {
+    negate = true;
+    body = body.slice(1);
+    if (!body || body.startsWith("-")) {
+      throw new ValidationError(`empty target in dispatch selector '${token}'`);
+    }
+  }
+  const lower = body.toLowerCase();
+  const neg = negate ? { negate } : {};
   if (lower.startsWith("plan:") || lower.startsWith("in:")) {
     const prefixLength = lower.startsWith("plan:") ? 5 : 3;
-    const [planId, statusSuffix] = splitTargetAndStatus(token.slice(prefixLength), token);
+    const [planId, statusSuffix] = splitTargetAndStatus(body.slice(prefixLength), token);
     const { status, allowedModes } = parseStatusSuffix(statusSuffix);
     return {
       target: {
@@ -306,10 +320,11 @@ function parseClause(token: string): DispatchClause {
       },
       status,
       allowedModes,
+      ...neg,
     };
   }
-  if (token.startsWith("#")) {
-    const [rawDomain, statusSuffix] = splitTargetAndStatus(token.slice(1), token);
+  if (body.startsWith("#")) {
+    const [rawDomain, statusSuffix] = splitTargetAndStatus(body.slice(1), token);
     const domain = normalizeDomain(rawDomain);
     if (!domain) {
       throw new ValidationError(`empty domain in dispatch selector '${token}'`);
@@ -319,9 +334,10 @@ function parseClause(token: string): DispatchClause {
       target: { kind: "domain", domain },
       status,
       allowedModes,
+      ...neg,
     };
   }
-  const [idPattern, statusSuffix] = splitTargetAndStatus(token, token);
+  const [idPattern, statusSuffix] = splitTargetAndStatus(body, token);
   const { status, allowedModes } = parseStatusSuffix(statusSuffix);
   return {
     target: {
@@ -331,6 +347,7 @@ function parseClause(token: string): DispatchClause {
     },
     status,
     allowedModes,
+    ...neg,
   };
 }
 
@@ -341,7 +358,13 @@ export function parseDispatchFilter(raw = ""): DispatchFilter {
   }
   const tokens = tokenizeClauses(trimmed);
   const clauses = tokens.map(parseClause);
-  if (clauses.length === 1 && clauses[0].target.kind === "id" && clauses[0].target.rawPattern === "*" && !clauses[0].status) {
+  if (
+    clauses.length === 1 &&
+    !clauses[0].negate &&
+    clauses[0].target.kind === "id" &&
+    clauses[0].target.rawPattern === "*" &&
+    !clauses[0].status
+  ) {
     return { raw: trimmed, clauses: [] };
   }
   return { raw: trimmed, clauses };
@@ -390,9 +413,19 @@ export function matchesDispatchFilter(
   itemsById: ReadonlyMap<string, RunItem>,
 ): boolean {
   if (!filter || filter.clauses.length === 0) return true;
-  return filter.clauses.some(
-    (clause) => clause.allowedModes.has(mode) && clauseMatchesTarget(clause, item, itemsById),
-  );
+  // positive clauses OR as before; a negated clause that hits disqualifies.
+  // An exclusion-only filter has no positive side — it matches by default.
+  let positiveHit = !filter.clauses.some((clause) => !clause.negate);
+  for (const clause of filter.clauses) {
+    if (!clause.allowedModes.has(mode)) continue;
+    const hit = clauseMatchesTarget(clause, item, itemsById);
+    if (clause.negate) {
+      if (hit) return false;
+    } else if (hit) {
+      positiveHit = true;
+    }
+  }
+  return positiveHit;
 }
 
 function buildItemsById(items: RunItem[]): Map<string, RunItem> {
@@ -492,8 +525,12 @@ export function listDispatchCandidates(
 
   const ours = (entry: RunItem) =>
     entry.claim != null && sessionIdMatches(entry.claim.holder, coderName, machine);
+  const canResume = (entry: RunItem) =>
+    ours(entry) &&
+    entry.claim?.dead === true &&
+    (!admission || admission.mintedSessions.has(entry.claim!.holder));
   for (const entry of items) {
-    if (entry.status === "in_progress" && ours(entry) && !st.tried.has(entry.id)) {
+    if (entry.status === "in_progress" && canResume(entry) && !st.tried.has(entry.id)) {
       pushCandidate(entry, "resume");
     }
   }
@@ -502,7 +539,7 @@ export function listDispatchCandidates(
       entry.status === "in_progress" &&
       entry.claim?.dead === true &&
       here(entry) &&
-      !ours(entry) &&
+      !canResume(entry) &&
       !st.tried.has(entry.id)
     ) {
       pushCandidate(entry, "takeover");
@@ -575,10 +612,14 @@ export function pickNext(
 
   const ours = (entry: RunItem) =>
     entry.claim != null && sessionIdMatches(entry.claim.holder, coderName, machine);
+  const canResume = (entry: RunItem) =>
+    ours(entry) &&
+    entry.claim?.dead === true &&
+    (!admission || admission.mintedSessions.has(entry.claim!.holder));
   for (const entry of items) {
     if (
       entry.status !== "in_progress" ||
-      !ours(entry) ||
+      !canResume(entry) ||
       !free(entry.id) ||
       st.tried.has(entry.id) ||
       !allowed(entry, "resume")
@@ -594,7 +635,7 @@ export function pickNext(
       entry.status !== "in_progress" ||
       entry.claim?.dead !== true ||
       !here(entry) ||
-      ours(entry) ||
+      canResume(entry) ||
       !free(entry.id) ||
       st.tried.has(entry.id) ||
       !allowed(entry, "takeover")

@@ -16,7 +16,7 @@ Forced levers (human only):
 
 Options:
   --max <n>        max active local issues (dispatches + live local in_progress claims)
-  --filter <expr>  item selector (e.g. "SE-01xx:inreview, Plan PL-1032:ready", "" clears)
+  --filter <expr>  item selector (e.g. "SE-01xx:inreview, Plan PL-1032:ready, -SE-0105", "" clears)
   --ws <name>      workspace name
 
 Configure defaults in workspace.yaml (falls back to ~/.teamengage/machine.yaml run:):

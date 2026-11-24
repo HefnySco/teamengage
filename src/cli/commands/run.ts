@@ -66,7 +66,7 @@ and logs to ~/.teamengage/runs/<workspace>/.
 
 options:
   --max <n>         start at most n new tasks
-  --filter <expr>   restrict items (e.g. "SE-01xx:inreview, Plan PL-1032:ready")
+  --filter <expr>   restrict items (e.g. "SE-01xx:inreview, Plan PL-1032:ready, -SE-0105")
   --watch           keep going when idle (pick up tasks as you approve them)
   --dry-run         print what would start, start nothing
   --ws <name>       pick a workspace
@@ -161,13 +161,18 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   /** Open the agent's session for it, so it ends when the agent's process does. */
   // label: this run works ONE item — hello adopts only that item's dead
   // claim (resume), never the machine's other dead claims of the agent name
-  const hello = async (agent: string, item: string): Promise<{ token: string; resume: string[] }> => {
+  const hello = async (
+    agent: string,
+    item: string,
+    adopt: boolean,
+  ): Promise<{ token: string; resume: string[] }> => {
     const res = await fetch(`${base}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         agent,
         label: item,
+        adopt,
         ...(opt(args, "--ws") ? { workspace: opt(args, "--ws") } : {}),
       }),
     });
@@ -190,7 +195,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       if (p.mode === "work") st.started++;
       return;
     }
-    const s = await hello(p.mode === "review" ? `${name}-review` : name, p.id);
+    const s = await hello(p.mode === "review" ? `${name}-review` : name, p.id, p.mode === "resume");
     if (p.mode === "resume" && !s.resume.includes(p.id)) {
       // its holder is still live (an interactive session of the same name?) — not ours to resume
       await bye(s.token);

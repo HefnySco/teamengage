@@ -49,6 +49,7 @@ describe("pickNext", () => {
     expect(pickNext(cfg(), st(), [item("A-2", "in_progress", { claim: same })], [], "work")).toEqual({ id: "A-2", mode: "resume" });
     // live holder, dead claim on another machine, tried — not picked
     expect(pickNext(cfg(), st(), [item("A-3", "in_progress", { claim: { ...dead, dead: false } })], [], "work")).toBeUndefined();
+    expect(pickNext(cfg(), st(), [item("A-3b", "in_progress", { claim: { ...same, dead: false } })], [], "work")).toBeUndefined();
     expect(pickNext(cfg(), st(), [item("A-4", "in_progress", { claim: { ...dead, machine: "home" } })], [], "work")).toBeUndefined();
     expect(pickNext(cfg(), st({ tried: new Set(["A-1"]) }), items, [], "work")).toBeUndefined();
   });

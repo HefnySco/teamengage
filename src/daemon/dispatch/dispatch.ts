@@ -149,6 +149,9 @@ export class Dispatcher {
   stopAll(): void {
     for (const active of this.children.values()) {
       active.child?.kill();
+      if (active.token && this.baseUrl) {
+        void this.closeRemoteSession(this.baseUrl, active.token);
+      }
     }
     this.children.clear();
     this.pendingClaim = undefined;
@@ -510,11 +513,19 @@ export class Dispatcher {
     agent: string,
     role: "coder" | "reviewer",
     label: string,
+    adopt: boolean,
   ): Promise<{ token: string; resume: string[] }> {
     const res = await fetch(`${baseUrl}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent, role, label, workspace: this.wsr.ws.name, dispatch: true }),
+      body: JSON.stringify({
+        agent,
+        role,
+        label,
+        workspace: this.wsr.ws.name,
+        dispatch: true,
+        adopt,
+      }),
     });
     const text = await res.text();
     const token = /^token (\S+)/m.exec(text)?.[1];
@@ -577,7 +588,7 @@ export class Dispatcher {
     const baseUrl = this.baseUrl;
     const baseAgent = agentName(cmdSpec.command);
     const sessionAgent = role === "reviewer" ? `${baseAgent}-review` : baseAgent;
-    void this.openRemoteSession(baseUrl, sessionAgent, role, pick.id)
+    void this.openRemoteSession(baseUrl, sessionAgent, role, pick.id, pick.mode === "resume")
       .then((opened) => {
         if (!this.children.has(pick.id)) {
           void this.closeRemoteSession(baseUrl, opened.token);

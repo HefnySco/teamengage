@@ -670,27 +670,160 @@ const Office = ({ sessions, dispatch, onOpen, onDispatch }) => {
     </div>`;
 };
 
+// ---- dispatch filter editor (team page) ------------------------------------
+// the selector text splits into two draft fields: bare positive id patterns
+// (TE-0001, SE-01xx) become removable chips; everything else — #domains,
+// plan:/in: targets, :status suffixes, -exclusions — stays in the text field.
+const FILTER_SEP = /[\s,]+/;
+// chip-eligible: only id-pattern characters and no '-'/'#'/':'/'plan' opener
+const isChipToken = (t) => /^[A-Za-z0-9*?_-]+$/.test(t) && !t.startsWith("-");
+const isPlanOpener = (t) => {
+  const b = t.startsWith("-") ? t.slice(1).toLowerCase() : t.toLowerCase();
+  return b === "plan" || b === "plan:" || b === "in:";
+};
+const splitFilter = (raw) => {
+  const words = (raw ?? "").split(FILTER_SEP).filter(Boolean);
+  const chips = [];
+  const rest = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (isPlanOpener(w)) {
+      rest.push(w);
+      if (i + 1 < words.length) rest.push(words[++i]);
+      continue;
+    }
+    (isChipToken(w) ? chips : rest).push(w);
+  }
+  return { chips, text: rest.join(" ") };
+};
+const composeFilter = (chips, text) =>
+  [...new Set(chips), ...(text ?? "").split(FILTER_SEP).filter(Boolean)].join(", ");
+// same filter through the same split always lands on one canonical string —
+// the dirty check compares canonical forms, not the user's keystrokes
+const canonicalFilter = (raw) => {
+  const s = splitFilter(raw);
+  return composeFilter(s.chips, s.text);
+};
+// suggestion rows for the filter box, driven by the token being typed —
+// mirrors the selector grammar: -exclusions, #domains, plan:/in: subtrees,
+// :status suffixes and plain task ids
+const DISPATCH_STATUS_SUG = [
+  ["ready", "work picks"],
+  ["inreview", "review + fix picks"],
+  ["inprogress", "resume + takeover picks"],
+];
+const filterSug = (q, tasks, plans) => {
+  const words = q.split(FILTER_SEP);
+  const tok = words[words.length - 1] ?? "";
+  // a 'plan'/'in' opener word makes the next token a plan-id pick
+  const prev = words.length > 1 ? words[words.length - 2] : "";
+  const prevBare = prev.startsWith("-") ? prev.slice(1).toLowerCase() : prev.toLowerCase();
+  const afterPlanKw = prevBare === "plan" || prevBare === "plan:" || prevBare === "in:";
+  const neg = tok.startsWith("-") ? "-" : "";
+  const body = neg ? tok.slice(1) : tok;
+  const statusSug = () => {
+    const idx = body.lastIndexOf(":");
+    const w = body.slice(idx + 1).toLowerCase();
+    const items = DISPATCH_STATUS_SUG.filter(([s]) => s.startsWith(w)).map(([s, d]) => ({
+      insert: `${neg}${body.slice(0, idx)}:${s}`,
+      body: html`<b>:${s}</b> <span class="text-secondary">${d}</span>`,
+    }));
+    return items.length ? { title: "status", items } : null;
+  };
+  const planSug = (kw, w, asText = false) => ({
+    title: "plans",
+    items: plans
+      .filter((p) => p.id.toUpperCase().includes(w.toUpperCase()))
+      .slice(0, 8)
+      .map((p) => ({
+        // a '-' on the plan word carries the negation — never on the id itself
+        insert: `${asText ? "" : neg}${kw}${p.id}`,
+        // completes a 'plan <word>' opener — it belongs in the text, not a chip
+        ...(asText ? { asText } : {}),
+        body: html`<b>${p.id}</b> <span class="text-secondary">${p.title}</span>`,
+      })),
+  });
+  let def = null;
+  if (afterPlanKw) {
+    def = planSug("", body, true);
+  } else if (body.startsWith("#")) {
+    def = body.includes(":")
+      ? statusSug()
+      : {
+          title: "domains",
+          items: Object.entries(
+            tasks.reduce((m, i) => {
+              for (const d of i.domains ?? []) m[d] = (m[d] ?? 0) + 1;
+              return m;
+            }, {}),
+          )
+            .filter(([d]) => d.includes(body.slice(1).toLowerCase()))
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([d, n]) => ({
+              insert: `${neg}#${d}`,
+              body: html`<i class="dot" style=${`--c:${domainColors[d] ?? fallbackColor(d)}`}></i><b>#${d}</b><span class="ms-auto text-secondary">${n}</span>`,
+            })),
+        };
+  } else if (/^(plan|in):/i.test(body)) {
+    const rest = body.replace(/^(plan|in):/i, "");
+    const kw = /^in:/i.test(body) ? "in:" : "plan:";
+    def = rest.includes(":") ? statusSug() : planSug(kw, rest);
+  } else if (body.includes(":")) {
+    def = statusSug();
+  } else if (body) {
+    const w = body.toUpperCase();
+    const items = ["plan:", "in:"]
+      .filter((kw) => kw.startsWith(body.toLowerCase()))
+      .map((kw) => ({
+        insert: `${neg}${kw}`,
+        body: html`<b>${kw}</b> <span class="text-secondary">a plan subtree</span>`,
+      }));
+    items.push(
+      ...tasks
+        .filter((i) => i.id.toUpperCase().includes(w))
+        .slice(0, 8 - items.length)
+        .map((i) => ({
+          insert: `${neg}${i.id}`,
+          body: html`<b>${i.id}</b> <span class="triage-tag">${i.status}</span> <span class="text-secondary">${i.title}</span>`,
+        })),
+    );
+    def = items.length ? { title: "tasks", items } : null;
+  }
+  if (def && !def.items.length) def = null;
+  return { def, tok };
+};
+
 // GL-0329 / TE-0204 — the live team page: sessions with what they hold, plus
 // per-item dispatch controls (on/off, max online issues, wildcard selector,
 // matched preview, and last 10 events). Refreshes over SSE.
 const Team = ({ onOpen }) => {
   const { data: sessions, reload: reloadSessions } = useApi("/api/sessions");
   const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
+  const { data: items } = useApi("/api/items");
   const serverMax = dispatch?.max_issues ?? dispatch?.max_sessions ?? 2;
   const serverFilter = dispatch?.filter ?? "";
   const [maxInput, setMaxInput] = useState(String(serverMax));
-  const [filterInput, setFilterInput] = useState(serverFilter);
+  const [filterChips, setFilterChips] = useState([]);
+  const [filterText, setFilterText] = useState(serverFilter);
+  const [sugSel, setSugSel] = useState(0); // highlighted suggestion row
+  const [sugOff, setSugOff] = useState(false); // Esc dismisses until the text changes
+  const [sugFocus, setSugFocus] = useState(false); // dropdown only while the input is focused
 
   useEffect(() => {
     if (dispatch) setMaxInput(String(dispatch.max_issues ?? dispatch.max_sessions ?? 2));
   }, [dispatch?.max_issues, dispatch?.max_sessions]);
 
   useEffect(() => {
-    if (dispatch) setFilterInput(dispatch.filter ?? "");
+    if (!dispatch) return;
+    const s = splitFilter(dispatch.filter ?? "");
+    setFilterChips(s.chips);
+    setFilterText(s.text);
   }, [dispatch?.filter]);
 
   const sendDispatch = (payload) =>
     post("/api/dispatch", payload).then(reloadDispatch, (e) => toast(e.message));
+
+  const draftFilter = composeFilter(filterChips, filterText);
 
   const buildDraftPatch = () => {
     const parsedMax = Number(maxInput);
@@ -698,7 +831,7 @@ const Team = ({ onOpen }) => {
       toast("max issues must be an integer >= 1");
       return null;
     }
-    return { max_issues: parsedMax, filter: filterInput.trim() };
+    return { max_issues: parsedMax, filter: draftFilter };
   };
 
   const applyDraft = () => {
@@ -716,10 +849,34 @@ const Team = ({ onOpen }) => {
   };
 
   const clearFilter = () => {
-    setFilterInput("");
+    setFilterChips([]);
+    setFilterText("");
     const parsedMax = Number(maxInput);
     const validMax = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : serverMax;
     sendDispatch({ max_issues: validMax, filter: "" });
+  };
+
+  const removeChip = (chip) => setFilterChips(filterChips.filter((c) => c !== chip));
+
+  // × on a matched candidate — keep it out of this queue with a -id exclusion.
+  // An exact positive chip for it goes too; but never leave the filter with
+  // no positive clause — "TE-1, -TE-1" is an empty queue, "-TE-1" alone
+  // would match everything else.
+  const excludeItem = (id) => {
+    const idx = filterChips.findIndex((c) => c.toUpperCase() === id.toUpperCase());
+    const dropChip = idx >= 0;
+    const keptChips = dropChip ? filterChips.filter((_, i) => i !== idx) : filterChips;
+    const nextText = `${filterText} -${id}`.trim();
+    const nextChips =
+      dropChip &&
+      !composeFilter(keptChips, nextText)
+        .split(FILTER_SEP)
+        .some((t) => t && !t.startsWith("-"))
+        ? filterChips
+        : keptChips;
+    setFilterChips(nextChips);
+    setFilterText(nextText);
+    sendDispatch({ filter: composeFilter(nextChips, nextText) });
   };
 
   // TE-0209 forced levers: pause stops new starts, block parks one item,
@@ -749,7 +906,59 @@ const Team = ({ onOpen }) => {
   const agentsReady = Boolean(dispatch?.agents_ready ?? dispatch?.agents?.length);
   const draftDirty =
     dispatch != null &&
-    (Number(maxInput) !== serverMax || filterInput.trim() !== serverFilter.trim());
+    (Number(maxInput) !== serverMax || draftFilter !== canonicalFilter(serverFilter));
+
+  // filter suggestions — the pool is what the selector can reach: task-type
+  // items for ids/domains, epics+features for plan: subtrees
+  const tasks = (items ?? []).filter(
+    (i) => !i.archived && !["epic", "idea", "discussion", "feature"].includes(i.type),
+  );
+  const plans = (items ?? []).filter(
+    (i) => !i.archived && (i.type === "epic" || i.type === "feature"),
+  );
+  const { def: sugDef, tok: filterTok } = filterSug(filterText, tasks, plans);
+  const sug = sugFocus && !sugOff ? sugDef : null;
+  const sel = sug ? Math.min(sugSel, sug.items.length - 1) : 0;
+  const applySug = (insert) => {
+    const rest = filterText.slice(0, filterText.length - filterTok.length);
+    const clean = insert.trim();
+    const asText = sug?.items.some((i) => i.insert === insert && i.asText);
+    if (isChipToken(clean) && !asText) {
+      if (!filterChips.some((c) => c.toUpperCase() === clean.toUpperCase())) {
+        setFilterChips([...filterChips, clean]);
+      }
+      setFilterText(rest);
+    } else {
+      setFilterText(rest + insert + " ");
+    }
+  };
+  const setFilterDraft = (v) => {
+    setFilterText(v);
+    setSugOff(false); // a new token reopens a dismissed dropdown
+  };
+  const onFilterKey = (e) => {
+    if (sug) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSugSel((s) => (s + (e.key === "ArrowDown" ? 1 : -1) + sug.items.length) % sug.items.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applySug(sug.items[sel].insert);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSugOff(true);
+        return;
+      }
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyDraft();
+    }
+  };
 
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
@@ -806,21 +1015,25 @@ const Team = ({ onOpen }) => {
           </div>
           <div class="input-group input-group-sm dispatch-filter-group">
             <span class="input-group-text">filter</span>
-            <input
-              type="text"
-              class="form-control font-monospace"
-              placeholder="SE-01xx:inreview, Plan PL-1032:ready"
-              aria-label="Dispatch selector filter"
-              value=${filterInput}
-              onInput=${(e) => setFilterInput(e.target.value)}
-              onKeyDown=${(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  applyDraft();
-                }
-              }}
-            />
-            ${(filterInput || serverFilter) &&
+            <div class="form-control font-monospace dispatch-filter-edit">
+              ${filterChips.map(
+                (c) => html`<span class="filter-chip" key=${c}>${c}<button
+                    type="button" class="filter-chip-x" title=${`remove ${c} from the filter`}
+                    onClick=${() => removeChip(c)}>×</button></span>`,
+              )}
+              <input
+                type="text"
+                placeholder="TE-0001, #web:ready, plan:PL-1032, -TE-0002"
+                aria-label="Dispatch selector filter"
+                value=${filterText}
+                onInput=${(e) => setFilterDraft(e.target.value)}
+                onFocus=${() => setSugFocus(true)}
+                onBlur=${() => setSugFocus(false)}
+                onKeyDown=${onFilterKey}
+              />
+              ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
+            </div>
+            ${(draftFilter || serverFilter) &&
             html`<button class="btn btn-outline-secondary" type="button" title="clear filter — match all tasks" onClick=${clearFilter}>Clear</button>`}
           </div>
           <button
@@ -848,7 +1061,7 @@ const Team = ({ onOpen }) => {
                   (m) =>
                     html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
                       ? html`<span class="triage-tag dispatch-blocked-tag">blocked</span><button class="btn btn-link btn-sm p-0 dispatch-unblock" title="unblock — let dispatch start it again" onClick=${() => unblockItem(m.id)}>unblock</button><button class="btn btn-link btn-sm p-0 dispatch-reset" title="reset — clear tried/fix/failure memory" onClick=${() => resetItem(m.id)}>reset</button>`
-                      : html`<button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
+                      : html`<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
                 )}
                 ${matchedItems.length > 20 && html`<span class="text-secondary">+${matchedItems.length - 20} more</span>`}`
             : html`<span class="text-secondary">${dispatch.enabled ? "0 matched — standby" : "0 matched"}</span>`}

@@ -174,6 +174,66 @@ describe("parseDispatchFilter and matchesDispatchFilter", () => {
     ).toEqual({ id: "SE-0144", mode: "review" });
   });
 
+  it("negated '-target' clauses exclude ids, plans and domains from the positive match", () => {
+    const rootPlan = makeItem("PL-1032", "ready", { type: "epic" });
+    const planTask = makeItem("SE-0010", "ready", { parent: "PL-1032" });
+    const webTask = makeItem("WC-0001", "ready", { domains: ["webclient"] });
+    const plainTask = makeItem("GL-0050", "ready");
+    const itemsById = makeMap([rootPlan, planTask, webTask, plainTask]);
+
+    // a positive clause plus an exclusion — negation wins over the OR
+    const filter = parseDispatchFilter("SE-xxxx, WC-xxxx, GL-xxxx, -SE-0010");
+    expect(matchesDispatchFilter(filter, planTask, "work", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(filter, webTask, "work", itemsById)).toBe(true);
+    expect(matchesDispatchFilter(filter, plainTask, "work", itemsById)).toBe(true);
+
+    // exclusions compose with domain and plan targets on both sides
+    const mixed = parseDispatchFilter("#webclient, -plan:PL-1032");
+    expect(matchesDispatchFilter(mixed, webTask, "work", itemsById)).toBe(true);
+    expect(matchesDispatchFilter(mixed, planTask, "work", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(mixed, plainTask, "work", itemsById)).toBe(false);
+
+    const domainOut = parseDispatchFilter("SE-xxxx, WC-xxxx, -#webclient");
+    expect(matchesDispatchFilter(domainOut, webTask, "work", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(domainOut, plainTask, "work", itemsById)).toBe(false);
+  });
+
+  it("an exclusion-only filter matches everything but the excluded", () => {
+    const webTask = makeItem("WC-0001", "ready", { domains: ["webclient"] });
+    const other = makeItem("GL-0050", "ready");
+    const itemsById = makeMap([webTask, other]);
+
+    for (const mode of ALL_MODES) {
+      expect(matchesDispatchFilter(parseDispatchFilter("-WC-0001"), webTask, mode, itemsById)).toBe(
+        false,
+      );
+      expect(matchesDispatchFilter(parseDispatchFilter("-WC-0001"), other, mode, itemsById)).toBe(
+        true,
+      );
+    }
+
+    // a status-scoped exclusion only bars that mode's candidates
+    const scoped = parseDispatchFilter("-#webclient:ready");
+    expect(matchesDispatchFilter(scoped, webTask, "work", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(scoped, webTask, "review", itemsById)).toBe(true);
+
+    expect(matchesDispatchFilter(parseDispatchFilter("-*"), webTask, "work", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(parseDispatchFilter("-*"), other, "work", itemsById)).toBe(false);
+  });
+
+  it("two-word 'plan' / 'in' forms negate with a leading dash", () => {
+    const rootPlan = makeItem("PL-1032", "ready", { type: "epic" });
+    const planTask = makeItem("SE-0010", "ready", { parent: "PL-1032" });
+    const other = makeItem("SE-0099", "ready");
+    const itemsById = makeMap([rootPlan, planTask, other]);
+
+    for (const expr of ["SE-xxxx, -plan PL-1032", "SE-xxxx, -in:PL-1032"]) {
+      const filter = parseDispatchFilter(expr);
+      expect(matchesDispatchFilter(filter, planTask, "work", itemsById)).toBe(false);
+      expect(matchesDispatchFilter(filter, other, "work", itemsById)).toBe(true);
+    }
+  });
+
   it("throws ValidationError on unknown status suffixes or empty targets", () => {
     for (const bad of [
       "SE-01*:done",
@@ -185,6 +245,10 @@ describe("parseDispatchFilter and matchesDispatchFilter", () => {
       "#",
       "#:ready",
       "SE-01*:ready:extra",
+      "-",
+      "--SE-0100",
+      "-#",
+      "-:ready",
     ]) {
       expect(() => parseDispatchFilter(bad)).toThrow(ValidationError);
     }
@@ -258,20 +322,107 @@ describe("admit — admission checks before a pick (TE-0208)", () => {
     expect(admit(spent, "fix", makeAdmission({ fixes: new Map([["WS-0001", 3]]) })).ok).toBe(false);
   });
 
-  it("resume needs a holder session this dispatcher minted and still live", () => {
-    const claimedBy = (holder: string) =>
-      makeItem("WS-0001", "in_progress", { claim: { holder, machine: "box" } });
-    const ctx = makeAdmission({ mintedSessions: new Set(["devin@box#aaaa"]) });
-    // same name, never minted — the phantom-resume hole
-    expect(admit(claimedBy("devin@box#zzzz"), "resume", ctx).ok).toBe(false);
-    // minted and live
-    expect(admit(claimedBy("devin@box#aaaa"), "resume", ctx).ok).toBe(true);
-    // minted but its process is gone
-    const dead = makeAdmission({
+  it("resume needs an ended holder session that this dispatcher minted", () => {
+    const claimedBy = (holder: string, dead = true) =>
+      makeItem("WS-0001", "in_progress", { claim: { holder, machine: "box", dead } });
+    const endedCtx = makeAdmission({
       mintedSessions: new Set(["devin@box#aaaa"]),
       isLive: () => false,
     });
-    expect(admit(claimedBy("devin@box#aaaa"), "resume", dead).ok).toBe(false);
+    // same name, never minted — the phantom-resume hole
+    expect(admit(claimedBy("devin@box#zzzz"), "resume", endedCtx).ok).toBe(false);
+    // minted and ended — ready for hello adoption
+    expect(admit(claimedBy("devin@box#aaaa"), "resume", endedCtx).ok).toBe(true);
+    // minted and still live — cannot resume while its session is active
+    const liveCtx = makeAdmission({
+      mintedSessions: new Set(["devin@box#aaaa"]),
+      isLive: () => true,
+    });
+    expect(admit(claimedBy("devin@box#aaaa", false), "resume", liveCtx).ok).toBe(false);
+  });
+
+  it("a dead un-minted same-name claim is a takeover, not a stuck resume", () => {
+    // the GL-0217 hole: a manual 'claude' session claimed, then died; the
+    // holder name matches the coder so only resume applied — and resume can
+    // never admit a session this dispatcher did not mint
+    const now = Date.now();
+    const ctx = makeAdmission({ now, isLive: () => false });
+    const item = makeItem("GL-0217", "in_progress", {
+      claim: {
+        holder: "devin@box#zzzz",
+        machine: "box",
+        dead: true,
+        last_seen: new Date(now - 20 * 60_000).toISOString(),
+      },
+    });
+    const items = [item];
+    const candidates = listDispatchCandidates(
+      makeConfig(),
+      makeState(),
+      items,
+      [],
+      "box",
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(candidates.map((c) => `${c.id}:${c.mode}`)).toEqual(["GL-0217:takeover"]);
+    const pick = pickNext(
+      makeConfig(),
+      makeState(),
+      items,
+      [],
+      "box",
+      Infinity,
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(pick).toEqual({ id: "GL-0217", mode: "takeover", reasons: expect.any(Array) });
+  });
+
+  it("minted dead claims resume immediately, un-minted dead claims wait out grace, and live claims are untouched", () => {
+    const now = Date.now();
+    const liveItem = makeItem("GL-0218", "in_progress", {
+      claim: { holder: "devin@box#live", machine: "box", dead: false },
+    });
+    const mintedDead = makeItem("GL-0219", "in_progress", {
+      claim: {
+        holder: "devin@box#aaaa",
+        machine: "box",
+        dead: true,
+        last_seen: new Date(now - 60_000).toISOString(),
+      },
+    });
+    const unmintedFreshDead = makeItem("GL-0220", "in_progress", {
+      claim: {
+        holder: "devin@box#bbbb",
+        machine: "box",
+        dead: true,
+        last_seen: new Date(now - 60_000).toISOString(),
+      },
+    });
+    const ctx = makeAdmission({
+      now,
+      mintedSessions: new Set(["devin@box#aaaa"]),
+      isLive: (id) => id === "devin@box#live",
+    });
+    const candidates = listDispatchCandidates(
+      makeConfig(),
+      makeState(),
+      [liveItem, mintedDead, unmintedFreshDead],
+      [],
+      "box",
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(candidates.map((c) => `${c.id}:${c.mode}`)).toEqual([
+      "GL-0219:resume",
+      "GL-0220:takeover",
+    ]);
+    expect(candidates[0].admission?.ok).toBe(true);
+    expect(candidates[1].admission?.ok).toBe(false);
   });
 
   it("takeover waits out takeover_grace_after on a fresh dead claim", () => {

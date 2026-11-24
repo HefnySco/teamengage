@@ -595,31 +595,183 @@ describe("dispatcher-held claims are never swept (TE-0207)", () => {
 });
 
 describe("admission checks before a dispatch (TE-0208)", () => {
-  it("resume does not pick a claim held by a same-named session the dispatcher never minted", async () => {
+  it("leaves a live same-named session's claim untouched", async () => {
     const wsr = await makeWs(
       `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
       [{ id: "WS-0001", status: "in_progress" }],
     );
     const ops = new WorkspaceOps(wsr, sessions, undefined, home);
-    // a claim whose holder merely shares the coder command's agent name —
-    // sessions.hello never opened it for this dispatcher
-    const now = new Date().toISOString();
+    const stranger = sessions.hello("sleep");
     ops.index.setClaim({
       item: "WS-0001",
-      holder: "sleep@test#abcd",
+      holder: stranger.id,
       actor: "agent",
       machine: "test",
       targets: [],
-      claimed_at: now,
-      last_seen: now,
+      claimed_at: new Date(Date.now() - 3 * 60 * 60_000).toISOString(),
+      last_seen: new Date(Date.now() - 60 * 60_000).toISOString(),
     });
     const d = dispatcher(wsr);
     d.tick();
     expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    expect(d.status().matched).toEqual([]);
+  });
+
+  it("end-to-end over /agent: same-name takeover claims cleanly and minted dead claim resumes without grace wait", async () => {
+    const { startDaemon } = await import("../server/server.js");
+    const { registerAgentRoutes } = await import("../../agent/http.js");
+    const { EventBus } = await import("../api/events.js");
+
+    const serverHome = mkdtempSync(join(tmpdir(), "te-dispatch-e2e-"));
+    const scriptPath = join(serverHome, "coder.sh");
+    writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'BASE="$1"',
+        'if [ "$TE_MODE" = "takeover" ]; then',
+        '  curl -sf -X POST "$BASE/agent/claim/$TE_ITEM" -H "X-TE-Session: $TE_SESSION" >/dev/null',
+        '  curl -sf -X POST "$BASE/agent/submit/$TE_ITEM" -H "X-TE-Session: $TE_SESSION" -d \'{"summary":"took over and finished"}\' >/dev/null',
+        'elif [ "$TE_MODE" = "work" ]; then',
+        '  curl -sf -X POST "$BASE/agent/claim/$TE_ITEM" -H "X-TE-Session: $TE_SESSION" >/dev/null',
+        '  curl -sf -X POST "$BASE/agent/ask/$TE_ITEM" -H "X-TE-Session: $TE_SESSION" -d \'{"question":"port?"}\' >/dev/null',
+        'elif [ "$TE_MODE" = "resume" ]; then',
+        '  curl -sf -X POST "$BASE/agent/submit/$TE_ITEM" -H "X-TE-Session: $TE_SESSION" -d \'{"summary":"resumed without re-claim"}\' >/dev/null',
+        "fi",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  takeover_grace_after: "15m"\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const ctx = {
+      home: serverHome,
+      machine: "test",
+      workspaces: new Map([["ws", wsr]]),
+      sessions,
+      bus: new EventBus(),
+      dispatchers: new Map(),
+    };
+    const handle = await startDaemon({
+      home: serverHome,
+      port: 0,
+      health: () => ({ machine: "test", workspaces: ["ws"] }),
+      register: async (app) => {
+        registerAgentRoutes(app, ctx);
+      },
+    });
+    wsr.ws.config.dispatch = {
+      enabled: true,
+      max_issues: 2,
+      agents: [{ role: "coder", command: `${scriptPath} ${handle.url} #` }],
+    };
+
+    const d = dispatcher(wsr);
+    d.setBaseUrl(handle.url);
+    try {
+      // 1) GL-0217: manual session with the coder's agent name ('coder') claims WS-0001 and dies
+      const manual = await ops.hello("coder");
+      await ops.claim("WS-0001", manual.session);
+      sessions.disconnect(manual.session.id);
+      const oldClaim = ops.index.get("WS-0001")!.claim!;
+      ops.index.setClaim({
+        ...oldClaim,
+        last_seen: new Date(Date.now() - 20 * 60_000).toISOString(),
+      });
+
+      // 2) Tick starts WS-0001 (takeover) and WS-0002 (work -> ask -> waiting)
+      d.tick();
+      await untilEvent("dispatch_start", 1);
+      const waitStatus = async (id: string, target: string) => {
+        const deadline = Date.now() + 8000;
+        while (ops.index.get(id)?.meta.status !== target && Date.now() < deadline) {
+          await sleep(40);
+        }
+      };
+      await waitStatus("WS-0001", "in_review");
+      expect(ops.index.get("WS-0001")!.meta.status).toBe("in_review");
+
+      // Next tick picks WS-0002 as work; child claims and asks -> waiting, then exits (session dead)
+      const waitIdle = async () => {
+        const deadline = Date.now() + 8000;
+        while (d.status().running.length > 0 && Date.now() < deadline) await sleep(40);
+      };
+      await waitIdle();
+      d.tick();
+      await waitStatus("WS-0002", "waiting");
+      await waitIdle();
+
+      // Human answers immediately (claim is <15m old, minted by d) -> resumes right away without grace wait
+      await ops.answer("WS-0002", "8080");
+      expect(ops.index.get("WS-0002")!.meta.status).toBe("in_progress");
+      expect(d.status().matched.find((c) => c.id === "WS-0002")).toMatchObject({
+        id: "WS-0002",
+        mode: "resume",
+        admission: { ok: true },
+      });
+      d.tick();
+      await waitStatus("WS-0002", "in_review");
+      expect(ops.index.get("WS-0002")!.meta.status).toBe("in_review");
+
+      // stopAll (pause --kill) closes remote sessions so killed runs do not linger live
+      wsr.ws.config.dispatch = {
+        enabled: true,
+        max_issues: 2,
+        agents: [{ role: "reviewer", command: "sleep 30 #" }],
+      };
+      d.tick();
+      await untilEvent("dispatch_start", 5);
+      expect(sessions.list()).toHaveLength(2);
+      d.pause("emergency", true);
+      const byeDeadline = Date.now() + 4000;
+      while (sessions.list().length > 0 && Date.now() < byeDeadline) await sleep(40);
+      expect(sessions.list()).toHaveLength(0);
+    } finally {
+      d.stopAll();
+      await handle.close();
+      rmSync(serverHome, { recursive: true, force: true });
+    }
+  });
+
+  it("a dead same-name claim is a takeover candidate, refused only until the grace passes", async () => {
+    // GL-0217: a manual session with the coder's agent name claimed, then
+    // died — before the fix the claim stranded: resume could never admit it
+    // (not minted) and takeover skipped 'ours' claims
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  takeover_grace_after: "15m"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "in_progress" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const dead = (seenMs: number) =>
+      ops.index.setClaim({
+        item: "WS-0001",
+        holder: "sleep@test#abcd",
+        actor: "agent",
+        machine: "test",
+        targets: [],
+        claimed_at: new Date(Date.now() - 86_400_000).toISOString(),
+        last_seen: new Date(Date.now() - seenMs).toISOString(),
+      });
+    dead(60_000);
+    const d = dispatcher(wsr);
+    d.tick();
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
     const matched = d.status().matched.find((c) => c.id === "WS-0001");
-    expect(matched?.mode).toBe("resume");
+    expect(matched?.mode).toBe("takeover");
     expect(matched?.admission?.ok).toBe(false);
-    expect(matched?.admission?.reasons.join(" ")).toContain("not minted");
+
+    dead(20 * 60_000);
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(1);
+    expect(starts[0].data.mode).toBe("takeover");
   });
 
   it("takeover waits for takeover_grace_after after the claim dies", async () => {

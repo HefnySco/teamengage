@@ -1294,3 +1294,45 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   .dispatch-live { animation: none; }
 }
 .dispatch-toggle { display: inline-flex; align-items: center; gap: .4rem; }
+/* dispatch filter editor: id chips + free text inside one .form-control */
+.dispatch-filter-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .2rem;
+  height: auto;
+  min-height: calc(1.5em + .5rem + 2px);
+  padding: .1rem .4rem;
+  position: relative;
+}
+.dispatch-filter-edit input {
+  flex: 1;
+  min-width: 9rem;
+  border: 0;
+  outline: none;
+  padding: 0;
+  font: inherit;
+  background: transparent;
+  color: inherit;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .15rem;
+  flex: none;
+  background: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: .25rem;
+  padding: 0 .15rem 0 .3rem;
+  font-size: .82em;
+  white-space: nowrap;
+}
+.filter-chip-x {
+  border: 0;
+  background: none;
+  padding: 0 .15rem;
+  line-height: 1;
+  font-size: 1.1em;
+  color: var(--bs-secondary-color);
+}
+.filter-chip-x:hover { color: var(--bs-danger); }

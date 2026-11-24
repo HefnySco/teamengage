@@ -550,12 +550,17 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   where `*` matches any text, `?` one character, and `x` after `-` one digit),
   plan subtrees (`Plan PL-1032:ready`, `plan:PL-1032`, `in:PL-1032`), and
   domains (`#webclient:ready`), with optional `:ready`, `:inreview`, or
-  `:inprogress` suffixes. When all matched items finish, dispatch stays `on`
+  `:inprogress` suffixes. A `-` prefix negates a clause: positive clauses
+  still OR together, but an item that hits any `-target` is out — so
+  `#webclient -WC-0012` selects the domain minus one task, and `-WC-0012`
+  alone matches everything but it. When all matched items finish, dispatch stays `on`
   and watches for new matches. Every pick first passes `admit()` — the item
   must sit below `max_attempts`, carry no `dispatch_blocked` flag, and meet
   its mode's checks (`fix` needs a spare round plus an issues note or
-  findings, `resume` a holder session this dispatcher minted and still live,
-  `takeover` a claim dead longer than `takeover_grace_after`, `review` a
+  findings, `resume` a dead claim whose holder session this dispatcher minted,
+  `takeover` any other local claim dead longer than `takeover_grace_after`
+  regardless of holder name — `hello` skips adoption outside `resume` so the
+  child's `claim` takes it over, and live claims are never touched — `review` a
   reviewer command whose declared model satisfies `review_models`). The
   matched preview and `dispatch_start` carry these admission reasons. Two
   failed runs on one item write `dispatch_blocked` with the reason in its
