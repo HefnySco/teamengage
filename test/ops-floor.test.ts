@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, feed } from "../web/ops-floor.js";
+import { derive, feed, isReviewerSession } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -129,5 +129,26 @@ describe("feed", () => {
     expect(lines).toEqual([
       { at: "2026-11-24T09:03:00.000Z", kind: "dispatch_start", id: "GL-0213", mode: "review", room: "rev" },
     ]);
+  });
+});
+
+describe("isReviewerSession", () => {
+  it("lets a set role decide", () => {
+    expect(isReviewerSession(session({ role: "reviewer" }))).toBe(true);
+    expect(isReviewerSession(session({ role: "coder", agent: "lens-review", label: "review" }))).toBe(false);
+  });
+
+  it("counts a session with no role as a reviewer by its label or agent name", () => {
+    expect(isReviewerSession(session({ role: undefined, agent: "lens-quick-review", label: "review" }))).toBe(true);
+    expect(isReviewerSession(session({ role: undefined, agent: "claude", label: "review" }))).toBe(true);
+    expect(isReviewerSession(session({ role: undefined, agent: "lens-deep-review", label: "GL-0212" }))).toBe(true);
+    expect(isReviewerSession(session({ role: undefined, agent: "forge", label: "GL-0212" }))).toBe(false);
+    expect(isReviewerSession(undefined)).toBe(false);
+  });
+
+  it("puts the history events of a role-less reviewer in room rev", () => {
+    const sessions = [session({ id: "lens-quick-review@m#1", role: undefined, agent: "lens-quick-review", label: "review" })];
+    const lines = feed([], [{ ts: "2026-11-24T09:00:00.000Z", actor: "lens-quick-review@m#1", session: "lens-quick-review@m#1", item: "GL-0212", action: "log", note: "read the diff" }], sessions);
+    expect(lines[0].room).toBe("rev");
   });
 });

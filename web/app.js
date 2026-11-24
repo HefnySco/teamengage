@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, feed } from "./ops-floor.js";
+import { derive, feed, isReviewerSession } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -45,14 +45,33 @@ export const post = (path, body) => api(path, { method: "POST", body: JSON.strin
 const listeners = new Set();
 const onEvent = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const notify = (e) => listeners.forEach((f) => f(e));
-const es = new EventSource("/events");
-es.onmessage = (e) => notify({ kind: "event", data: JSON.parse(e.data) });
-for (const kind of [
-  "watch", "reconcile", "auto_accept", "auto_archive", "auto_release", "peer_timeout",
-  "auto_source_done",
-  "session_start", "session_end", "dispatch_start", "dispatch_fail", "dispatch_off",
-]) {
-  es.addEventListener(kind, (e) => notify({ kind, data: JSON.parse(e.data) }));
+// one socket per browser, shared across tabs: every EventSource holds a
+// connection forever, and ~6 of them fill the per-origin pool — a new tab's
+// API fetches then queue forever ("loading…" that never ends). The lock
+// holder opens the socket and reposts each event on the channel; the other
+// tabs listen there and open no socket at all.
+const eventBus = "BroadcastChannel" in window ? new BroadcastChannel("te-events") : null;
+if (eventBus) eventBus.onmessage = (e) => notify(e.data);
+const openSocket = () => {
+  const es = new EventSource("/events");
+  const fan = (msg) => (notify(msg), eventBus?.postMessage(msg));
+  es.onmessage = (e) => fan({ kind: "event", data: JSON.parse(e.data) });
+  for (const kind of [
+    "watch", "reconcile", "auto_accept", "auto_archive", "auto_release", "peer_timeout",
+    "auto_source_done",
+    "session_start", "session_end", "dispatch_start", "dispatch_fail", "dispatch_off",
+  ]) {
+    es.addEventListener(kind, (e) => fan({ kind, data: JSON.parse(e.data) }));
+  }
+};
+if (eventBus && navigator.locks) {
+  // the lock is held until the tab unloads; the next queued tab then leads
+  void navigator.locks.request(
+    "te-events",
+    () => (openSocket(), new Promise((release) => addEventListener("pagehide", release, { once: true }))),
+  );
+} else {
+  openSocket();
 }
 
 const STATUSES = ["draft", "ready", "hold", "in_progress", "waiting", "in_review", "done", "dropped"];
@@ -431,7 +450,7 @@ const LinkedText = ({ text, onOpen }) =>
 export function useApi(path, deps = []) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
-  const reload = () => api(path).then(setData, setErr);
+  const reload = () => api(path).then((d) => (setErr(null), setData(d)), setErr);
   useEffect(() => {
     reload();
     return onEvent(() => reload());
@@ -551,7 +570,6 @@ const QuestionRow = ({ q, item, onOpen, onAnswer }) => {
 const OFFICE_QUIET_MS = 15 * 60_000; // no call this long → the hologram dims
 const OFFICE_GONE_MS = 30 * 60_000; // an empty chair fades out after this
 const OFFICE_VANISH_MS = 950; // matches the of-vanish CSS transition
-const isReviewerSession = (s) => /review/i.test(s?.role ?? "");
 // TE-0215 — floor logs: a bounded buffer of history events, back-filled by
 // /events?replay=200 (as the activity page does) then kept live through the
 // shared onEvent store. The replay stream stays open and pushes the same
@@ -575,32 +593,55 @@ const DispatchToggle = ({ enabled, ready, onToggle, whyIdle }) => html`
     ${enabled && html`<span class="dispatch-live" title=${whyIdle ? `idle — ${whyIdle}` : "dispatch is running"}></span>`}
   </span>`;
 
-// a card that changed desk flies there on an arc: a fixed-position ghost
-// clone lifts, rotates and lands while the real card pops into place
-const flyDoc = (el, from, to) => {
-  const ghost = el.cloneNode(true);
+// card positions are kept in page coordinates, so a scroll between two
+// renders does not bend a flight
+const CARD_MEMORY_MS = 60_000; // a card with no place is remembered this long
+const pageSpot = (el) => {
+  const r = el.getBoundingClientRect();
+  return { x: r.left + window.scrollX, y: r.top + window.scrollY };
+};
+// a fixed-position clone of a card at a page spot
+const ghostAt = (node, spot) => {
+  const ghost = node.cloneNode(true);
   ghost.classList.add("of-ghost");
-  ghost.style.left = from.x + "px";
-  ghost.style.top = from.y + "px";
+  ghost.style.visibility = ""; // the source may be a card hidden mid-flight
+  ghost.style.left = spot.x - window.scrollX + "px";
+  ghost.style.top = spot.y - window.scrollY + "px";
   document.body.appendChild(ghost);
-  el.style.visibility = "hidden";
-  const dx = to.left - from.x;
-  const dy = to.top - from.y;
+  return ghost;
+};
+// a card that changed place flies there on an arc: a ghost clone lifts,
+// rotates and lands. With el (the real card) the real card hides during the
+// flight and pops on landing; without el (the card went behind "+N more")
+// the ghost lands on the counter and fades
+const flyDoc = (node, from, to, el) => {
+  el?._ofGhost?.remove();
+  const ghost = ghostAt(node, from);
+  if (el) {
+    el._ofGhost = ghost;
+    el.style.visibility = "hidden";
+  }
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
   const lift = Math.min(160, 50 + Math.abs(dx) * 0.16);
+  const end = el ? "scale(1)" : "scale(.6)";
   ghost
     .animate(
       [
-        { transform: "translate(0,0) rotate(0) scale(1)" },
+        { transform: "translate(0,0) rotate(0) scale(1)", opacity: 1 },
         {
           transform: `translate(${dx * 0.5}px,${dy * 0.5 - lift}px) rotate(${dx > 0 ? 7 : -7}deg) scale(1.15)`,
           offset: 0.5,
+          opacity: 1,
         },
-        { transform: `translate(${dx}px,${dy}px) rotate(0) scale(1)` },
+        { transform: `translate(${dx}px,${dy}px) rotate(0) ${end}`, opacity: el ? 1 : 0 },
       ],
       { duration: 850 + Math.abs(dx) * 0.3, easing: "cubic-bezier(.3,.6,.25,1)" },
     )
     .finished.then(() => {
       ghost.remove();
+      if (!el || el._ofGhost !== ghost) return;
+      el._ofGhost = null;
       el.style.visibility = "";
       el.animate([{ transform: "scale(1.18)" }, { transform: "none" }], {
         duration: 300,
@@ -608,6 +649,20 @@ const flyDoc = (el, from, to) => {
       });
     })
     .catch(() => ghost.remove());
+};
+// a card that left the floor (accepted, dropped, released) dissolves where
+// it was, as the concept's vanishAt does
+const vanishDoc = (node, spot) => {
+  const ghost = ghostAt(node, spot);
+  ghost
+    .animate(
+      [
+        { opacity: 1, transform: "none", filter: "none" },
+        { opacity: 0, transform: "translateY(-14px) scale(.8)", filter: "blur(4px)" },
+      ],
+      { duration: 700, easing: "ease-in" },
+    )
+    .finished.then(() => ghost.remove(), () => ghost.remove());
 };
 
 // one hologram figure: gradient silhouette + scan lines. useId keeps every
@@ -647,31 +702,37 @@ const HoloStage = () => html`<div class="of-stage of-flick">
 
 // one task card — colours come from the --te-st-* tokens via the m-<mode>
 // class and name the item status like the inbox: work/resume/takeover/fix
-// in_progress, review/accept in_review, ask waiting
-const DocCard = ({ d, onOpen }) => html`<a
+// in_progress, review/accept in_review, ask waiting. Every task link on the
+// floor is a real href into a new tab — a click never moves the team page
+const DocCard = ({ d }) => html`<a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
   title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
-  onClick=${() => onOpen(d.id)}
+  href=${"#/item/" + d.id}
+  target="_blank"
+  rel="noopener"
   ><b>${d.id}</b><span>${d.label ?? d.mode}</span></a>`;
 
 // a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
 // the first cap cards then "+N more"; uncapped seat trays fan their cards
 // past 3 and unfold on hover
-const DocTray = ({ loc, docs, cap = 0, onOpen }) => {
+const DocTray = ({ loc, docs, cap = 0 }) => {
   const more = cap && docs.length > cap ? docs.length - cap : 0;
   const shown = more ? docs.slice(0, cap) : docs;
   const fan = !cap && docs.length > 3;
   return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
-    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} onOpen=${onOpen} />`)}
-    ${more > 0 && html`<span class="of-more">+${more} more</span>`}
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} />`)}
+    ${more > 0 &&
+    html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
+      >+${more} more</span
+    >`}
     ${fan && html`<span class="of-count">×${docs.length}</span>`}
   </div>`;
 };
 
 // one workstation: hologram on a projector disc over a desk card with the
 // agent name, machine, model tag, its task tray and a status line
-const Seat = ({ e, docs, questionIds, onOpen }) => {
+const Seat = ({ e, docs, questionIds }) => {
   const { s, gone } = e;
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
@@ -693,7 +754,7 @@ const Seat = ({ e, docs, questionIds, onOpen }) => {
         <span class="of-lb">${s.machine}</span>
         ${s.model && html`<span class="of-model">${s.model}</span>`}
       </div>
-      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onOpen=${onOpen} />
+      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} />
       <div class="of-meta"><i class="of-st"></i>${s.role || "agent"} · ${meta}</div>
     </div>
   </div>`;
@@ -702,14 +763,14 @@ const Seat = ({ e, docs, questionIds, onOpen }) => {
 // a room's floor log: its last FEED_LINES feed lines, newest at the top, on a
 // perspective grid at the bottom of the room card. A line is time, action,
 // item id (click opens it), mode and the short note feed() cut
-const FloorLog = ({ lines, onOpen }) => html`<div class="of-log">
+const FloorLog = ({ lines }) => html`<div class="of-log">
   <div class="of-grid"></div>
   <div class="of-lines">
     ${lines.map(
       (e) => html`<div class="of-line" key=${`${e.at}|${e.kind}|${e.id ?? ""}|${e.note ?? ""}`}>
         <span class="of-tm">${hhmm(e.at)}</span>
         <span class="of-kd">${e.kind}</span>
-        ${e.id ? html` · <a onClick=${() => onOpen(e.id)}>${e.id}</a>` : ""}
+        ${e.id ? html` · <a href=${"#/item/" + e.id} target="_blank" rel="noopener">${e.id}</a>` : ""}
         ${e.mode ? html` <span class="of-dim">(${e.mode})</span>` : ""}
         ${e.note ? html` <span class="of-dim">${e.note}</span>` : ""}
       </div>`,
@@ -720,7 +781,7 @@ const FloorLog = ({ lines, onOpen }) => html`<div class="of-log">
 
 // one room of the floor: header with live/left counts over the desk grid and
 // the floor log pinned to the bottom
-const FloorRoom = ({ room, entries, seats, questionIds, logs, onOpen }) => {
+const FloorRoom = ({ room, entries, seats, questionIds, logs }) => {
   const live = entries.filter((e) => !e.gone).length;
   return html`<section class=${"of-room of-" + room}>
     <div class="of-rhead">
@@ -738,19 +799,18 @@ const FloorRoom = ({ room, entries, seats, questionIds, logs, onOpen }) => {
             e=${e}
             docs=${seats.get(e.s.id) ?? []}
             questionIds=${questionIds}
-            onOpen=${onOpen}
           />`,
       )}
     </div>
     ${!entries.length &&
     html`<div class="of-empty">no ${room === "dev" ? "coder" : "reviewer"} sessions</div>`}
-    <${FloorLog} lines=${logs} onOpen=${onOpen} />
+    <${FloorLog} lines=${logs} />
   </section>`;
 };
 
 // the dispatch front desk: dispatcher hologram inside a capacity ring
 // (online_issues of max_issues), the matched queue and the toggle
-const FrontDesk = ({ dispatch, queue, onOpen, onDispatch }) => {
+const FrontDesk = ({ dispatch, queue, onDispatch }) => {
   const online = dispatch.online_issues ?? 0;
   const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
   const frac = max ? Math.min(1, online / max) : 0;
@@ -780,7 +840,7 @@ const FrontDesk = ({ dispatch, queue, onOpen, onDispatch }) => {
       <${HoloStage} />
       <div class="of-num">${online}/${max}</div>
     </div>
-    <${DocTray} loc="dispatch" docs=${queue} cap=${6} onOpen=${onOpen} />
+    <${DocTray} loc="dispatch" docs=${queue} cap=${6} />
     <div class="of-sub">${sub}</div>
     <div class="mt-1">
       <${DispatchToggle}
@@ -795,7 +855,7 @@ const FrontDesk = ({ dispatch, queue, onOpen, onDispatch }) => {
 
 // the human's desk: a person figure (not a projection) with the questions
 // and the in_review items that wait for an accept, with counts
-const YourDesk = ({ you, onOpen }) => {
+const YourDesk = ({ you }) => {
   const nq = you.filter((a) => a.mode === "ask").length;
   const na = you.length - nq;
   return html`<div class="of-deskctr of-you">
@@ -823,7 +883,7 @@ const YourDesk = ({ you, onOpen }) => {
         <path d="M50 42 L 34 58 L 26 74 L 33 78 L 42 64 L 55 52 Z" opacity=".9" />
       </svg>
     </div>
-    <${DocTray} loc="you" docs=${you} cap=${6} onOpen=${onOpen} />
+    <${DocTray} loc="you" docs=${you} cap=${6} />
     <div class="of-sub">
       ${you.length
         ? html`<b>${nq}</b> question${nq === 1 ? "" : "s"} · <b>${na}</b> to accept`
@@ -832,7 +892,7 @@ const YourDesk = ({ you, onOpen }) => {
   </div>`;
 };
 
-const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
+const OpsFloor = ({ sessions, dispatch, inbox, onDispatch }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
   const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
@@ -890,36 +950,64 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
   }, [live]);
 
   // FLIP after every commit: a card that changed desk flies on an arc, a
-  // card that moved inside one tray slides, a new card pops in
+  // card that moved inside one tray slides, a new card pops in. Three more
+  // cases keep a card's path whole through a review → fix cycle:
+  //  - a card behind "+N more" counts as being at that counter, so it flies
+  //    out of it and into it;
+  //  - a card with no place keeps its last spot for CARD_MEMORY_MS, so when
+  //    it comes back (a reviewer or fixer seat appears a moment later) it
+  //    flies from where it was instead of popping in;
+  //  - a card that leaves the floor dissolves where it was.
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const prev = spots.current;
+    const first = !spots.mounted;
+    spots.mounted = true;
+    const now = Date.now();
     const next = new Map();
     for (const el of root.querySelectorAll(".of-doc[data-doc]")) {
       const id = el.getAttribute("data-doc");
-      const r = el.getBoundingClientRect();
+      const to = pageSpot(el);
       const loc = el.closest("[data-loc]")?.getAttribute("data-loc") ?? "";
-      next.set(id, { x: r.left, y: r.top, loc });
+      next.set(id, { ...to, loc, node: el.cloneNode(true), at: now });
       const from = prev.get(id);
       if (!from) {
-        el.animate([{ opacity: 0, transform: "scale(.7)" }, { opacity: 1, transform: "none" }], {
-          duration: 400,
-          easing: "ease-out",
-        });
+        if (!first)
+          el.animate([{ opacity: 0, transform: "scale(.7)" }, { opacity: 1, transform: "none" }], {
+            duration: 400,
+            easing: "ease-out",
+          });
         continue;
       }
-      const dx = from.x - r.left;
-      const dy = from.y - r.top;
+      const dx = from.x - to.x;
+      const dy = from.y - to.y;
       if (Math.abs(dx) < 2 && Math.abs(dy) < 2) continue;
-      if (from.loc === loc) {
+      if (from.loc === loc && !from.hidden && !from.gone) {
         el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], {
           duration: 350,
           easing: "cubic-bezier(.2,.8,.2,1)",
         });
         continue;
       }
-      flyDoc(el, from, r);
+      flyDoc(el, from, to, el);
+    }
+    // cards behind a "+N more" counter: their spot is the counter
+    for (const m of root.querySelectorAll(".of-more[data-hidden]")) {
+      const spot = pageSpot(m);
+      const loc = m.closest("[data-loc]")?.getAttribute("data-loc") ?? "";
+      for (const id of (m.getAttribute("data-hidden") ?? "").split(" ")) {
+        if (!id || next.has(id)) continue;
+        const from = prev.get(id);
+        if (from && !from.hidden && !from.gone && from.node) flyDoc(from.node, from, spot);
+        next.set(id, { ...spot, loc, hidden: true, node: from?.node, at: now });
+      }
+    }
+    // cards with no place this render: dissolve once, then remember the spot
+    for (const [id, from] of prev) {
+      if (next.has(id)) continue;
+      if (!from.gone && !from.hidden && from.node) vanishDoc(from.node, from);
+      if (now - from.at < CARD_MEMORY_MS) next.set(id, from.gone ? from : { ...from, gone: true });
     }
     spots.current = next;
   });
@@ -960,17 +1048,15 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
           seats=${seats}
           questionIds=${questionIds}
           logs=${roomLines("dev")}
-          onOpen=${onOpen}
         />
         <div class="of-center">
           ${dsp &&
           html`<${FrontDesk}
             dispatch=${dsp}
             queue=${queue}
-            onOpen=${onOpen}
             onDispatch=${onDispatch}
           />`}
-          <${YourDesk} you=${you} onOpen=${onOpen} />
+          <${YourDesk} you=${you} />
         </div>
         <${FloorRoom}
           room="rev"
@@ -978,13 +1064,12 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
           seats=${seats}
           questionIds=${questionIds}
           logs=${roomLines("rev")}
-          onOpen=${onOpen}
         />
       </div>
       <div class="of-ticker">
         ${ticker
           ? html`<b>${ago(ticker.at)} ago</b> — <span class="of-kd">${ticker.kind}</span>${ticker.id
-              ? html` · <a onClick=${() => onOpen(ticker.id)}>${ticker.id}</a>`
+              ? html` · <a href=${"#/item/" + ticker.id} target="_blank" rel="noopener">${ticker.id}</a>`
               : ""}${ticker.mode ? ` (${ticker.mode})` : ""}${ticker.note
               ? ` ${ticker.note}`
               : ""}${ticker.room === "you" ? " · by you" : ""}`
@@ -1116,13 +1201,55 @@ const filterSug = (q, tasks, plans) => {
   return { def, tok };
 };
 
+// the ops floor needs sessions, dispatch and inbox from the same moment: three
+// independent useApi fetches land one by one, and a render between them shows
+// an item with no place (its card is removed, then pops back instead of
+// flying). One debounced fetch of all three after a burst of events, and only
+// the newest answer is kept — an older, slower response never wins.
+const FLOOR_DEBOUNCE_MS = 250;
+const FLOOR_MAX_WAIT_MS = 1000; // a steady event stream still refreshes this often
+function useFloorSnapshot() {
+  const [snap, setSnap] = useState({ sessions: null, dispatch: null, inbox: null });
+  const seq = useRef(0);
+  const reload = () => {
+    const n = ++seq.current;
+    return Promise.all([api("/api/sessions"), api("/api/dispatch"), api("/api/inbox")]).then(
+      ([sessions, dispatch, inbox]) => {
+        if (n === seq.current) setSnap({ sessions, dispatch, inbox });
+      },
+      () => {}, // keep the last good snapshot; the next event retries
+    );
+  };
+  useEffect(() => {
+    reload();
+    let timer = 0;
+    let first = 0;
+    const fire = () => {
+      timer = 0;
+      first = 0;
+      reload();
+    };
+    const off = onEvent(() => {
+      const now = Date.now();
+      if (!first) first = now;
+      clearTimeout(timer);
+      timer = setTimeout(fire, Math.max(0, Math.min(FLOOR_DEBOUNCE_MS, first + FLOOR_MAX_WAIT_MS - now)));
+    });
+    return () => {
+      clearTimeout(timer);
+      off();
+    };
+  }, []);
+  return { ...snap, reload };
+}
+
 // GL-0329 / TE-0204 — the live team page: sessions with what they hold, plus
 // per-item dispatch controls (on/off, max online issues, wildcard selector,
 // matched preview, and last 10 events). Refreshes over SSE.
-const Team = ({ onOpen }) => {
-  const { data: sessions, reload: reloadSessions } = useApi("/api/sessions");
-  const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
-  const { data: inbox } = useApi("/api/inbox"); // questions + reviews for the ops-floor "your desk"
+const Team = () => {
+  // one snapshot for the floor and the controls — see useFloorSnapshot
+  const { sessions, dispatch, inbox, reload: reloadFloor } = useFloorSnapshot();
+  const reloadDispatch = reloadFloor;
   const { data: items } = useApi("/api/items");
   const serverMax = dispatch?.max_issues ?? dispatch?.max_sessions ?? 2;
   const serverFilter = dispatch?.filter ?? "";
@@ -1304,7 +1431,7 @@ const Team = ({ onOpen }) => {
   return html`
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h2 class="h4 mb-0">Team</h2>
-      <${RefreshBtn} refresh=${() => Promise.all([reloadSessions(), reloadDispatch()])} />
+      <${RefreshBtn} refresh=${reloadFloor} />
       <span class="small text-secondary">
         ${ss.length} session(s) · ${dispatch ? `${onlineIssues}/${serverMax} online issue(s)` : "…"} · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}${serverFilter ? html` · <code class="small">${serverFilter}</code>` : ""}
       </span>
@@ -1313,7 +1440,6 @@ const Team = ({ onOpen }) => {
       sessions=${ss}
       dispatch=${dispatch}
       inbox=${inbox}
-      onOpen=${onOpen}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
     />
     ${dispatch
@@ -1379,7 +1505,7 @@ const Team = ({ onOpen }) => {
           <span class="id text-secondary" title=${s.id}>${s.agent}@${s.machine}${s.label ? ` · ${s.label}` : ""}</span>
           <span class="t">
             ${s.role ? html`<span class="triage-tag">${s.role}</span> ` : ""}${s.tier ? html`<span class="triage-tag">${s.tier}</span> ` : ""}${s.model ? html`<span class="triage-tag">${s.model}</span> ` : ""}
-            ${(s.holding ?? []).map((id) => html`<a class="item id" onClick=${() => onOpen(id)}>${id}</a> `)}
+            ${(s.holding ?? []).map((id) => html`<a class="item id" href=${"#/item/" + id} target="_blank" rel="noopener">${id}</a> `)}
             <span class="text-secondary">${(s.holding ?? []).length ? "" : "idle — "}seen ${ago(s.last_seen)} ago</span>
           </span>
         </div>`)}
@@ -1393,7 +1519,7 @@ const Team = ({ onOpen }) => {
             <span class="text-secondary">active:</span>
             ${runningItems.map((r) =>
               r.mode
-                ? html`<span class="dispatch-chip" key=${r.id}><a class="item id" onClick=${() => onOpen(r.id)}>${r.id}</a> <span class="triage-tag">${r.mode}</span></span>`
+                ? html`<span class="dispatch-chip" key=${r.id}><a class="item id" href=${"#/item/" + r.id} target="_blank" rel="noopener">${r.id}</a> <span class="triage-tag">${r.mode}</span></span>`
                 : html`<span class="id" key=${r.id}>${r.id}</span>`,
             )}
           </div>`}
@@ -1403,7 +1529,7 @@ const Team = ({ onOpen }) => {
                 <span class="text-secondary">matched ${matchedItems.length}:</span>
                 ${matchedItems.slice(0, 20).map(
                   (m) =>
-                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : m.admission?.ok === false ? `refused: ${m.admission.reasons.join("; ")} — ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" onClick=${() => onOpen(m.id)}>${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
+                    html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : m.admission?.ok === false ? `refused: ${m.admission.reasons.join("; ")} — ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" href=${"#/item/" + m.id} target="_blank" rel="noopener">${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
                       ? html`<span class="triage-tag dispatch-blocked-tag">blocked</span><button class="btn btn-link btn-sm p-0 dispatch-unblock" title="unblock — let dispatch start it again" onClick=${() => unblockItem(m.id)}>unblock</button><button class="btn btn-link btn-sm p-0 dispatch-reset" title="reset — clear tried/fix/failure memory" onClick=${() => resetItem(m.id)}>reset</button>`
                       : html`${m.admission?.ok === false ? html`<span class="triage-tag dispatch-refused-tag">refused</span>` : ""}<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
                 )}
@@ -1415,7 +1541,7 @@ const Team = ({ onOpen }) => {
             <div class="small text-secondary mt-1">
               ${[...ev].reverse().map(
                 (e, i) =>
-                  html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.id ? html` · <a class="item id" onClick=${() => onOpen(e.data.id)}>${e.data.id}</a>` : ""}${e.data.mode ? ` (${e.data.mode})` : ""}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`,
+                  html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.id ? html` · <a class="item id" href=${"#/item/" + e.data.id} target="_blank" rel="noopener">${e.data.id}</a>` : ""}${e.data.mode ? ` (${e.data.mode})` : ""}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`,
               )}
             </div>`
           : html`<div class="small text-secondary">no dispatch events yet</div>`}`}`;
@@ -3888,7 +4014,7 @@ const FollowUp = ({ id, onClose }) => {
 };
 
 const ItemView = ({ id }) => {
-  const { data: b, reload } = useApi(`/api/items/${id}`, [id]);
+  const { data: b, err, reload } = useApi(`/api/items/${id}`, [id]);
   const { data: arts } = useApi(`/api/items/${id}/artifacts`, [id]);
   const [viewing, setViewing] = useState(null); // artifact index being viewed
   const [picked, setTab] = useState(null);
@@ -3910,6 +4036,7 @@ const ItemView = ({ id }) => {
       dispatchEvent(new HashChangeEvent("hashchange"));
     }
   }, [b, id]);
+  if (err) return html`<p class="text-danger mt-3">${id} — ${String(err.message ?? err).split("\n")[0].slice(0, 300)}</p>`;
   if (!b) return html`<p class="text-secondary">loading…</p>`;
   const it = b.item;
   if (it.meta.type === "discussion") return html`<p class="text-secondary">loading…</p>`;
@@ -4540,24 +4667,18 @@ const PlansGit = () => {
 
 // nav badge on "sync": something to pull / push (cheap local status, refreshed on events)
 function refreshSyncBadge(g) {
-  const a = document.querySelector('#nav a[data-r="sync"]');
-  if (!a) return;
   const n = (g?.behind ?? 0) + (g?.ahead ?? 0) + (g?.changes?.length ?? 0);
-  a.dataset.badge = n ? (g.behind ? `↓${g.behind}` : "●") : "";
+  setNavBadge("sync", "badge", n ? (g.behind ? `↓${g.behind}` : "●") : "");
 }
 // nav count on "inbox": everything waiting on the human
 function refreshInboxBadge(d) {
-  const a = document.querySelector('#nav a[data-r="inbox"]');
-  if (!a) return;
   const n = ["questions", "drafts", "reviews", "drop_flags", "claims", "findings", "promotions"].reduce((s, k) => s + (d?.[k]?.length ?? 0), 0);
-  a.dataset.count = n || "";
+  setNavBadge("inbox", "count", n || "");
 }
 // nav badge on "ops": live jobs (running, waiting, failed) — warning like sync
 function refreshOpsBadge(jobs) {
-  const a = document.querySelector('#nav a[data-r="ops"]');
-  if (!a || !Array.isArray(jobs)) return;
-  const n = jobs.filter((j) => ["running", "waiting", "failed"].includes(j.status)).length;
-  a.dataset.badge = n || "";
+  const n = Array.isArray(jobs) ? jobs.filter((j) => ["running", "waiting", "failed"].includes(j.status)).length : 0;
+  setNavBadge("ops", "badge", n || "");
 }
 const pollNavBadges = () => {
   api("/api/plans-git").then(refreshSyncBadge).catch(() => {});
@@ -5802,17 +5923,114 @@ const App = () => {
   // a known route name wins even with a second segment (#/graph/<plan>) —
   // only unknown names like `item/<id>` fall through to the item page
   const View = routes[name] ?? (itemId ? ItemView : Inbox);
-  useEffect(() => {
-    document.querySelectorAll("#nav a").forEach((a) =>
-      a.classList.toggle("active", a.dataset.r === (routes[name] ? name : "items")));
-  });
+  useEffect(() => markNavActive());
   const onOpen = (id) => nav(`item/${id}`);
   return html`<${View} onOpen=${onOpen} id=${itemId} /><${DialogHost} />`;
 };
 
-document.getElementById("nav").innerHTML = Object.keys(routes)
-  .map((r) => `<a href="#/${r}" data-r="${r}" class="nav-link d-flex align-items-center gap-1 small fw-medium">${r}</a>`)
-  .join("");
+// ---- pinnable top nav -------------------------------------------------------
+// every route starts as a bar tab; a tab's × (hover) hides it into the ⋯
+// menu and a menu row's ← pins it back. the hidden set persists like the
+// theme — a route not in it (e.g. a new page) shows in the bar by default.
+const NAV_PINNED_DEFAULT = ["inbox", "board", "team", "plans", "ideas", "discussions"];
+const navHiddenDefault = () => Object.keys(routes).filter((r) => !NAV_PINNED_DEFAULT.includes(r));
+function navHidden() {
+  try {
+    const h = JSON.parse(localStorage.getItem("te.nav.hidden") ?? "null");
+    return Array.isArray(h) ? h : navHiddenDefault();
+  } catch {
+    return navHiddenDefault();
+  }
+}
+let navMenuOpen = false;
+const navMenuBadges = {}; // hidden tab → badge value; any truthy value dots the ⋯
+
+// a badge goes on the pinned tab when there is one; a hidden tab can only
+// mark the ⋯ button — it can't show its number, so it always shows a dot
+function setNavBadge(r, key, v) {
+  const a = document.querySelector(`#nav a[data-r="${r}"]`);
+  if (a) {
+    delete navMenuBadges[r];
+    a.dataset[key] = v;
+  } else {
+    navMenuBadges[r] = v;
+  }
+  const more = document.getElementById("nav-more-btn");
+  if (more) more.dataset.badge = Object.values(navMenuBadges).some(Boolean) ? "●" : "";
+}
+
+function markNavActive() {
+  const [name] = route().split("/");
+  const r = routes[name] ? name : "items";
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.r === r));
+  const more = document.getElementById("nav-more-btn");
+  if (more) more.classList.toggle("active", navHidden().includes(r));
+}
+
+function renderNav() {
+  const hidden = new Set(navHidden());
+  const names = Object.keys(routes);
+  document.getElementById("nav").innerHTML = names
+    .filter((r) => !hidden.has(r))
+    .map(
+      (r) =>
+        `<a href="#/${r}" data-r="${r}" class="nav-link d-flex align-items-center gap-1 small fw-medium">${r}<span class="nav-x" data-x="${r}" title="hide — moves to the ⋯ menu">×</span></a>`,
+    )
+    .join("");
+  const hid = names.filter((r) => hidden.has(r));
+  document.getElementById("nav-more").innerHTML = hid.length
+    ? `<a href="#" id="nav-more-btn" class="nav-link d-flex align-items-center gap-1 small fw-medium" title="more pages — a row's ← puts it back in the bar">⋯</a>
+       <div class="sug nav-menu"${navMenuOpen ? "" : " hidden"}>${hid
+         .map(
+           (r) =>
+             `<div class="it" data-goto="${r}"><span class="flex-grow-1">${r}</span>${navMenuBadges[r] ? `<span class="nav-mi-badge">${navMenuBadges[r]}</span>` : ""}<span class="nav-pin" data-pin="${r}" title="show in the top bar">←</span></div>`,
+         )
+         .join("")}</div>`
+    : "";
+  markNavActive();
+  pollNavBadges(); // rebuilt tabs lose their data-badge/data-count attributes
+}
+
+document.getElementById("nav").addEventListener("click", (e) => {
+  const x = e.target.closest("[data-x]");
+  if (!x) return;
+  e.preventDefault();
+  localStorage.setItem("te.nav.hidden", JSON.stringify([...navHidden(), x.dataset.x]));
+  renderNav();
+});
+document.getElementById("nav-more").addEventListener("click", (e) => {
+  // stopPropagation on every handled click — renderNav detaches e.target, so
+  // the document click-away below would see a target "outside" the menu and
+  // close it again on the same event
+  const pin = e.target.closest("[data-pin]");
+  if (pin) {
+    e.stopPropagation();
+    localStorage.setItem("te.nav.hidden", JSON.stringify(navHidden().filter((r) => r !== pin.dataset.pin)));
+    renderNav();
+    return;
+  }
+  if (e.target.closest("#nav-more-btn")) {
+    e.preventDefault();
+    e.stopPropagation();
+    navMenuOpen = !navMenuOpen;
+    renderNav();
+    return;
+  }
+  const row = e.target.closest("[data-goto]");
+  if (row) {
+    e.stopPropagation();
+    navMenuOpen = false;
+    location.hash = "#/" + row.dataset.goto;
+    renderNav();
+  }
+});
+document.addEventListener("click", (e) => {
+  if (navMenuOpen && !e.target.closest("#nav-more")) {
+    navMenuOpen = false;
+    renderNav();
+  }
+});
+renderNav();
 document.getElementById("theme-toggle").onclick = () => {
   const el = document.documentElement;
   const next = el.dataset.theme === "dark" ? "light" : "dark";

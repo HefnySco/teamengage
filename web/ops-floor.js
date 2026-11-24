@@ -12,6 +12,20 @@
 const isReviewerRole = (role) => /review/i.test(role ?? "");
 
 /**
+ * Is this session a reviewer? A set role decides. A session with no role
+ * (a reviewer started by hand or by a scout, e.g. agent lens-quick-review,
+ * label review) counts as a reviewer when its label is "review" or its
+ * agent name has "review" in it.
+ * @param {{role?:string,label?:string,agent?:string}|undefined} s
+ * @returns {boolean}
+ */
+export function isReviewerSession(s) {
+  if (!s) return false;
+  if (s.role) return isReviewerRole(s.role);
+  return /^review$/i.test(s.label ?? "") || /review/i.test(s.agent ?? "");
+}
+
+/**
  * Where each item sits right now — one place per item, in this order:
  * a session desk, the dispatch queue (dispatch.matched), then the human's
  * desk (inbox.questions, then inbox.reviews).
@@ -80,8 +94,7 @@ export function derive(sessions, dispatch, inbox) {
  * @returns {Array<{at:string,kind:string,id?:string,mode?:string,note?:string,room:string}>}
  */
 export function feed(dispatchEvents, historyEvents, sessions) {
-  const roleOf = (session) =>
-    (sessions ?? []).find((s) => s.id === session)?.role;
+  const sessionOf = (session) => (sessions ?? []).find((s) => s.id === session);
   const out = [];
   for (const e of dispatchEvents ?? [])
     out.push({
@@ -95,7 +108,7 @@ export function feed(dispatchEvents, historyEvents, sessions) {
     const room =
       e.actor === "human"
         ? "you"
-        : e.action === "review" || isReviewerRole(roleOf(e.session))
+        : e.action === "review" || isReviewerSession(sessionOf(e.session))
           ? "rev"
           : "dev";
     out.push({

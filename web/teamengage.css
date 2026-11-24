@@ -253,6 +253,51 @@
   border-radius: 50%;
   background: var(--bs-warning);
 }
+/* pinnable tabs: a tab's × (hover) hides it into the ⋯ menu, a row's ← pins it back */
+#nav a .nav-x {
+  width: 0.9rem;
+  flex: none;
+  text-align: center;
+  line-height: 1;
+  opacity: 0;
+  color: var(--bs-tertiary-color);
+  transition: opacity 0.12s;
+}
+#nav a:hover .nav-x {
+  opacity: 1;
+}
+#nav a .nav-x:hover {
+  color: var(--bs-danger);
+}
+/* a hidden tab's badge collapses to a dot on the ⋯ — same warning signal */
+#nav-more-btn[data-badge]:not([data-badge=""])::after {
+  content: "";
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 50%;
+  background: var(--bs-warning);
+}
+#nav-more .nav-menu {
+  left: auto;
+  right: 0;
+  min-width: 9rem;
+}
+#nav-more .nav-pin {
+  opacity: 0;
+  color: var(--bs-tertiary-color);
+  transition: opacity 0.12s;
+}
+#nav-more .it:hover .nav-pin {
+  opacity: 1;
+}
+#nav-more .nav-pin:hover {
+  color: var(--bs-primary);
+}
+#nav-more .nav-mi-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--bs-warning);
+}
 /* status colours shared by triage dots, board headers and card hovers */
 .st-draft {
   --st: var(--te-st-draft);
