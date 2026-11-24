@@ -990,3 +990,52 @@ describe("forced lever CLI (TE-0209)", () => {
     }
   });
 });
+
+describe("a dispatch-minted session carries the spawned child's pid (TE-0218)", () => {
+  it("the session opened for a spawned child gets child.pid attached once it exists", async () => {
+    const { startDaemon } = await import("../server/server.js");
+    const { registerApiRoutes } = await import("../api/api.js");
+    const { registerAgentRoutes } = await import("../../agent/http.js");
+    const { EventBus } = await import("../api/events.js");
+
+    const srvHome = mkdtempSync(join(tmpdir(), "te-dispatch-pid-"));
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    const ctx = {
+      home: srvHome,
+      machine: "test",
+      workspaces: new Map([["ws", wsr]]),
+      sessions,
+      bus: new EventBus(),
+      dispatchers: new Map([["ws", d]]),
+    };
+    const handle = await startDaemon({
+      home: srvHome,
+      port: 0,
+      health: () => ({ machine: "test", workspaces: ["ws"] }),
+      register: async (app) => {
+        registerApiRoutes(app, ctx);
+        registerAgentRoutes(app, ctx);
+      },
+    });
+    try {
+      d.setBaseUrl(`http://127.0.0.1:${handle.port}`);
+      d.tick();
+      await untilEvent("dispatch_start", 1);
+      const running = d.status().running;
+      expect(running).toHaveLength(1);
+      const minted = sessions.list().find((s) => s.label === "WS-0001");
+      expect(minted).toBeDefined();
+      expect(minted!.pid).toBe(running[0].pid);
+      // and the pid probe, not the 2h idle limit, keeps it live
+      minted!.last_seen = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
+      expect(sessions.isLive(minted!.id)).toBe(true);
+    } finally {
+      d.stopAll();
+      await handle.close();
+      rmSync(srvHome, { recursive: true, force: true });
+    }
+  });
+});

@@ -39,6 +39,7 @@ export interface DispatchUpdate {
 interface ActiveChild extends RunningDispatch {
   child?: ChildProcess;
   token?: string;
+  sessionId?: string;
 }
 
 interface ResolvedCommands {
@@ -514,7 +515,7 @@ export class Dispatcher {
     role: "coder" | "reviewer",
     label: string,
     adopt: boolean,
-  ): Promise<{ token: string; resume: string[] }> {
+  ): Promise<{ token: string; resume: string[]; sessionId?: string }> {
     const res = await fetch(`${baseUrl}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -541,7 +542,7 @@ export class Dispatcher {
       // TE-0208: resume admits only holders this dispatcher minted itself
       this.mintedIds.add(sessionId);
     }
-    return { token, resume };
+    return { token, resume, sessionId };
   }
 
   /**
@@ -601,6 +602,7 @@ export class Dispatcher {
           return;
         }
         activeEntry.token = opened.token;
+        activeEntry.sessionId = opened.sessionId;
         this.spawnChildProcess(pick, role, cmdSpec, startVersion, activeEntry, opened.token);
       })
       .catch((err: Error) => {
@@ -655,6 +657,12 @@ export class Dispatcher {
 
     activeEntry.child = child;
     activeEntry.pid = child.pid ?? 0;
+    // TE-0218: the minted session carries no pid from hello — attach the
+    // child's so the pid probe (not the 2h idle limit) keeps a quiet agent
+    // live while its process runs
+    if (activeEntry.sessionId && child.pid) {
+      this.sessions.attachPid(activeEntry.sessionId, child.pid);
+    }
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
     this.emit("dispatch_start", {

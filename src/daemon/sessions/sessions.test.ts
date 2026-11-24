@@ -103,6 +103,34 @@ describe("idle limit (TE-0165)", () => {
   });
 });
 
+describe("attachPid — a minted session follows its child process (TE-0218)", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  it("a session with a live pid attached stays live past the idle limit without touch", () => {
+    const r = new SessionRegistry("desktop");
+    r.idleAfterMs = 60_000;
+    const s = r.hello("dispatch-agent"); // minted without a pid, as openRemoteSession leaves it
+    r.attachPid(s.id, process.pid);
+    s.last_seen = ago(10 * 60_000);
+    expect(r.isLive(s.id)).toBe(true);
+    expect(r.list().map((x) => x.id)).toContain(s.id);
+  });
+
+  it("a session whose attached pid is dead leaves the registry on the next isLive", () => {
+    const r = new SessionRegistry("desktop");
+    const s = r.hello("dispatch-agent");
+    r.attachPid(s.id, 2 ** 22); // at pid_max — cannot exist
+    expect(r.isLive(s.id)).toBe(false);
+    expect(r.get(s.id)).toBeUndefined();
+  });
+
+  it("attachPid on an unknown id is a no-op", () => {
+    const r = new SessionRegistry("desktop");
+    r.attachPid("ghost@desktop#0000", process.pid);
+    expect(r.get("ghost@desktop#0000")).toBeUndefined();
+  });
+});
+
 describe("dispatch-minted sessions and live claim capacity (TE-0206)", () => {
   it("marks a live session dispatch-minted; disconnect and the idle prune unmark it", () => {
     const r = new SessionRegistry("test");

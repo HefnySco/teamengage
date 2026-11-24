@@ -103,6 +103,17 @@ export class SessionRegistry {
     if (s) this.onChange?.("end", s);
   }
 
+  /**
+   * Attach a client pid after registration (TE-0218): the dispatcher mints
+   * the session before it can spawn the agent process, so hello carries no
+   * pid — without this the idle limit reaps a quiet-but-running agent.
+   * Once set, the pid probe (not last_seen) decides liveness.
+   */
+  attachPid(id: string, pid: number): void {
+    const s = this.sessions.get(id);
+    if (s) s.pid = pid;
+  }
+
   markDispatchMinted(id: string): void {
     if (this.sessions.has(id)) this.mintedByDispatch.add(id);
   }
