@@ -1257,7 +1257,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
    room and a reviewers room of hologram desks, a centre column with the
    dispatch front desk and the human's desk. Accent vars follow the theme;
    everything else rides bootstrap tokens so light and dark both read. */
-.ofloor {
+.ofloor,
+.of-console {
   --of-dev: #0284c7;
   --of-rev: #7c3aed;
   --of-dsp: #d97706;
@@ -1269,9 +1270,10 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   --of-glass2: var(--bs-secondary-bg);
   --of-docbg: var(--bs-body-bg);
   --of-shadow: 0 18px 40px -22px rgba(15, 23, 42, 0.35);
-  margin-bottom: 1rem;
 }
-[data-bs-theme="dark"] .ofloor {
+.ofloor { margin-bottom: 1rem; }
+[data-bs-theme="dark"] .ofloor,
+[data-bs-theme="dark"] .of-console {
   --of-dev: #38bdf8;
   --of-rev: #a78bfa;
   --of-dsp: #fbbf24;
@@ -1535,13 +1537,142 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 /* the human — a person, not a projection */
 .of-you .of-person { width: 96px; height: 118px; color: var(--of-you); margin: 4px 0 -4px; opacity: 0.92; }
 .of-you .of-person svg { width: 100%; height: 100%; }
-.dispatch-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-.dispatch-max-group { width: 10.5rem; flex: none; }
-.dispatch-filter-group { flex: 1 1 20rem; max-width: 34rem; min-width: 14rem; }
+
+/* floor log — the room's recent events on a perspective grid, pinned to the
+   bottom of the room card (margin-top: auto) */
+.of-log { position: relative; margin-top: auto; height: 170px; flex: none; overflow: hidden; }
+.of-log .of-grid {
+  position: absolute;
+  inset: 0 -30% -60% -30%;
+  transform: perspective(500px) rotateX(58deg);
+  transform-origin: top;
+  background:
+    linear-gradient(color-mix(in srgb, var(--ac) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ac) 16%, transparent) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 25%);
+  mask-image: linear-gradient(180deg, transparent, #000 25%);
+}
+.of-log .of-lines {
+  position: absolute;
+  inset: 18px 22px 0;
+  font-size: 11.5px;
+  line-height: 2;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
+}
+.of-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.of-line:first-child { animation: of-linein 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes of-linein { from { transform: translateY(-100%); opacity: 0; } }
+.of-line .of-tm { color: var(--of-faint); font-family: var(--bs-font-monospace); font-size: 10.5px; display: inline-block; width: 44px; }
+.of-line .of-kd { color: color-mix(in srgb, var(--ac) 80%, var(--bs-body-color)); }
+.of-line a { color: var(--bs-body-color); font-family: var(--bs-font-monospace); font-weight: 600; cursor: pointer; }
+.of-line .of-dim { color: var(--of-dim); }
+.of-line.of-none { color: var(--of-faint); }
+
+/* the ticker under the floor — the latest event from any room, a human's
+   included (they get no room log) */
+.of-ticker {
+  margin-top: 12px;
+  padding: 8px 16px;
+  font-size: 11.5px;
+  color: var(--of-dim);
+  border: 1px solid var(--of-line);
+  border-radius: 12px;
+  background: var(--of-glass);
+  box-shadow: var(--of-shadow);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.of-ticker b { color: var(--bs-body-color); font-weight: 600; }
+.of-ticker .of-kd { color: var(--bs-body-color); }
+.of-ticker a { color: var(--bs-body-color); font-family: var(--bs-font-monospace); font-weight: 600; cursor: pointer; }
+
+/* TE-0216 — the dispatch console: one glass row under the ops floor
+   (te-0212 concept v9.1). Toggle, pause/resume, the max-issues stepper, the
+   filter box with its chips and the active count share the of-* tokens. */
+.of-console {
+  margin: 14px 0 1rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid var(--of-line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--of-glass);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--of-shadow);
+}
+.of-console .of-lbl { font-size: 11px; color: var(--of-dim); white-space: nowrap; }
+.of-console .of-paused { font-size: 11px; color: var(--bs-warning); white-space: nowrap; }
+.of-console .of-why { font-size: 11px; color: var(--of-dim); white-space: nowrap; }
+.of-console .of-why b { color: var(--of-dsp); font-weight: 600; }
+/* the max-issues stepper: minus, value, plus in one bordered pill */
+.of-step {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--of-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--of-glass2);
+}
+.of-step button {
+  border: 0;
+  background: transparent;
+  width: 24px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--of-dim);
+  font-size: 13px;
+  line-height: 1;
+}
+.of-step button:hover { color: var(--bs-body-color); }
+.of-step input {
+  width: 32px;
+  padding: 4px 0;
+  text-align: center;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--bs-body-color);
+  font: 600 12px var(--bs-font-monospace);
+}
+/* the filter box: id chips and free text inside one field; the suggestion
+   dropdown (.sug) anchors to it */
+.of-fbar {
+  position: relative;
+  flex: 1 1 18rem;
+  min-width: 15rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  border: 1px solid var(--of-line);
+  border-radius: 9px;
+  background: var(--of-glass2);
+  padding: 4px 7px;
+}
+.of-fbar:focus-within {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bs-primary) 18%, transparent);
+}
+.of-ftext {
+  flex: 1;
+  min-width: 9rem;
+  border: 0;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  color: var(--bs-body-color);
+  font: 11.5px var(--bs-font-monospace);
+}
+.of-ftext::placeholder { color: var(--of-faint); }
 .dispatch-strip { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
 .dispatch-chip { display: inline-flex; align-items: center; gap: .2rem; }
 @media (max-width: 575.98px) {
-  .dispatch-filter-group { flex-basis: 100%; max-width: 100%; }
+  .of-fbar { flex-basis: 100%; }
 }
 .dispatch-live { width: .55rem; height: .55rem; border-radius: 50%; background: var(--bs-danger); flex: none; animation: dispatch-live-pulse 1.2s ease-in-out infinite; }
 @keyframes dispatch-live-pulse {
@@ -1552,37 +1683,16 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   .dispatch-live { animation: none; }
 }
 .dispatch-toggle { display: inline-flex; align-items: center; gap: .4rem; }
-/* dispatch filter editor: id chips + free text inside one .form-control */
-.dispatch-filter-edit {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .2rem;
-  height: auto;
-  min-height: calc(1.5em + .5rem + 2px);
-  padding: .1rem .4rem;
-  position: relative;
-}
-.dispatch-filter-edit input {
-  flex: 1;
-  min-width: 9rem;
-  border: 0;
-  outline: none;
-  padding: 0;
-  font: inherit;
-  background: transparent;
-  color: inherit;
-}
 .filter-chip {
   display: inline-flex;
   align-items: center;
   gap: .15rem;
   flex: none;
-  background: var(--bs-secondary-bg);
+  background: var(--bs-tertiary-bg);
   border: 1px solid var(--bs-border-color);
-  border-radius: .25rem;
-  padding: 0 .15rem 0 .3rem;
-  font-size: .82em;
+  border-radius: .35rem;
+  padding: 0 .15rem 0 .35rem;
+  font: 600 10.5px var(--bs-font-monospace);
   white-space: nowrap;
 }
 .filter-chip-x {

@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive } from "./ops-floor.js";
+import { derive, feed } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -73,6 +73,7 @@ const ago = (ts) => {
   if (s < 86400) return `${(s / 3600) | 0}h`;
   return `${(s / 86400) | 0}d`;
 };
+const hhmm = (ts) => new Date(ts).toTimeString().slice(0, 5); // floor-log timestamps
 
 // time left until an ISO timestamp, for countdowns ("in 12m", "due")
 const untilText = (ts) => {
@@ -551,6 +552,14 @@ const OFFICE_QUIET_MS = 15 * 60_000; // no call this long → the hologram dims
 const OFFICE_GONE_MS = 30 * 60_000; // an empty chair fades out after this
 const OFFICE_VANISH_MS = 950; // matches the of-vanish CSS transition
 const isReviewerSession = (s) => /review/i.test(s?.role ?? "");
+// TE-0215 — floor logs: a bounded buffer of history events, back-filled by
+// /events?replay=200 (as the activity page does) then kept live through the
+// shared onEvent store. The replay stream stays open and pushes the same
+// events, so both paths dedupe on the daemon's event id (machine|ts|seq —
+// src/daemon/api/events.ts eventId).
+const FEED_CAP = 200;
+const FEED_LINES = 6; // lines one room log shows, newest first
+const feedEventId = (e) => `${e.machine}|${e.ts}|${e.seq ?? 0}`;
 
 // the one dispatch on/off control — same on the dispatch bar and the
 // office front-desk seat: a button (red-outlined "off" when running) and a
@@ -690,8 +699,28 @@ const Seat = ({ e, docs, questionIds, onOpen }) => {
   </div>`;
 };
 
-// one room of the floor: header with live/left counts over the desk grid
-const FloorRoom = ({ room, entries, seats, questionIds, onOpen }) => {
+// a room's floor log: its last FEED_LINES feed lines, newest at the top, on a
+// perspective grid at the bottom of the room card. A line is time, action,
+// item id (click opens it), mode and the short note feed() cut
+const FloorLog = ({ lines, onOpen }) => html`<div class="of-log">
+  <div class="of-grid"></div>
+  <div class="of-lines">
+    ${lines.map(
+      (e) => html`<div class="of-line" key=${`${e.at}|${e.kind}|${e.id ?? ""}|${e.note ?? ""}`}>
+        <span class="of-tm">${hhmm(e.at)}</span>
+        <span class="of-kd">${e.kind}</span>
+        ${e.id ? html` · <a onClick=${() => onOpen(e.id)}>${e.id}</a>` : ""}
+        ${e.mode ? html` <span class="of-dim">(${e.mode})</span>` : ""}
+        ${e.note ? html` <span class="of-dim">${e.note}</span>` : ""}
+      </div>`,
+    )}
+    ${!lines.length && html`<div class="of-line of-none">no events yet</div>`}
+  </div>
+</div>`;
+
+// one room of the floor: header with live/left counts over the desk grid and
+// the floor log pinned to the bottom
+const FloorRoom = ({ room, entries, seats, questionIds, logs, onOpen }) => {
   const live = entries.filter((e) => !e.gone).length;
   return html`<section class=${"of-room of-" + room}>
     <div class="of-rhead">
@@ -715,6 +744,7 @@ const FloorRoom = ({ room, entries, seats, questionIds, onOpen }) => {
     </div>
     ${!entries.length &&
     html`<div class="of-empty">no ${room === "dev" ? "coder" : "reviewer"} sessions</div>`}
+    <${FloorLog} lines=${logs} onOpen=${onOpen} />
   </section>`;
 };
 
@@ -809,6 +839,28 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
   const [, bump] = useState(0);
   const live = sessions ?? [];
   const liveIds = new Set(live.map((s) => s.id));
+
+  // floor logs: history events, back-filled from the replay stream then fed
+  // live by the shared store — dedupe covers the overlap and a reconnect
+  const [hist, setHist] = useState([]);
+  const seen = useRef(new Set());
+  useEffect(() => {
+    const push = (e) => {
+      const k = feedEventId(e);
+      if (seen.current.has(k)) return;
+      seen.current.add(k);
+      if (seen.current.size > 3 * FEED_CAP) seen.current = new Set([...seen.current].slice(-FEED_CAP));
+      setHist((h) => [...h.slice(1 - FEED_CAP), e]);
+    };
+    const src = new EventSource("/events?replay=200");
+    src.onmessage = (m) => push(JSON.parse(m.data));
+    const off = onEvent((m) => m.kind === "event" && push(m.data));
+    return () => {
+      src.close();
+      off();
+    };
+  }, []);
+
   useEffect(() => {
     const k = known.current;
     let needsRender = false;
@@ -890,6 +942,15 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
   const devEntries = entries.filter((e) => !isReviewerSession(e.s));
   const revEntries = entries.filter((e) => isReviewerSession(e.s));
 
+  // feed() merges dispatch.events with the history buffer and gives each
+  // line a room; remembered (gone) sessions still resolve their role, so a
+  // leaving session's last events land in the right room. A human's events
+  // get room "you" — they go to the ticker only, never a room log
+  const feedSessions = entries.map((e) => e.s);
+  const all = feed(dispatch?.events, hist, feedSessions);
+  const ticker = all[all.length - 1];
+  const roomLines = (room) => all.filter((e) => e.room === room).slice(-FEED_LINES).reverse();
+
   return html`
     <div class="ofloor" ref=${rootRef}>
       <div class="of-floor">
@@ -898,6 +959,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
           entries=${devEntries}
           seats=${seats}
           questionIds=${questionIds}
+          logs=${roomLines("dev")}
           onOpen=${onOpen}
         />
         <div class="of-center">
@@ -915,8 +977,18 @@ const OpsFloor = ({ sessions, dispatch, inbox, onOpen, onDispatch }) => {
           entries=${revEntries}
           seats=${seats}
           questionIds=${questionIds}
+          logs=${roomLines("rev")}
           onOpen=${onOpen}
         />
+      </div>
+      <div class="of-ticker">
+        ${ticker
+          ? html`<b>${ago(ticker.at)} ago</b> — <span class="of-kd">${ticker.kind}</span>${ticker.id
+              ? html` · <a onClick=${() => onOpen(ticker.id)}>${ticker.id}</a>`
+              : ""}${ticker.mode ? ` (${ticker.mode})` : ""}${ticker.note
+              ? ` ${ticker.note}`
+              : ""}${ticker.room === "you" ? " · by you" : ""}`
+          : "waiting for events…"}
       </div>
     </div>`;
 };
@@ -1110,6 +1182,15 @@ const Team = ({ onOpen }) => {
 
   const removeChip = (chip) => setFilterChips(filterChips.filter((c) => c !== chip));
 
+  // the console stepper moves the draft max by one — Apply still sends it,
+  // exactly like typing the number; a broken draft falls back to the server
+  // value instead of jumping to 1
+  const stepMaxIssues = (delta) => {
+    const cur = Number(maxInput);
+    const base = Number.isInteger(cur) && cur >= 1 ? cur : serverMax;
+    setMaxInput(String(Math.max(1, base + delta)));
+  };
+
   // × on a matched candidate — keep it out of this queue with a -id exclusion.
   // An exact positive chip for it goes too; but never leave the filter with
   // no positive clause — "TE-1, -TE-1" is an empty queue, "-TE-1" alone
@@ -1227,6 +1308,61 @@ const Team = ({ onOpen }) => {
       onOpen=${onOpen}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
     />
+    ${dispatch
+      ? html`
+        <div class="of-console">
+          <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} whyIdle=${dispatch.why_idle} onToggle=${toggleEnabled} />
+          ${dispatch.paused != null
+            ? html`<button class="btn btn-sm btn-outline-warning dispatch-resume" title="lift the pause" onClick=${resumeDispatch}>resume</button><span class="of-paused">paused${dispatch.paused ? `: ${dispatch.paused}` : ""}</span>`
+            : html`<button class="btn btn-sm btn-outline-secondary dispatch-pause" title="stop new starts now" onClick=${pauseDispatch}>pause</button>`}
+          <span class="of-lbl">max issues</span>
+          <span class="of-step">
+            <button type="button" title="one issue less" aria-label="decrease max issues" onClick=${() => stepMaxIssues(-1)}>−</button>
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="Max online issues"
+              value=${maxInput}
+              onInput=${(e) => setMaxInput(e.target.value)}
+              onKeyDown=${(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyDraft();
+                }
+              }}
+            />
+            <button type="button" title="one issue more" aria-label="increase max issues" onClick=${() => stepMaxIssues(1)}>+</button>
+          </span>
+          <span class="of-lbl">filter</span>
+          <div class="of-fbar">
+            ${filterChips.map(
+              (c) => html`<span class="filter-chip" key=${c}>${c}<button
+                  type="button" class="filter-chip-x" title=${`remove ${c} from the filter`}
+                  onClick=${() => removeChip(c)}>×</button></span>`,
+            )}
+            <input
+              type="text"
+              class="of-ftext"
+              placeholder="TE-0001, #web:ready, plan:PL-1032, -TE-0002"
+              aria-label="Dispatch selector filter"
+              value=${filterText}
+              onInput=${(e) => setFilterDraft(e.target.value)}
+              onFocus=${() => setSugFocus(true)}
+              onBlur=${() => setSugFocus(false)}
+              onKeyDown=${onFilterKey}
+            />
+            ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
+          </div>
+          ${(draftFilter || serverFilter) &&
+          html`<button class="btn btn-sm btn-outline-secondary" type="button" title="clear filter — match all tasks" onClick=${clearFilter}>Clear</button>`}
+          <button
+            class=${"btn btn-sm " + (draftDirty ? "btn-primary" : "btn-outline-secondary")}
+            type="button"
+            onClick=${applyDraft}
+          >Apply</button>
+          <span class="of-why">${onlineIssues}/${serverMax} active${dispatch.why_idle ? html` · <b>idle: ${dispatch.why_idle}</b>` : ""}</span>
+        </div>`
+      : html`<div class="small text-secondary mt-1">loading…</div>`}
     <div class="triage-group">sessions <span class="n">${ss.length}</span></div>
     <div class="d-flex flex-column gap-1 mt-1 mb-3">
       ${ss.length === 0 && html`<div class="small text-secondary">no live sessions — agents appear here when they say hello</div>`}
@@ -1241,61 +1377,8 @@ const Team = ({ onOpen }) => {
         </div>`)}
     </div>
     <div class="triage-group">dispatch <span class="n">${onlineIssues}/${serverMax}</span></div>
-    ${dispatch
-      ? html`
-        <div class="dispatch-bar mt-2 mb-2">
-          <${DispatchToggle} enabled=${dispatch.enabled} ready=${agentsReady} whyIdle=${dispatch.why_idle} onToggle=${toggleEnabled} />
-          ${dispatch.paused != null
-            ? html`<button class="btn btn-sm btn-outline-warning dispatch-resume" title="lift the pause" onClick=${resumeDispatch}>resume</button><span class="small text-warning">paused${dispatch.paused ? `: ${dispatch.paused}` : ""}</span>`
-            : html`<button class="btn btn-sm btn-outline-secondary dispatch-pause" title="stop new starts now" onClick=${pauseDispatch}>pause</button>`}
-          <div class="input-group input-group-sm dispatch-max-group">
-            <span class="input-group-text">max issues</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              class="form-control"
-              aria-label="Max online issues"
-              value=${maxInput}
-              onInput=${(e) => setMaxInput(e.target.value)}
-              onKeyDown=${(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  applyDraft();
-                }
-              }}
-            />
-          </div>
-          <div class="input-group input-group-sm dispatch-filter-group">
-            <span class="input-group-text">filter</span>
-            <div class="form-control font-monospace dispatch-filter-edit">
-              ${filterChips.map(
-                (c) => html`<span class="filter-chip" key=${c}>${c}<button
-                    type="button" class="filter-chip-x" title=${`remove ${c} from the filter`}
-                    onClick=${() => removeChip(c)}>×</button></span>`,
-              )}
-              <input
-                type="text"
-                placeholder="TE-0001, #web:ready, plan:PL-1032, -TE-0002"
-                aria-label="Dispatch selector filter"
-                value=${filterText}
-                onInput=${(e) => setFilterDraft(e.target.value)}
-                onFocus=${() => setSugFocus(true)}
-                onBlur=${() => setSugFocus(false)}
-                onKeyDown=${onFilterKey}
-              />
-              ${sug && html`<${SearchSug} sug=${sug} sel=${sel} onPick=${applySug} />`}
-            </div>
-            ${(draftFilter || serverFilter) &&
-            html`<button class="btn btn-outline-secondary" type="button" title="clear filter — match all tasks" onClick=${clearFilter}>Clear</button>`}
-          </div>
-          <button
-            class=${"btn btn-sm " + (draftDirty ? "btn-primary" : "btn-outline-secondary")}
-            type="button"
-            onClick=${applyDraft}
-          >Apply</button>
-          <span class="small text-secondary">${onlineIssues}/${serverMax} active issues</span>
-        </div>
+    ${dispatch &&
+    html`
         ${runningItems.length > 0 &&
         html`
           <div class="dispatch-strip small mb-1">
@@ -1327,8 +1410,7 @@ const Team = ({ onOpen }) => {
                   html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.id ? html` · <a class="item id" onClick=${() => onOpen(e.data.id)}>${e.data.id}</a>` : ""}${e.data.mode ? ` (${e.data.mode})` : ""}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`,
               )}
             </div>`
-          : html`<div class="small text-secondary">no dispatch events yet</div>`}`
-      : html`<div class="small text-secondary mt-1">loading…</div>`}`;
+          : html`<div class="small text-secondary">no dispatch events yet</div>`}`}`;
 };
 
 const Inbox = ({ onOpen }) => {
