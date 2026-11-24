@@ -29,6 +29,8 @@ export interface RunItem {
     dead_since?: string;
   } | null;
   ai_review?: { verdict: "ok" | "issues"; summary?: string; note?: string; needs_human?: boolean };
+  /** model id of the session that submitted the current submission (GL-0360) */
+  submitted_model?: string;
   question?: { text: string };
 }
 
@@ -86,20 +88,44 @@ export interface AdmissionContext {
   maxAttempts: number;
   fixRounds: number;
   fixes: ReadonlyMap<string, number>;
-  coderName: string;
+  /** agent names of every configured coder command — a dead claim by any of them is "ours" (TE-0225) */
+  coderNames: string[];
   /** session ids this dispatcher opened itself — resume trusts only these */
   mintedSessions: ReadonlySet<string>;
   isLive: (sessionId: string) => boolean;
   takeoverGraceMs: number;
-  /** GL-0361 rule — the reviewer command's parsed model must satisfy it */
+  /** GL-0361 rule — the picked reviewer command's parsed model must satisfy it */
   reviewModels?: { deep?: string; quick?: string; deep_from_tier: Tier };
-  reviewerModel?: string;
+  /** parsed --model of each configured reviewer command, config order — undefined = declares none (TE-0225) */
+  reviewerModels?: (string | undefined)[];
 }
 
 export interface Admission {
   ok: boolean;
   /** refused: why it failed · admitted: which checks qualified it */
   reasons: string[];
+}
+
+/**
+ * TE-0225: may a reviewer command with this parsed --model review the item?
+ * Two gates, same order as the state machine: the DE-0161 different-model
+ * rule refuses only a proven same-model clash (either side unknown → the
+ * review stands), then GL-0361 review_models — a declared model, deep at or
+ * above deep_from_tier, quick or deep below.
+ */
+export function reviewerModelAllowed(
+  model: string | undefined,
+  item: RunItem,
+  reviewModels?: { deep?: string; quick?: string; deep_from_tier: Tier },
+): boolean {
+  if (item.submitted_model !== undefined && model === item.submitted_model) return false;
+  if (!reviewModels) return true;
+  if (!model) return false;
+  if (tierRank(item.tier) >= tierRank(reviewModels.deep_from_tier)) {
+    return model === reviewModels.deep;
+  }
+  const pool = [reviewModels.quick, reviewModels.deep].filter(Boolean);
+  return pool.length === 0 || pool.includes(model);
 }
 
 /**
@@ -165,24 +191,22 @@ export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admissi
       break;
     }
     case "review": {
-      const rm = ctx.reviewModels;
-      if (rm) {
-        if (!ctx.reviewerModel) {
-          failed.push("the reviewer command declares no model and review_models is set");
-        } else {
-          const needsDeep = tierRank(item.tier) >= tierRank(rm.deep_from_tier);
-          const pool = [rm.quick, rm.deep].filter(Boolean);
-          const allowed = needsDeep
-            ? ctx.reviewerModel === rm.deep
-            : pool.length === 0 || pool.includes(ctx.reviewerModel);
-          if (!allowed) {
-            failed.push(`reviewer model ${ctx.reviewerModel} may not review this item`);
-          } else {
-            passed.push(`reviewer model ${ctx.reviewerModel} allowed`);
-          }
-        }
+      // TE-0225: the pick spawns the first qualifying configured reviewer —
+      // refuse when none differs from submitted_model or satisfies review_models
+      const candidates = ctx.reviewerModels ?? [];
+      const qualifying = candidates.filter((model) =>
+        reviewerModelAllowed(model, item, ctx.reviewModels),
+      );
+      if (qualifying.length) {
+        passed.push(`reviewer model ${qualifying[0] ?? "undeclared"} allowed`);
+      } else if (!candidates.length) {
+        failed.push("no reviewer command is configured");
+      } else if (ctx.reviewModels && candidates.every((model) => model === undefined)) {
+        failed.push("no reviewer command declares a model and review_models is set");
       } else {
-        passed.push("no review_models rule");
+        failed.push(
+          "no configured reviewer differs from submitted_model or satisfies review_models",
+        );
       }
       break;
     }
@@ -523,8 +547,13 @@ export function listDispatchCandidates(
     }
   }
 
-  const ours = (entry: RunItem) =>
-    entry.claim != null && sessionIdMatches(entry.claim.holder, coderName, machine);
+  // TE-0225: a claim by any configured coder's name counts as ours — several
+  // coder commands may mint sessions under different agent names
+  const ours = (entry: RunItem) => {
+    if (entry.claim == null) return false;
+    const names = admission?.coderNames ?? [coderName];
+    return names.some((name) => sessionIdMatches(entry.claim!.holder, name, machine));
+  };
   const canResume = (entry: RunItem) =>
     ours(entry) &&
     entry.claim?.dead === true &&
@@ -610,8 +639,13 @@ export function pickNext(
     if (a) return { id: entry.id, mode: "fix", ...(admission ? { reasons: a.reasons } : {}) };
   }
 
-  const ours = (entry: RunItem) =>
-    entry.claim != null && sessionIdMatches(entry.claim.holder, coderName, machine);
+  // TE-0225: a claim by any configured coder's name counts as ours — several
+  // coder commands may mint sessions under different agent names
+  const ours = (entry: RunItem) => {
+    if (entry.claim == null) return false;
+    const names = admission?.coderNames ?? [coderName];
+    return names.some((name) => sessionIdMatches(entry.claim!.holder, name, machine));
+  };
   const canResume = (entry: RunItem) =>
     ours(entry) &&
     entry.claim?.dead === true &&

@@ -262,7 +262,7 @@ describe("admit — admission checks before a pick (TE-0208)", () => {
     maxAttempts: 5,
     fixRounds: 3,
     fixes: new Map(),
-    coderName: "devin",
+    coderNames: ["devin"],
     mintedSessions: new Set(),
     isLive: () => true,
     takeoverGraceMs: 15 * 60_000,
@@ -438,15 +438,66 @@ describe("admit — admission checks before a pick (TE-0208)", () => {
     expect(admit(oldDead, "takeover", ctx).ok).toBe(true);
   });
 
-  it("review admits only a reviewer command whose declared model satisfies review_models", () => {
+  it("review admits only a configured reviewer model that satisfies review_models (TE-0225)", () => {
     const ctx = makeAdmission({
       reviewModels: { deep: "deep-model", quick: "quick-model", deep_from_tier: "heavy" },
     });
     const lightItem = makeItem("WS-0001", "in_review", { claim: { holder: "a@box#1", machine: "box" }, tier: "standard" });
     const heavyItem = makeItem("WS-0002", "in_review", { claim: { holder: "a@box#1", machine: "box" }, tier: "heavy" });
-    expect(admit(lightItem, "review", ctx).ok).toBe(false); // no declared model
-    expect(admit(lightItem, "review", { ...ctx, reviewerModel: "quick-model" }).ok).toBe(true);
-    expect(admit(heavyItem, "review", { ...ctx, reviewerModel: "quick-model" }).ok).toBe(false);
-    expect(admit(heavyItem, "review", { ...ctx, reviewerModel: "deep-model" }).ok).toBe(true);
+    expect(admit(lightItem, "review", ctx).ok).toBe(false); // no reviewer configured
+    expect(admit(lightItem, "review", { ...ctx, reviewerModels: ["quick-model"] }).ok).toBe(true);
+    expect(admit(heavyItem, "review", { ...ctx, reviewerModels: ["quick-model"] }).ok).toBe(false);
+    expect(admit(heavyItem, "review", { ...ctx, reviewerModels: ["quick-model", "deep-model"] }).ok).toBe(true);
+    // a reviewer command without --model cannot serve while review_models is set
+    expect(admit(lightItem, "review", { ...ctx, reviewerModels: [undefined] }).ok).toBe(false);
+  });
+
+  it("review refuses when no configured reviewer differs from submitted_model (TE-0225)", () => {
+    const ctx = makeAdmission({ reviewerModels: ["swe-2-high"] });
+    const item = makeItem("WS-0001", "in_review", {
+      claim: { holder: "a@box#1", machine: "box" },
+      submitted_model: "swe-2-high",
+    });
+    expect(admit(item, "review", ctx).ok).toBe(false);
+    expect(admit(item, "review", { ...ctx, reviewerModels: ["swe-2-high", "sonnet"] }).ok).toBe(true);
+    // an undeclared reviewer model counts as different — the review layer decides
+    expect(admit(item, "review", { ...ctx, reviewerModels: ["swe-2-high", undefined] }).ok).toBe(true);
+    // a submission with no declared model is reviewable by any configured reviewer
+    const unmarked = makeItem("WS-0002", "in_review", {
+      claim: { holder: "a@box#1", machine: "box" },
+    });
+    expect(admit(unmarked, "review", { ...ctx, reviewerModels: [undefined] }).ok).toBe(true);
+  });
+
+  it("resume matches a dead claim held by any configured coder name (TE-0225)", () => {
+    // a second coder command minted 'claude' sessions — the default coderName
+    // ('devin') alone would route its dead claim to takeover
+    const ctx = makeAdmission({
+      coderNames: ["devin", "claude"],
+      mintedSessions: new Set(["claude@box#dead"]),
+      isLive: () => false,
+    });
+    const item = makeItem("WS-0001", "in_progress", {
+      claim: { holder: "claude@box#dead", machine: "box", dead: true },
+    });
+    const pick = pickNext(
+      makeConfig(),
+      makeState(),
+      [item],
+      [],
+      "box",
+      Infinity,
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(pick?.mode).toBe("resume");
+    // without the extra coder name the same claim is a takeover candidate
+    expect(
+      pickNext(makeConfig(), makeState(), [item], [], "box", Infinity, "devin", undefined, {
+        ...ctx,
+        coderNames: ["devin"],
+      })?.mode,
+    ).toBe("takeover");
   });
 });

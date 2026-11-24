@@ -23,6 +23,8 @@ interface SeedItem {
   status?: string;
   parent?: string;
   domains?: string[];
+  tier?: string;
+  submittedModel?: string;
   aiReview?: { verdict: "ok" | "issues"; summary: string; note?: string };
 }
 
@@ -52,12 +54,14 @@ async function makeWs(
     mkdirSync(join(plans, "items", prefix), { recursive: true });
     const parentYaml = item.parent ? `parent: ${item.parent}\n` : "";
     const domainsYaml = item.domains?.length ? `domains: [${item.domains.join(", ")}]\n` : "";
+    const tierYaml = item.tier ? `tier: ${item.tier}\n` : "";
+    const modelYaml = item.submittedModel ? `submitted_model: ${item.submittedModel}\n` : "";
     const reviewYaml = item.aiReview
       ? `ai_review:\n  verdict: ${item.aiReview.verdict}\n  summary: "${item.aiReview.summary}"\n${item.aiReview.note ? `  note: "${item.aiReview.note}"\n` : ""}  reviewed_by: rev@test#1111\n  reviewed_at: "2026-11-23T00:00:00.000Z"\n`
       : "";
     writeFileSync(
       join(plans, "items", prefix, `${item.id}.md`),
-      `---\nid: ${item.id}\ntype: ${item.type ?? "task"}\ntitle: ${item.id}\nstatus: ${item.status ?? "ready"}\n${parentYaml}${domainsYaml}${reviewYaml}version: 1\n---\n\n## Summary\nx\n`,
+      `---\nid: ${item.id}\ntype: ${item.type ?? "task"}\ntitle: ${item.id}\nstatus: ${item.status ?? "ready"}\n${parentYaml}${domainsYaml}${tierYaml}${modelYaml}${reviewYaml}version: 1\n---\n\n## Summary\nx\n`,
     );
   }
   execFileSync("git", ["init", "-b", "main"], { cwd: plans });
@@ -1401,5 +1405,81 @@ describe("dispatch state persists across a restart (TE-0223)", () => {
     const d3 = dispatcher(wsr);
     expect(d3.status().enabled).toBe(true);
     expect(d3.status().paused).toBeNull();
+  });
+});
+
+describe("coder and reviewer commands picked per item (TE-0225)", () => {
+  it("a light item spawns the light coder and a heavy item the heavy coder", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n  agents:\n    - { role: coder, tier: light, command: "sleep 30 #light" }\n    - { role: coder, tier: heavy, command: "sleep 30 #heavy" }\n`,
+      [
+        { id: "WS-0001", status: "ready", tier: "light" },
+        { id: "WS-0002", status: "ready", tier: "heavy" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(2);
+    expect(starts.find((s) => s.data.id === "WS-0001")?.data.command).toBe("sleep 30 #light");
+    expect(starts.find((s) => s.data.id === "WS-0002")?.data.command).toBe("sleep 30 #heavy");
+    expect(starts.every((s) => s.data.role === "coder")).toBe(true);
+  });
+
+  it("an untiered coder entry covers only the tiers no declared entry matches exactly", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 3\n  agents:\n    - { role: coder, command: "sleep 30 #default" }\n    - { role: coder, tier: heavy, command: "sleep 30 #heavy" }\n`,
+      [
+        { id: "WS-0001", status: "ready", tier: "light" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready", tier: "heavy" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    for (let i = 0; i < 3; i++) d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(3);
+    // the untiered default takes the ordinary work, the declared heavy its own
+    expect(starts.find((s) => s.data.id === "WS-0001")?.data.command).toBe("sleep 30 #default");
+    expect(starts.find((s) => s.data.id === "WS-0002")?.data.command).toBe("sleep 30 #default");
+    expect(starts.find((s) => s.data.id === "WS-0003")?.data.command).toBe("sleep 30 #heavy");
+  });
+
+  it("review_models: a standard item spawns the quick reviewer and a heavy item the deep one", async () => {
+    const wsr = await makeWs(
+      `review_models:\n  deep: deep-model\n  quick: quick-model\n  deep_from_tier: heavy\ndispatch:\n  enabled: true\n  max_issues: 3\n  agents:\n    - { role: reviewer, command: "true --model quick-model" }\n    - { role: reviewer, command: "true --model deep-model" }\n`,
+      [
+        { id: "WS-0001", status: "in_review", tier: "standard" },
+        { id: "WS-0002", status: "in_review", tier: "heavy" },
+        { id: "WS-0003", status: "in_review", tier: "standard", submittedModel: "quick-model" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    for (const [index, id] of ["WS-0001", "WS-0002", "WS-0003"].entries()) {
+      ops.index.setClaim({
+        item: id,
+        holder: `author@test#aa${index}`,
+        machine: "test",
+        claimed_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        targets: [],
+      });
+    }
+    const d = dispatcher(wsr);
+    d.tick();
+    const starts = events.filter((e) => e.kind === "dispatch_start");
+    expect(starts).toHaveLength(3);
+    expect(starts.find((s) => s.data.id === "WS-0001")?.data.command).toBe(
+      "true --model quick-model",
+    );
+    expect(starts.find((s) => s.data.id === "WS-0002")?.data.command).toBe(
+      "true --model deep-model",
+    );
+    // submitted by quick-model — the same-model reviewer is refused, deep serves
+    expect(starts.find((s) => s.data.id === "WS-0003")?.data.command).toBe(
+      "true --model deep-model",
+    );
+    expect(starts.every((s) => s.data.role === "reviewer")).toBe(true);
   });
 });

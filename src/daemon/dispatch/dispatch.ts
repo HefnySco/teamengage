@@ -10,12 +10,14 @@ import { WorkspaceOps } from "../api/ops.js";
 import { loadMachineConfig } from "../../core/config/config.js";
 import { NotFoundError, ValidationError } from "../../core/model/errors.js";
 import { RunConfig, parseDuration, type DispatchAgent } from "../../core/model/workspace.js";
+import { tierRank, type Tier } from "../../core/model/item.js";
 import {
   agentName,
   listDispatchCandidates,
   parseDispatchFilter,
   pickNext,
   promptFor,
+  reviewerModelAllowed,
   type AdmissionContext,
   type DispatchFilter,
   type MatchedCandidate,
@@ -60,9 +62,16 @@ interface ActiveChild extends RunningDispatch {
   baselineVersion?: number;
 }
 
+interface ResolvedCommand {
+  command: string;
+  source: "dispatch" | "run";
+  /** dispatch.agents tier — a run.* fallback carries none (untiered = every tier) */
+  tier?: Tier;
+}
+
 interface ResolvedCommands {
-  coder?: { command: string; source: "dispatch" | "run" };
-  reviewer?: { command: string; source: "dispatch" | "run" };
+  coders: ResolvedCommand[];
+  reviewers: ResolvedCommand[];
   fixRounds: number;
   defaultConcurrency: number;
 }
@@ -410,28 +419,73 @@ export class Dispatcher {
     const configuredAgents = (this.wsr.ws.config.dispatch?.agents ?? []).filter(
       (agent) => !isLegacyTeRunCommand(agent.command),
     );
-    const dispatchCoder = configuredAgents.find((agent) => agent.role === "coder");
-    const dispatchReviewer = configuredAgents.find((agent) => agent.role === "reviewer");
+    // TE-0225: every non-legacy entry stays a candidate — the pick chooses
+    // one per item; the machine.yaml run: block fills a role with no entry
+    const coders: ResolvedCommand[] = configuredAgents
+      .filter((agent) => agent.role === "coder")
+      .map((agent) => ({ command: agent.command, source: "dispatch", tier: agent.tier }));
+    const reviewers: ResolvedCommand[] = configuredAgents
+      .filter((agent) => agent.role === "reviewer")
+      .map((agent) => ({ command: agent.command, source: "dispatch", tier: agent.tier }));
+    if (!coders.length && runCfg.coder) {
+      coders.push({ command: runCfg.coder, source: "run" });
+    }
+    if (!reviewers.length && runCfg.reviewer) {
+      reviewers.push({ command: runCfg.reviewer, source: "run" });
+    }
     return {
-      coder: dispatchCoder
-        ? { command: dispatchCoder.command, source: "dispatch" }
-        : runCfg.coder
-          ? { command: runCfg.coder, source: "run" }
-          : undefined,
-      reviewer: dispatchReviewer
-        ? { command: dispatchReviewer.command, source: "dispatch" }
-        : runCfg.reviewer
-          ? { command: runCfg.reviewer, source: "run" }
-          : undefined,
+      coders,
+      reviewers,
       fixRounds: runCfg.fix_rounds,
       defaultConcurrency: hasRunBlock ? runCfg.concurrency : 2,
     };
   }
 
+  /**
+   * TE-0225: the lowest-tier coder entry that can take the item. A declared
+   * tier must be >= the item's; an untiered entry counts as an exact match
+   * for the item ("matches all tiers") and loses the tie to a declared
+   * entry at the item's tier — a specialist wins its own tier, the
+   * untiered default covers everything else.
+   */
+  private pickCoder(resolved: ResolvedCommands, tier?: Tier): ResolvedCommand | undefined {
+    const need = tierRank(tier);
+    let best: ResolvedCommand | undefined;
+    let bestRank = Infinity;
+    let bestDeclared = false;
+    for (const entry of resolved.coders) {
+      if (entry.tier !== undefined && tierRank(entry.tier) < need) continue;
+      const rank = entry.tier === undefined ? need : tierRank(entry.tier);
+      const declared = entry.tier !== undefined;
+      if (rank < bestRank || (rank === bestRank && declared && !bestDeclared)) {
+        best = entry;
+        bestRank = rank;
+        bestDeclared = declared;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * TE-0225: the first reviewer entry whose parsed --model differs from the
+   * submission's model and satisfies review_models (deep at or above
+   * deep_from_tier, quick or deep below).
+   */
+  private pickReviewer(resolved: ResolvedCommands, item: RunItem): ResolvedCommand | undefined {
+    const rm = this.wsr.ws.config.review_models;
+    return resolved.reviewers.find((entry) =>
+      reviewerModelAllowed(commandModel(entry.command), item, rm),
+    );
+  }
+
   private effectiveAgents(resolved: ResolvedCommands): DispatchAgent[] {
     const out: DispatchAgent[] = [];
-    if (resolved.coder) out.push({ role: "coder", command: resolved.coder.command });
-    if (resolved.reviewer) out.push({ role: "reviewer", command: resolved.reviewer.command });
+    for (const entry of resolved.coders) {
+      out.push({ role: "coder", command: entry.command, ...(entry.tier ? { tier: entry.tier } : {}) });
+    }
+    for (const entry of resolved.reviewers) {
+      out.push({ role: "reviewer", command: entry.command, ...(entry.tier ? { tier: entry.tier } : {}) });
+    }
     return out;
   }
 
@@ -543,6 +597,7 @@ export class Dispatcher {
         findings: indexed.meta.findings?.length,
         claim: indexed.claim ? { ...indexed.claim, dead } : null,
         ai_review: indexed.meta.ai_review,
+        submitted_model: indexed.meta.submitted_model,
         question: indexed.meta.question,
       });
     }
@@ -559,12 +614,12 @@ export class Dispatcher {
       maxAttempts: this.wsr.ws.config.max_attempts,
       fixRounds: resolved.fixRounds,
       fixes: this.fixes,
-      coderName: resolved.coder ? agentName(resolved.coder.command) : "",
+      coderNames: resolved.coders.map((entry) => agentName(entry.command)),
       mintedSessions: this.mintedIds,
       isLive: (id) => this.sessions.isLive(id),
       takeoverGraceMs: parseDuration(this.wsr.ws.config.takeover_grace_after),
       reviewModels: this.wsr.ws.config.review_models,
-      reviewerModel: resolved.reviewer ? commandModel(resolved.reviewer.command) : undefined,
+      reviewerModels: resolved.reviewers.map((entry) => commandModel(entry.command)),
     };
   }
 
@@ -574,15 +629,15 @@ export class Dispatcher {
     const agents = this.effectiveAgents(resolved);
     const { items, ready, onlineIds, tried } = this.collectBoard(ops);
     const runCfg = RunConfig.parse({
-      ...(resolved.coder ? { coder: resolved.coder.command } : {}),
-      ...(resolved.reviewer ? { reviewer: resolved.reviewer.command } : {}),
+      ...(resolved.coders[0] ? { coder: resolved.coders[0].command } : {}),
+      ...(resolved.reviewers[0] ? { reviewer: resolved.reviewers[0].command } : {}),
       concurrency: this.maxIssues,
       fix_rounds: resolved.fixRounds,
     });
     const admission = this.admissionCtx(resolved, Date.now());
     const blockedIds = new Set(items.filter((i) => i.dispatch_blocked).map((i) => i.id));
     const matched: Array<MatchedCandidate & { blocked?: boolean }> =
-      resolved.coder || resolved.reviewer
+      resolved.coders.length || resolved.reviewers.length
         ? listDispatchCandidates(
             runCfg,
             { fixes: this.fixes, tried },
@@ -601,7 +656,7 @@ export class Dispatcher {
       pid: entry.pid,
       started_at: entry.started_at,
     }));
-    const agentsReady = Boolean(resolved.coder || resolved.reviewer);
+    const agentsReady = Boolean(resolved.coders.length || resolved.reviewers.length);
     // TE-0206: a starved dispatcher is never silent — name why nothing starts
     let whyIdle: string | null = null;
     if (this.pausedReason !== undefined)
@@ -654,7 +709,7 @@ export class Dispatcher {
   tick(): void {
     if (!this.enabled || this.pausedReason !== undefined) return;
     const resolved = this.resolveCommands();
-    if (!resolved.coder && !resolved.reviewer) return;
+    if (!resolved.coders.length && !resolved.reviewers.length) return;
 
     const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
     if (this.pendingClaim) {
@@ -675,8 +730,8 @@ export class Dispatcher {
     }
 
     const runCfg = RunConfig.parse({
-      ...(resolved.coder ? { coder: resolved.coder.command } : {}),
-      ...(resolved.reviewer ? { reviewer: resolved.reviewer.command } : {}),
+      ...(resolved.coders[0] ? { coder: resolved.coders[0].command } : {}),
+      ...(resolved.reviewers[0] ? { reviewer: resolved.reviewers[0].command } : {}),
       concurrency: Math.max(1, this.maxIssues),
       fix_rounds: resolved.fixRounds,
     });
@@ -702,7 +757,15 @@ export class Dispatcher {
         admission,
       );
       if (!pick) break;
-      const cmdSpec = pick.mode === "review" ? resolved.reviewer : resolved.coder;
+      // TE-0225: the item decides which configured command spawns — coder
+      // by tier, reviewer by submitted_model + review_models
+      const pickedItem = items.find((entry) => entry.id === pick.id);
+      const cmdSpec =
+        pick.mode === "review"
+          ? pickedItem
+            ? this.pickReviewer(resolved, pickedItem)
+            : undefined
+          : this.pickCoder(resolved, pickedItem?.tier);
       if (!cmdSpec) break;
       const startVersion = ops.index.get(pick.id)?.meta.version ?? 0;
       onlineIds.add(pick.id);
