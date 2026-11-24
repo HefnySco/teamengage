@@ -45,6 +45,10 @@ function seedPlans(dir: string, sync: "manual" | "auto", extra = "") {
     join(dir, "items", "WS", "WS-0002.md"),
     '---\nid: WS-0002\ntype: task\ntitle: two\nstatus: ready\nversion: 1\ntargets: ["@self:src/b.ts"]\n---\n\n## Summary\nx\n',
   );
+  writeFileSync(
+    join(dir, ".gitattributes"),
+    ".teamengage/**/*.jsonl merge=union\nmachines/*.trans.md merge=union\n",
+  );
   execFileSync("git", ["init", "-b", "main"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: dir });
   execFileSync("git", ["config", "user.name", "t"], { cwd: dir });
@@ -225,7 +229,7 @@ describe("sync:auto — propose", () => {
 });
 
 describe("sync:auto — divergence and repair", () => {
-  it("a diverged plans repo is reported, never merged", async () => {
+  it("a diverged plans repo is rebased, then carries both sides' work", async () => {
     const { plansA, plansB, a } = await mkPair("div");
     // B advances the remote
     writeFileSync(
@@ -237,11 +241,10 @@ describe("sync:auto — divergence and repair", () => {
     writeFileSync(join(plansA, "notes.txt"), "local work\n");
     execFileSync("git", ["add", "-A"], { cwd: plansA });
     execFileSync("git", ["commit", "-m", "te: local note"], { cwd: plansA });
-    const headBefore = gitOk(["rev-parse", "HEAD"], plansA).trim();
 
-    await expect(pullBeforeMutation(a.wsr)).rejects.toThrow(ClaimRefusedError);
-    await expect(pullBeforeMutation(a.wsr)).rejects.toThrow(/diverged/);
-    expect(gitOk(["rev-parse", "HEAD"], plansA).trim()).toBe(headBefore); // untouched
+    await expect(pullBeforeMutation(a.wsr)).resolves.toBe(true);
+    expect(existsSync(join(plansA, "notes.txt"))).toBe(true); // A's work survived the rebase
+    expect(existsSync(join(plansA, "items", "WS", "WS-0003.md"))).toBe(true); // B's work landed
   });
 
   it("renumbers the items whose ids the remote won, then pushes", async () => {

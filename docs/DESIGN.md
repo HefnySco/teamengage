@@ -687,8 +687,10 @@ Machines share the **plans repo** through git; nothing else is shared.
     before `propose`, and before an ops job takes a target lock, and pushes
     after each daemon-made plans commit. This shrinks the race window to
     seconds. Applies only to the plans repo, which is TeamEngage's own data.
-    A pull that finds the branch diverged is reported ("resolve it in a
-    terminal") — the plans repo is never merged by the daemon. Offline, or
+    A pull that finds the branch diverged replays the local plan-state
+    commits on the remote tip (rebase --autostash — what the human would
+    run), with union-merged append-only logs keeping it clean; a rebase
+    that hits a real conflict aborts and is reported. Offline, or
     with no remote, the mutation proceeds and is marked _unsynced_.
 - **Id allocation is remote-aware.** Next-id for items and `D-` decisions
   counts ids on the fetched upstream too, so a stale local counter never

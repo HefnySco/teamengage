@@ -36,6 +36,10 @@ beforeAll(async () => {
   g(home, "init", "-q", "--bare", "-b", "main", remote);
   mkdirSync(join(a, "Tasks", ".teamengage", "items"), { recursive: true });
   writeFileSync(join(a, "Tasks", ".teamengage", "workspace.yaml"), "name: t\nprefix: TK\nmode: overlay\ncommit: false\n");
+  writeFileSync(
+    join(a, "Tasks", ".gitattributes"),
+    ".teamengage/**/*.jsonl merge=union\n.teamengage/items/**/*.md merge=union\nmachines/*.trans.md merge=union\n",
+  );
   writeFileSync(join(a, "Tasks", "TASK-01-x.md"), "# one\n");
   writeFileSync(join(a, "outside.txt"), "not plans\n");
   g(a, "init", "-q", "-b", "main");
@@ -80,7 +84,7 @@ describe("task folder git from the web", () => {
     expect((await pullPlans(wsB)).pulled).toBe(0); // up to date
   });
 
-  it("refuses to push while behind, and refuses to pull a diverged history", async () => {
+  it("refuses to push while behind, rebases a diverged history, and reports a real conflict", async () => {
     writeFileSync(join(b, "Tasks", "TASK-03-z.md"), "# three\n");
     await commitAndPushPlans(wsB, "Tasks: three from laptop");
 
@@ -89,8 +93,24 @@ describe("task folder git from the web", () => {
 
     g(a, "add", "Tasks/TASK-04-w.md");
     g(a, "commit", "-qm", "local four", "--", "Tasks");
+    const p = await pullPlans(wsA); // diverged — local commits replay on the remote tip
+    expect(p.pulled).toBe(1);
+    expect(readFileSync(join(a, "Tasks", "TASK-03-z.md"), "utf8")).toBe("# three\n");
+    expect(readFileSync(join(a, "Tasks", "TASK-04-w.md"), "utf8")).toBe("# four\n");
+    expect((await plansGitStatus(wsA, { fetch: true })).remotes.find((r) => r.name === "origin")?.behind).toBe(0);
+
+    // a real conflict still refuses and rolls back to the pre-rebase head
+    await commitAndPushPlans(wsA, "Tasks: flush desktop"); // a is caught up
+    await pullPlans(wsB); // b picks up a's commits before editing
+    writeFileSync(join(b, "Tasks", "TASK-03-z.md"), "# three — laptop edit\n");
+    await commitAndPushPlans(wsB, "Tasks: laptop edits three");
+    writeFileSync(join(a, "Tasks", "TASK-03-z.md"), "# three — desktop edit\n");
+    g(a, "add", "Tasks/TASK-03-z.md");
+    g(a, "commit", "-qm", "desktop edits three", "--", "Tasks");
+    const headBefore = g(a, "rev-parse", "HEAD");
     await expect(pullPlans(wsA)).rejects.toThrow(/diverged from origin: 1 local and 1 remote/);
-    expect(existsSync(join(a, "Tasks", "TASK-03-z.md"))).toBe(false); // nothing merged
+    expect(g(a, "rev-parse", "HEAD")).toBe(headBefore); // rebase aborted, nothing applied
+    g(a, "reset", "-q", "--hard", "origin/main"); // drop the conflicted local commit — a is synced again
   });
 });
 

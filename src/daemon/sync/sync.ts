@@ -85,8 +85,9 @@ export async function remoteClaims(plansDir: string, ref?: string): Promise<Clai
 /**
  * sync:auto — pull the plans repo before a mutation (claim, propose, ops
  * lock; DE-0299). Fast-forward only, task-folder changes stashed around the
- * merge — the same rules `te sync` plays by. A diverged repo or a pull that
- * git refuses is reported (thrown), never merged on the daemon's own.
+ * merge — the same rules `te sync` plays by. A diverged repo is rebased the
+ * way the human would (git pull --rebase); a rebase that hits a real
+ * conflict aborts and is reported, never merged blind.
  * Returns false when there is no remote or it is unreachable: the caller
  * proceeds and marks the mutation unsynced, like manual mode offline.
  */
@@ -99,11 +100,6 @@ export async function pullBeforeMutation(wsr: WorkspaceRuntime): Promise<boolean
   const upstream = await upstreamRef(plansDir);
   if (!upstream) return false;
   const ab = await aheadBehind(plansDir, upstream).catch(() => ({ ahead: 0, behind: 0 }));
-  if (ab.ahead > 0 && ab.behind > 0) {
-    throw new ClaimRefusedError(
-      `plans repo diverged from ${upstream} (${ab.ahead} local, ${ab.behind} remote) — resolve it in a terminal; te never merges the plans repo`,
-    );
-  }
   if (ab.behind > 0) await pullPlans(wsr, undefined, { stash: true });
   return true;
 }
@@ -613,10 +609,12 @@ function markFetched(st: PlansGitStatus, name: string, fetched: boolean | undefi
 }
 
 /**
- * fetch + fast-forward merge of `remote`'s branch. `stash`: uncommitted
- * task-folder changes are stashed first and popped after the merge — so a
- * pull that would fail on colliding edits can still fast-forward. A failed
- * pop keeps the stash and reports the conflicts.
+ * fetch + fast-forward merge of `remote`'s branch; on divergence, rebase the
+ * local plan-state commits onto the remote tip (union-merged append-only
+ * logs make this clean in practice — a real conflict aborts and reports).
+ * `stash`: uncommitted task-folder changes are stashed first and popped
+ * after — so a pull that would fail on colliding edits can still land. A
+ * failed pop keeps the stash and reports the conflicts.
  */
 async function pullIn(
   wsr: WorkspaceRuntime,
@@ -632,9 +630,28 @@ async function pullIn(
   if (!r.ref) throw new ClaimRefusedError(`${r.name} has no branch ${before.branch}`);
   if (r.behind === 0) return { remote: r.name, pulled: 0, stashed: false, status: before };
   if (r.ahead > 0) {
-    throw new ClaimRefusedError(
-      `diverged from ${r.name}: ${r.ahead} local and ${r.behind} remote commit(s) — resolve in a terminal (git pull --rebase ${r.name} ${before.branch} in ${before.repo})`,
-    );
+    // Diverged: replay the local plan-state commits on the remote tip —
+    // what the human would do by hand (git pull --rebase). --autostash
+    // covers any uncommitted work in the tree (a rebase needs it clean,
+    // not just the plans scope). Append-only and store-regenerated files
+    // carry merge=union so these rebases apply cleanly; a real conflict
+    // aborts back to the pre-rebase state and reports the files.
+    try {
+      await git(before.repo, ["rebase", "--autostash", r.ref], { timeoutMs: 120_000 });
+    } catch (e) {
+      const unmerged = await git(before.repo, ["diff", "--name-only", "--diff-filter=U"])
+        .then((o) => o.trim().split("\n").filter(Boolean))
+        .catch(() => [] as string[]);
+      await git(before.repo, ["rebase", "--abort"]).catch(() => {});
+      throw new ClaimRefusedError(
+        `diverged from ${r.name}: ${r.ahead} local and ${r.behind} remote commit(s) — auto-rebase hit a real conflict` +
+          (unmerged.length ? ` in ${unmerged.join(", ")}` : "") +
+          `; resolve in a terminal (git pull --rebase ${r.name} ${before.branch} in ${before.repo}): ${gitErrorSummary(e)}`,
+      );
+    }
+    await wsr.store.reindex();
+    void wsr.overlay?.rescan();
+    return { remote: r.name, pulled: r.behind, stashed: false, status: markFetched(await plansGitStatus(wsr), r.name, true) };
   }
   let stashed = false;
   if (stash && before.changes.length) {
@@ -665,8 +682,8 @@ async function pullIn(
 
 /**
  * Pull from the chosen remote (default: the upstream's): fetch, then
- * fast-forward only. Diverged history or colliding local edits are refused —
- * those need a human at a terminal, never an automatic merge of the plans.
+ * fast-forward — or rebase when diverged (aborts and reports on real
+ * conflicts, never a blind merge of the plans).
  * `opts.stash`: stash task-folder changes around the pull instead of failing.
  */
 export async function pullPlans(
