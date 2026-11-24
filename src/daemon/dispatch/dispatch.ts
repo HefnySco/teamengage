@@ -711,6 +711,11 @@ export class Dispatcher {
     for (const p of roots) {
       const item = p.item!;
       const skip = (reason: string) => report.skipped.push({ pid: p.pid, item, reason });
+      // the daemon itself may carry TE_* from the agent whose te call spawned it
+      if (p.pid === process.pid) {
+        skip("daemon_self");
+        continue;
+      }
       if (this.children.has(item)) {
         skip("already_running");
         continue;
@@ -724,13 +729,17 @@ export class Dispatcher {
         skip("unknown_item");
         continue;
       }
-      if (it.claim && !ops.claimDead(it.claim)) {
+      // a reviewer never holds the claim — the submitter's claim stays as is
+      const isReview = p.mode === "review";
+      if (!isReview && it.claim && !ops.claimDead(it.claim)) {
         skip("claim_live");
         continue;
       }
       // adoption matches the holder's agent name — take it from the dead
-      // claim; an unclaimed item gets a plain "discovered" session
-      const agent = it.claim ? it.claim.holder.split("@")[0].split("#")[0] : "discovered";
+      // claim; an unclaimed item gets a plain "discovered" session.
+      // A reviewer gets the "<agent>-review" name and does not adopt.
+      const baseAgent = it.claim ? it.claim.holder.split("@")[0].split("#")[0] : "discovered";
+      const agent = isReview ? `${baseAgent}-review` : baseAgent;
       const { session, resume } = await ops.hello(
         agent,
         p.pid,
@@ -738,7 +747,7 @@ export class Dispatcher {
         p.role,
         undefined,
         item,
-        true,
+        !isReview,
       );
       this.mintedIds.add(session.id);
       if (p.token) rebind?.(p.token, session, this.wsr);

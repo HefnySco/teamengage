@@ -1196,4 +1196,35 @@ describe("te discover: reattach orphaned agent processes (TE-0219)", () => {
       for (const c of [plain, rootA, rootB, twin, other]) c.kill();
     }
   });
+
+  it("a review-mode orphan gets the -review name, does not adopt the claim, and the daemon's own pid is skipped", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const gone = await ops.hello("devin");
+    await ops.claim("WS-0001", gone.session);
+    sessions.disconnect(gone.session.id);
+
+    const rev = markedChild({ TE_ITEM: "WS-0001", TE_MODE: "review", TE_ROLE: "reviewer" });
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          { pid: process.pid, ppid: 1, started_at: "", item: "WS-0001", mode: "work" },
+          { pid: rev.pid!, ppid: 1, started_at: "", item: "WS-0001", mode: "review", role: "reviewer" },
+        ],
+      });
+      expect(report.skipped.find((s) => s.pid === process.pid)?.reason).toBe("daemon_self");
+      expect(report.reattached).toHaveLength(1);
+      const r = report.reattached[0];
+      expect(r.claim).toBe("none");
+      expect(r.session.startsWith("devin-review@test#")).toBe(true);
+      // the submitter's claim is untouched, so the review is not a self-review
+      expect(ops.index.get("WS-0001")!.claim!.holder).toBe(gone.session.id);
+    } finally {
+      rev.kill();
+    }
+  });
 });
