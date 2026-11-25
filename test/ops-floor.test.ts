@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, feed, isReviewerSession, sessionKind } from "../web/ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind, seatLoad } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -176,6 +176,36 @@ describe("derive", () => {
       ok: false,
       reasons: ["max_attempts", "dispatch_blocked"],
     });
+  });
+});
+
+describe("seatLoad (TE-0240)", () => {
+  it("reads an empty holding as free standby", () => {
+    expect(seatLoad([])).toBe("free");
+    expect(seatLoad(undefined)).toBe("free");
+  });
+
+  it("reads one light-tier item as light", () => {
+    expect(seatLoad(["light"])).toBe("light");
+    expect(seatLoad([{ tier: "light" }])).toBe("light");
+  });
+
+  it("reads standard-tier work as steady", () => {
+    expect(seatLoad(["standard"])).toBe("steady");
+    expect(seatLoad([{ tier: "standard" }])).toBe("steady");
+  });
+
+  it("reads a heavy tier — or two-plus items — as heavy", () => {
+    expect(seatLoad(["heavy"])).toBe("heavy");
+    expect(seatLoad(["light", "standard"])).toBe("heavy");
+    expect(seatLoad(["light", "light"])).toBe("heavy");
+    expect(seatLoad([{ tier: "light" }, { tier: "heavy" }])).toBe("heavy");
+  });
+
+  it("reads an unknown or missing tier as standard", () => {
+    expect(seatLoad([undefined])).toBe("steady");
+    expect(seatLoad([{ tier: undefined }])).toBe("steady");
+    expect(seatLoad(["weird"])).toBe("steady");
   });
 });
 

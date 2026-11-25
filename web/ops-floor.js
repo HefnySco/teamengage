@@ -131,6 +131,29 @@ export function derive(sessions, dispatch, inbox) {
   return { seats, queue, you, placed };
 }
 
+// load mood ranks — the tier order the seat's energy follows
+const TIER_RANK = { light: 1, standard: 2, heavy: 3 };
+
+/**
+ * A coder seat's load mood — the colour/energy channel of TE-0240
+ * (presence keeps its own channel: of-quiet/of-gone stay on the seat and
+ * compose on top). Read off the held items' tiers: nothing held is a free
+ * standby, a heavy tier or two-plus items is heavy, a best held tier of
+ * light is light, the rest is steady. Entries may be tier strings or seat
+ * docs carrying .tier; an unknown tier reads standard.
+ * @param {Array<string|{tier?:string}|undefined>|undefined} holding
+ * @returns {'free'|'light'|'steady'|'heavy'}
+ */
+export function seatLoad(holding) {
+  const held = holding ?? [];
+  if (!held.length) return "free";
+  const rank = (d) =>
+    TIER_RANK[typeof d === "string" ? d : d?.tier] ?? TIER_RANK.standard;
+  const top = Math.max(...held.map(rank));
+  if (top >= TIER_RANK.heavy || held.length >= 2) return "heavy";
+  return top === TIER_RANK.light ? "light" : "steady";
+}
+
 /**
  * One feed for the floor logs: dispatch_* events merged with history
  * events, each line tagged with a room — rev for a reviewer role or a

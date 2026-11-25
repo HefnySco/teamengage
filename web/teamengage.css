@@ -1309,6 +1309,7 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   --of-planner: #0d9488;
   --of-ops: #e11d48;
   --of-dsp: #d97706;
+  --of-busy: #f97316;
   --of-you: #334155;
   --of-line: var(--bs-border-color);
   --of-dim: var(--bs-secondary-color);
@@ -1453,6 +1454,33 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-seat.of-gone .of-beam { display: none; }
 .of-seat.of-gone .of-disc::after { animation: none; }
 
+/* TE-0240 — coder seat load moods: the colour/energy channel seatLoad() in
+   web/ops-floor.js derives from the held items' tiers. Presence keeps its own
+   channel — of-quiet dims and of-gone ghosts on top of any mood, so a heavy
+   seat can read hot-but-silent. Everything below is motion, opacity and
+   accent only; the silhouette never changes. */
+/* free — live, holding nothing: dim standby, slow flicker, the projector
+   disc breathes like a standby LED */
+.of-seat.of-mood-free .of-stage { opacity: 0.55; }
+.of-seat.of-mood-free .of-fig { animation: of-float 9s ease-in-out infinite, of-flick 16s steps(1) infinite; }
+.of-seat.of-mood-free .of-beam { opacity: 0.3; }
+.of-seat.of-mood-free .of-disc { animation: of-standby 3s ease-in-out infinite; }
+@keyframes of-standby {
+  0%, 100% { box-shadow: 0 0 18px -2px color-mix(in srgb, currentColor 55%, transparent); }
+  50% { box-shadow: 0 0 26px -2px color-mix(in srgb, currentColor 80%, transparent); }
+}
+/* light — the everyday cyan, one notch calmer; steady keeps it untouched */
+.of-seat.of-mood-light .of-fig { animation: of-float 7s ease-in-out infinite, of-flick 12s steps(1) infinite; }
+/* heavy — the shared #f97316 heat accent, a brighter glow, faster motion */
+.of-seat.of-mood-heavy { --ac: var(--of-busy); }
+.of-seat.of-mood-heavy .of-fig {
+  animation: of-float 3.6s ease-in-out infinite, of-flick 4.5s steps(1) infinite;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, currentColor 62%, transparent));
+}
+.of-seat.of-mood-heavy .of-disc::after { animation-duration: 7s; }
+.of-seat.of-mood-heavy .of-scan { animation: of-scanmove 1.4s linear infinite; }
+@keyframes of-scanmove { to { background-position: 0 6px; } }
+
 /* desk card under the projection */
 .of-deskcard {
   width: 100%;
@@ -1532,6 +1560,9 @@ button.of-more:hover, button.of-more:focus-visible, button.of-more.on { color: v
 }
 .of-doc::before { content: ""; position: absolute; left: 3px; top: 3px; bottom: 3px; width: 2px; border-radius: 2px; background: var(--m); }
 .of-doc:hover { transform: translateY(-2px); }
+/* TE-0240 — a held item's tier letter rides beside the card id, so colour
+   alone never has to tell light from steady */
+.of-doc .of-docid { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
 .of-doc b { font: 600 10.5px/1.25 var(--bs-font-monospace); letter-spacing: 0.01em; }
 .of-doc span { font-size: 9px; color: var(--m); line-height: 1.2; }
 .of-doc.m-work, .of-doc.m-resume, .of-doc.m-takeover, .of-doc.m-fix { --m: var(--te-st-in_progress); }

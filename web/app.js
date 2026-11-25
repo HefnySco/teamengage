@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, feed, isReviewerSession, sessionKind } from "./ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind, seatLoad } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -726,7 +726,7 @@ const DocCard = ({ d, onAct, acting, onLog, onStop, onQueue }) => html`<span cla
   href=${"#/item/" + d.id}
   target="_blank"
   rel="noopener"
-  ><b>${d.id}</b><span>${d.label ?? d.mode}</span>${d.started_at &&
+  ><span class="of-docid"><b>${d.id}</b>${d.tier && html`<${TierChip} t=${d.tier} />`}</span><span>${d.label ?? d.mode}</span>${d.started_at &&
   html`<span class="of-elapsed" title=${`running since ${hhmm(d.started_at)}`}><${Elapsed} at=${d.started_at} /></span>`}</a
 >${d.has_log &&
   html`<button
@@ -841,12 +841,16 @@ const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop, onQueue, onMor
 
 // one workstation: hologram on a projector disc over a desk card with the
 // agent name, machine, model tag, its task tray and a status line
-const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
+const Seat = ({ e, docs, questionIds, tiers, onLog, onStop }) => {
   const { s, gone } = e;
   // planner and ops sessions sit in the developers room but wear their own
   // accent (of-role-* on the seat swaps --ac); kind resolves role → label →
   // agent in ops-floor.js (TE-0233)
   const kind = sessionKind(s);
+  // TE-0240 — a coder hologram's load mood (free|light|steady|heavy) rides
+  // the seat class; planner/ops/reviewer seats keep their role look, and
+  // of-quiet/of-gone still compose on top as the presence channel
+  const load = kind === "coder" ? seatLoad(docs.map((d) => tiers?.get(d.id))) : null;
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
   const meta = gone
@@ -857,7 +861,7 @@ const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
         ? `quiet ${ago(s.last_seen)}`
         : `at desk · ${ago(s.last_seen)}`;
   return html`<div
-    class=${"of-seat of-role-" + kind + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
+    class=${"of-seat of-role-" + kind + (load ? " of-mood-" + load : "") + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
     title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""}${s.label ? " · " + s.label : ""}`}
   >
     <${HoloStage} />
@@ -867,7 +871,12 @@ const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
         <span class="of-lb">${s.machine}</span>
         ${s.model && html`<span class="of-model">${s.model}</span>`}
       </div>
-      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onLog=${onLog} onStop=${onStop} />
+      <${DocTray}
+        loc=${"seat:" + s.id}
+        docs=${gone ? [] : docs.map((d) => (tiers?.has(d.id) ? { ...d, tier: tiers.get(d.id) } : d))}
+        onLog=${onLog}
+        onStop=${onStop}
+      />
       <div class="of-meta"><i class="of-st"></i>${s.role || kind} · ${meta}</div>
     </div>
   </div>`;
@@ -897,7 +906,7 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
 
 // one room of the floor: header with live/left counts over the desk grid and
 // the floor log pinned to the bottom
-const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog, onStop }) => {
+const FloorRoom = ({ room, entries, seats, questionIds, tiers, logs, onLog, onStop }) => {
   const live = entries.filter((e) => !e.gone).length;
   // per-role counts of who is at desk — shown only once a planner or an ops
   // session sits in, so a plain coder room keeps the short count (TE-0233)
@@ -931,6 +940,7 @@ const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog, onStop }) =
             e=${e}
             docs=${seats.get(e.s.id) ?? []}
             questionIds=${questionIds}
+            tiers=${tiers}
             onLog=${onLog}
             onStop=${onStop}
           />`,
@@ -1170,7 +1180,7 @@ const RunLogModal = ({ id, onClose }) => {
     </div>`;
 };
 
-const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop, onQueue }) => {
+const OpsFloor = ({ sessions, dispatch, inbox, tiers, onDispatch, onDone, onStop, onQueue }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
   const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
@@ -1326,6 +1336,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop, onQue
           entries=${devEntries}
           seats=${seats}
           questionIds=${questionIds}
+          tiers=${tiers}
           logs=${roomLines("dev")}
           onLog=${setLogId}
           onStop=${onStop}
@@ -1345,6 +1356,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop, onQue
           entries=${revEntries}
           seats=${seats}
           questionIds=${questionIds}
+          tiers=${tiers}
           logs=${roomLines("rev")}
           onLog=${setLogId}
           onStop=${onStop}
@@ -1536,6 +1548,9 @@ const Team = () => {
   const { sessions, dispatch, inbox, reload: reloadFloor } = useFloorSnapshot();
   const reloadDispatch = reloadFloor;
   const { data: items } = useApi("/api/items");
+  // TE-0240 — each coder seat's load mood reads its held items' tiers off
+  // one lookup; an id the list does not know reads standard in seatLoad
+  const itemTiers = useMemo(() => new Map((items ?? []).map((i) => [i.id, i.tier])), [items]);
   const serverMax = dispatch?.max_issues ?? dispatch?.max_sessions ?? 2;
   const serverFilter = dispatch?.filter ?? "";
   const [maxInput, setMaxInput] = useState(String(serverMax));
@@ -1761,6 +1776,7 @@ const Team = () => {
       sessions=${ss}
       dispatch=${dispatch}
       inbox=${inbox}
+      tiers=${itemTiers}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
       onDone=${reloadFloor}
       onStop=${stopItem}
