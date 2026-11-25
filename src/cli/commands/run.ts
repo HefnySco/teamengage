@@ -3,12 +3,14 @@ import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { daemonApi, ensureDaemon } from "../client.js";
 import { loadMachineConfig, teHome } from "../../core/config/config.js";
-import { RunConfig } from "../../core/model/workspace.js";
+import { RunConfig, parseDuration } from "../../core/model/workspace.js";
+import type { Tier } from "../../core/model/item.js";
 import {
   agentName,
   parseDispatchFilter,
   pickNext,
   promptFor,
+  type AdmissionContext,
   type DispatchFilter,
   type Mode,
   type Pick,
@@ -77,15 +79,34 @@ interface Workspace {
   root: string;
   machine: string;
   autonomy: string;
+  max_attempts?: number;
+  takeover_grace_after?: string;
+  review_models?: { deep?: string; quick?: string; deep_from_tier: Tier };
 }
 
-async function board(args: string[], home?: string): Promise<{ items: RunItem[]; ready: string[] }> {
+/** The model id a command declares (`--model x` or `--model=x`). */
+const commandModel = (cmd: string): string | undefined =>
+  /(?:^|\s)--?model(?:=|\s+)(\S+)/.exec(cmd)?.[1];
+
+async function board(
+  args: string[],
+  home?: string,
+): Promise<{ items: RunItem[]; ready: string[]; live: Set<string> }> {
   const q = wsQ(args);
-  const items = (await daemonApi("GET", `/api/items${q ? `?${q}` : ""}`, undefined, home)) as RunItem[];
+  const items = (await daemonApi("GET", `/api/items${q ? `?${q}` : ""}`, undefined, home)) as Array<
+    RunItem & { findings?: unknown }
+  >;
+  // the API carries the findings array; RunItem wants its count (admission)
+  for (const i of items) if (Array.isArray(i.findings)) i.findings = i.findings.length;
   const next = (await daemonApi("GET", `/api/next?limit=500${q ? `&${q}` : ""}`, undefined, home)) as Array<{
     meta: { id: string };
   }>;
-  return { items, ready: next.map((n) => n.meta.id) };
+  // live session ids feed admit()'s isLive — a claim whose holder session is
+  // still up is never resumed or taken over
+  const sessions = (await daemonApi("GET", `/api/sessions${q ? `?${q}` : ""}`, undefined, home)) as Array<{
+    id: string;
+  }>;
+  return { items, ready: next.map((n) => n.meta.id), live: new Set(sessions.map((s) => s.id)) };
 }
 
 function lastLine(file: string): string {
@@ -156,6 +177,8 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   say(`te run on ${ws.machine} · ${ws.name} · coder: ${cfg.coder ? agentName(cfg.coder) : "—"} · reviewer: ${cfg.reviewer ? agentName(cfg.reviewer) : "you"}`);
 
   const done: Array<Pick & { code: number | null; log: string }> = [];
+  /** session ids this run minted — resume admits only these (TE-0228) */
+  const minted = new Set<string>();
   /** cuts the idle poll short when an agent exits */
   let wake: (() => void) | undefined;
   /** Open the agent's session for it, so it ends when the agent's process does. */
@@ -165,12 +188,14 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
     agent: string,
     item: string,
     adopt: boolean,
-  ): Promise<{ token: string; resume: string[] }> => {
+    role: "coder" | "reviewer",
+  ): Promise<{ token: string; resume: string[]; sessionId?: string }> => {
     const res = await fetch(`${base}/agent/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         agent,
+        role,
         label: item,
         adopt,
         ...(opt(args, "--ws") ? { workspace: opt(args, "--ws") } : {}),
@@ -180,12 +205,22 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
     const token = /^token (\S+)/m.exec(text)?.[1];
     if (!res.ok || !token) throw new Error(`hello failed: ${text.split("\n")[0]}`);
     const resume = /^resume: (.+)$/m.exec(text)?.[1].split(/,\s*/) ?? [];
-    return { token, resume };
+    const sessionId = /^session (\S+)/m.exec(text)?.[1];
+    if (sessionId) minted.add(sessionId);
+    return { token, resume, sessionId };
   };
   const bye = (token: string) =>
     fetch(`${base}/agent/bye`, { method: "POST", headers: { "x-te-session": token } }).catch(() => {});
+  /** TE-0228: report the spawned child's pid so the session's liveness follows it. */
+  const attachPid = (token: string, pid: number) =>
+    fetch(`${base}/agent/pid`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-te-session": token },
+      body: JSON.stringify({ pid }),
+    }).catch(() => {});
 
   const start = async (p: Pick, items: RunItem[]) => {
+    const role: "coder" | "reviewer" = p.mode === "review" ? "reviewer" : "coder";
     const cmd = p.mode === "review" ? cfg.reviewer! : cfg.coder!;
     const name = agentName(cmd);
     const title = items.find((i) => i.id === p.id)?.title ?? "";
@@ -195,7 +230,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       if (p.mode === "work") st.started++;
       return;
     }
-    const s = await hello(p.mode === "review" ? `${name}-review` : name, p.id, p.mode === "resume");
+    const s = await hello(p.mode === "review" ? `${name}-review` : name, p.id, p.mode === "resume", role);
     if (p.mode === "resume" && !s.resume.includes(p.id)) {
       // its holder is still live (an interactive session of the same name?) — not ours to resume
       await bye(s.token);
@@ -208,11 +243,20 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
     const script = cmd.includes("TE_PROMPT") ? cmd : `${cmd} "$TE_PROMPT"`;
     const child = spawn("bash", ["-c", script], {
       cwd: ws.root,
-      env: { ...process.env, TE_PROMPT: prompt, TE_ITEM: p.id, TE_MODE: p.mode, TE_SESSION: s.token },
+      env: {
+        ...process.env,
+        TE_PROMPT: prompt,
+        TE_ITEM: p.id,
+        TE_MODE: p.mode,
+        TE_SESSION: s.token,
+        TE_ROLE: role,
+        TE_WS: ws.name,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
+    if (child.pid) void attachPid(s.token, child.pid);
     children.add(child);
     st.running.set(p.id, p.mode);
     if (p.mode === "work") {
@@ -235,7 +279,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
   };
 
   for (;;) {
-    const { items, ready } = await board(args, home);
+    const { items, ready, live } = await board(args, home);
     const byId = new Map(items.map((i) => [i.id, i]));
     // a started coder has claimed (or moved the item on) — the next may start
     if (st.pendingClaim && byId.get(st.pendingClaim)?.claim) st.pendingClaim = undefined;
@@ -245,8 +289,23 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       say(`■ ${d.mode} ${d.id} → ${now?.status ?? "?"}${now?.ai_review && d.mode === "review" ? ` (${now.ai_review.verdict})` : ""}${d.code ? ` · exit ${d.code}, log ${d.log}` : ""}${line ? ` · ${line}` : ""}`);
       if (d.mode !== "review" && (now?.status === "ready" || now?.status === "in_progress")) st.tried.add(d.id);
     }
+    // TE-0228: the same admission gates the dispatcher enforces — rebuilt
+    // per tick so attempts, blocks, liveness and minted sessions stay fresh
+    const admission: AdmissionContext = {
+      machine: ws.machine,
+      now: Date.now(),
+      maxAttempts: ws.max_attempts ?? 5,
+      fixRounds: cfg.fix_rounds,
+      fixes: st.fixes,
+      coderNames: cfg.coder ? [agentName(cfg.coder)] : [],
+      mintedSessions: minted,
+      isLive: (id) => live.has(id),
+      takeoverGraceMs: parseDuration(ws.takeover_grace_after ?? "15m"),
+      reviewModels: ws.review_models,
+      reviewerModels: cfg.reviewer ? [commandModel(cfg.reviewer)] : [],
+    };
     let p: Pick | undefined;
-    while (!stopping && (p = pickNext(cfg, st, items, ready, ws.machine, maxTasks, undefined, filter))) {
+    while (!stopping && (p = pickNext(cfg, st, items, ready, ws.machine, maxTasks, undefined, filter, admission))) {
       await start(p, items);
       if (dry) continue;
       if (p.mode === "work") break; // let it claim before choosing the next (target locks)

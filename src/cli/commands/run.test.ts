@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { pickNext, agentName, promptFor, inboxEntries, parseDispatchFilter, runCmd, type RunState, type RunItem } from "./run.js";
 import { RunConfig } from "../../core/model/workspace.js";
+import type { AdmissionContext } from "../../core/dispatch/selector.js";
 
 const cfg = (over: Partial<RunConfig> = {}) => RunConfig.parse({ coder: "devin -p --", reviewer: "claude -p", ...over });
 const st = (over: Partial<RunState> = {}): RunState => ({
@@ -97,6 +98,75 @@ describe("pickNext", () => {
     expect(pickNext(cfg(), st(), all, ready, "work", Infinity, undefined, planFilter)).toEqual({
       id: "MP-0005",
       mode: "work",
+    });
+  });
+
+  it("applies admission gates: dispatch_blocked, max_attempts, takeover grace, minted resume, reviewer model", () => {
+    const adm = (over: Partial<AdmissionContext> = {}): AdmissionContext => ({
+      machine: "work",
+      now: Date.now(),
+      maxAttempts: 5,
+      fixRounds: 1,
+      fixes: new Map(),
+      coderNames: ["devin"],
+      mintedSessions: new Set(),
+      isLive: () => false,
+      takeoverGraceMs: 15 * 60_000,
+      ...over,
+    });
+    // reviewerModels comes from the configured command, as run.ts builds it
+    const modelOf = (cmd?: string) => cmd && /(?:^|\s)--?model(?:=|\s+)(\S+)/.exec(cmd)?.[1];
+    const pick = (
+      items: RunItem[],
+      ready: string[],
+      context = adm(),
+      config = cfg(),
+    ) =>
+      pickNext(config, st(), items, ready, "work", Infinity, undefined, undefined, {
+        ...context,
+        reviewerModels: config.reviewer ? [modelOf(config.reviewer)] : [],
+      });
+
+    // a blocked item and an item at the attempt cap are skipped, not picked
+    const gated = [
+      item("A-1", "ready", { dispatch_blocked: { reason: "two failed runs", at: "2026-01-01T00:00:00Z" } }),
+      item("A-2", "ready", { attempts: 5 }),
+      item("A-3", "ready"),
+    ];
+    expect(pick(gated, ["A-1", "A-2", "A-3"])).toMatchObject({ id: "A-3", mode: "work" });
+    // and every candidate is refused when all are gated
+    expect(pick(gated.slice(0, 2), ["A-1", "A-2"])).toBeUndefined();
+
+    // a just-dead claim waits out takeover_grace_after, an old one takes over
+    const freshDead = {
+      holder: "claude@work#aa11",
+      machine: "work",
+      dead: true,
+      dead_since: new Date().toISOString(),
+    };
+    expect(pick([item("A-4", "in_progress", { claim: freshDead })], [])).toBeUndefined();
+    const staleDead = { ...freshDead, dead_since: new Date(Date.now() - 60 * 60_000).toISOString() };
+    expect(pick([item("A-4", "in_progress", { claim: staleDead })], [])).toMatchObject({
+      id: "A-4",
+      mode: "takeover",
+    });
+
+    // resume admits only holders this run minted; an unminted dead claim is takeover
+    const mine = { holder: "devin@work#bb22", machine: "work", dead: true, dead_since: staleDead.dead_since };
+    expect(pick([item("A-5", "in_progress", { claim: mine })], [])).toMatchObject({
+      id: "A-5",
+      mode: "takeover",
+    });
+    expect(
+      pick([item("A-5", "in_progress", { claim: mine })], [], adm({ mintedSessions: new Set(["devin@work#bb22"]) })),
+    ).toMatchObject({ id: "A-5", mode: "resume" });
+
+    // a reviewer declaring the submitter's model is refused; another model passes
+    const review = [item("A-6", "in_review", { claim: here, submitted_model: "swe-2-high" })];
+    expect(pick(review, [], adm(), cfg({ reviewer: "claude -p --model swe-2-high" }))).toBeUndefined();
+    expect(pick(review, [], adm(), cfg({ reviewer: "claude -p --model sonnet" }))).toMatchObject({
+      id: "A-6",
+      mode: "review",
     });
   });
 

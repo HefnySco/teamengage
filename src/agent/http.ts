@@ -209,6 +209,7 @@ CALLS  (POST with a JSON body, or GET with query args; <id> may go in the path)
   ${"tool".padEnd(8)} ${"args".padEnd(34)} what it does
 ${rows.join("\n")}
   bye      —                                  end this session (claims stay; hello with the task as label to resume)
+  pid      pid                                attach your process id — liveness follows it, not the idle limit
 
 OPS — playbooks and jobs (repeatable deploys; the daemon never runs the commands)
   A job runs the steps of a playbook in order. A cursor points at the
@@ -318,6 +319,16 @@ export function registerAgentRoutes(app: FastifyInstance, ctx: DaemonCtx): void 
         if (s.binding.session) ctx.sessions.disconnect(s.binding.session.id);
         sessions.delete(token as string);
         return send(reply, 200, "bye");
+      }
+      if (tool === "pid") {
+        // the spawner (te run) reports the child process it just started —
+        // once set, the pid probe (not last_seen) decides liveness
+        const pid = Number((req.body as { pid?: unknown } | undefined)?.pid);
+        if (!Number.isInteger(pid) || pid <= 0) {
+          return send(reply, 400, "ERROR USAGE: pid needs {\"pid\":<positive int>}");
+        }
+        if (s.binding.session) ctx.sessions.attachPid(s.binding.session.id, pid);
+        return send(reply, 200, `pid ${pid}`);
       }
       const t = s.tools.get(tool);
       if (!t || tool === "hello")

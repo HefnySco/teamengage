@@ -54,6 +54,42 @@ or abandoned goes back to `ready` and doesn't sit on a dead claim.
 Agents need the `te-work` and `te-review` skills (`skills/`, linked during
 install; see [AGENTS.md](../AGENTS.md)).
 
+## `te dispatch` — the daemon runs the team
+
+`te run` works while your terminal is open. `te dispatch` runs the same
+pick–spawn–review loop inside the daemon, so agents keep working with no
+terminal open — and applies the same admission gates (`dispatch_blocked`,
+`max_attempts`, takeover grace, reviewer model rules) to every pick.
+
+```bash
+te dispatch on [--max <n>] [--filter <expr>]   # start dispatching
+te dispatch off                              # stop starting new items
+te dispatch status                           # live state — issues, filter, runs
+```
+
+- `--max <n>` caps the live issues at once — dispatched children plus live
+  local `in_progress` claims (`max_issues` in `workspace.yaml`).
+- `--filter <expr>` narrows what gets picked (e.g. `"SE-01xx:inreview,
+  Plan PL-1032:ready, -SE-0105"`).
+- `te dispatch pause [--kill] [reason]` stops new starts — `--kill` also
+  stops running children; `te dispatch resume` lifts the pause.
+- `te dispatch block <id>` keeps one item away from agents until
+  `unblock`; `reset <id>` clears its tried/fix/failure memory;
+  `stop <id> [--release]` ends one running child.
+
+Defaults live in `workspace.yaml`:
+
+```yaml
+dispatch:
+  enabled: false
+  max_issues: 2
+  filter: "SE-01xx:inreview, Plan PL-1032:ready"
+```
+
+The web UI's team page (`/ui#/team`) shows the ops floor — developers, the
+dispatch desk, reviewers and your desk — with the same levers per item.
+Logs land in `~/.teamengage/runs/<workspace>/dispatch-<item>-<mode>-*.log`.
+
 ## Two machines
 
 `te run` works on the machine you run it on. Before you leave:

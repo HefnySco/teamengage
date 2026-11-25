@@ -218,7 +218,7 @@ describe("plain-HTTP agent API", () => {
     expect(r.status).toBe(200);
     expect(r.text).toContain("RULES");
     expect(r.text).toContain(`${daemon.url}/agent/hello`);
-    for (const tool of ["next", "brief", "claim", "log", "ask", "submit", "propose"]) {
+    for (const tool of ["next", "brief", "claim", "log", "ask", "submit", "propose", "pid"]) {
       expect(r.text).toMatch(new RegExp(`^  ${tool}\\s`, "m"));
     }
     // GL-0346: the guide names the human layer's fields and their word limits
@@ -240,6 +240,21 @@ describe("plain-HTTP agent API", () => {
     const r = await call("GET", "/agent/next");
     expect(r.status).toBe(401);
     expect(r.text).toContain("POST /agent/hello");
+  });
+
+  it("pid attaches a process id to the caller's session; a bad pid is USAGE", async () => {
+    const h = await call("POST", "/agent/hello", { body: { agent: "runner" } });
+    expect(h.status).toBe(200);
+    const token = /^token (\S+)/m.exec(h.text)![1];
+    const sessionId = /^session (\S+)/m.exec(h.text)![1];
+    for (const bad of [{ pid: "nope" }, { pid: 0 }, { pid: -3 }, {}]) {
+      const r = await call("POST", "/agent/pid", { token, body: bad });
+      expect(r.status).toBe(400);
+      expect(r.text).toContain("ERROR USAGE");
+    }
+    const ok = await call("POST", "/agent/pid", { token, body: { pid: process.pid } });
+    expect(ok.status).toBe(200);
+    expect(ctx.sessions.get(sessionId)?.pid).toBe(process.pid);
   });
 
   it("hello with model lowercases and echoes it (GL-0360); no model still works", async () => {

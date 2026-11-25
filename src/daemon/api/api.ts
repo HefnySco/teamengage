@@ -862,6 +862,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         autonomy: cfg.autonomy,
         machine: ctx.machine,
         max_attempts: cfg.max_attempts,
+        takeover_grace_after: cfg.takeover_grace_after,
+        review_models: cfg.review_models,
         stale_after: cfg.stale_after,
         projects: Object.entries(cfg.projects).map(([name, p]) => ({ name, prefix: p.prefix })),
       };
