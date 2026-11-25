@@ -1589,6 +1589,26 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-docwrap:hover .of-act, .of-act.on { opacity: 1; }
 .of-act.on { color: var(--bs-primary); border-color: var(--bs-primary); }
 
+/* TE-0230 - the stop nub mirrors .of-act on the card's left corner: a
+   running dispatch card gets an x that kills just this child */
+.of-stop {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  z-index: 3;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--of-line);
+  background: var(--of-docbg);
+  color: var(--of-dim);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+
 /* the inline popover a ⚡ opens under your desk's tray */
 .of-pop {
   width: 100%;

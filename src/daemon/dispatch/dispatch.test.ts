@@ -955,6 +955,79 @@ describe("forced correction levers (TE-0209)", () => {
   });
 });
 
+describe("per-item stop lever (TE-0230)", () => {
+  it("stop kills one running child and marks the item tried so a tick does not restart it", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    expect(d.status().running).toHaveLength(1);
+    const stoppedId = d.status().running[0].id;
+    await d.stopItem(stoppedId);
+    expect(d.status().running).toHaveLength(0);
+    expect(events.some((e) => e.kind === "dispatch_stop" && e.data.id === stoppedId)).toBe(true);
+    // the tried marker keeps the stopped item down — the other ready item runs
+    d.tick();
+    await untilEvent("dispatch_start", 2);
+    const second = events.filter((e) => e.kind === "dispatch_start")[1];
+    expect(second.data.id).not.toBe(stoppedId);
+    // a human stop is no failed run — the item is not dispatch_blocked
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    expect(ops.index.get(stoppedId)!.meta.dispatch_blocked).toBeUndefined();
+    // stopping an idle item names the missing child
+    await expect(d.stopItem("WS-9999")).rejects.toThrow(/no running dispatch/);
+    d.stopAll();
+  });
+
+  it("stop --release frees the item's claim and leaves it ready, then tried keeps it down", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    // a running child holds the item's claim in real life — make that true here
+    const it = ops.index.get("WS-0001")!;
+    await ops.store.perform(
+      "WS-0001",
+      it.meta.version,
+      { kind: "agent", session: "agent-x@test#aa0", machine: "test" },
+      {
+        type: "claim",
+        claim: {
+          item: "WS-0001",
+          holder: "agent-x@test#aa0",
+          actor: "agent",
+          machine: "test",
+          targets: [],
+          claimed_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+        },
+      },
+    );
+    expect(ops.index.get("WS-0001")!.meta.status).toBe("in_progress");
+    await d.stopItem("WS-0001", true);
+    const after = ops.index.get("WS-0001")!;
+    expect(after.claim).toBeUndefined();
+    expect(after.meta.status).toBe("ready");
+    const logBody =
+      after.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("released");
+    // tried at the post-release version — a tick does not restart it
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    d.stopAll();
+  });
+});
+
 describe("forced lever CLI (TE-0209)", () => {
   it("te dispatch pause/resume/block/unblock/reset print clear confirmations", async () => {
     const { startDaemon } = await import("../server/server.js");

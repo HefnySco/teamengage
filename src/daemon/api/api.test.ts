@@ -2167,6 +2167,7 @@ describe("shared lessons per domain (GL-0322)", () => {
       { block: { id: "WS-0001", reason: "x" } },
       { unblock: { id: "WS-0001" } },
       { reset: { id: "WS-0001" } },
+      { stop: { id: "WS-0001" } },
     ]) {
       expect((await post(body, agent)).status).toBe(403);
     }
@@ -2204,6 +2205,11 @@ describe("shared lessons per domain (GL-0322)", () => {
     expect(logBody).toContain("reset dispatch state");
     expect((await post({ reset: { id: "WS-9999" } })).status).toBe(404);
     expect((await post({ unblock: { id: itemId } })).status).toBe(400);
+    // TE-0230: stop — same shape as the other levers; 400 on bad spec/release, 404 with no running child
+    expect((await post({ stop: "x" })).status).toBe(400);
+    expect((await post({ stop: { id: itemId, release: "yes" } })).status).toBe(400);
+    expect((await post({ stop: { id: "WS-9999" } })).status).toBe(404);
+    expect((await post({ stop: { id: itemId } })).status).toBe(404);
   });
 
   it("dispatch runtime state persists — a new Dispatcher on the same home reloads it (TE-0223)", async () => {

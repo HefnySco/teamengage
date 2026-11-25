@@ -717,7 +717,7 @@ const Elapsed = ({ at }) => {
 // floor is a real href into a new tab — a click never moves the team page.
 // onAct (your desk only, TE-0231) adds a corner ⚡ that toggles the card's
 // inline popover — the anchor stays the only clickable surface besides it
-const DocCard = ({ d, onAct, acting, onLog }) => html`<span class="of-docwrap"><a
+const DocCard = ({ d, onAct, acting, onLog, onStop }) => html`<span class="of-docwrap"><a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
   title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
@@ -736,6 +736,16 @@ const DocCard = ({ d, onAct, acting, onLog }) => html`<span class="of-docwrap"><
       onLog?.(d.id);
     }}
     >${d.last_line || "log"}</button
+  >`}${onStop && d.started_at &&
+  html`<button
+    class="of-stop"
+    title="stop this run - kills the agent, the other children keep running"
+    onClick=${(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onStop(d.id);
+    }}
+    >x</button
   >`}${onAct &&
   html`<button
     class=${"of-act" + (acting ? " on" : "")}
@@ -751,12 +761,12 @@ const DocCard = ({ d, onAct, acting, onLog }) => html`<span class="of-docwrap"><
 // a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
 // the first cap cards then "+N more"; uncapped seat trays fan their cards
 // past 3 and unfold on hover
-const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog }) => {
+const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop }) => {
   const more = cap && docs.length > cap ? docs.length - cap : 0;
   const shown = more ? docs.slice(0, cap) : docs;
   const fan = !cap && docs.length > 3;
   return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
-    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} onLog=${onLog} />`)}
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} onLog=${onLog} onStop=${onStop} />`)}
     ${more > 0 &&
     html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
       >+${more} more</span
@@ -767,7 +777,7 @@ const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog }) => {
 
 // one workstation: hologram on a projector disc over a desk card with the
 // agent name, machine, model tag, its task tray and a status line
-const Seat = ({ e, docs, questionIds, onLog }) => {
+const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
   const { s, gone } = e;
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
@@ -789,7 +799,7 @@ const Seat = ({ e, docs, questionIds, onLog }) => {
         <span class="of-lb">${s.machine}</span>
         ${s.model && html`<span class="of-model">${s.model}</span>`}
       </div>
-      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onLog=${onLog} />
+      <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onLog=${onLog} onStop=${onStop} />
       <div class="of-meta"><i class="of-st"></i>${s.role || "agent"} · ${meta}</div>
     </div>
   </div>`;
@@ -816,7 +826,7 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
 
 // one room of the floor: header with live/left counts over the desk grid and
 // the floor log pinned to the bottom
-const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog }) => {
+const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog, onStop }) => {
   const live = entries.filter((e) => !e.gone).length;
   return html`<section class=${"of-room of-" + room}>
     <div class="of-rhead">
@@ -835,6 +845,7 @@ const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog }) => {
             docs=${seats.get(e.s.id) ?? []}
             questionIds=${questionIds}
             onLog=${onLog}
+            onStop=${onStop}
           />`,
       )}
     </div>
@@ -1046,7 +1057,7 @@ const RunLogModal = ({ id, onClose }) => {
     </div>`;
 };
 
-const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
+const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
   const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
@@ -1204,6 +1215,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
           questionIds=${questionIds}
           logs=${roomLines("dev")}
           onLog=${setLogId}
+          onStop=${onStop}
         />
         <div class="of-center">
           ${dsp &&
@@ -1221,6 +1233,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone }) => {
           questionIds=${questionIds}
           logs=${roomLines("rev")}
           onLog=${setLogId}
+          onStop=${onStop}
         />
       </div>
       <div class="of-ticker">
@@ -1522,6 +1535,26 @@ const Team = () => {
   const unblockItem = (id) => sendDispatch({ unblock: { id } });
   const resetItem = (id) => sendDispatch({ reset: { id } });
 
+  // TE-0230: a confirmed stop kills one running child - the other children
+  // keep running; discover scans /proc and reattaches orphaned agents
+  const stopItem = async (id) => {
+    if (
+      !(await confirmDialog(
+        `stop ${id}?`,
+        "the running agent is killed and its session closed - dispatch marks the item tried at this version so it does not restart on its own.",
+        { ok: "stop", danger: true },
+      ))
+    )
+      return;
+    sendDispatch({ stop: { id } });
+  };
+  const discover = async () => {
+    const r = await post("/api/dispatch/discover", {}).catch((e) => (toast(e.message), null));
+    if (!r) return;
+    toast(`discover: ${r.reattached?.length ?? 0} reattached, ${r.skipped?.length ?? 0} skipped`, "success");
+    reloadDispatch();
+  };
+
   const ss = sessions ?? [];
   const ev = dispatch?.events ?? [];
   const onlineIssues = dispatch?.online_issues ?? 0;
@@ -1600,6 +1633,7 @@ const Team = () => {
       inbox=${inbox}
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
       onDone=${reloadFloor}
+      onStop=${stopItem}
     />
     ${dispatch
       ? html`
@@ -1608,6 +1642,7 @@ const Team = () => {
           ${dispatch.paused != null
             ? html`<button class="btn btn-sm btn-outline-warning dispatch-resume" title="lift the pause" onClick=${resumeDispatch}>resume</button><span class="of-paused">paused${dispatch.paused ? `: ${dispatch.paused}` : ""}</span>`
             : html`<button class="btn btn-sm btn-outline-secondary dispatch-pause" title="stop new starts now" onClick=${pauseDispatch}>pause</button>`}
+          <button class="btn btn-sm btn-outline-secondary dispatch-discover" title="reattach orphaned agent processes" onClick=${discover}>discover</button>
           <span class="of-lbl">max issues</span>
           <span class="of-step">
             <button type="button" title="one issue less" aria-label="decrease max issues" onClick=${() => stepMaxIssues(-1)}>−</button>

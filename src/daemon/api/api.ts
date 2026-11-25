@@ -501,6 +501,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         block?: unknown;
         unblock?: unknown;
         reset?: unknown;
+        stop?: unknown;
       };
       const d = dispatcherFor(wsOf(req.query));
       const rawMax = body.max_issues !== undefined ? body.max_issues : body.max_sessions;
@@ -560,6 +561,7 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         ["block", "block"],
         ["unblock", "unblock"],
         ["reset", "reset"],
+        ["stop", "stop"],
       ] as const) {
         const spec = body[field];
         if (spec === undefined) continue;
@@ -575,8 +577,15 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           await d.blockItem(itemId, reason);
         } else if (action === "unblock") {
           await d.unblockItem(itemId);
-        } else {
+        } else if (action === "reset") {
           await d.resetItem(itemId);
+        } else {
+          // TE-0230: stop kills one running child; release frees its claim
+          const release = (spec as { release?: unknown }).release;
+          if (release !== undefined && typeof release !== "boolean") {
+            throw new ValidationError("stop.release must be a boolean");
+          }
+          await d.stopItem(itemId, release ?? false);
         }
       }
       if (d.isEnabled()) {

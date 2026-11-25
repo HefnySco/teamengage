@@ -430,6 +430,55 @@ export class Dispatcher {
   }
 
   /**
+   * TE-0230: stop one active child — the per-item version of pause --kill.
+   * A spawned child gets child.kill(); a rediscovered orphan has no
+   * ChildProcess handle, so its pid gets SIGTERM. The minted session is
+   * closed, a pending claim on the item is cleared and the item's version
+   * goes into triedVersions so the next tick does not restart it. With
+   * release=true the item's claim is freed too — only while it holds one
+   * in a status release accepts (in_progress/waiting).
+   */
+  async stopItem(id: string, release = false): Promise<void> {
+    const active = this.children.get(id);
+    if (!active) throw new NotFoundError(`no running dispatch for '${id}'`);
+    this.children.delete(id);
+    if (this.pendingClaim === id) this.pendingClaim = undefined;
+    if (active.child) {
+      active.child.kill();
+    } else if (active.pid > 0) {
+      try {
+        process.kill(active.pid, "SIGTERM");
+      } catch {
+        // already gone — the next reap probe would have caught it
+      }
+    }
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    const canRelease =
+      release &&
+      it !== undefined &&
+      it.claim != null &&
+      (it.meta.status === "in_progress" || it.meta.status === "waiting");
+    try {
+      if (canRelease) await ops.release(id, "human");
+    } finally {
+      // the tried marker lands after the release — release bumps the
+      // version and collectBoard drops a marker that names a stale one
+      const version = ops.index.get(id)?.meta.version;
+      if (version !== undefined) this.triedVersions.set(id, version);
+      this.persist();
+      const cleanup =
+        active.token && this.baseUrl
+          ? this.closeRemoteSession(this.baseUrl, active.token)
+          : Promise.resolve();
+      void cleanup.finally(() => this.persist());
+      if (active.sessionId) this.sessions.disconnect(active.sessionId);
+      this.emit("dispatch_stop", { id, pid: active.pid, release });
+      this.persistLever("dispatch_stop", release ? "stopped + claim released" : "stopped", id);
+    }
+  }
+
+  /**
    * Clear the in-memory triedVersions, fix count and per-item failure count
    * for one item so a repaired environment can retry clean. A persisted
    * dispatch_blocked stays — that is the unblock lever's job.

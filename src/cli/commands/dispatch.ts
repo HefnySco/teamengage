@@ -13,6 +13,7 @@ Forced levers (human only):
   te dispatch block <id> <reason>                  keep one item out of dispatch until unblock
   te dispatch unblock <id>                         clear a blocked item
   te dispatch reset <id>                           clear the item's tried/fix/failure memory
+  te dispatch stop <id> [--release]                stop one running child; --release frees its claim
 
 Options:
   --max <n>        max active local issues (dispatches + live local in_progress claims)
@@ -107,7 +108,7 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
     if (i > 0 && arr[i - 1] === "--ws") return false;
     return !a.startsWith("--");
   });
-  if (sub === "pause" || sub === "resume" || sub === "block" || sub === "unblock" || sub === "reset") {
+  if (sub === "pause" || sub === "resume" || sub === "block" || sub === "unblock" || sub === "reset" || sub === "stop") {
     const kill = args.includes("--kill");
     let payload: Record<string, unknown>;
     let confirm: string;
@@ -135,6 +136,10 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
       } else if (sub === "unblock") {
         payload = { unblock: { id } };
         confirm = `${id} unblocked`;
+      } else if (sub === "stop") {
+        const release = args.includes("--release");
+        payload = { stop: { id, release } };
+        confirm = `${id} stopped${release ? " — claim released" : ""}`;
       } else {
         payload = { reset: { id } };
         confirm = `${id} dispatch memory cleared`;
