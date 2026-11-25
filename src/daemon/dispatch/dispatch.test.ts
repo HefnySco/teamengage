@@ -1797,13 +1797,21 @@ describe("coder and reviewer commands picked per item (TE-0225)", () => {
     const ops = new WorkspaceOps(wsr, sessions, undefined, home);
     const d = dispatcher(wsr);
     // a work pick holds pendingClaim until the spawned coder claims its
-    // item — stand in for that claim so the next tick may start the next
-    const claimSpawned = async () => {
+    // item — write the claim straight to the index (the same stand-in the
+    // review_models test uses) so the next tick may start the next item
+    const claimSpawned = () => {
       const started = events.filter((e) => e.kind === "dispatch_start").at(-1);
-      await ops.claim(String(started?.data.id), sessions.hello("sleep"));
+      ops.index.setClaim({
+        item: String(started?.data.id),
+        holder: sessions.hello("sleep").id,
+        machine: "test",
+        claimed_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        targets: [],
+      });
     };
     d.tick();
-    await claimSpawned();
+    claimSpawned();
     d.tick();
     const starts = events.filter((e) => e.kind === "dispatch_start");
     expect(starts).toHaveLength(2);
@@ -1823,11 +1831,20 @@ describe("coder and reviewer commands picked per item (TE-0225)", () => {
     );
     const ops = new WorkspaceOps(wsr, sessions, undefined, home);
     const d = dispatcher(wsr);
-    // same stand-in: pendingClaim releases once the spawned coder claims
+    // same stand-in: pendingClaim releases once the index shows the claim
     for (let i = 0; i < 3; i++) {
       d.tick();
       const started = events.filter((e) => e.kind === "dispatch_start").at(-1);
-      if (i < 2) await ops.claim(String(started?.data.id), sessions.hello("sleep"));
+      if (i < 2) {
+        ops.index.setClaim({
+          item: String(started?.data.id),
+          holder: sessions.hello("sleep").id,
+          machine: "test",
+          claimed_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+          targets: [],
+        });
+      }
     }
     const starts = events.filter((e) => e.kind === "dispatch_start");
     expect(starts).toHaveLength(3);
