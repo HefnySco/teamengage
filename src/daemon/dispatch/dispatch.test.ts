@@ -1513,8 +1513,16 @@ describe("coder and reviewer commands picked per item (TE-0225)", () => {
         { id: "WS-0002", status: "ready", tier: "heavy" },
       ],
     );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
     const d = dispatcher(wsr);
+    // a work pick holds pendingClaim until the spawned coder claims its
+    // item — stand in for that claim so the next tick may start the next
+    const claimSpawned = async () => {
+      const started = events.filter((e) => e.kind === "dispatch_start").at(-1);
+      await ops.claim(String(started?.data.id), sessions.hello("sleep"));
+    };
     d.tick();
+    await claimSpawned();
     d.tick();
     const starts = events.filter((e) => e.kind === "dispatch_start");
     expect(starts).toHaveLength(2);
@@ -1532,8 +1540,14 @@ describe("coder and reviewer commands picked per item (TE-0225)", () => {
         { id: "WS-0003", status: "ready", tier: "heavy" },
       ],
     );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
     const d = dispatcher(wsr);
-    for (let i = 0; i < 3; i++) d.tick();
+    // same stand-in: pendingClaim releases once the spawned coder claims
+    for (let i = 0; i < 3; i++) {
+      d.tick();
+      const started = events.filter((e) => e.kind === "dispatch_start").at(-1);
+      if (i < 2) await ops.claim(String(started?.data.id), sessions.hello("sleep"));
+    }
     const starts = events.filter((e) => e.kind === "dispatch_start");
     expect(starts).toHaveLength(3);
     // the untiered default takes the ordinary work, the declared heavy its own
