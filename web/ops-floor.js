@@ -10,6 +10,34 @@
 //                session, item, action, from, to, note)
 
 const isReviewerRole = (role) => /review/i.test(role ?? "");
+// "ops" counts as a word only — devops, options and props stay coders
+const isOpsWord = (w) => /(^|[^a-z])ops([^a-z]|$)/i.test(w ?? "");
+const isPlannerWord = (w) => /plan/i.test(w ?? "");
+
+/**
+ * What kind of session this is: 'coder' | 'reviewer' | 'planner' | 'ops'.
+ * A set role decides. A session with no role resolves by its label, then
+ * its agent name — a hand-started reviewer is label "review" or has
+ * "review" in its agent name; the same idea gives "plan"/"planner" a
+ * planner and an "ops" word an ops session. Anything else is a coder.
+ * @param {{role?:string,label?:string,agent?:string}|undefined} s
+ * @returns {'coder'|'reviewer'|'planner'|'ops'}
+ */
+export function sessionKind(s) {
+  if (!s) return "coder";
+  if (s.role) {
+    if (isReviewerRole(s.role)) return "reviewer";
+    if (isPlannerWord(s.role)) return "planner";
+    if (isOpsWord(s.role)) return "ops";
+    return "coder";
+  }
+  if (/^review$/i.test(s.label ?? "") || /review/i.test(s.agent ?? ""))
+    return "reviewer";
+  if (/^plan(ner)?$/i.test(s.label ?? "") || isPlannerWord(s.agent))
+    return "planner";
+  if (/^ops$/i.test(s.label ?? "") || isOpsWord(s.agent)) return "ops";
+  return "coder";
+}
 
 /**
  * Is this session a reviewer? A set role decides. A session with no role
@@ -20,9 +48,7 @@ const isReviewerRole = (role) => /review/i.test(role ?? "");
  * @returns {boolean}
  */
 export function isReviewerSession(s) {
-  if (!s) return false;
-  if (s.role) return isReviewerRole(s.role);
-  return /^review$/i.test(s.label ?? "") || /review/i.test(s.agent ?? "");
+  return sessionKind(s) === "reviewer";
 }
 
 /**
@@ -108,11 +134,13 @@ export function derive(sessions, dispatch, inbox) {
 /**
  * One feed for the floor logs: dispatch_* events merged with history
  * events, each line tagged with a room — rev for a reviewer role or a
- * review action, you for the human actor, else dev. Sorted oldest first.
+ * review action, you for the human actor, else dev — and, when a session
+ * resolves, with the session's resolved kind on `role` (a planner or ops
+ * line sits in room dev but keeps its kind). Sorted oldest first.
  * @param {Array<{at:string,kind:string,data?:{id?:string,mode?:string,role?:string}}>} dispatchEvents
  * @param {Array<{ts:string,actor:string,session?:string,item?:string,action:string,from?:string,to?:string,note?:string}>} historyEvents
- * @param {Array<{id:string,role?:string}>} sessions
- * @returns {Array<{at:string,kind:string,id?:string,mode?:string,note?:string,room:string}>}
+ * @param {Array<{id:string,role?:string,label?:string,agent?:string}>} sessions
+ * @returns {Array<{at:string,kind:string,id?:string,mode?:string,note?:string,room:string,role?:string}>}
  */
 export function feed(dispatchEvents, historyEvents, sessions) {
   const sessionOf = (session) => (sessions ?? []).find((s) => s.id === session);
@@ -124,12 +152,16 @@ export function feed(dispatchEvents, historyEvents, sessions) {
       id: e.data?.id,
       mode: e.data?.mode,
       room: isReviewerRole(e.data?.role) ? "rev" : "dev",
+      ...(e.data?.role ? { role: sessionKind({ role: e.data.role }) } : {}),
     });
   for (const e of historyEvents ?? []) {
+    // a human's line has no session kind — room "you" is its whole tag
+    const role =
+      e.actor === "human" ? undefined : sessionKind(sessionOf(e.session));
     const room =
       e.actor === "human"
         ? "you"
-        : e.action === "review" || isReviewerSession(sessionOf(e.session))
+        : e.action === "review" || role === "reviewer"
           ? "rev"
           : "dev";
     out.push({
@@ -142,6 +174,7 @@ export function feed(dispatchEvents, historyEvents, sessions) {
           ? `→ ${e.to}`
           : "",
       room,
+      ...(role ? { role } : {}),
     });
   }
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));

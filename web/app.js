@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, feed, isReviewerSession } from "./ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -779,6 +779,10 @@ const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop }) => {
 // agent name, machine, model tag, its task tray and a status line
 const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
   const { s, gone } = e;
+  // planner and ops sessions sit in the developers room but wear their own
+  // accent (of-role-* on the seat swaps --ac); kind resolves role → label →
+  // agent in ops-floor.js (TE-0233)
+  const kind = sessionKind(s);
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
   const meta = gone
@@ -789,7 +793,7 @@ const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
         ? `quiet ${ago(s.last_seen)}`
         : `at desk · ${ago(s.last_seen)}`;
   return html`<div
-    class=${"of-seat" + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
+    class=${"of-seat of-role-" + kind + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
     title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""}${s.label ? " · " + s.label : ""}`}
   >
     <${HoloStage} />
@@ -800,7 +804,7 @@ const Seat = ({ e, docs, questionIds, onLog, onStop }) => {
         ${s.model && html`<span class="of-model">${s.model}</span>`}
       </div>
       <${DocTray} loc=${"seat:" + s.id} docs=${gone ? [] : docs} onLog=${onLog} onStop=${onStop} />
-      <div class="of-meta"><i class="of-st"></i>${s.role || "agent"} · ${meta}</div>
+      <div class="of-meta"><i class="of-st"></i>${s.role || kind} · ${meta}</div>
     </div>
   </div>`;
 };
@@ -817,6 +821,9 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
         <span class="of-kd">${e.kind}</span>
         ${e.id ? html` · <a href=${"#/item/" + e.id} target="_blank" rel="noopener">${e.id}</a>` : ""}
         ${e.mode ? html` <span class="of-dim">(${e.mode})</span>` : ""}
+        ${e.role && e.role !== "coder" && e.role !== "reviewer"
+          ? html` <span class="of-dim">[${e.role}]</span>`
+          : ""}
         ${e.note ? html` <span class="of-dim">${e.note}</span>` : ""}
       </div>`,
     )}
@@ -828,12 +835,28 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
 // the floor log pinned to the bottom
 const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog, onStop }) => {
   const live = entries.filter((e) => !e.gone).length;
+  // per-role counts of who is at desk — shown only once a planner or an ops
+  // session sits in, so a plain coder room keeps the short count (TE-0233)
+  const kinds = new Map();
+  for (const e of entries) {
+    if (e.gone) continue;
+    const k = sessionKind(e.s);
+    kinds.set(k, (kinds.get(k) ?? 0) + 1);
+  }
+  const breakdown =
+    (kinds.get("planner") ?? 0) + (kinds.get("ops") ?? 0) > 0
+      ? " · " +
+        ["coder", "planner", "ops", "reviewer"]
+          .filter((k) => kinds.has(k))
+          .map((k) => `${kinds.get(k)} ${k}`)
+          .join(" · ")
+      : "";
   return html`<section class=${"of-room of-" + room}>
     <div class="of-rhead">
       <i class="of-orb"></i>
       <h2>${room === "dev" ? "developers" : "reviewers"}</h2>
       <span class="of-cnt"
-        >${live} at desk${entries.length > live ? ` · ${entries.length - live} left` : ""}</span
+        >${live} at desk${breakdown}${entries.length > live ? ` · ${entries.length - live} left` : ""}</span
       >
     </div>
     <div class="of-desks">

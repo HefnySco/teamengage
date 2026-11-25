@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, feed, isReviewerSession } from "../web/ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -206,7 +206,25 @@ describe("feed", () => {
     ];
     const lines = feed(dispatchEvents, [], []);
     expect(lines).toEqual([
-      { at: "2026-11-24T09:03:00.000Z", kind: "dispatch_start", id: "GL-0213", mode: "review", room: "rev" },
+      { at: "2026-11-24T09:03:00.000Z", kind: "dispatch_start", id: "GL-0213", mode: "review", room: "rev", role: "reviewer" },
+    ]);
+  });
+
+  it("carries the resolved kind on each line — a planner stays in room dev (TE-0233)", () => {
+    const sessions = [
+      session({ id: "planner-1@m#1", role: "planner", agent: "planner-1" }),
+      session({ id: "ops-1@m#2", role: undefined, agent: "ops-1" }),
+    ];
+    const historyEvents = [
+      { ts: "2026-11-24T09:00:00.000Z", actor: "planner-1@m#1", session: "planner-1@m#1", item: "TE-0233", action: "log", note: "drafting" },
+      { ts: "2026-11-24T09:01:00.000Z", actor: "ops-1@m#2", session: "ops-1@m#2", item: "TE-0233", action: "log", note: "deploying" },
+      { ts: "2026-11-24T09:02:00.000Z", actor: "human", session: "human", item: "TE-0233", action: "accept", from: "in_review", to: "done" },
+    ];
+    const lines = feed([], historyEvents, sessions);
+    expect(lines.map((l) => [l.room, l.role])).toEqual([
+      ["dev", "planner"],
+      ["dev", "ops"],
+      ["you", undefined],
     ]);
   });
 });
@@ -229,5 +247,29 @@ describe("isReviewerSession", () => {
     const sessions = [session({ id: "lens-quick-review@m#1", role: undefined, agent: "lens-quick-review", label: "review" })];
     const lines = feed([], [{ ts: "2026-11-24T09:00:00.000Z", actor: "lens-quick-review@m#1", session: "lens-quick-review@m#1", item: "GL-0212", action: "log", note: "read the diff" }], sessions);
     expect(lines[0].room).toBe("rev");
+  });
+});
+
+describe("sessionKind (TE-0233)", () => {
+  it("lets a set role decide", () => {
+    expect(sessionKind(session({ role: "reviewer" }))).toBe("reviewer");
+    expect(sessionKind(session({ role: "planner" }))).toBe("planner");
+    expect(sessionKind(session({ role: "ops" }))).toBe("ops");
+    expect(sessionKind(session({ role: "coder", agent: "planner-1", label: "plan" }))).toBe("coder");
+  });
+
+  it("falls back to label, then agent, when no role is set", () => {
+    expect(sessionKind(session({ role: undefined, label: "plan", agent: "claude" }))).toBe("planner");
+    expect(sessionKind(session({ role: undefined, label: "TE-0233", agent: "planner-1" }))).toBe("planner");
+    expect(sessionKind(session({ role: undefined, label: "ops", agent: "devin" }))).toBe("ops");
+    expect(sessionKind(session({ role: undefined, label: "TE-0233", agent: "ops-runner" }))).toBe("ops");
+    expect(sessionKind(session({ role: undefined, label: "review", agent: "claude" }))).toBe("reviewer");
+    expect(sessionKind(session({ role: undefined, agent: "lens-quick-review", label: "GL-0212" }))).toBe("reviewer");
+  });
+
+  it("reads plain agents and words like devops as coders", () => {
+    expect(sessionKind(session({ role: undefined, agent: "devops", label: "GL-0212" }))).toBe("coder");
+    expect(sessionKind(session({ role: undefined, agent: "forge", label: "GL-0212" }))).toBe("coder");
+    expect(sessionKind(undefined)).toBe("coder");
   });
 });

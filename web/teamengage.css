@@ -1306,6 +1306,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-console {
   --of-dev: #0284c7;
   --of-rev: #7c3aed;
+  --of-planner: #0d9488;
+  --of-ops: #e11d48;
   --of-dsp: #d97706;
   --of-you: #334155;
   --of-line: var(--bs-border-color);
@@ -1321,6 +1323,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 [data-bs-theme="dark"] .of-console {
   --of-dev: #38bdf8;
   --of-rev: #a78bfa;
+  --of-planner: #2dd4bf;
+  --of-ops: #fb7185;
   --of-dsp: #fbbf24;
   --of-you: #e2e8f0;
   --of-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.8);
@@ -1343,6 +1347,11 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 }
 .of-room.of-dev { --ac: var(--of-dev); }
 .of-room.of-rev { --ac: var(--of-rev); }
+/* planner and ops sessions sit in the developers room but wear their own
+   accent — the seat-level --ac colours the hologram, disc, tray and hover
+   border without moving the seat to another room (TE-0233) */
+.of-seat.of-role-planner { --ac: var(--of-planner); }
+.of-seat.of-role-ops { --ac: var(--of-ops); }
 .of-room::before {
   content: "";
   position: absolute;
