@@ -244,8 +244,17 @@ export const ItemMeta = z
     /**
      * Dispatch breaker (TE-0208): set after two failed dispatch runs on this
      * item — the dispatcher never picks it until an unblock clears the flag.
+     * `by`/`actor` say who set it (TE-0237): an agent's session id and
+     * "agent", or "human"/"daemon" for the human lever and the auto-breaker.
      */
-    dispatch_blocked: z.object({ reason: z.string(), at: DateStr }).optional(),
+    dispatch_blocked: z
+      .object({
+        reason: z.string(),
+        at: DateStr,
+        by: z.string().optional(),
+        actor: z.enum(["agent", "human", "daemon"]).optional(),
+      })
+      .optional(),
     /**
      * Dispatch push (TE-0236): the human injected this item into the
      * dispatcher's queue — a work pick admits it past the filter (positive

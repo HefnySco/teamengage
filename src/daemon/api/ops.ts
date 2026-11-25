@@ -4036,6 +4036,19 @@ export class WorkspaceOps {
     });
   }
 
+  /**
+   * TE-0237: the agent's self-eject from auto-dispatch — sets
+   * dispatch_blocked on an item the session holds. The state machine
+   * refuses a non-holder; only the human's `te dispatch unblock` lifts it.
+   */
+  async dispatchBlock(id: string, session: Session, reason: string) {
+    const it = this.item(id);
+    return this.store.perform(id, it.meta.version, this.actorFor(session), {
+      type: "dispatch_block",
+      reason,
+    });
+  }
+
   /** Human dismisses a drop flag — the item stays. */
   async unflagDrop(id: string) {
     const it = this.item(id);

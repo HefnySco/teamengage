@@ -577,6 +577,35 @@ export function registerWriteTools(
   );
 
   server.registerTool(
+    "dispatch_block",
+    {
+      description:
+        "Self-eject an item you hold from auto-dispatch: sets dispatch_blocked with your reason, " +
+        "so the dispatcher never picks it again until the human runs 'te dispatch unblock' " +
+        "(the only way back — an agent cannot unblock). Holder only, reason required; " +
+        "the block lands in the human's inbox. Status and claim are untouched. " +
+        "For ordinary cases prefer release (hand the item back → ready), handoff (stuck on this " +
+        "attempt) or flag_drop (the task itself is wrong) — dispatch_block is only for " +
+        "'keep the task but never auto-dispatch it'.",
+      inputSchema: { id: z.string(), reason: z.string() },
+    },
+    async ({ id, reason }) => {
+      try {
+        const s = session();
+        if (isToolResult(s)) return s;
+        const o = ops();
+        if (isToolResult(o)) return o;
+        await o.dispatchBlock(id, s, reason);
+        return okText(
+          `blocked ${id} from dispatch — only 'te dispatch unblock <id>' by the human lifts it`,
+        );
+      } catch (e) {
+        return errFrom(e);
+      }
+    },
+  );
+
+  server.registerTool(
     "edit",
     {
       description:

@@ -1149,11 +1149,21 @@ function apply(
 
     case "dispatch_block": {
       // TE-0208: the daemon's per-item breaker (two failed runs) or the
-      // human blocks an item from dispatch — status untouched
-      if (actor.kind !== "daemon" && actor.kind !== "human")
-        throw new ForbiddenError("dispatch_block is a daemon/human action");
+      // human blocks an item from dispatch — status untouched.
+      // TE-0237: an agent may self-eject — holder only, so a session can
+      // never block another agent's work; the human's unblock lifts it.
+      if (actor.kind === "agent") {
+        requireHolder(actor, ctx, action.type);
+      } else {
+        requireHumanOrDaemon(actor, action.type);
+      }
       if (TERMINAL.includes(from)) fail(from, action.type);
-      out.meta.dispatch_blocked = { reason: action.reason, at: stamp };
+      out.meta.dispatch_blocked = {
+        reason: action.reason,
+        at: stamp,
+        by: actor.session,
+        actor: actor.kind,
+      };
       out.events.push(ev(actor, stamp, meta.id, "dispatch_block", from, from, action.reason));
       out.log.push(`- ${stamp} ${who} blocked dispatch: ${action.reason}`);
       return out;

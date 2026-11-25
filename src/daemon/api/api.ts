@@ -436,6 +436,19 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
             reason: i.meta.drop_request!.reason,
             at: i.meta.drop_request!.at,
           })),
+        // TE-0237: items kept out of auto-dispatch — an agent-set block
+        // names the session that self-ejected (by + actor: "agent"); only
+        // 'te dispatch unblock' lifts any of them
+        dispatch_blocks: items
+          .filter((i) => i.meta.dispatch_blocked)
+          .map((i) => ({
+            id: i.meta.id,
+            status: i.meta.status,
+            by: i.meta.dispatch_blocked!.by,
+            actor: i.meta.dispatch_blocked!.actor,
+            reason: i.meta.dispatch_blocked!.reason,
+            at: i.meta.dispatch_blocked!.at,
+          })),
         // TE-0160: promoted discussion lines waiting for the human's OK
         promotions: items.flatMap((i) =>
           ((i.meta.promotions as Array<Record<string, unknown>> | undefined) ?? [])

@@ -100,6 +100,7 @@ describe("MCP tools (MC-0001/2/3)", () => {
         "capture",
         "claim",
         "detach",
+        "dispatch_block",
         "edit",
         "flag_drop",
         "graph",
