@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, feed, isReviewerSession, sessionKind, seatLoad } from "../web/ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind, seatLoad, seatMood } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -206,6 +206,39 @@ describe("seatLoad (TE-0240)", () => {
     expect(seatLoad([undefined])).toBe("steady");
     expect(seatLoad([{ tier: undefined }])).toBe("steady");
     expect(seatLoad(["weird"])).toBe("steady");
+  });
+});
+
+describe("seatMood (TE-0240)", () => {
+  it("wears no mood on a gone or fading seat, whatever the tray held", () => {
+    expect(seatMood("coder", true, false, ["heavy"])).toBe(null);
+    expect(seatMood("coder", false, true, ["heavy", "light"])).toBe(null);
+    expect(seatMood("coder", true, false, [])).toBe(null);
+  });
+
+  it("wears no mood on planner, ops and reviewer seats", () => {
+    for (const kind of ["planner", "ops", "reviewer"]) {
+      expect(seatMood(kind, false, false, ["heavy"])).toBe(null);
+    }
+  });
+
+  it("keeps the mood on a live coder seat — quiet still composes on top", () => {
+    expect(seatMood("coder", false, false, [])).toBe("free");
+    expect(seatMood("coder", false, false, ["heavy"])).toBe("heavy");
+  });
+});
+
+describe("mood styles compose with presence (TE-0240)", () => {
+  it("guards every mood motion or opacity rule against of-quiet, of-gone and of-vanish", () => {
+    const css = readFileSync(join(here, "../web/teamengage.css"), "utf8");
+    const moodRules = css.match(/\.of-seat\.of-mood-[^{]+\{[^}]*\}/g) ?? [];
+    const motion = moodRules.filter((r) => /animation|opacity|filter/.test(r));
+    expect(motion.length).toBeGreaterThan(0);
+    for (const rule of motion) {
+      expect(rule).toContain(":not(.of-quiet)");
+      expect(rule).toContain(":not(.of-gone)");
+      expect(rule).toContain(":not(.of-vanish)");
+    }
   });
 });
 

@@ -155,6 +155,23 @@ export function seatLoad(holding) {
 }
 
 /**
+ * The mood class a seat carries — seatLoad() for a live coder session,
+ * null for anything else: planner/ops/reviewer seats keep their role
+ * look, and a gone or fading seat wears no mood — it stays a plain
+ * dashed ghost whatever its tray held. A quiet seat keeps its mood so
+ * of-quiet can still compose on top (hot-but-dim). (TE-0240)
+ * @param {string} kind sessionKind() result
+ * @param {boolean} gone the session ended (of-gone seat)
+ * @param {boolean} fading the session is vanishing (of-vanish seat)
+ * @param {Array<string|{tier?:string}|undefined>|undefined} holding held items' tiers
+ * @returns {'free'|'light'|'steady'|'heavy'|null}
+ */
+export function seatMood(kind, gone, fading, holding) {
+  if (kind !== "coder" || gone || fading) return null;
+  return seatLoad(holding);
+}
+
+/**
  * One feed for the floor logs: dispatch_* events merged with history
  * events, each line tagged with a room — rev for a reviewer role or a
  * review action, you for the human actor, else dev — and, when a session

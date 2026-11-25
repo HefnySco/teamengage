@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, feed, isReviewerSession, sessionKind, seatLoad } from "./ops-floor.js";
+import { derive, feed, isReviewerSession, sessionKind, seatMood } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -850,7 +850,7 @@ const Seat = ({ e, docs, questionIds, tiers, onLog, onStop }) => {
   // TE-0240 — a coder hologram's load mood (free|light|steady|heavy) rides
   // the seat class; planner/ops/reviewer seats keep their role look, and
   // of-quiet/of-gone still compose on top as the presence channel
-  const load = kind === "coder" ? seatLoad(docs.map((d) => tiers?.get(d.id))) : null;
+  const load = seatMood(kind, gone, e.fading, docs.map((d) => tiers?.get(d.id)));
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
   const meta = gone

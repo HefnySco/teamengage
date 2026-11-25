@@ -1456,29 +1456,33 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 
 /* TE-0240 — coder seat load moods: the colour/energy channel seatLoad() in
    web/ops-floor.js derives from the held items' tiers. Presence keeps its own
-   channel — of-quiet dims and of-gone ghosts on top of any mood, so a heavy
-   seat can read hot-but-silent. Everything below is motion, opacity and
-   accent only; the silhouette never changes. */
+   channel and outranks motion — of-quiet dims and stills, of-gone ghosts —
+   so every mood motion or opacity rule below yields to a quiet, gone or
+   vanishing seat through :not(); only the heavy --ac swap composes, which is
+   what lets a heavy seat read hot-but-silent. Everything here is motion,
+   opacity and accent only; the silhouette never changes. */
 /* free — live, holding nothing: dim standby, slow flicker, the projector
    disc breathes like a standby LED */
-.of-seat.of-mood-free .of-stage { opacity: 0.55; }
-.of-seat.of-mood-free .of-fig { animation: of-float 9s ease-in-out infinite, of-flick 16s steps(1) infinite; }
-.of-seat.of-mood-free .of-beam { opacity: 0.3; }
-.of-seat.of-mood-free .of-disc { animation: of-standby 3s ease-in-out infinite; }
+.of-seat.of-mood-free:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-stage { opacity: 0.55; }
+.of-seat.of-mood-free:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-fig { animation: of-float 9s ease-in-out infinite, of-flick 16s steps(1) infinite; }
+.of-seat.of-mood-free:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-beam { opacity: 0.3; }
+.of-seat.of-mood-free:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-disc { animation: of-standby 3s ease-in-out infinite; }
 @keyframes of-standby {
   0%, 100% { box-shadow: 0 0 18px -2px color-mix(in srgb, currentColor 55%, transparent); }
   50% { box-shadow: 0 0 26px -2px color-mix(in srgb, currentColor 80%, transparent); }
 }
 /* light — the everyday cyan, one notch calmer; steady keeps it untouched */
-.of-seat.of-mood-light .of-fig { animation: of-float 7s ease-in-out infinite, of-flick 12s steps(1) infinite; }
-/* heavy — the shared #f97316 heat accent, a brighter glow, faster motion */
+.of-seat.of-mood-light:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-fig { animation: of-float 7s ease-in-out infinite, of-flick 12s steps(1) infinite; }
+/* heavy — the shared #f97316 heat accent, a brighter glow, faster motion;
+   the --ac swap is the one rule that still composes under of-quiet
+   (hot-but-dim) */
 .of-seat.of-mood-heavy { --ac: var(--of-busy); }
-.of-seat.of-mood-heavy .of-fig {
+.of-seat.of-mood-heavy:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-fig {
   animation: of-float 3.6s ease-in-out infinite, of-flick 4.5s steps(1) infinite;
   filter: drop-shadow(0 0 14px color-mix(in srgb, currentColor 62%, transparent));
 }
-.of-seat.of-mood-heavy .of-disc::after { animation-duration: 7s; }
-.of-seat.of-mood-heavy .of-scan { animation: of-scanmove 1.4s linear infinite; }
+.of-seat.of-mood-heavy:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-disc::after { animation-duration: 7s; }
+.of-seat.of-mood-heavy:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-scan { animation: of-scanmove 1.4s linear infinite; }
 @keyframes of-scanmove { to { background-position: 0 6px; } }
 
 /* desk card under the projection */
