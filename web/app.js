@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, feed, isReviewerSession, sessionKind, seatMood } from "./ops-floor.js";
+import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatMood } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -693,11 +693,14 @@ const HoloFigure = () => {
   </div>`;
 };
 
-// the hologram projector: beam and spinning disc under the figure
-const HoloStage = () => html`<div class="of-stage of-flick">
+// the hologram projector: beam and spinning disc under the figure.
+// children are mood markers a desk can tuck inside the stage (the paused
+// ❚❚ hold and the idle z-marks, TE-0239) — seats pass none
+const HoloStage = ({ children }) => html`<div class="of-stage of-flick">
   <div class="of-beam"></div>
   <div class="of-disc"></div>
   <${HoloFigure} />
+  ${children}
 </div>`;
 
 // TE-0229 — a ticking "running for" badge on a seat card; it re-renders
@@ -963,13 +966,16 @@ const FrontDesk = ({ dispatch, queue, onDispatch, onQueue }) => {
   const frac = max ? Math.min(1, online / max) : 0;
   const C = 2 * Math.PI * 68;
   const readyToStart = Boolean(dispatch.agents_ready ?? dispatch.agents?.length);
+  // TE-0239 — the desk's busyness mood: one of-mood-* class on the
+  // container; every visual delta lives in teamengage.css
+  const mood = dispatchMood(dispatch, queue.length);
   const sub = !dispatch.enabled
     ? html`dispatch is <b>off</b>`
     : dispatch.paused != null
       ? html`<b>paused</b>${dispatch.paused ? " — " + dispatch.paused : ""}`
       : html`${queue.length} matched · <b>${online}</b> of ${max} issues
-          live${dispatch.why_idle ? ` · idle: ${dispatch.why_idle}` : ""}`;
-  return html`<div class=${"of-deskctr of-dsp" + (dispatch.enabled ? "" : " of-off")}>
+          live${dispatch.why_idle ? ` · idle: ${dispatch.why_idle}` : mood === "idle" ? " · idle" : ""}`;
+  return html`<div class=${"of-deskctr of-dsp of-mood-" + mood}>
     <h3>front desk · dispatch</h3>
     <div class="of-gauge">
       <svg class="of-ring" viewBox="0 0 150 150">
@@ -984,7 +990,11 @@ const FrontDesk = ({ dispatch, queue, onDispatch, onQueue }) => {
           stroke-dasharray=${`${(C * frac).toFixed(1)} ${C.toFixed(1)}`}
         />
       </svg>
-      <${HoloStage} />
+      <${HoloStage}>
+        ${mood === "paused" && html`<span class="of-hold">❚❚</span>`}
+        ${mood === "idle" &&
+        html`<span class="of-zzz">z</span><span class="of-zzz of-z2">z</span><span class="of-zzz of-z3">z</span>`}
+      </${HoloStage}>
       <div class="of-num">${online}/${max}</div>
     </div>
     <${DocTray}

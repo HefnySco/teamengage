@@ -1310,6 +1310,7 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   --of-ops: #e11d48;
   --of-dsp: #d97706;
   --of-busy: #f97316;
+  --of-max: #f43f1e;
   --of-you: #334155;
   --of-line: var(--bs-border-color);
   --of-dim: var(--bs-secondary-color);
@@ -1767,9 +1768,82 @@ details.of-diag > summary:hover { color: var(--bs-body-color); }
   border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
   background: var(--of-glass2);
 }
-.of-deskctr.of-dsp.of-off .of-gauge, .of-deskctr.of-dsp.of-off .of-stage { color: var(--of-faint); }
-.of-deskctr.of-dsp.of-off .of-gauge .of-val { stroke: var(--of-faint); filter: none; }
-.of-deskctr.of-dsp.of-off .of-fig { animation: none; filter: none; }
+/* TE-0239 — dispatch front-desk avatar moods: dispatchMood() in
+   web/ops-floor.js lands one of-mood-* class on .of-deskctr.of-dsp. All
+   deltas are motion, opacity and accent only — the silhouette never
+   changes; steady keeps today's look untouched and needs no rules. */
+/* off — projector dead: no figure, no beam, unlit ring and disc */
+.of-deskctr.of-dsp.of-mood-off .of-gauge, .of-deskctr.of-dsp.of-mood-off .of-stage { color: var(--of-faint); }
+.of-deskctr.of-dsp.of-mood-off .of-gauge .of-val { stroke: var(--of-faint); filter: none; }
+.of-deskctr.of-dsp.of-mood-off .of-fig { display: none; }
+.of-deskctr.of-dsp.of-mood-off .of-beam { display: none; }
+.of-deskctr.of-dsp.of-mood-off .of-disc { box-shadow: none; }
+.of-deskctr.of-dsp.of-mood-off .of-disc::after { animation: none; }
+.of-deskctr.of-dsp.of-mood-off .of-num { color: var(--of-faint); }
+/* paused — frozen mid-flicker, disc spin halted, a ❚❚ marker over the head */
+.of-deskctr.of-dsp.of-mood-paused .of-fig, .of-deskctr.of-dsp.of-mood-paused .of-disc::after { animation-play-state: paused; }
+.of-deskctr.of-dsp.of-mood-paused .of-stage { opacity: 0.8; }
+.of-hold {
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  transform: translateX(-50%);
+  font-size: 20px;
+  text-shadow: 0 0 8px currentColor;
+}
+/* idle — dimmed to half, slow lazy flicker, z-marks drift off the head */
+.of-deskctr.of-dsp.of-mood-idle .of-stage { opacity: 0.5; }
+.of-deskctr.of-dsp.of-mood-idle .of-fig { animation: of-float 9s ease-in-out infinite, of-flick 16s steps(1) infinite; }
+.of-deskctr.of-dsp.of-mood-idle .of-beam { opacity: 0.3; }
+.of-deskctr.of-dsp.of-mood-idle .of-disc::after { animation-duration: 30s; }
+.of-zzz {
+  position: absolute;
+  top: 20px;
+  left: 58px;
+  font-size: 11px;
+  opacity: 0;
+  animation: of-zrise 4s ease-in infinite;
+  text-shadow: 0 0 6px currentColor;
+}
+.of-zzz.of-z2 { top: 30px; left: 64px; animation-delay: 1.6s; font-size: 9px; }
+.of-zzz.of-z3 { top: 26px; left: 70px; animation-delay: 3.1s; font-size: 8px; }
+@keyframes of-zrise {
+  0% { opacity: 0; transform: translate(0, 0) rotate(-8deg); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(10px, -26px) rotate(10deg); }
+}
+/* busy — 1.5x energy, accent shifts to orange on figure, ring arc and num */
+.of-deskctr.of-dsp.of-mood-busy .of-gauge, .of-deskctr.of-dsp.of-mood-busy .of-stage { color: var(--of-busy); }
+.of-deskctr.of-dsp.of-mood-busy .of-gauge .of-val { stroke: var(--of-busy); filter: drop-shadow(0 0 7px var(--of-busy)); }
+.of-deskctr.of-dsp.of-mood-busy .of-num { color: var(--of-busy); }
+.of-deskctr.of-dsp.of-mood-busy .of-fig {
+  animation: of-float 4s ease-in-out infinite, of-flick 5s steps(1) infinite;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, currentColor 60%, transparent));
+}
+.of-deskctr.of-dsp.of-mood-busy .of-disc::after { animation-duration: 7s; }
+.of-deskctr.of-dsp.of-mood-busy .of-scan { animation: of-scanmove 1.4s linear infinite; }
+/* maxed — glitch jitter, pulsing ring arc, accent shifts to red-orange */
+.of-deskctr.of-dsp.of-mood-maxed .of-gauge, .of-deskctr.of-dsp.of-mood-maxed .of-stage { color: var(--of-max); }
+.of-deskctr.of-dsp.of-mood-maxed .of-gauge .of-val {
+  stroke: var(--of-max);
+  filter: drop-shadow(0 0 9px var(--of-max));
+  animation: of-ringpulse 1.1s ease-in-out infinite;
+}
+@keyframes of-ringpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.of-deskctr.of-dsp.of-mood-maxed .of-fig {
+  animation: of-float 2.6s ease-in-out infinite, of-glitch 2.2s steps(1) infinite;
+  filter: drop-shadow(0 0 16px color-mix(in srgb, currentColor 70%, transparent));
+}
+@keyframes of-glitch {
+  0%, 88% { opacity: 1; transform: translate(-50%, 0); }
+  89% { opacity: 0.4; transform: translate(-53%, -2px); }
+  90% { opacity: 1; transform: translate(-47%, 1px); }
+  92% { opacity: 0.6; transform: translate(-50%, 0); }
+  94% { opacity: 1; }
+}
+.of-deskctr.of-dsp.of-mood-maxed .of-disc::after { animation-duration: 3.5s; }
+.of-deskctr.of-dsp.of-mood-maxed .of-scan { animation: of-scanmove 0.7s linear infinite; opacity: 0.7; }
+.of-deskctr.of-dsp.of-mood-maxed .of-num { color: var(--of-max); }
 
 /* the human — a person, not a projection */
 .of-you .of-person { width: 96px; height: 118px; color: var(--of-you); margin: 4px 0 -4px; opacity: 0.92; }

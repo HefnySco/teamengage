@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, feed, isReviewerSession, sessionKind, seatLoad, seatMood } from "../web/ops-floor.js";
+import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatLoad, seatMood } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -176,6 +176,52 @@ describe("derive", () => {
       ok: false,
       reasons: ["max_attempts", "dispatch_blocked"],
     });
+  });
+});
+
+describe("dispatchMood (TE-0239)", () => {
+  const dsp = (over: Record<string, unknown>) => ({
+    enabled: true,
+    paused: null,
+    online_issues: 0,
+    max_issues: 3,
+    ...over,
+  });
+
+  it("is off whenever the dispatcher is disabled, whatever the rest says", () => {
+    expect(dispatchMood({ enabled: false }, 0)).toBe("off");
+    expect(dispatchMood({ enabled: false, paused: "freeze", online_issues: 3, max_issues: 3 }, 4)).toBe("off");
+    expect(dispatchMood(undefined, 0)).toBe("off");
+  });
+
+  it("is paused when paused holds a value — an empty string still counts", () => {
+    expect(dispatchMood(dsp({ paused: "deploy freeze", online_issues: 1 }), 1)).toBe("paused");
+    expect(dispatchMood(dsp({ paused: "" }), 0)).toBe("paused");
+  });
+
+  it("is idle when nothing is online and the queue is empty — why_idle is its reason", () => {
+    expect(dispatchMood(dsp(), 0)).toBe("idle");
+    expect(dispatchMood(dsp({ why_idle: "no_match" }), 0)).toBe("idle");
+    expect(dispatchMood(dsp({ why_idle: "no_agents" }), 0)).toBe("idle");
+  });
+
+  it("is steady under two-thirds — and while matched work waits for a live slot", () => {
+    expect(dispatchMood(dsp({ online_issues: 1 }), 0)).toBe("steady");
+    expect(dispatchMood(dsp({ online_issues: 1 }), 2)).toBe("steady");
+    // nothing live yet but the queue is not empty — not idle, still calm
+    expect(dispatchMood(dsp(), 2)).toBe("steady");
+  });
+
+  it("is busy at two-thirds of capacity and maxed at full", () => {
+    expect(dispatchMood(dsp({ online_issues: 2 }), 0)).toBe("busy");
+    expect(dispatchMood(dsp({ online_issues: 2 }), 4)).toBe("busy");
+    expect(dispatchMood(dsp({ online_issues: 3 }), 0)).toBe("maxed");
+    expect(dispatchMood(dsp({ online_issues: 5 }), 0)).toBe("maxed");
+  });
+
+  it("falls back to max_sessions when max_issues is absent, and never divides by zero", () => {
+    expect(dispatchMood(dsp({ max_issues: undefined, max_sessions: 2, online_issues: 2 }), 0)).toBe("maxed");
+    expect(dispatchMood(dsp({ max_issues: 0, online_issues: 0 }), 0)).toBe("idle");
   });
 });
 

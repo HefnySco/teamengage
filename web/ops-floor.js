@@ -131,6 +131,32 @@ export function derive(sessions, dispatch, inbox) {
   return { seats, queue, you, placed };
 }
 
+/**
+ * The dispatch front desk's busyness mood — the colour/energy channel of
+ * TE-0239 on the capacity hologram. Read off the dispatch state only:
+ * off when the dispatcher is disabled, paused when paused holds a value
+ * (an empty string is a reasonless pause, still paused), idle when
+ * nothing is online and the matched queue is empty (why_idle then rides
+ * the desk's sub line — it is the idle reason, not another mood), then
+ * the online/max fraction: maxed at full capacity, busy at two-thirds or
+ * more, steady below. Zero online with a non-empty queue is steady —
+ * work matched but not yet live.
+ * @param {{enabled?:boolean,paused?:string|null,online_issues?:number,max_issues?:number,max_sessions?:number,why_idle?:string|null}|undefined} dispatch
+ * @param {number} matched how many items sit on the front-desk queue
+ * @returns {'off'|'paused'|'idle'|'steady'|'busy'|'maxed'}
+ */
+export function dispatchMood(dispatch, matched) {
+  if (!dispatch?.enabled) return "off";
+  if (dispatch.paused != null) return "paused";
+  const online = dispatch.online_issues ?? 0;
+  const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
+  if (online === 0 && !(matched > 0)) return "idle";
+  const frac = max > 0 ? Math.min(1, online / max) : 0;
+  if (frac >= 1) return "maxed";
+  if (frac >= 2 / 3) return "busy";
+  return "steady";
+}
+
 // load mood ranks — the tier order the seat's energy follows
 const TIER_RANK = { light: 1, standard: 2, heavy: 3 };
 
