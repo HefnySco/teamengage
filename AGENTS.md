@@ -56,6 +56,7 @@ cd <task-folder>
 echo '@AGENTS.md' > CLAUDE.md
 te skills --install                                                          # links te-* into every detected agent skills dir — never copy
 te hooks --install                                                              # Claude Code guard
+te devin-scope --install                                                        # Devin agents: Write() scope for the repos (§6)
 ```
 
 Add `ignore: [AGENTS.md, CLAUDE.md]` to `.teamengage/workspace.yaml` (the
@@ -358,6 +359,19 @@ Add a short section to the global rules (`~/.codeium/windsurf/memories/global_ru
 telling Devin that tasks in `<task-folder>` are tracked by TeamEngage, to read
 `<task-folder>/AGENTS.md` first, to use `curl http://127.0.0.1:4747/agent`, and
 to use the skills above. Show the human the text before saving it.
+
+Devin agents also need write scope to the repos. A `devin -p` session spawned
+in the task folder may write only inside it; a claim that hands it a checkout
+from `repos:` or a git resource is outside that scope, every write is refused,
+and its scope request is rejected unanswered (print mode cannot prompt). Grant
+the scope once — it computes `Write(...)` rules for every repo the workspace
+can hand out and merges them into `<task-folder>/.devin/config.local.json`
+(project-local, kept out of git):
+
+```bash
+te devin-scope --install      # writes <task-folder>/.devin/config.local.json
+te devin-scope --check        # after repos:/resources: change — reports drift
+```
 
 **Check:** start an agent session and have it run
 
