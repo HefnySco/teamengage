@@ -16,9 +16,14 @@ plan, nobody takes the same task twice, nothing is "done" until you say so.
                 draft → ready → in progress → in review → done
 ```
 
-| Board — every task, by status | Graph — dependencies as a diagram | Sync — git between machines |
+<p align="center"><img src="docs/screenshots/team.png" alt="The ops floor — coders at their desks, the dispatch desk with its capacity ring, and the reviewers" /></p>
+<p align="center"><i>The ops floor: developers on the left, dispatch's capacity ring in the middle, reviewers on the right — every live agent as a hologram, with its task cards, an elapsed timer and a live log tail.</i></p>
+
+| Board — every task, by status | Plans — epics & megaplans, progress % | Graph — dependencies as a diagram |
 |---|---|---|
-| ![Board view](docs/screenshots/board.png) | ![Graph view](docs/screenshots/graph.png) | ![Sync view](docs/screenshots/sync.png) |
+| ![Board view](docs/screenshots/board.png) | ![Plans view](docs/screenshots/plans.png) | ![Graph view](docs/screenshots/graph.png) |
+| ![Inbox view](docs/screenshots/inbox.png) | ![Metrics view](docs/screenshots/metrics.png) | ![Sync view](docs/screenshots/sync.png) |
+| *Inbox — questions, reviews, accepts waiting on you* | *Metrics — scorecard per agent, tier and model* | *Sync — plans & code between machines* |
 
 ### Your day with it
 
@@ -46,24 +51,27 @@ you turn it on:
 ```bash
 te dispatch on|off|status                  # start or stop the daemon's launcher
 te dispatch pause [--kill] [reason]        # stop new picks; --kill also stops running agents
+te dispatch push <ID>                      # queue one item past the filter, one-shot
 te dispatch block <ID> [reason]            # keep one item away from agents
-te dispatch unblock <ID>
-te dispatch reset <ID>                     # clear an item's failure and retry memory
+te dispatch stop <ID> [--release]          # stop one running agent, keep the rest
+te dispatch unblock|unpush|reset <ID>
 te discover                                # re-attach agents still running after a daemon restart
 ```
 
 Dispatch honours a live limit (`max_issues`) and a selector filter
 (`--filter`, for example `plan:TE-0212`). It refuses a pick when the item
 has already failed twice, is blocked, or has no reviewer that differs from
-the coder. Dispatch state (on/off, limit, filter, pause, failures) survives
-daemon restarts. A claim with no live holder is released automatically after
+the coder — and the team page shows the refusal reason on each card.
+Dispatch state (on/off, limit, filter, pause, failures) survives daemon
+restarts. A claim with no live holder is released automatically after
 `auto_release_after` (default 2 h; `0` turns this off).
 
 The web UI's **team** page (`/ui#/team`) shows the same state as a floor
 plan: developers at their desks, the dispatch desk with its capacity ring,
 the reviewers, and your own desk, where you answer questions and accept
-work. Each item's card shows why admission refused it. The page updates
-live over one shared event stream per browser.
+work inline. Each running agent's card shows an elapsed timer and a live
+tail of its run log; planner and ops sessions wear their own colours. The
+page updates live over one shared event stream per browser.
 
 ### Why it helps
 
@@ -71,6 +79,9 @@ live over one shared event stream per browser.
   configured on each ready task, sends every submission to a reviewer model,
   and sends `issues` back for a fix. It only stops for you: questions,
   accepts, new plans.
+- **Watch them work.** The ops floor shows every live session at a desk —
+  coder, reviewer, planner — with its task cards, an elapsed timer and a
+  live log tail.
 - **Your task files stay yours.** It tracks an existing folder of Markdown
   task specs in place (one `te:` line per file).
 - **No two agents on the same work.** An agent *claims* a task before it
