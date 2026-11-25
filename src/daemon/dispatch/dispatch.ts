@@ -122,6 +122,8 @@ export interface ProcScan {
   mode?: Mode;
   role?: "coder" | "reviewer";
   token?: string;
+  /** TE-0238: raw /proc/<pid>/cmdline (NUL-separated argv) — the agent check */
+  cmdline?: string;
 }
 
 export interface DiscoverReattached {
@@ -178,9 +180,42 @@ export function scanProcesses(procRoot = "/proc"): ProcScan[] {
     } catch {
       // unreadable or exited mid-scan — stays unmarked
     }
+    try {
+      scan.cmdline = readFileSync(join(dir, "cmdline")).toString("latin1");
+    } catch {
+      // gone or unreadable — the agent check treats it as unverifiable
+    }
     out.push(scan);
   }
   return out;
+}
+
+/** /proc/<pid>/cmdline — undefined when the process is gone or unreadable. */
+function procCmdline(pid: number, procRoot = "/proc"): string | undefined {
+  try {
+    return readFileSync(join(procRoot, String(pid), "cmdline")).toString("latin1");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * TE-0238: a marked root counts as an agent only when an argv token's
+ * basename names a configured agent command. The TE_* env propagates to
+ * every descendant, so a helper (dev server, watcher) that outlived its
+ * agent still looks marked — its cmdline names its own binary instead.
+ */
+export function cmdlineMatchesAgent(
+  cmdline: string | undefined,
+  agentNames: ReadonlySet<string>,
+): boolean {
+  if (!cmdline) return false;
+  for (const token of cmdline.split(/[\s\0]+/)) {
+    if (!token) continue;
+    const base = basename(token).replace(/\.[A-Za-z0-9]+$/, "");
+    if (agentNames.has(base)) return true;
+  }
+  return false;
 }
 
 /**
@@ -477,6 +512,16 @@ export class Dispatcher {
         process.kill(active.pid, "SIGTERM");
       } catch {
         // already gone — the next reap probe would have caught it
+      }
+    }
+    // TE-0238: kill the whole marked tree — every descendant inherited
+    // TE_ITEM; a survivor would be rediscovered as the agent
+    for (const p of scanProcesses()) {
+      if (p.item !== id || p.pid === process.pid || p.pid === active.pid) continue;
+      try {
+        process.kill(p.pid, "SIGTERM");
+      } catch {
+        // gone mid-sweep — the next discover run would have caught it
       }
     }
     const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
@@ -1046,6 +1091,12 @@ export class Dispatcher {
     const procs = (opts.scan ?? (() => scanProcesses()))();
     const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
     const report: DiscoverReport = { scanned: procs.length, reattached: [], skipped: [] };
+    // TE-0238: a marked root must look like a real agent — an argv token
+    // basename matching a configured coder or reviewer command
+    const resolved = this.resolveCommands();
+    const agentNames = new Set(
+      [...resolved.coders, ...resolved.reviewers].map((entry) => agentName(entry.command)),
+    );
     // a marker tree shares one env — only the process whose parent does NOT
     // carry the same TE_ITEM is the spawned root we track
     const markedByItem = new Map<string, Set<number>>();
@@ -1078,6 +1129,14 @@ export class Dispatcher {
       }
       if (!pidAlive(p.pid)) {
         skip("exited");
+        continue;
+      }
+      // TE-0238: the marker env propagates to every descendant — a reparented
+      // helper is a marked root too. When agent commands are configured,
+      // trust only a root whose argv names one; a workspace with no
+      // configured commands has nothing to compare and keeps the old trust.
+      if (agentNames.size && !cmdlineMatchesAgent(p.cmdline ?? procCmdline(p.pid), agentNames)) {
+        skip("not_an_agent");
         continue;
       }
       const it = ops.index.get(item);

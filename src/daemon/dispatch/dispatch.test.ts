@@ -1443,6 +1443,176 @@ describe("te discover: reattach orphaned agent processes (TE-0219)", () => {
   });
 });
 
+describe("discover trusts only real agent processes, stop kills the marked tree (TE-0238)", () => {
+  const markedHelper = (env: Record<string, string>, cmd = "sleep 30") =>
+    spawn("bash", ["-c", cmd], { env: { ...process.env, ...env } });
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const markedPids = (id: string) =>
+    scanProcesses()
+      .filter((p) => p.item === id)
+      .map((p) => p.pid);
+  const waitUntil = async (cond: () => boolean, timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!cond() && Date.now() < deadline) await sleep(40);
+  };
+
+  it("a marked root whose argv names no configured agent is skipped as not_an_agent", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "devin -p" }\n    - { role: reviewer, command: "claude -p --model sonnet" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    // the GL-0218 case: a reparented dev server that inherited the marker
+    const helper = markedHelper({
+      TE_ITEM: "WS-0001",
+      TE_MODE: "work",
+      TE_ROLE: "coder",
+      TE_SESSION: "tok-dev",
+    });
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          {
+            pid: helper.pid!,
+            ppid: 1,
+            started_at: "",
+            item: "WS-0001",
+            mode: "work",
+            role: "coder",
+            token: "tok-dev",
+            cmdline: "node /opt/site/node_modules/react-scripts/scripts/start.js",
+          },
+        ],
+      });
+      expect(report.skipped.find((s) => s.pid === helper.pid)?.reason).toBe("not_an_agent");
+      expect(report.reattached).toHaveLength(0);
+      // no session is minted and no children entry is created for it
+      expect(sessions.list().filter((s) => s.label === "WS-0001")).toHaveLength(0);
+      expect(d.status().running).toHaveLength(0);
+      expect(events.some((e) => e.kind === "dispatch_discover")).toBe(false);
+    } finally {
+      helper.kill();
+    }
+  });
+
+  it("a daemonized agent (ppid 1) whose argv names a configured command still reattaches", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "devin -p" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const gone = await ops.hello("devin");
+    await ops.claim("WS-0001", gone.session);
+    sessions.disconnect(gone.session.id);
+
+    const agent = markedHelper({
+      TE_ITEM: "WS-0001",
+      TE_MODE: "work",
+      TE_ROLE: "coder",
+      TE_SESSION: "tok-agent",
+    });
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          {
+            pid: agent.pid!,
+            ppid: 1,
+            started_at: "",
+            item: "WS-0001",
+            mode: "work",
+            role: "coder",
+            token: "tok-agent",
+            cmdline: "devin -p --model swe-2-high -- use the te-work skill",
+          },
+        ],
+      });
+      expect(report.reattached).toHaveLength(1);
+      expect(report.reattached[0].claim).toBe("adopted");
+      expect(ops.index.get("WS-0001")!.claim!.holder).toBe(report.reattached[0].session);
+    } finally {
+      agent.kill();
+    }
+  });
+
+  it("a scan entry without cmdline falls back to the live /proc argv", async () => {
+    // the TE-0219-style fake scans carry no cmdline — the pid is real
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: false\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const child = markedHelper({ TE_ITEM: "WS-0001", TE_MODE: "work", TE_ROLE: "coder" });
+    const d = dispatcher(wsr);
+    try {
+      const report = await d.discoverOrphans({
+        scan: () => [
+          {
+            pid: child.pid!,
+            ppid: 1,
+            started_at: "",
+            item: "WS-0001",
+            mode: "work",
+            role: "coder",
+          },
+        ],
+      });
+      expect(report.reattached).toHaveLength(1);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("a marked helper outliving its root is not rediscovered, and stop kills the whole marked tree", async () => {
+    // the fake agent leaves a marked sleep behind when its root dies; the
+    // helper's argv ("sleep 60") names no configured command ("bash")
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "bash -c 'sleep 60 & wait'" }\n`,
+    );
+    const d = dispatcher(wsr);
+    try {
+      d.tick();
+      await untilEvent("dispatch_start", 1);
+      const rootPid = d.status().running[0].pid;
+      await waitUntil(() => markedPids("WS-0001").length >= 2);
+      const helperPid = markedPids("WS-0001").find((pid) => pid !== rootPid);
+      expect(helperPid).toBeDefined();
+
+      // the agent dies; the marked helper survives it — discover must not
+      // mistake the helper for the agent
+      process.kill(rootPid, "SIGKILL");
+      await waitUntil(() => !markedPids("WS-0001").includes(rootPid) && !alive(rootPid));
+      const report = await d.discoverOrphans();
+      expect(report.skipped.find((s) => s.pid === helperPid)?.reason).toBe("not_an_agent");
+      expect(report.reattached).toHaveLength(0);
+      expect(alive(helperPid!)).toBe(true);
+
+      // a fresh run, then stop — every pid carrying TE_ITEM=WS-0001 dies,
+      // the orphaned helper from the first run included
+      await d.resetItem("WS-0001");
+      d.tick();
+      await untilEvent("dispatch_start", 2);
+      await waitUntil(() => markedPids("WS-0001").length >= 3);
+      await d.stopItem("WS-0001");
+      await waitUntil(() => markedPids("WS-0001").length === 0);
+      expect(markedPids("WS-0001")).toEqual([]);
+    } finally {
+      for (const pid of markedPids("WS-0001")) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }
+  });
+});
+
 describe("dispatch state persists across a restart (TE-0223)", () => {
   const stateFile = () => join(home, "dispatch", "ws.json");
   const readState = () =>
