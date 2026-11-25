@@ -34,6 +34,7 @@ async function ensureDaemon(home?: string): Promise<{ port: number; token: strin
         detached: true,
         stdio: "ignore",
         env: { ...process.env },
+        windowsHide: true,
       });
       child.unref();
     }

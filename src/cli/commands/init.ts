@@ -57,7 +57,7 @@ export async function initCmd(args: string[], home?: string): Promise<number> {
   if (!existsSync(ignore)) writeFileSync(ignore, "*.tmp\nworktrees/\n");
 
   if (!overlay && !(await isRepo(plansDir))) {
-    execFileSync("git", ["init", "-b", "main"], { cwd: plansDir });
+    execFileSync("git", ["init", "-b", "main"], { cwd: plansDir, windowsHide: true });
     await git(plansDir, ["add", "-A"]);
     await git(plansDir, ["-c", "user.email=teamengage@local", "-c", "user.name=teamengage", "commit", "-m", "te: init workspace"]);
   }

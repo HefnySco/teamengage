@@ -95,7 +95,7 @@ export async function execStep(
   }
   const ran = await new Promise<{ code: number; output: string; timed_out?: boolean }>((resolvePromise, rejectPromise) => {
     const stream = createWriteStream(log_file);
-    const child = spawn(opts.bash ?? "bash", ["-c", step.run ?? ""], { cwd: opts.cwd, env });
+    const child = spawn(opts.bash ?? "bash", ["-c", step.run ?? ""], { cwd: opts.cwd, env, windowsHide: true });
     let text = "";
     let timed_out = false;
     const timer = timeout_ms

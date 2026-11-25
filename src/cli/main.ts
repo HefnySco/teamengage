@@ -391,6 +391,7 @@ async function main(argv: string[]): Promise<number> {
       const here = dirname(fileURLToPath(import.meta.url));
       const r = spawnSync(process.execPath, [join(here, "..", "daemon", "main.js")], {
         stdio: "inherit",
+        windowsHide: true,
       });
       return r.status ?? 1;
     }
@@ -420,7 +421,12 @@ async function main(argv: string[]): Promise<number> {
       const url = `http://127.0.0.1:${port}/ui?token=${token}`;
       process.stdout.write(`${url}\n`);
       const { spawn } = await import("node:child_process");
-      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+      // xdg-open is Linux-only; on Windows `start` is a cmd builtin
+      const open =
+        process.platform === "win32"
+          ? spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true })
+          : spawn("xdg-open", [url], { detached: true, stdio: "ignore", windowsHide: true });
+      open.on("error", () => {}).unref();
       return 0;
     }
     default:

@@ -1320,7 +1320,7 @@ export class WorkspaceOps {
         for (const r of job.repos) {
           if (!r.commit || resolve(this.wsr.ws.root, r.path) !== dir) continue;
           try {
-            execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit]);
+            execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit], { windowsHide: true });
             out.push({ id: job.id, playbook: job.playbook, status: job.status, version: job.version });
             seen.add(job.id);
           } catch {

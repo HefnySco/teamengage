@@ -253,6 +253,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
         TE_WS: ws.name,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
@@ -387,7 +388,7 @@ export async function waitCmd(args: string[], home?: string): Promise<number> {
     if (fresh.length) {
       for (const [, line] of fresh) process.stdout.write(`${line}\n`);
       if (flag(args, "--notify")) {
-        spawn("notify-send", ["TeamEngage", fresh.map(([, l]) => l).join("\n")], { stdio: "ignore", detached: true })
+        spawn("notify-send", ["TeamEngage", fresh.map(([, l]) => l).join("\n")], { stdio: "ignore", detached: true, windowsHide: true })
           .on("error", () => {})
           .unref();
       }

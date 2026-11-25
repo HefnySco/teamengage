@@ -55,7 +55,7 @@ function capture(file: string, args: string[], opts: { cwd?: string; timeoutMs?:
     let out = "";
     let stdout = "";
     let timedOut = false;
-    const child = execFile(file, args, { cwd: opts.cwd }, () => {});
+    const child = execFile(file, args, { cwd: opts.cwd, windowsHide: true }, () => {});
     const kill = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");

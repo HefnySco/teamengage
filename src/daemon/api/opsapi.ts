@@ -390,8 +390,8 @@ function repoStates(wsr: WorkspaceRuntime, pb: Playbook): JobRepoState[] {
   for (const p of pb.repos) {
     const dir = resolve(wsr.ws.root, p);
     try {
-      const commit = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-      const dirty = execFileSync("git", ["-C", dir, "status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+      const commit = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+      const dirty = execFileSync("git", ["-C", dir, "status", "--porcelain"], { encoding: "utf8", windowsHide: true }).trim().length > 0;
       out.push({ path: p, commit, dirty });
     } catch (e) {
       out.push({ path: p, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
@@ -439,7 +439,7 @@ export function opsJobsForItem(wsr: WorkspaceRuntime, ctx: DaemonCtx, commits: {
       for (const r of job.repos) {
         if (!r.commit || resolve(wsr.ws.root, r.path) !== dir) continue;
         try {
-          execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit]);
+          execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", c.sha, r.commit], { windowsHide: true });
           jobs.push(job);
           seen.add(job.id);
         } catch {

@@ -59,7 +59,7 @@ export async function fireNotify(
 
 function runCommand(command: string, body: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = execFile("sh", ["-c", command], { timeout: 30_000 }, (err, _stdout, stderr) => {
+    const child = execFile("sh", ["-c", command], { timeout: 30_000, windowsHide: true }, (err, _stdout, stderr) => {
       if (err)
         reject(new Error(`'${command}' → ${err.message}${stderr ? ` — ${stderr.trim()}` : ""}`));
       else resolve();

@@ -47,6 +47,7 @@ export async function git(repo: string, args: string[], opts: RunOpts = {}): Pro
       timeout: opts.timeoutMs ?? 10_000,
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...opts.env },
+      windowsHide: true,
     });
     return stdout;
   } catch (e) {

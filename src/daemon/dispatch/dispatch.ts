@@ -1287,6 +1287,7 @@ export class Dispatcher {
           ...(token ? { TE_SESSION: token } : {}),
         },
         stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
       });
     } catch (e) {
       out.close();

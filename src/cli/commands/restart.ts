@@ -61,7 +61,13 @@ export function ensureFreshWebBundle(
   const build =
     run ??
     ((cwd: string) =>
-      spawnSync("npm", ["run", "build:web"], { cwd, stdio: "inherit" }).status === 0);
+      spawnSync("npm", ["run", "build:web"], {
+        cwd,
+        stdio: "inherit",
+        windowsHide: true,
+        // npm is a .cmd on Windows — it only runs through cmd.exe
+        shell: process.platform === "win32",
+      }).status === 0);
   return build(dirname(dir));
 }
 
@@ -80,6 +86,7 @@ export async function restartCmd(args: string[], home?: string): Promise<number>
   if (existsSync(unit)) {
     const r = spawnSync("systemctl", ["--user", "restart", "teamengaged"], {
       stdio: "inherit",
+      windowsHide: true,
     });
     if (r.status !== 0) {
       process.stderr.write("te: systemctl --user restart teamengaged failed\n");

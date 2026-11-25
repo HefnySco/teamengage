@@ -20,6 +20,7 @@ export async function ensureDaemon(home?: string): Promise<{ port: number; token
       const child = spawn(process.execPath, [daemonEntry], {
         detached: true,
         stdio: "ignore",
+        windowsHide: true,
       });
       child.unref();
     }

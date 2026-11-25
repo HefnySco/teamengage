@@ -116,7 +116,7 @@ export function envFindings(loaded: LoadedEnv[], machineIds: ReadonlySet<string>
  */
 export function wifiName(): string {
   try {
-    return execFileSync("iwgetid", ["-r"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync("iwgetid", ["-r"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
   } catch {
     /* no iwgetid or not on wifi */
   }
@@ -124,6 +124,7 @@ export function wifiName(): string {
     const out = execFileSync("nmcli", ["-t", "-f", "ACTIVE,SSID", "dev", "wifi"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     });
     return out.split("\n").find((l) => l.startsWith("yes:"))?.slice(4) ?? "";
   } catch {

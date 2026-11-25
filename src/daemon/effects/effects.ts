@@ -438,7 +438,7 @@ async function existsOn(ws: LoadedWorkspace, res: string, base: string): Promise
       await execFileP(
         "ssh",
         [...(r.config.ssh_opts ?? []), r.config.host, `test -e ${shq(join(r.config.path, base))}`],
-        { timeout: 30_000 },
+        { timeout: 30_000, windowsHide: true },
       );
       return true;
     } catch (e) {
@@ -467,7 +467,7 @@ async function isDirOn(ws: LoadedWorkspace, res: string, base: string): Promise<
       await execFileP(
         "ssh",
         [...(r.config.ssh_opts ?? []), r.config.host, `test -d ${shq(join(r.config.path, base))}`],
-        { timeout: 30_000 },
+        { timeout: 30_000, windowsHide: true },
       );
       return true;
     } catch {
@@ -487,7 +487,7 @@ async function deleteOn(ws: LoadedWorkspace, res: string, base: string): Promise
     await execFileP(
       "ssh",
       [...(r.config.ssh_opts ?? []), r.config.host, `rm -rf -- ${shq(join(r.config.path, base))}`],
-      { timeout: 60_000 },
+      { timeout: 60_000, windowsHide: true },
     );
   }
 }
@@ -504,7 +504,7 @@ async function ensureParentOn(ws: LoadedWorkspace, res: string, base: string): P
     await execFileP(
       "ssh",
       [...(r.config.ssh_opts ?? []), r.config.host, `mkdir -p ${shq(join(r.config.path, parent))}`],
-      { timeout: 30_000 },
+      { timeout: 30_000, windowsHide: true },
     ).catch(() => {});
   }
 }
@@ -529,7 +529,7 @@ async function rsyncSnapshot(
     dest,
   ];
   try {
-    await execFileP("rsync", args, { timeout: 120_000 });
+    await execFileP("rsync", args, { timeout: 120_000, windowsHide: true });
   } catch (e) {
     const err = e as { stderr?: string };
     throw new TeError("INTERNAL", `snapshot failed: ${err.stderr ?? (e as Error).message}`);
@@ -590,7 +590,7 @@ async function rsyncDryDiff(src: string, dest: string, sshOpts?: string[]): Prom
         src,
         dest,
       ],
-      { timeout: 60_000 },
+      { timeout: 60_000, windowsHide: true },
     );
     return stdout
       .split("\n")
