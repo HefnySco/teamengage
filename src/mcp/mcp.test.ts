@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { z } from "zod";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -262,6 +263,77 @@ describe("archived dependencies stay visible to agents", () => {
       const cur = store.idx.get("WS-0001")!;
       await store.perform("WS-0001", cur.meta.version, human, { type: "unarchive" });
     }
+  });
+});
+
+describe("skills over MCP (SEP-2640)", () => {
+  it("initialize advertises the resources capability and the skills extension", () => {
+    const caps = client.getServerCapabilities()!;
+    expect(caps.resources).toBeDefined();
+    expect(caps.extensions).toMatchObject({ "io.modelcontextprotocol/skills": {} });
+  });
+
+  it("resources/list serves SKILL.md plus supporting files per skills/<name>", async () => {
+    const { resources } = await client.listResources();
+    const uris = resources.map((r) => r.uri);
+    for (const skill of ["te-analysis", "te-discuss", "te-ops", "te-plan", "te-review", "te-tag", "te-work"]) {
+      expect(uris).toContain(`skill://${skill}/SKILL.md`);
+    }
+    // supporting files are listed too
+    expect(uris).toContain("skill://te-work/README.md");
+    // entries carry name and description from the skill frontmatter
+    const skillMd = resources.find((r) => r.uri === "skill://te-work/SKILL.md")!;
+    expect(skillMd.name).toBe("te-work");
+    expect(skillMd.description).toContain("TeamEngage");
+  });
+
+  it("resources/read returns the SKILL.md text and supporting files", async () => {
+    const r = await client.readResource({ uri: "skill://te-work/SKILL.md" });
+    const c = r.contents[0];
+    expect(c.mimeType).toBe("text/markdown");
+    expect("text" in c && c.text).toContain("name: te-work");
+    const readme = await client.readResource({ uri: "skill://te-work/README.md" });
+    const rc = readme.contents[0];
+    expect("text" in rc && rc.text.length).toBeTruthy();
+    // an unknown skill uri is an error
+    await expect(client.readResource({ uri: "skill://no-such/SKILL.md" })).rejects.toThrow();
+  });
+
+  it("skills/list returns frontmatter and a sha256 manifest per skill", async () => {
+    const res = await client.request(
+      { method: "skills/list", params: {} } as never,
+      z
+        .object({
+          resultType: z.string(),
+          skills: z.array(
+            z
+              .object({
+                uri: z.string(),
+                frontmatter: z.record(z.string(), z.unknown()),
+                resources: z.array(
+                  z.object({ uri: z.string(), digest: z.string(), size: z.number() }).passthrough(),
+                ),
+              })
+              .passthrough(),
+          ),
+        })
+        .passthrough(),
+    );
+    const entry = res.skills.find((s) => s.uri === "skill://te-work/SKILL.md")!;
+    expect(entry.frontmatter.name).toBe("te-work");
+    expect(entry.resources[0].digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(entry.resources.map((f) => f.uri)).toContain("skill://te-work/README.md");
+  });
+
+  it("skills/get returns one skill's entry by uri", async () => {
+    const res = await client.request(
+      { method: "skills/get", params: { uri: "skill://te-plan/SKILL.md" } } as never,
+      z.object({ resultType: z.string(), skill: z.object({ uri: z.string() }).passthrough() }).passthrough(),
+    );
+    expect(res.skill.uri).toBe("skill://te-plan/SKILL.md");
+    await expect(
+      client.request({ method: "skills/get", params: { uri: "skill://nope/SKILL.md" } } as never, z.object({}).passthrough()),
+    ).rejects.toThrow();
   });
 });
 

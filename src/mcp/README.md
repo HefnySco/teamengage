@@ -7,7 +7,9 @@ get the same tools the `/agent/*` HTTP API exposes.
   one-liners, errors as `ERROR <code>: message`; docs/AGENT-OUTPUT.md) and
   the `ToolResult` shape.
 - `server/` — the MCP server on Streamable HTTP, mounted at `/mcp` on the
-  daemon.
+  daemon. Also serves the repo's `skills/` tree as `skill://` resources
+  (SEP-2640: the `io.modelcontextprotocol/skills` extension, resources +
+  skills/list|get).
 - `shim/` — `teamengage mcp`: a stdio↔HTTP proxy for IDEs that only spawn
   local commands.
 - `tools/` — the read and write tool registrations (hello/next/brief/… ,
