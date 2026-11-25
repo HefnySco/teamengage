@@ -587,7 +587,12 @@ done     = terminal, but ──to_draft──▶ draft reopens it (done-by-mista
   team page): `te dispatch pause [--kill] [reason]` stops new starts at once
   and names the reason in `status.why_idle` as `paused: <reason>`; `resume`
   or `on` lifts it. `te dispatch block <id> <reason>` sets `dispatch_blocked`
-  like the breaker does; `unblock` clears it. `te dispatch reset <id>`
+  like the breaker does; `unblock` clears it. `te dispatch push <id>` sets
+  `dispatch_push` — the positive mirror: a one-shot queue flag a work pick
+  admits past the filter (positive non-match and `-` exclusions both lose)
+  while the other admission gates still apply; the flag clears on claim and
+  `unpush` lifts it. `status().pushed` lists the pushed-but-unclaimed ids.
+  `te dispatch reset <id>`
   clears the in-memory tried/fix/failure counters so a repaired item retries
   clean. The team page puts pause/resume beside the toggle and
   block/unblock/reset on matched candidates.

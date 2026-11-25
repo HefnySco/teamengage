@@ -174,6 +174,8 @@ export type Action =
    */
   | { type: "dispatch_block"; reason: string }
   | { type: "dispatch_unblock" }
+  | { type: "dispatch_push" }
+  | { type: "dispatch_unpush" }
   | { type: "dispatch_reset" }
   | { type: "plan_auto_done" }
   /**
@@ -503,6 +505,8 @@ function apply(
         );
       }
       set("in_progress");
+      // TE-0236: the push flag is one-shot — a successful claim consumes it
+      delete out.meta.dispatch_push;
       out.log.push(
         takeover
           ? from === "in_progress"
@@ -1163,6 +1167,30 @@ function apply(
       delete out.meta.dispatch_blocked;
       out.events.push(ev(actor, stamp, meta.id, "dispatch_unblock", from, from));
       out.log.push(`- ${stamp} ${who} unblocked dispatch`);
+      return out;
+    }
+
+    case "dispatch_push": {
+      // TE-0236: the human's per-item queue lever — the positive mirror of
+      // dispatch_blocked. A work pick admits the item past the filter;
+      // the flag is one-shot and clears on claim.
+      if (actor.kind !== "daemon" && actor.kind !== "human")
+        throw new ForbiddenError("dispatch_push is a daemon/human action");
+      if (TERMINAL.includes(from)) fail(from, action.type);
+      out.meta.dispatch_push = { at: stamp, by: actor.session };
+      out.events.push(ev(actor, stamp, meta.id, "dispatch_push", from, from));
+      out.log.push(`- ${stamp} ${who} pushed to dispatch`);
+      return out;
+    }
+
+    case "dispatch_unpush": {
+      if (actor.kind !== "daemon" && actor.kind !== "human")
+        throw new ForbiddenError("dispatch_unpush is a daemon/human action");
+      if (!meta.dispatch_push)
+        throw new InvalidTransitionError("not dispatch_push", from, action.type);
+      delete out.meta.dispatch_push;
+      out.events.push(ev(actor, stamp, meta.id, "dispatch_unpush", from, from));
+      out.log.push(`- ${stamp} ${who} unpushed from dispatch`);
       return out;
     }
 

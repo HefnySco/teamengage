@@ -12,6 +12,8 @@ Forced levers (human only):
   te dispatch resume                               lift a pause ('on' also does)
   te dispatch block <id> <reason>                  keep one item out of dispatch until unblock
   te dispatch unblock <id>                         clear a blocked item
+  te dispatch push <id>                            queue one item — admitted past the filter, clears on claim
+  te dispatch unpush <id>                          clear a pushed item
   te dispatch reset <id>                           clear the item's tried/fix/failure memory
   te dispatch stop <id> [--release]                stop one running child; --release frees its claim
 
@@ -37,7 +39,8 @@ interface DispatchStatusResponse {
   online_issues: number;
   live_sessions: number;
   filter: string;
-  matched: Array<{ id: string; mode: string; status: string; title: string; blocked?: boolean }>;
+  matched: Array<{ id: string; mode: string; status: string; title: string; blocked?: boolean; pushed?: boolean }>;
+  pushed?: string[];
   running: Array<{ id: string; mode: string; role: string; pid: number; started_at: string }>;
   agents: Array<{ role: string; tier?: string; command: string }>;
   agents_ready: boolean;
@@ -57,10 +60,11 @@ function formatStatusSummary(status: DispatchStatusResponse): string {
     ? ` · running: ${status.running.map((entry) => `${entry.id} (${entry.mode})`).join(", ")}`
     : "";
   const filterText = status.filter ? ` · filter: ${status.filter}` : "";
+  const pushedText = status.pushed?.length ? ` · pushed: ${status.pushed.join(", ")}` : "";
   const idleText = status.why_idle ? ` · ${status.why_idle}` : "";
   return (
     `dispatch ${status.enabled ? "on" : "off"} · issues ${status.online_issues}/${status.max_issues}` +
-    ` · sessions ${status.live_sessions}${filterText}${idleText}${runningText}\n`
+    ` · sessions ${status.live_sessions}${filterText}${pushedText}${idleText}${runningText}\n`
   );
 }
 
@@ -86,7 +90,7 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
       `  matched (${status.matched.length}): ${
         status.matched.length
           ? status.matched
-              .map((entry) => `${entry.id} (${entry.mode}${entry.blocked ? " blocked" : ""})`)
+              .map((entry) => `${entry.id} (${entry.mode}${entry.blocked ? " blocked" : ""}${entry.pushed ? " pushed" : ""})`)
               .join(", ")
           : "none"
       }\n`,
@@ -108,7 +112,16 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
     if (i > 0 && arr[i - 1] === "--ws") return false;
     return !a.startsWith("--");
   });
-  if (sub === "pause" || sub === "resume" || sub === "block" || sub === "unblock" || sub === "reset" || sub === "stop") {
+  if (
+    sub === "pause" ||
+    sub === "resume" ||
+    sub === "block" ||
+    sub === "unblock" ||
+    sub === "push" ||
+    sub === "unpush" ||
+    sub === "reset" ||
+    sub === "stop"
+  ) {
     const kill = args.includes("--kill");
     let payload: Record<string, unknown>;
     let confirm: string;
@@ -136,6 +149,12 @@ export async function dispatchCmd(args: string[], home?: string): Promise<number
       } else if (sub === "unblock") {
         payload = { unblock: { id } };
         confirm = `${id} unblocked`;
+      } else if (sub === "push") {
+        payload = { push: { id } };
+        confirm = `${id} pushed to dispatch`;
+      } else if (sub === "unpush") {
+        payload = { unpush: { id } };
+        confirm = `${id} unpushed`;
       } else if (sub === "stop") {
         const release = args.includes("--release");
         payload = { stop: { id, release } };

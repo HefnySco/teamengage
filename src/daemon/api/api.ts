@@ -500,6 +500,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
         resume?: unknown;
         block?: unknown;
         unblock?: unknown;
+        push?: unknown;
+        unpush?: unknown;
         reset?: unknown;
         stop?: unknown;
       };
@@ -560,6 +562,8 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
       for (const [field, action] of [
         ["block", "block"],
         ["unblock", "unblock"],
+        ["push", "push"],
+        ["unpush", "unpush"],
         ["reset", "reset"],
         ["stop", "stop"],
       ] as const) {
@@ -577,6 +581,11 @@ export function registerApiRoutes(app: FastifyInstance, ctx: DaemonCtx): void {
           await d.blockItem(itemId, reason);
         } else if (action === "unblock") {
           await d.unblockItem(itemId);
+        } else if (action === "push") {
+          // TE-0236: queue one item for dispatch — beats the filter, one-shot
+          await d.pushItem(itemId);
+        } else if (action === "unpush") {
+          await d.unpushItem(itemId);
         } else if (action === "reset") {
           await d.resetItem(itemId);
         } else {

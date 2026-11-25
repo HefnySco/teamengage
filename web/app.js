@@ -780,7 +780,17 @@ const DocCard = ({ d, onAct, acting, onLog, onStop, onQueue }) => html`<span cla
             }}
             >reset</button
           >`
-      : html`<button
+      : html`${d.pushed &&
+          html`<button
+            class="of-qv dispatch-unpush"
+            title="pushed — press to unpush and take it off the dispatch queue"
+            onClick=${(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onQueue("unpush", d.id);
+            }}
+            >pushed ⌫</button
+          >`}<button
             class="of-qv dispatch-exclude"
             title=${`exclude — add -${d.id} to the filter`}
             onClick=${(e) => {
@@ -1638,11 +1648,14 @@ const Team = () => {
   };
   const unblockItem = (id) => sendDispatch({ unblock: { id } });
   const resetItem = (id) => sendDispatch({ reset: { id } });
+  // TE-0236 — push queues one item past the filter; unpush lifts the flag
+  const pushItem = (id) => sendDispatch({ push: { id } });
+  const unpushItem = (id) => sendDispatch({ unpush: { id } });
 
   // TE-0232 — the front-desk queue cards carry the same four levers the
   // legacy matched chips do; the action name picks the handler
   const queueAct = (action, id) =>
-    ({ exclude: excludeItem, block: blockItem, unblock: unblockItem, reset: resetItem })[action]?.(id);
+    ({ exclude: excludeItem, block: blockItem, unblock: unblockItem, reset: resetItem, push: pushItem, unpush: unpushItem })[action]?.(id);
 
   // TE-0232 — the legacy text lists fold into a diagnostics drawer, closed
   // by default; the open state lives in sessionStorage like the inbox folds
@@ -1741,7 +1754,7 @@ const Team = () => {
       <h2 class="h4 mb-0">Team</h2>
       <${RefreshBtn} refresh=${reloadFloor} />
       <span class="small text-secondary">
-        ${ss.length} session(s) · ${dispatch ? `${onlineIssues}/${serverMax} online issue(s)` : "…"} · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}${serverFilter ? html` · <code class="small">${serverFilter}</code>` : ""}
+        ${ss.length} session(s) · ${dispatch ? `${onlineIssues}/${serverMax} online issue(s)` : "…"} · dispatch ${dispatch?.enabled ? html`<b class="text-success">on</b>` : "off"}${serverFilter ? html` · <code class="small">${serverFilter}</code>` : ""}${(dispatch?.pushed ?? []).length ? html` · pushed: ${dispatch.pushed.join(", ")}` : ""}
       </span>
     </div>
     <${OpsFloor}
@@ -1846,7 +1859,7 @@ const Team = () => {
                   (m) =>
                     html`<span class="dispatch-chip" key=${`${m.id}:${m.mode}`} title=${m.blocked ? `blocked: ${m.title ?? m.id}` : m.admission?.ok === false ? `refused: ${m.admission.reasons.join("; ")} — ${m.title ?? m.id}` : (m.title ?? m.id)}><a class="item id" href=${"#/item/" + m.id} target="_blank" rel="noopener">${m.id}</a> <span class="triage-tag">${m.mode}</span>${m.blocked
                       ? html`<span class="triage-tag dispatch-blocked-tag">blocked</span><button class="btn btn-link btn-sm p-0 dispatch-unblock" title="unblock — let dispatch start it again" onClick=${() => unblockItem(m.id)}>unblock</button><button class="btn btn-link btn-sm p-0 dispatch-reset" title="reset — clear tried/fix/failure memory" onClick=${() => resetItem(m.id)}>reset</button>`
-                      : html`${m.admission?.ok === false ? html`<span class="triage-tag dispatch-refused-tag">refused</span>` : ""}<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
+                      : html`${m.admission?.ok === false ? html`<span class="triage-tag dispatch-refused-tag">refused</span>` : ""}${m.pushed ? html`<span class="triage-tag dispatch-pushed-tag">pushed</span><button class="btn btn-link btn-sm p-0 dispatch-unpush" title="unpush — take it off the dispatch queue" onClick=${() => unpushItem(m.id)}>unpush</button>` : ""}<button class="btn btn-link btn-sm p-0 dispatch-exclude" title=${`exclude — add -${m.id} to the filter`} onClick=${() => excludeItem(m.id)}>×</button><button class="btn btn-link btn-sm p-0 dispatch-block" title="block — keep it out of dispatch" onClick=${() => blockItem(m.id)}>block</button>`}</span>`,
                 )}
                 ${matchedItems.length > 20 && html`<span class="text-secondary">+${matchedItems.length - 20} more</span>`}`
             : html`<span class="text-secondary">${dispatch.enabled ? "0 matched — standby" : "0 matched"}</span>`}
@@ -2794,6 +2807,7 @@ const Board = ({ onOpen }) => {
                       <div class="bcard-meta d-flex align-items-center gap-1 flex-wrap">
                         <${DomainTags} ds=${i.domains} onClick=${setDomain} active=${domain} />
                         ${i.blocked && html`<span>blocked</span>`}
+                        ${i.dispatch_push && html`<span title="queued for dispatch — a work pick admits it past the filter until a claim clears it">queued</span>`}
                         ${i.paused && html`<span title=${`paused — plan ${i.paused_by} is on hold`}>paused</span>`}
                         ${(i.overlap ?? []).length > 0 && html`<span class="badge text-bg-warning"
                           title=${`Touches overlap — warning only:\n${i.overlap.map((o) => `${o.id}: ${o.paths.join(", ")}`).join("\n")}`}
@@ -4068,13 +4082,20 @@ const ActBtn = ({ variant = "outline-secondary", title, disabled, onClick, child
 //                 (never claimed — no hold, review, star or graph buttons)
 // filePath is the item's task/DISC file (worded into the delete confirm);
 // onDeleted is where to nav after delete (default: the board).
-export const ItemActions = ({ mode, it, act, filePath, onDeleted }) => {
+export const ItemActions = ({ mode, it, act, filePath, onDeleted, reload }) => {
   const id = it.meta.id;
   const st = it.meta.status;
   const closed = st === "done" || st === "dropped";
   const claimed = Boolean(it.claim);
   const work = mode !== "discuss";
   const fileLabel = mode === "discuss" ? "DISC file" : "task file";
+  // TE-0236: push to dispatch — the per-item queue lever, POST /api/dispatch
+  const pushToggle = async () => {
+    await post("/api/dispatch", it.meta.dispatch_push ? { unpush: { id } } : { push: { id } }).catch(
+      (e) => toast(e.message),
+    );
+    reload?.();
+  };
   // a cancelled prompt (null) aborts the action — only OK fires it
   const askThen = async (action, label, extra) => {
     const reason = await promptDialog(label);
@@ -4111,6 +4132,11 @@ export const ItemActions = ({ mode, it, act, filePath, onDeleted }) => {
     ${work && st === "hold" && html`<${ActBtn} variant="primary" title="resume — take it off hold" onClick=${() => act("unhold")}><${PlayIcon} /></${ActBtn}>`}
     ${work && (st === "draft" || st === "ready") && html`<${ActBtn} title="hold — park it with an optional reason" onClick=${() => askThen("hold", "hold reason (optional)")}><${PauseIcon} /></${ActBtn}>`}
     ${work && (st === "ready" || st === "hold" || st === "done") && html`<${ActBtn} title=${st === "done" ? "reopen — back to draft" : "to draft — pull it back for edits"} onClick=${() => askThen("draft", st === "done" ? "reopen — why back to draft? (optional)" : "why back to draft? (optional)")}>${st === "done" ? html`<${UndoIcon} />` : html`<${PencilIcon} />`}</${ActBtn}>`}
+    ${work && st === "ready" && !claimed && html`<${ActBtn} variant=${it.meta.dispatch_push ? "success" : "outline-secondary"}
+      title=${it.meta.dispatch_push
+        ? `queued for dispatch${it.meta.dispatch_push.at ? ` — pushed ${ago(it.meta.dispatch_push.at)} ago` : ""} · press to unpush`
+        : "push to dispatch — queue it for the dispatcher; a work pick admits it past the filter, a claim clears the flag"}
+      onClick=${pushToggle}><${RobotIcon} /></${ActBtn}>`}
     ${work && st === "in_review" && html`<${ActBtn} variant="success" title="accept — merge the claim's worktrees, the item becomes done" onClick=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}><${CheckCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject — send the submission back with a reason" onClick=${() => askThen("reject", "reject reason")}><${XCircleIcon} /></${ActBtn}><${ActBtn} variant="outline-danger" title="reject & release — send it back AND free the claim → ready for another agent (the branch is kept)" onClick=${() => askThen("reject", "reject reason", { release: true })}><${UnlockIcon} /></${ActBtn}>`}
     ${work && it.claim && html`<${ActBtn} variant="outline-primary" disabled=${!canRelease(st)} title=${releaseTitle(st)} onClick=${async () => { if (await confirmDialog(`release the claim on ${id}?`, `held by ${it.claim.holder}@${it.claim.machine} — the item goes back to ready; work in its worktree is kept but the claim record is gone.`, { ok: "release", danger: true })) act("release", { note: "released by human" }); }}><${UnlockIcon} /></${ActBtn}>`}
     ${st === "dropped" && html`<${ActBtn} variant="outline-primary" title="undrop — bring it back" onClick=${() => act("undrop")}><${UndoIcon} /></${ActBtn}>`}
@@ -4589,13 +4615,14 @@ ${b.deps.length > 0 && html`
       ${it.meta.type === "epic" && html`<${PlanBadge} i=${it} /><${PlanProblems} id=${it.meta.id} p=${it.plan_problems} onOpen=${(pid) => nav(`item/${pid}`)} />`}
       ${it.meta.type === "idea" && html`<span class="badge badge-idea" title="idea — a source document; agents plan from it, it is never claimed">idea</span>`}
       ${it.meta.archived && html`<span class="badge text-bg-secondary">archived</span>`}
+      ${it.meta.dispatch_push && html`<span class="badge text-bg-info" title=${`queued for dispatch${it.meta.dispatch_push.by ? ` by ${it.meta.dispatch_push.by}` : ""}${it.meta.dispatch_push.at ? ` · pushed ${ago(it.meta.dispatch_push.at)} ago` : ""} — a work pick admits it past the filter until a claim clears it`}>queued</span>`}
       <span class="text-truncate text-secondary" title=${it.meta.title}>${it.meta.title}</span>
       <span class="view-sw small text-nowrap ms-auto" title="simple — the human layer first, agent detail folded · full — everything expanded">
         <a class=${viewMode === "simple" ? "on" : ""} onClick=${() => setItemView("simple")}>simple</a>
         <span class="text-secondary"> | </span>
         <a class=${viewMode === "full" ? "on" : ""} onClick=${() => setItemView("full")}>full</a>
       </span>
-      <${ItemActions} mode=${it.meta.type === "epic" ? "plan" : it.meta.type === "idea" ? "idea" : "task"} it=${it} act=${act} filePath=${b.source?.path} />
+      <${ItemActions} mode=${it.meta.type === "epic" ? "plan" : it.meta.type === "idea" ? "idea" : "task"} it=${it} act=${act} filePath=${b.source?.path} reload=${reload} />
     </div>
     <${HumanCard} it=${it}
       onAccept=${async () => { if (await confirmDialog(`accept ${id}?`, "the claim's worktrees merge into the task repo(s) and the item becomes done — the merges cannot be undone from here.", { ok: "accept" })) act("accept"); }}

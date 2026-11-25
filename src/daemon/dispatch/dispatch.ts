@@ -430,6 +430,33 @@ export class Dispatcher {
   }
 
   /**
+   * TE-0236: queue one item for dispatch — the positive mirror of blockItem.
+   * The flag lives on the item meta and clears on claim; a stale tried
+   * marker at the current version would keep it down, so push lifts it.
+   */
+  async pushItem(id: string): Promise<void> {
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    if (!it) throw new NotFoundError(`no item '${id}'`);
+    this.triedVersions.delete(id);
+    this.persist();
+    await ops.store.perform(it.meta.id, it.meta.version, this.humanActor(), {
+      type: "dispatch_push",
+    });
+    this.emit("dispatch_push", { id });
+  }
+
+  async unpushItem(id: string): Promise<void> {
+    const ops = new WorkspaceOps(this.wsr, this.sessions, this.wsr.links, this.home);
+    const it = ops.index.get(id);
+    if (!it) throw new NotFoundError(`no item '${id}'`);
+    await ops.store.perform(it.meta.id, it.meta.version, this.humanActor(), {
+      type: "dispatch_unpush",
+    });
+    this.emit("dispatch_unpush", { id });
+  }
+
+  /**
    * TE-0230: stop one active child — the per-item version of pause --kill.
    * A spawned child gets child.kill(); a rediscovered orphan has no
    * ChildProcess handle, so its pid gets SIGTERM. The minted session is
@@ -689,6 +716,7 @@ export class Dispatcher {
         tier: indexed.meta.tier,
         attempts: indexed.meta.attempts,
         dispatch_blocked: indexed.meta.dispatch_blocked,
+        dispatch_push: indexed.meta.dispatch_push,
         findings: indexed.meta.findings?.length,
         claim: indexed.claim ? { ...indexed.claim, dead } : null,
         ai_review: indexed.meta.ai_review,
@@ -731,7 +759,11 @@ export class Dispatcher {
     });
     const admission = this.admissionCtx(resolved, Date.now());
     const blockedIds = new Set(items.filter((i) => i.dispatch_blocked).map((i) => i.id));
-    const matched: Array<MatchedCandidate & { blocked?: boolean }> =
+    // TE-0236: pushed-but-unclaimed items — the queue flags awaiting a claim
+    const pushedIds = new Set(
+      items.filter((i) => i.dispatch_push && !i.claim).map((i) => i.id),
+    );
+    const matched: Array<MatchedCandidate & { blocked?: boolean; pushed?: boolean }> =
       resolved.coders.length || resolved.reviewers.length
         ? listDispatchCandidates(
             runCfg,
@@ -742,7 +774,7 @@ export class Dispatcher {
             undefined,
             this.filter,
             admission,
-          ).map((c) => ({ ...c, blocked: blockedIds.has(c.id) }))
+          ).map((c) => ({ ...c, blocked: blockedIds.has(c.id), pushed: pushedIds.has(c.id) }))
         : [];
     const running: RunningDispatch[] = [...this.children.values()].map((entry) => {
       const known = entry.log ?? this.latestLogPath(entry.id);
@@ -793,6 +825,7 @@ export class Dispatcher {
       filter: this.filter.raw,
       warnings: this.configWarnings,
       matched,
+      pushed: [...pushedIds],
       running,
       agents,
       agents_ready: agentsReady,

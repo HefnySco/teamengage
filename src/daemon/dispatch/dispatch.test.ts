@@ -956,6 +956,111 @@ describe("forced correction levers (TE-0209)", () => {
   });
 });
 
+describe("per-item push lever (TE-0236)", () => {
+  it("a pushed item starts past a non-matching filter and its claim clears the flag", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  filter: "SE-01xx"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    // the filter names another prefix — a plain tick starts nothing
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    // push queues it — status lists it and the next tick starts it
+    await d.pushItem("WS-0001");
+    expect(ops.index.get("WS-0001")!.meta.dispatch_push?.by).toBe("human");
+    expect(d.status().pushed).toEqual(["WS-0001"]);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    expect(events.filter((e) => e.kind === "dispatch_start")[0].data).toMatchObject({
+      id: "WS-0001",
+      mode: "work",
+    });
+    // the claim the spawned coder would make consumes the one-shot flag
+    const it = ops.index.get("WS-0001")!;
+    await ops.store.perform(
+      "WS-0001",
+      it.meta.version,
+      { kind: "agent", session: "agent-x@test#aa0", machine: "test" },
+      {
+        type: "claim",
+        claim: {
+          item: "WS-0001",
+          holder: "agent-x@test#aa0",
+          actor: "agent",
+          machine: "test",
+          targets: [],
+          claimed_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+        },
+      },
+    );
+    expect(ops.index.get("WS-0001")!.meta.dispatch_push).toBeUndefined();
+    // no re-fire after the attempt: a later tick starts nothing again
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+    expect(d.status().pushed).toEqual([]);
+    d.stopAll();
+  });
+
+  it("push wins over a -id exclusion and unpush puts the item back under the filter", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  filter: "-WS-0001"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    await d.pushItem("WS-0001");
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    expect(events.filter((e) => e.kind === "dispatch_start")[0].data).toMatchObject({
+      id: "WS-0001",
+      mode: "work",
+    });
+    d.stopAll();
+
+    // a second pushed item: unpush clears the flag and nothing starts
+    const wsr2 = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  filter: "-WS-0001"\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const ops2 = new WorkspaceOps(wsr2, sessions, undefined, home);
+    const d2 = dispatcher(wsr2);
+    events.length = 0;
+    await d2.pushItem("WS-0001");
+    expect(ops2.index.get("WS-0001")!.meta.dispatch_push).toBeDefined();
+    await d2.unpushItem("WS-0001");
+    expect(ops2.index.get("WS-0001")!.meta.dispatch_push).toBeUndefined();
+    expect(d2.status().pushed).toEqual([]);
+    d2.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    const logBody =
+      ops2.index.get("WS-0001")!.sections.find((s) => s.heading.toLowerCase() === "log")?.body ?? "";
+    expect(logBody).toContain("pushed to dispatch");
+    expect(logBody).toContain("unpushed from dispatch");
+    d2.stopAll();
+  });
+
+  it("push does not admit a blocked item — the admission gates still refuse it", async () => {
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "sleep 30" }\n`,
+    );
+    const d = dispatcher(wsr);
+    await d.blockItem("WS-0001", "env broken");
+    await d.pushItem("WS-0001");
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(0);
+    const matched = d.status().matched.find((c) => c.id === "WS-0001");
+    expect(matched?.admission?.ok).toBe(false);
+    expect(matched?.admission?.reasons.join(" ")).toContain("dispatch_blocked");
+    d.stopAll();
+  });
+});
+
 describe("per-item stop lever (TE-0230)", () => {
   it("stop kills one running child and marks the item tried so a tick does not restart it", async () => {
     const wsr = await makeWs(
@@ -1075,6 +1180,12 @@ describe("forced lever CLI (TE-0209)", () => {
       chunks.length = 0;
       expect(await dispatchCmd(["reset", "WS-0001"], cliHome)).toBe(0);
       expect(chunks.join("")).toContain("WS-0001 dispatch memory cleared");
+      chunks.length = 0;
+      expect(await dispatchCmd(["push", "WS-0001"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("WS-0001 pushed to dispatch");
+      chunks.length = 0;
+      expect(await dispatchCmd(["unpush", "WS-0001"], cliHome)).toBe(0);
+      expect(chunks.join("")).toContain("WS-0001 unpushed");
       chunks.length = 0;
       expect(await dispatchCmd(["resume"], cliHome)).toBe(0);
       expect(chunks.join("")).toContain("dispatch resumed");

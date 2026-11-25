@@ -18,6 +18,8 @@ export interface RunItem {
   attempts?: number;
   /** persisted dispatch breaker — set after two failed runs (TE-0208) */
   dispatch_blocked?: { reason: string; at: string };
+  /** persisted per-item queue flag (TE-0236) — a work pick beats the filter */
+  dispatch_push?: { at: string; by?: string };
   /** structured findings the latest issues review carries (TE-0208 fix check) */
   findings?: number;
   claim?: {
@@ -149,6 +151,7 @@ export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admissi
     case "work": {
       if (item.status !== "ready") failed.push(`status ${item.status}, expected ready`);
       else if (item.claim) failed.push(`claimed by ${item.claim.holder}`);
+      else if (item.dispatch_push) passed.push("ready and unclaimed · dispatch_push");
       else passed.push("ready and unclaimed");
       break;
     }
@@ -436,6 +439,9 @@ export function matchesDispatchFilter(
   mode: Mode,
   itemsById: ReadonlyMap<string, RunItem>,
 ): boolean {
+  // TE-0236: a pushed item beats the filter for a work pick — a deliberate
+  // per-item action wins over a positive non-match and over -exclusions
+  if (mode === "work" && item.dispatch_push) return true;
   if (!filter || filter.clauses.length === 0) return true;
   // positive clauses OR as before; a negated clause that hits disqualifies.
   // An exclusion-only filter has no positive side — it matches by default.

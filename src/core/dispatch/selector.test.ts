@@ -501,3 +501,79 @@ describe("admit — admission checks before a pick (TE-0208)", () => {
     ).toBe("takeover");
   });
 });
+
+describe("dispatch_push — the per-item queue lever (TE-0236)", () => {
+  const pushed = (id: string, overrides: Partial<RunItem> = {}): RunItem =>
+    makeItem(id, "ready", {
+      dispatch_push: { at: "2026-11-25T00:00:00Z" },
+      ...overrides,
+    });
+  const ctx: AdmissionContext = {
+    machine: "box",
+    now: Date.now(),
+    maxAttempts: 5,
+    fixRounds: 3,
+    fixes: new Map(),
+    coderNames: ["devin"],
+    mintedSessions: new Set(),
+    isLive: () => true,
+    takeoverGraceMs: 15 * 60_000,
+  };
+
+  it("a pushed ready item is a work candidate and the pick even when no clause matches it", () => {
+    const filter = parseDispatchFilter("SE-01xx");
+    const items = [pushed("ZZ-0001"), makeItem("SE-0100", "ready")];
+    const candidates = listDispatchCandidates(
+      makeConfig(),
+      makeState(),
+      items,
+      ["ZZ-0001", "SE-0100"],
+      "box",
+      "devin",
+      filter,
+      ctx,
+    );
+    expect(candidates.map((entry) => `${entry.id}:${entry.mode}`)).toEqual([
+      "ZZ-0001:work",
+      "SE-0100:work",
+    ]);
+    const pick = pickNext(
+      makeConfig(),
+      makeState(),
+      items,
+      ["ZZ-0001", "SE-0100"],
+      "box",
+      Infinity,
+      "devin",
+      filter,
+      ctx,
+    );
+    expect(pick).toEqual({ id: "ZZ-0001", mode: "work", reasons: expect.any(Array) });
+    expect(pick?.reasons?.join(" ")).toContain("dispatch_push");
+  });
+
+  it("push wins over a negated clause that names the item — for work only", () => {
+    const filter = parseDispatchFilter("SE-xxxx, -ZZ-0001");
+    const item = pushed("ZZ-0001");
+    const itemsById = makeMap([item]);
+    expect(matchesDispatchFilter(filter, item, "work", itemsById)).toBe(true);
+    // the flag lifts the work gate only — every other mode still honors it
+    expect(matchesDispatchFilter(filter, item, "review", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(filter, item, "fix", itemsById)).toBe(false);
+    expect(matchesDispatchFilter(filter, item, "resume", itemsById)).toBe(false);
+  });
+
+  it("push never bypasses the other gates: claimed, non-ready, maxed and blocked stay refused", () => {
+    for (const [id, item] of [
+      ["claimed", pushed("WS-0001", { claim: { holder: "a@box#1", machine: "box" } })],
+      ["non-ready", pushed("WS-0002", { status: "in_progress" })],
+      ["maxed", pushed("WS-0003", { attempts: 5 })],
+      ["blocked", pushed("WS-0004", { dispatch_blocked: { reason: "two failed runs", at: "x" } })],
+    ] as const) {
+      const a = admit(item, "work", ctx);
+      expect(a.ok, id).toBe(false);
+      expect(a.reasons.length, id).toBeGreaterThan(0);
+    }
+    expect(admit(pushed("WS-0005"), "work", ctx).ok).toBe(true);
+  });
+});

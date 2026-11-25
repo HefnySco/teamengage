@@ -246,6 +246,12 @@ export const ItemMeta = z
      * item — the dispatcher never picks it until an unblock clears the flag.
      */
     dispatch_blocked: z.object({ reason: z.string(), at: DateStr }).optional(),
+    /**
+     * Dispatch push (TE-0236): the human injected this item into the
+     * dispatcher's queue — a work pick admits it past the filter (positive
+     * non-match and negated clauses both lose). One-shot: a claim clears it.
+     */
+    dispatch_push: z.object({ at: DateStr, by: z.string().optional() }).optional(),
     /** model id of the session that submitted the current submission (GL-0360) */
     submitted_model: z.string().optional(),
     /** tier of the agent session that proposed it (light-authored drafts need vetting) */
