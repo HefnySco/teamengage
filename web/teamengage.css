@@ -1451,7 +1451,7 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-seat.of-quiet .of-fig, .of-seat.of-gone .of-fig { animation: none; }
 .of-seat.of-gone .of-stage { color: var(--of-faint); }
 .of-seat.of-gone .of-fig { filter: none; }
-.of-seat.of-gone .of-fig path, .of-seat.of-gone .of-fig circle { fill: none; stroke-dasharray: 3 4; }
+.of-seat.of-gone .of-fig path, .of-seat.of-gone .of-fig circle, .of-seat.of-gone .of-fig rect, .of-seat.of-gone .of-fig line { fill: none; stroke-dasharray: 3 4; }
 .of-seat.of-gone .of-beam { display: none; }
 .of-seat.of-gone .of-disc::after { animation: none; }
 
@@ -1485,6 +1485,44 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-seat.of-mood-heavy:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-disc::after { animation-duration: 7s; }
 .of-seat.of-mood-heavy:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-scan { animation: of-scanmove 1.4s linear infinite; }
 @keyframes of-scanmove { to { background-position: 0 6px; } }
+
+/* TE-0241 — the reviewer tell: a document card with a magnifier lens floats
+   at the figure's side while the seat holds an active review. The prop is
+   drawn inside the HoloFigure SVG, so the quiet/gone/dim rules above ghost
+   it with the silhouette — only the lens pan needs its own presence guard
+   (it is a child animation .of-fig's animation:none cannot reach). A free
+   reviewer wears of-mood-free — the same standby as a free coder. */
+.of-prop .of-pdoc { fill: color-mix(in srgb, currentColor 22%, transparent); stroke-opacity: 0.8; }
+.of-prop .of-pln { stroke-opacity: 0.65; stroke-width: 1.4; }
+.of-prop .of-plens { fill: none; stroke-width: 1.8; }
+.of-seat:not(.of-quiet):not(.of-gone):not(.of-vanish) .of-prop .of-plensg { animation: of-lenspan 3.2s ease-in-out infinite; }
+@keyframes of-lenspan {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(0, 7px); }
+}
+/* the transient verdict mark — a ✓/✗ pulses over the head after a review
+   lands, then fades out for good; the item card keeps the record. Green
+   for ok, red for issues, gone and vanishing seats never wear it */
+.of-verdict {
+  position: absolute;
+  top: 0;
+  left: 54%;
+  font-size: 15px;
+  font-weight: 700;
+  animation: of-vpop 4.5s ease-in-out forwards;
+}
+.of-v-ok { color: var(--te-st-done); text-shadow: 0 0 8px var(--te-st-done); }
+.of-v-issues { color: var(--te-st-dropped); text-shadow: 0 0 8px var(--te-st-dropped); }
+@keyframes of-vpop {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  12% { opacity: 1; transform: none; }
+  30% { opacity: 0.35; }
+  45% { opacity: 1; }
+  60% { opacity: 0.35; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.of-seat.of-gone .of-verdict, .of-seat.of-vanish .of-verdict { display: none; }
 
 /* desk card under the projection */
 .of-deskcard {

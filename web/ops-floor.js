@@ -198,6 +198,47 @@ export function seatMood(kind, gone, fading, holding) {
 }
 
 /**
+ * Does a reviewer seat hold an active review — the floating doc+lens
+ * prop rides on this (TE-0241). A dispatched reviewer child holds no
+ * in_progress claim; derive() seats its item off the running entry named
+ * by its label, and that card's mode is "review". Any other kind or an
+ * empty/other-mode tray is not reviewing — a free reviewer wears the same
+ * standby mood as a free coder.
+ * @param {string} kind sessionKind() result
+ * @param {Array<{mode?:string}|undefined>|undefined} holding the seat's docs
+ * @returns {boolean}
+ */
+export function seatReviewing(kind, holding) {
+  if (kind !== "reviewer") return false;
+  return (holding ?? []).some((d) => d?.mode === "review");
+}
+
+/**
+ * The newest verdict each reviewer session just landed — history events
+ * with action "review" carry it as "<verdict>: <note>" in note, and the
+ * mark pulses over the figure for a few seconds, then fades (TE-0241).
+ * The item card keeps the permanent record. Only events inside
+ * `windowMs` count; a human's send-back (actor human) never marks a
+ * reviewer seat. Returns session id → {ok, at}, newest event wins.
+ * @param {Array<{ts:string,actor:string,session?:string,action:string,note?:string}>} events
+ * @param {number} now ms epoch the floor renders at
+ * @param {number} windowMs how long a verdict keeps its mark
+ * @returns {Map<string,{ok:boolean,at:number}>}
+ */
+export function verdictMarks(events, now, windowMs = 8000) {
+  const out = new Map();
+  for (const e of events ?? []) {
+    if (e.action !== "review") continue;
+    const who = e.session ?? e.actor;
+    if (!who || who === "human") continue;
+    const at = Date.parse(e.ts);
+    if (Number.isNaN(at) || now - at > windowMs || at - now > 60_000) continue;
+    out.set(who, { ok: (e.note ?? "").split(":")[0].trim() === "ok", at });
+  }
+  return out;
+}
+
+/**
  * One feed for the floor logs: dispatch_* events merged with history
  * events, each line tagged with a room — rev for a reviewer role or a
  * review action, you for the human actor, else dev — and, when a session

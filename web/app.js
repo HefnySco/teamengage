@@ -2,7 +2,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./teamengage.css";
 import { markdownToHtml, inlineMarkdown, notesSection } from "./markdown.js";
 import { Discussions } from "./discussions.js";
-import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatMood } from "./ops-floor.js";
+import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatMood, seatReviewing, verdictMarks } from "./ops-floor.js";
 import { confirmDialog, promptDialog, toast, DialogHost } from "./dialogs.js";
 import { h, render } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useId } from "preact/hooks";
@@ -666,8 +666,11 @@ const vanishDoc = (node, spot) => {
 };
 
 // one hologram figure: gradient silhouette + scan lines. useId keeps every
-// figure's <linearGradient> id unique across the floor
-const HoloFigure = () => {
+// figure's <linearGradient> id unique across the floor. TE-0241 — a
+// `reviewer` figure carries the document+lens prop inside the same SVG, so
+// the quiet/gone/dim rules ghost it with the silhouette for free; the lens
+// pan and every prop style live in CSS
+const HoloFigure = ({ reviewer }) => {
   const g = useId();
   return html`<div class="of-fig">
     <svg viewBox="0 0 100 160">
@@ -687,6 +690,17 @@ const HoloFigure = () => {
           d="M37 40 C 30 52 29 66 33 78 L 38 76 C 35 66 36 54 41 46 Z M63 40 C 70 52 71 66 67 78 L 62 76 C 65 66 64 54 59 46 Z"
           opacity=".8"
         />
+        ${reviewer &&
+        html`<g class="of-prop">
+          <rect class="of-pdoc" x="60" y="46" width="24" height="32" rx="2.5" />
+          <line class="of-pln" x1="64" y1="54" x2="80" y2="54" />
+          <line class="of-pln" x1="64" y1="60" x2="80" y2="60" />
+          <line class="of-pln" x1="64" y1="66" x2="75" y2="66" />
+          <g class="of-plensg">
+            <circle class="of-plens" cx="69" cy="56" r="7.5" />
+            <line class="of-plens" x1="74.5" y1="61.5" x2="80" y2="68" />
+          </g>
+        </g>`}
       </g>
     </svg>
     <div class="of-scan"></div>
@@ -695,11 +709,15 @@ const HoloFigure = () => {
 
 // the hologram projector: beam and spinning disc under the figure.
 // children are mood markers a desk can tuck inside the stage (the paused
-// ❚❚ hold and the idle z-marks, TE-0239) — seats pass none
-const HoloStage = ({ children }) => html`<div class="of-stage of-flick">
+// ❚❚ hold and the idle z-marks, TE-0239) — seats pass none. TE-0241 —
+// `verdict` {ok, at} pops a ✓/✗ over the head briefly after a review
+// lands; keying the span on `at` restarts the pulse on the next verdict
+const HoloStage = ({ children, reviewer, verdict }) => html`<div class="of-stage of-flick">
   <div class="of-beam"></div>
   <div class="of-disc"></div>
-  <${HoloFigure} />
+  <${HoloFigure} reviewer=${reviewer} />
+  ${verdict &&
+  html`<span key=${verdict.at} class=${"of-verdict " + (verdict.ok ? "of-v-ok" : "of-v-issues")}>${verdict.ok ? "✓" : "✗"}</span>`}
   ${children}
 </div>`;
 
@@ -844,7 +862,7 @@ const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop, onQueue, onMor
 
 // one workstation: hologram on a projector disc over a desk card with the
 // agent name, machine, model tag, its task tray and a status line
-const Seat = ({ e, docs, questionIds, tiers, onLog, onStop }) => {
+const Seat = ({ e, docs, questionIds, tiers, verdict, onLog, onStop }) => {
   const { s, gone } = e;
   // planner and ops sessions sit in the developers room but wear their own
   // accent (of-role-* on the seat swaps --ac); kind resolves role → label →
@@ -854,6 +872,11 @@ const Seat = ({ e, docs, questionIds, tiers, onLog, onStop }) => {
   // the seat class; planner/ops/reviewer seats keep their role look, and
   // of-quiet/of-gone still compose on top as the presence channel
   const load = seatMood(kind, gone, e.fading, docs.map((d) => tiers?.get(d.id)));
+  // TE-0241 — a reviewer holding an active review carries the doc+lens
+  // prop; a live reviewer holding none wears the same free standby as a
+  // free coder, in the reviewer purple
+  const reviewing = seatReviewing(kind, docs);
+  const mood = load ?? (!gone && !e.fading && kind === "reviewer" && !reviewing ? "free" : null);
   const quiet = !gone && Date.now() - Date.parse(s.last_seen) > OFFICE_QUIET_MS;
   const waiting = !gone && questionIds.has(s.label);
   const meta = gone
@@ -864,10 +887,10 @@ const Seat = ({ e, docs, questionIds, tiers, onLog, onStop }) => {
         ? `quiet ${ago(s.last_seen)}`
         : `at desk · ${ago(s.last_seen)}`;
   return html`<div
-    class=${"of-seat of-role-" + kind + (load ? " of-mood-" + load : "") + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
+    class=${"of-seat of-role-" + kind + (mood ? " of-mood-" + mood : "") + (e.fading ? " of-vanish" : gone ? " of-gone" : quiet ? " of-quiet" : "")}
     title=${`${s.agent}@${s.machine}${s.role ? " · " + s.role : ""}${s.tier ? " · " + s.tier : ""}${s.model ? " · " + s.model : ""}${s.label ? " · " + s.label : ""}`}
   >
-    <${HoloStage} />
+    <${HoloStage} reviewer=${reviewing} verdict=${kind === "reviewer" ? verdict : null} />
     <div class="of-deskcard">
       <div class="of-who">
         <span class="of-nm">${s.agent}</span>
@@ -909,7 +932,7 @@ const FloorLog = ({ lines }) => html`<div class="of-log">
 
 // one room of the floor: header with live/left counts over the desk grid and
 // the floor log pinned to the bottom
-const FloorRoom = ({ room, entries, seats, questionIds, tiers, logs, onLog, onStop }) => {
+const FloorRoom = ({ room, entries, seats, questionIds, tiers, logs, verdicts, onLog, onStop }) => {
   const live = entries.filter((e) => !e.gone).length;
   // per-role counts of who is at desk — shown only once a planner or an ops
   // session sits in, so a plain coder room keeps the short count (TE-0233)
@@ -944,6 +967,7 @@ const FloorRoom = ({ room, entries, seats, questionIds, tiers, logs, onLog, onSt
             docs=${seats.get(e.s.id) ?? []}
             questionIds=${questionIds}
             tiers=${tiers}
+            verdict=${verdicts?.get(e.s.id)}
             onLog=${onLog}
             onStop=${onStop}
           />`,
@@ -1337,6 +1361,9 @@ const OpsFloor = ({ sessions, dispatch, inbox, tiers, onDispatch, onDone, onStop
   const all = feed(dispatch?.events, hist, feedSessions);
   const ticker = all[all.length - 1];
   const roomLines = (room) => all.filter((e) => e.room === room).slice(-FEED_LINES).reverse();
+  // TE-0241 — each session's newest verdict inside the pulse window; the
+  // reviewer room reads it for the transient ✓/✗ over the figure's head
+  const verdicts = verdictMarks(hist, Date.now());
 
   return html`
     <div class="ofloor" ref=${rootRef}>
@@ -1368,6 +1395,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, tiers, onDispatch, onDone, onStop
           questionIds=${questionIds}
           tiers=${tiers}
           logs=${roomLines("rev")}
+          verdicts=${verdicts}
           onLog=${setLogId}
           onStop=${onStop}
         />

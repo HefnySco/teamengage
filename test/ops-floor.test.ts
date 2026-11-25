@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 // web/ops-floor.js is a plain ES module (no types) — vitest imports it as-is
-import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatLoad, seatMood } from "../web/ops-floor.js";
+import { derive, dispatchMood, feed, isReviewerSession, sessionKind, seatLoad, seatMood, seatReviewing, verdictMarks } from "../web/ops-floor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -285,6 +285,63 @@ describe("mood styles compose with presence (TE-0240)", () => {
       expect(rule).toContain(":not(.of-gone)");
       expect(rule).toContain(":not(.of-vanish)");
     }
+  });
+});
+
+describe("seatReviewing (TE-0241)", () => {
+  it("is true only for a reviewer seat holding a review-mode card", () => {
+    expect(seatReviewing("reviewer", [{ id: "GL-1", mode: "review" }])).toBe(true);
+    expect(seatReviewing("reviewer", [{ id: "GL-1", mode: "work" }])).toBe(false);
+    expect(seatReviewing("reviewer", [])).toBe(false);
+    expect(seatReviewing("reviewer", undefined)).toBe(false);
+  });
+
+  it("is never true on coder, planner or ops seats", () => {
+    for (const kind of ["coder", "planner", "ops"]) {
+      expect(seatReviewing(kind, [{ id: "GL-1", mode: "review" }])).toBe(false);
+    }
+  });
+});
+
+describe("verdictMarks (TE-0241)", () => {
+  const now = Date.parse("2026-11-25T12:00:00.000Z");
+  const ev = (over: Record<string, unknown>) => ({
+    ts: "2026-11-25T11:59:58.000Z",
+    actor: "claude-review@desktop#77d1",
+    session: "claude-review@desktop#77d1",
+    item: "GL-0213",
+    action: "review",
+    note: "ok",
+    ...over,
+  });
+
+  it("marks the reviewing session ok or issues off the note prefix", () => {
+    const m = verdictMarks([ev({}), ev({ note: "issues: restart counter" })], now);
+    expect(m.get("claude-review@desktop#77d1")).toEqual({ ok: false, at: Date.parse("2026-11-25T11:59:58.000Z") });
+    const ok = verdictMarks([ev({ note: "ok: looks right" })], now);
+    expect(ok.get("claude-review@desktop#77d1")?.ok).toBe(true);
+  });
+
+  it("keeps only events inside the window and the newest one per session", () => {
+    const older = ev({ ts: "2026-11-25T11:59:56.000Z", note: "issues" });
+    const fresh = ev({ ts: "2026-11-25T11:59:59.000Z", note: "ok" });
+    const m = verdictMarks([older, fresh], now);
+    expect(m.get("claude-review@desktop#77d1")?.ok).toBe(true);
+    const old = verdictMarks([ev({ ts: "2026-11-25T11:59:40.000Z" })], now);
+    expect(old.size).toBe(0);
+  });
+
+  it("ignores non-review actions, a human send-back and sessions it cannot name", () => {
+    const m = verdictMarks(
+      [
+        ev({ action: "submit" }),
+        ev({ actor: "human", session: undefined }),
+        ev({ actor: undefined, session: undefined }),
+        ev({ ts: "not a date" }),
+      ],
+      now,
+    );
+    expect(m.size).toBe(0);
   });
 });
 
