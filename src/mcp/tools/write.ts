@@ -587,7 +587,7 @@ export function registerWriteTools(
         "For ordinary cases prefer release (hand the item back → ready), handoff (stuck on this " +
         "attempt) or flag_drop (the task itself is wrong) — dispatch_block is only for " +
         "'keep the task but never auto-dispatch it'.",
-      inputSchema: { id: z.string(), reason: z.string() },
+      inputSchema: { id: z.string(), reason: z.string().min(1) },
     },
     async ({ id, reason }) => {
       try {

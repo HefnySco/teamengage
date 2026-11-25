@@ -116,9 +116,9 @@ describe("agent dispatch_block (TE-0237)", () => {
   it("the verb sits beside flag_drop/handoff in the /agent protocol text", async () => {
     const guide = await call("GET", "/agent");
     expect(guide.status).toBe(200);
-    expect(guide.text).toMatch(/^  dispatch_block\s/m);
+    expect(guide.text).toMatch(/^ {2}dispatch_block\s/m);
     // no unblock verb for agents — the human's 'te dispatch unblock' is the only way back
-    expect(guide.text).not.toMatch(/^  dispatch_unblock\s/m);
+    expect(guide.text).not.toMatch(/^ {2}dispatch_unblock\s/m);
   });
 
   it("holder blocks its own claim — meta records actor=agent, session and reason; non-holder and unclaimed are refused", async () => {
@@ -169,6 +169,15 @@ describe("agent dispatch_block (TE-0237)", () => {
     // the holder self-ejects: reason is required, then recorded
     expect(
       (await call("POST", "/agent/dispatch_block/WS-0001", { token: holderToken })).status,
+    ).toBe(400);
+    // an empty reason is refused too — the block must say why
+    expect(
+      (
+        await call("POST", "/agent/dispatch_block/WS-0001", {
+          token: holderToken,
+          body: { reason: "" },
+        })
+      ).status,
     ).toBe(400);
     const blocked = await call("POST", "/agent/dispatch_block/WS-0001", {
       token: holderToken,
