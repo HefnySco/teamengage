@@ -89,6 +89,17 @@ describe("UI serving (UI-0001)", () => {
     }
   });
 
+  it("the team page carries the per-run stop nub and the discover button (TE-0230)", async () => {
+    const res = await fetch(`${daemon.url}/assets/app.js`, {
+      headers: { cookie: `te_token=${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    const js = await res.text();
+    for (const marker of ["of-stop", "dispatch-discover"]) {
+      expect(js).toContain(marker);
+    }
+  });
+
   it("your desk carries the inline answer and accept popovers (TE-0231)", async () => {
     const res = await fetch(`${daemon.url}/assets/app.js`, {
       headers: { cookie: `te_token=${daemon.token}` },

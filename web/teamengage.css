@@ -1608,6 +1608,8 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s;
+}
+.of-docwrap:hover .of-stop { opacity: 1; }
 
 /* the inline popover a ⚡ opens under your desk's tray */
 .of-pop {
