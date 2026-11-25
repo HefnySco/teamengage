@@ -1507,6 +1507,10 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-tray .of-count { font-size: 10px; font-family: var(--bs-font-monospace); color: var(--of-dim); margin-left: 4px; }
 .of-seat:hover .of-tray .of-count, .of-deskctr:hover .of-tray .of-count { display: none; }
 .of-tray .of-more { font-size: 10px; font-family: var(--bs-font-monospace); color: var(--of-dim); padding: 0 4px; }
+/* TE-0232 — the front desk's "+N more" is a button: it toggles the queue
+   popover; .on marks it while the popover is open */
+button.of-more { border: 0; background: none; cursor: pointer; }
+button.of-more:hover, button.of-more:focus-visible, button.of-more.on { color: var(--bs-body-color); text-decoration: underline; }
 
 /* task card — the left stripe and the tint come from the --te-st-* status
    token that its m-<mode> class picks */
@@ -1620,6 +1624,35 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 }
 .of-docwrap:hover .of-stop { opacity: 1; }
 
+/* TE-0232 — queue levers on a front-desk card: exclude/block on unblocked
+   items, unblock + reset on blocked ones; a dim strip tucked under the
+   card's bottom edge until hover or keyboard focus */
+.of-qlev {
+  position: absolute;
+  bottom: -7px;
+  right: 2px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.of-docwrap:hover .of-qlev,
+.of-docwrap:focus-within .of-qlev { opacity: 1; }
+.of-qlev .of-qv {
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 7px;
+  border: 1px solid var(--of-line);
+  background: var(--of-docbg);
+  color: var(--of-dim);
+  font: 8.5px/1 var(--bs-font-monospace);
+  cursor: pointer;
+}
+.of-qlev .of-qv:hover, .of-qlev .of-qv:focus-visible { color: var(--bs-body-color); border-color: var(--of-dim); }
+/* inside the +N popover the levers sit under the card, always shown */
+.of-qpop .of-qlev { position: static; opacity: 1; margin: 3px 0 0 4px; }
+
 /* the inline popover a ⚡ opens under your desk's tray */
 .of-pop {
   width: 100%;
@@ -1644,6 +1677,16 @@ a.met-num { cursor: pointer; text-decoration: underline dotted; text-underline-o
 .of-pop .of-pv-ok { color: var(--bs-success); }
 .of-pop .of-pv-issues { color: var(--bs-danger); }
 .of-pop .of-pd { margin-top: 6px; font-size: 11px; color: var(--bs-warning); }
+
+/* TE-0232 — the "+N more" popover's card list: the covered queue items in a
+   wrapping row, each with its levers on show */
+.of-qpop .of-qlist { display: flex; flex-wrap: wrap; gap: 10px 8px; margin-top: 8px; }
+
+/* TE-0232 — the diagnostics drawer under of-console: the legacy sessions,
+   dispatch and events text lists folded into one closed section */
+details.of-diag { margin-top: 0.75rem; }
+details.of-diag > summary { font-weight: 600; color: var(--of-dim); }
+details.of-diag > summary:hover { color: var(--bs-body-color); }
 
 /* centre column — the dispatch front desk and the human's desk */
 .of-center { display: flex; flex-direction: column; gap: 14px; }

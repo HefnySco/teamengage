@@ -716,8 +716,10 @@ const Elapsed = ({ at }) => {
 // in_progress, review/accept in_review, ask waiting. Every task link on the
 // floor is a real href into a new tab — a click never moves the team page.
 // onAct (your desk only, TE-0231) adds a corner ⚡ that toggles the card's
-// inline popover — the anchor stays the only clickable surface besides it
-const DocCard = ({ d, onAct, acting, onLog, onStop }) => html`<span class="of-docwrap"><a
+// inline popover — the anchor stays the only clickable surface besides it.
+// onQueue (front desk only, TE-0232) adds the dispatch levers under the
+// card: exclude + block on unblocked items, unblock + reset on blocked
+const DocCard = ({ d, onAct, acting, onLog, onStop, onQueue }) => html`<span class="of-docwrap"><a
   class=${"of-doc m-" + (d.mode || "work") + (d.blocked ? " of-blocked" : "") + (d.admission?.ok === false ? " of-refused" : "")}
   data-doc=${d.id}
   title=${(d.title ? d.title + " · " : "") + (d.mode || "") + (d.admission?.ok === false ? " · refused: " + d.admission.reasons.join("; ") : "")}
@@ -756,21 +758,73 @@ const DocCard = ({ d, onAct, acting, onLog, onStop }) => html`<span class="of-do
       onAct(d.id);
     }}
     >⚡</button
+  >`}${onQueue &&
+  html`<span class="of-qlev"
+    >${d.blocked
+      ? html`<button
+            class="of-qv dispatch-unblock"
+            title="unblock — let dispatch start it again"
+            onClick=${(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onQueue("unblock", d.id);
+            }}
+            >unblock</button
+          ><button
+            class="of-qv dispatch-reset"
+            title="reset — clear tried/fix/failure memory"
+            onClick=${(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onQueue("reset", d.id);
+            }}
+            >reset</button
+          >`
+      : html`<button
+            class="of-qv dispatch-exclude"
+            title=${`exclude — add -${d.id} to the filter`}
+            onClick=${(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onQueue("exclude", d.id);
+            }}
+            >×</button
+          ><button
+            class="of-qv dispatch-block"
+            title="block — keep it out of dispatch"
+            onClick=${(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onQueue("block", d.id);
+            }}
+            >block</button
+          >`}</span
   >`}</span>`;
 
 // a desk's tray of task cards. cap > 0 (the dispatch queue, your desk) shows
 // the first cap cards then "+N more"; uncapped seat trays fan their cards
-// past 3 and unfold on hover
-const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop }) => {
+// past 3 and unfold on hover. With onMore (the front desk, TE-0232) the
+// counter is a button that toggles the queue popover — data-hidden stays on
+// it so the FLIP pass keeps tracking the covered cards either way
+const DocTray = ({ loc, docs, cap = 0, act, onAct, onLog, onStop, onQueue, onMore, moreOn }) => {
   const more = cap && docs.length > cap ? docs.length - cap : 0;
   const shown = more ? docs.slice(0, cap) : docs;
   const fan = !cap && docs.length > 3;
   return html`<div class=${"of-tray" + (fan ? " of-fan" : "")} data-loc=${loc}>
-    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} onLog=${onLog} onStop=${onStop} />`)}
+    ${shown.map((d) => html`<${DocCard} key=${d.id} d=${d} acting=${act === d.id} onAct=${onAct} onLog=${onLog} onStop=${onStop} onQueue=${onQueue} />`)}
     ${more > 0 &&
-    html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
-      >+${more} more</span
-    >`}
+    (onMore
+      ? html`<button
+          type="button"
+          class=${"of-more" + (moreOn ? " on" : "")}
+          data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
+          title="show the rest of the queue"
+          onClick=${onMore}
+          >+${more} more</button
+        >`
+      : html`<span class="of-more" data-hidden=${docs.slice(cap).map((d) => d.id).join(" ")}
+          >+${more} more</span
+        >`)}
     ${fan && html`<span class="of-count">×${docs.length}</span>`}
   </div>`;
 };
@@ -879,8 +933,11 @@ const FloorRoom = ({ room, entries, seats, questionIds, logs, onLog, onStop }) =
 };
 
 // the dispatch front desk: dispatcher hologram inside a capacity ring
-// (online_issues of max_issues), the matched queue and the toggle
-const FrontDesk = ({ dispatch, queue, onDispatch }) => {
+// (online_issues of max_issues), the matched queue and the toggle. Queue
+// cards carry the dispatch levers through onQueue (TE-0232) and "+N more"
+// toggles an inline popover listing the covered items
+const FrontDesk = ({ dispatch, queue, onDispatch, onQueue }) => {
+  const [moreOpen, setMoreOpen] = useState(false);
   const online = dispatch.online_issues ?? 0;
   const max = dispatch.max_issues ?? dispatch.max_sessions ?? 0;
   const frac = max ? Math.min(1, online / max) : 0;
@@ -910,7 +967,17 @@ const FrontDesk = ({ dispatch, queue, onDispatch }) => {
       <${HoloStage} />
       <div class="of-num">${online}/${max}</div>
     </div>
-    <${DocTray} loc="dispatch" docs=${queue} cap=${6} />
+    <${DocTray}
+      loc="dispatch"
+      docs=${queue}
+      cap=${6}
+      onQueue=${onQueue}
+      onMore=${() => setMoreOpen((v) => !v)}
+      moreOn=${moreOpen}
+    />
+    ${moreOpen &&
+    queue.length > 6 &&
+    html`<${QueuePop} docs=${queue.slice(6)} onQueue=${onQueue} onClose=${() => setMoreOpen(false)} />`}
     <div class="of-sub">${sub}</div>
     <div class="mt-1">
       <${DispatchToggle}
@@ -922,6 +989,19 @@ const FrontDesk = ({ dispatch, queue, onDispatch }) => {
     </div>
   </div>`;
 };
+
+// TE-0232 — the "+N more" popover on the front desk: the queued cards past
+// the tray's cap, each carrying the same levers the visible cards do — the
+// popover keeps them shown (no hover needed, it is what it opened for)
+const QueuePop = ({ docs, onQueue, onClose }) => html`<div class="of-pop of-qpop">
+  <div class="of-phead">
+    <b>+${docs.length}</b><span class="of-kd">in queue</span>
+    <button class="of-popx" title="close" onClick=${onClose}>×</button>
+  </div>
+  <div class="of-qlist">
+    ${docs.map((d) => html`<${DocCard} key=${d.id} d=${d} onQueue=${onQueue} />`)}
+  </div>
+</div>`;
 
 // TE-0231 — a quick-action popover on a your-desk card: it opens inline
 // under the tray, acts on the item through the same /api/items/<id>/* calls
@@ -1080,7 +1160,7 @@ const RunLogModal = ({ id, onClose }) => {
     </div>`;
 };
 
-const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop }) => {
+const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop, onQueue }) => {
   const known = useRef(new Map()); // session id → {s, gone, fading} — empty chairs (client memory)
   const rootRef = useRef(null);
   const spots = useRef(new Map()); // doc id → {x, y, loc} from the previous render
@@ -1246,6 +1326,7 @@ const OpsFloor = ({ sessions, dispatch, inbox, onDispatch, onDone, onStop }) => 
             dispatch=${dsp}
             queue=${queue}
             onDispatch=${onDispatch}
+            onQueue=${onQueue}
           />`}
           <${YourDesk} you=${you} onDone=${onDone} />
         </div>
@@ -1558,6 +1639,19 @@ const Team = () => {
   const unblockItem = (id) => sendDispatch({ unblock: { id } });
   const resetItem = (id) => sendDispatch({ reset: { id } });
 
+  // TE-0232 — the front-desk queue cards carry the same four levers the
+  // legacy matched chips do; the action name picks the handler
+  const queueAct = (action, id) =>
+    ({ exclude: excludeItem, block: blockItem, unblock: unblockItem, reset: resetItem })[action]?.(id);
+
+  // TE-0232 — the legacy text lists fold into a diagnostics drawer, closed
+  // by default; the open state lives in sessionStorage like the inbox folds
+  const [diagOpen, setDiagOpen] = useState(() => loadSearch("te.team.diag") === "1");
+  const toggleDiag = (e) => {
+    setDiagOpen(e.currentTarget.open);
+    saveSearch("te.team.diag", e.currentTarget.open ? "1" : "");
+  };
+
   // TE-0230: a confirmed stop kills one running child - the other children
   // keep running; discover scans /proc and reattaches orphaned agents
   const stopItem = async (id) => {
@@ -1657,6 +1751,7 @@ const Team = () => {
       onDispatch=${({ enabled }) => toggleEnabled(enabled)}
       onDone=${reloadFloor}
       onStop=${stopItem}
+      onQueue=${queueAct}
     />
     ${dispatch
       ? html`
@@ -1714,6 +1809,9 @@ const Team = () => {
           <span class="of-why">${onlineIssues}/${serverMax} active${dispatch.why_idle ? html` · <b>idle: ${dispatch.why_idle}</b>` : ""}</span>
         </div>`
       : html`<div class="small text-secondary mt-1">loading…</div>`}
+    <details class="sec of-diag" open=${diagOpen} onToggle=${toggleDiag}>
+      <summary><span class="caret"></span>diagnostics — sessions, dispatch and events</summary>
+      <div class="sec-bd">
     <div class="triage-group">sessions <span class="n">${ss.length}</span></div>
     <div class="d-flex flex-column gap-1 mt-1 mb-3">
       ${ss.length === 0 && html`<div class="small text-secondary">no live sessions — agents appear here when they say hello</div>`}
@@ -1761,7 +1859,9 @@ const Team = () => {
                   html`<div key=${i}>${ago(e.at)} ago — ${e.kind}${e.data.id ? html` · <a class="item id" href=${"#/item/" + e.data.id} target="_blank" rel="noopener">${e.data.id}</a>` : ""}${e.data.mode ? ` (${e.data.mode})` : ""}${e.data.role ? ` · ${e.data.role}` : ""}${e.data.command ? ` · ${e.data.command}` : ""}${e.data.error ? ` · ${e.data.error}` : ""}${e.data.reason ? ` · ${e.data.reason}` : ""}</div>`,
               )}
             </div>`
-          : html`<div class="small text-secondary">no dispatch events yet</div>`}`}`;
+          : html`<div class="small text-secondary">no dispatch events yet</div>`}`}
+      </div>
+    </details>`;
 };
 
 const Inbox = ({ onOpen }) => {
