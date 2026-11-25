@@ -746,6 +746,7 @@ describe("admission checks before a dispatch (TE-0208)", () => {
       d.tick();
       await waitStatus("WS-0002", "in_review");
       expect(ops.index.get("WS-0002")!.meta.status).toBe("in_review");
+      await waitIdle();
 
       // stopAll (pause --kill) closes remote sessions so killed runs do not linger live
       wsr.ws.config.dispatch = {
