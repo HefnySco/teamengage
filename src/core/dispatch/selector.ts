@@ -20,6 +20,8 @@ export interface RunItem {
   dispatch_blocked?: { reason: string; at: string };
   /** persisted per-item queue flag (TE-0236) — a work pick beats the filter */
   dispatch_push?: { at: string; by?: string };
+  /** agent flag_drop waiting on the human (TE-0246) — work/fix picks refuse */
+  drop_request?: { by: string; reason?: string; at: string };
   /** structured findings the latest issues review carries (TE-0208 fix check) */
   findings?: number;
   claim?: {
@@ -146,6 +148,19 @@ export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admissi
   }
   if (item.dispatch_blocked) {
     failed.push(`dispatch_blocked: ${item.dispatch_blocked.reason}`);
+  }
+  // TE-0246: a drop flag or an open question waits on the human — every
+  // work/fix pick is wasted until the human drops, unflags or answers.
+  // Resume and takeover stay admitted so in-flight work can finish then.
+  if (mode === "work" || mode === "fix") {
+    if (item.drop_request) {
+      failed.push(
+        `drop_request by ${item.drop_request.by}${item.drop_request.reason ? `: ${item.drop_request.reason}` : ""}`,
+      );
+    }
+    if (item.question) {
+      failed.push(`open question: ${item.question.text}`);
+    }
   }
   switch (mode) {
     case "work": {

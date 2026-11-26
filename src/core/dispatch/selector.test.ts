@@ -577,3 +577,115 @@ describe("dispatch_push — the per-item queue lever (TE-0236)", () => {
     expect(admit(pushed("WS-0005"), "work", ctx).ok).toBe(true);
   });
 });
+
+describe("human-wait gate — drop_request and open questions (TE-0246)", () => {
+  const makeAdmission = (overrides: Partial<AdmissionContext> = {}): AdmissionContext => ({
+    machine: "box",
+    now: Date.now(),
+    maxAttempts: 5,
+    fixRounds: 3,
+    fixes: new Map(),
+    coderNames: ["devin"],
+    mintedSessions: new Set(["devin@box#aaaa"]),
+    isLive: () => false,
+    takeoverGraceMs: 15 * 60_000,
+    ...overrides,
+  });
+  const flagged = (id: string, overrides: Partial<RunItem> = {}): RunItem =>
+    makeItem(id, "ready", {
+      drop_request: { by: "devin@box#aaaa", reason: "stale — superseded", at: "2026-11-26T00:00:00Z" },
+      ...overrides,
+    });
+  const asked = (id: string, overrides: Partial<RunItem> = {}): RunItem =>
+    makeItem(id, "ready", {
+      question: { text: "reset dedup on restart too?" },
+      ...overrides,
+    });
+
+  it("refuses a work pick on a ready item flagged for drop — the reason names the drop request", () => {
+    const ctx = makeAdmission();
+    const a = admit(flagged("WS-0001"), "work", ctx);
+    expect(a.ok).toBe(false);
+    expect(a.reasons.join(" ")).toContain("drop_request");
+    expect(a.reasons.join(" ")).toContain("stale — superseded");
+    // the human unflags → the same item admits again
+    expect(admit(makeItem("WS-0001", "ready"), "work", ctx).ok).toBe(true);
+  });
+
+  it("refuses a work pick on a ready item with an open question — the reason names the question", () => {
+    const ctx = makeAdmission();
+    const a = admit(asked("WS-0002"), "work", ctx);
+    expect(a.ok).toBe(false);
+    expect(a.reasons.join(" ")).toContain("open question");
+    expect(a.reasons.join(" ")).toContain("reset dedup on restart too?");
+    // the human answers → the question clears and the item admits again
+    expect(admit(makeItem("WS-0002", "ready"), "work", ctx).ok).toBe(true);
+  });
+
+  it("refuses fix picks the same way — the human must act before another round", () => {
+    const ctx = makeAdmission();
+    const issuesNote = {
+      claim: { holder: "devin@box#aaaa", machine: "box" },
+      ai_review: { verdict: "issues" as const, note: "x.ts:1" },
+    };
+    expect(admit(flagged("WS-0001", { status: "in_review", ...issuesNote }), "fix", ctx).ok).toBe(
+      false,
+    );
+    expect(admit(asked("WS-0002", { status: "in_review", ...issuesNote }), "fix", ctx).ok).toBe(
+      false,
+    );
+    expect(admit(makeItem("WS-0003", "in_review", issuesNote), "fix", ctx).ok).toBe(true);
+  });
+
+  it("resume and takeover still admit flagged or asked items — in-flight work finishes", () => {
+    const ctx = makeAdmission();
+    const dead = {
+      claim: { holder: "devin@box#aaaa", machine: "box", dead: true, last_seen: new Date(Date.now() - 20 * 60_000).toISOString() },
+    };
+    expect(admit(flagged("WS-0001", { status: "in_progress", ...dead }), "resume", ctx).ok).toBe(
+      true,
+    );
+    expect(admit(asked("WS-0002", { status: "in_progress", ...dead }), "resume", ctx).ok).toBe(
+      true,
+    );
+    const unminted = {
+      claim: { holder: "other@box#zzzz", machine: "box", dead: true, last_seen: new Date(Date.now() - 20 * 60_000).toISOString() },
+    };
+    expect(admit(flagged("WS-0003", { status: "in_progress", ...unminted }), "takeover", ctx).ok).toBe(
+      true,
+    );
+    expect(admit(asked("WS-0004", { status: "in_progress", ...unminted }), "takeover", ctx).ok).toBe(
+      true,
+    );
+  });
+
+  it("pickNext skips a flagged or asked ready item and takes the next clean one", () => {
+    const ctx = makeAdmission();
+    const items = [flagged("WS-0001"), asked("WS-0002"), makeItem("WS-0003", "ready")];
+    const pick = pickNext(
+      makeConfig(),
+      makeState(),
+      items,
+      ["WS-0001", "WS-0002", "WS-0003"],
+      "box",
+      Infinity,
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(pick).toEqual({ id: "WS-0003", mode: "work", reasons: expect.any(Array) });
+    // the refused items still surface as candidates with their refusal reason
+    const candidates = listDispatchCandidates(
+      makeConfig(),
+      makeState(),
+      items,
+      ["WS-0001", "WS-0002", "WS-0003"],
+      "box",
+      "devin",
+      undefined,
+      ctx,
+    );
+    expect(candidates.find((c) => c.id === "WS-0001")?.admission?.ok).toBe(false);
+    expect(candidates.find((c) => c.id === "WS-0002")?.admission?.ok).toBe(false);
+  });
+});

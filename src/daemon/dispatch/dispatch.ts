@@ -762,6 +762,7 @@ export class Dispatcher {
         attempts: indexed.meta.attempts,
         dispatch_blocked: indexed.meta.dispatch_blocked,
         dispatch_push: indexed.meta.dispatch_push,
+        drop_request: indexed.meta.drop_request,
         findings: indexed.meta.findings?.length,
         claim: indexed.claim ? { ...indexed.claim, dead } : null,
         ai_review: indexed.meta.ai_review,
