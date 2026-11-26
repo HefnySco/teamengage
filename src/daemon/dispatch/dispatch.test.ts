@@ -876,6 +876,174 @@ describe("admission checks before a dispatch (TE-0208)", () => {
   });
 });
 
+describe("a giving-up run counts as failed even when the version moved (TE-0245)", () => {
+  const readDispatchState = () =>
+    JSON.parse(readFileSync(join(home, "dispatch", "ws.json"), "utf8")) as {
+      item_failures?: Record<string, number>;
+      tried_versions?: Record<string, number>;
+    };
+  const waitIdle = async (d: Dispatcher) => {
+    const deadline = Date.now() + 8000;
+    while (d.status().running.length > 0 && Date.now() < deadline) await sleep(40);
+  };
+  const waitFailures = async (id: string, count: number) => {
+    const deadline = Date.now() + 8000;
+    let saved: ReturnType<typeof readDispatchState> | undefined;
+    while (Date.now() < deadline) {
+      try {
+        saved = readDispatchState();
+      } catch {
+        saved = undefined;
+      }
+      if ((saved?.item_failures?.[id] ?? 0) >= count) return saved;
+      await sleep(40);
+    }
+    return saved;
+  };
+
+  // the child waits on a gate file so the simulated agent ops land before
+  // it exits — deterministic, unlike a fixed sleep
+  const newGate = () => {
+    const gate = join(home, `gate-${Math.random().toString(36).slice(2, 7)}`);
+    return {
+      cmd: `while [ ! -f ${gate} ]; do sleep 0.05; done`,
+      open: () => writeFileSync(gate, "go"),
+      close: () => rmSync(gate, { force: true }),
+    };
+  };
+
+  it("a run that claims, logs notes, releases and exits 0 counts as failed; two such runs block the item", async () => {
+    const gate = newGate();
+    gate.close();
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "${gate.cmd}" }\n`,
+      [{ id: "WS-0001", status: "ready" }],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+    // the GL-0215 loop: the agent claims, writes logs, releases, exits 0 —
+    // the version moved yet nothing was submitted; before TE-0245 the
+    // version change made this look like progress and reset the counter
+    const giveUp = async () => {
+      const agent = await ops.hello("coder");
+      await ops.claim("WS-0001", agent.session);
+      await ops.log("WS-0001", agent.session, "read the task and looked around");
+      await ops.release("WS-0001", agent.session, "giving up");
+      sessions.disconnect(agent.session.id);
+    };
+
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    await giveUp();
+    gate.open();
+    await waitIdle(d);
+    const saved = await waitFailures("WS-0001", 1);
+    expect(saved?.item_failures?.["WS-0001"]).toBe(1);
+    expect(ops.index.get("WS-0001")!.meta.dispatch_blocked).toBeUndefined();
+    // the tried marker sits at the post-release version — a tick alone does
+    // not restart it
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(1);
+
+    // a version bump clears the tried marker — the next tick runs it again
+    gate.close();
+    await ops.note("WS-0001", "human", "still open");
+    d.tick();
+    await untilEvent("dispatch_start", 2);
+    await giveUp();
+    gate.open();
+    await waitIdle(d);
+    const deadline = Date.now() + 8000;
+    while (!ops.index.get("WS-0001")!.meta.dispatch_blocked && Date.now() < deadline) {
+      await sleep(40);
+    }
+    const blocked = ops.index.get("WS-0001")!.meta.dispatch_blocked;
+    expect(blocked?.reason).toContain("two failed dispatch runs");
+    expect(blocked?.reason).toContain("no submission");
+    // admission refuses it — no more starts
+    d.tick();
+    await sleep(150);
+    expect(events.filter((e) => e.kind === "dispatch_start")).toHaveLength(2);
+    const matched = d.status().matched.find((c) => c.id === "WS-0001");
+    expect(matched?.admission?.ok).toBe(false);
+    expect(matched?.admission?.reasons.join(" ")).toContain("dispatch_blocked");
+  });
+
+  it("runs that end in_review, waiting or via handoff do not count as failed", async () => {
+    const gate = newGate();
+    gate.close();
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 1\n  agents:\n    - { role: coder, command: "${gate.cmd}" }\n`,
+      [
+        { id: "WS-0001", status: "ready" },
+        { id: "WS-0002", status: "ready" },
+        { id: "WS-0003", status: "ready" },
+      ],
+    );
+    const ops = new WorkspaceOps(wsr, sessions, undefined, home);
+    const d = dispatcher(wsr);
+
+    // submit → in_review
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    const submitter = await ops.hello("coder");
+    await ops.claim("WS-0001", submitter.session);
+    await ops.submit("WS-0001", submitter.session, { summary: "work done" });
+    gate.open();
+    await waitIdle(d);
+
+    // ask → waiting
+    gate.close();
+    d.tick();
+    await untilEvent("dispatch_start", 2);
+    const asker = await ops.hello("coder");
+    await ops.claim("WS-0002", asker.session);
+    await ops.ask("WS-0002", asker.session, "which port?");
+    gate.open();
+    await waitIdle(d);
+
+    // handoff → back to ready, but meta.attempts grew — not a dispatch failure
+    gate.close();
+    d.tick();
+    await untilEvent("dispatch_start", 3);
+    const quitter = await ops.hello("coder");
+    await ops.claim("WS-0003", quitter.session);
+    await ops.handoff("WS-0003", quitter.session, {
+      problem: "cannot build here",
+      tried: "npm run build",
+    });
+    sessions.disconnect(quitter.session.id);
+    gate.open();
+    await waitIdle(d);
+
+    expect(ops.index.get("WS-0001")!.meta.status).toBe("in_review");
+    expect(ops.index.get("WS-0002")!.meta.status).toBe("waiting");
+    const handedOff = ops.index.get("WS-0003")!;
+    expect(handedOff.meta.status).toBe("ready");
+    expect(handedOff.meta.attempts).toBe(1);
+
+    // none of the three runs grew the per-item failure count
+    const deadline = Date.now() + 8000;
+    let saved: ReturnType<typeof readDispatchState> | undefined;
+    while (Date.now() < deadline) {
+      try {
+        saved = readDispatchState();
+      } catch {
+        saved = undefined;
+      }
+      if (saved) break;
+      await sleep(40);
+    }
+    expect(saved?.item_failures?.["WS-0001"]).toBeUndefined();
+    expect(saved?.item_failures?.["WS-0002"]).toBeUndefined();
+    expect(saved?.item_failures?.["WS-0003"]).toBeUndefined();
+    expect(ops.index.get("WS-0001")!.meta.dispatch_blocked).toBeUndefined();
+    expect(ops.index.get("WS-0002")!.meta.dispatch_blocked).toBeUndefined();
+    expect(ops.index.get("WS-0003")!.meta.dispatch_blocked).toBeUndefined();
+  });
+});
+
 describe("forced correction levers (TE-0209)", () => {
   it("pause stops new starts and names the reason in why_idle; resume restarts them", async () => {
     const wsr = await makeWs(

@@ -75,8 +75,8 @@ interface ActiveChild extends RunningDispatch {
   sessionId?: string;
   /** TE-0229: the run log this child's stdout/stderr is piped to */
   log?: string;
-  /** TE-0219: item version when an orphan was reattached — the reap baseline */
-  baselineVersion?: number;
+  /** TE-0219: item meta.attempts when an orphan was reattached — the reap baseline */
+  baselineAttempts?: number;
 }
 
 interface ResolvedCommand {
@@ -668,15 +668,17 @@ export class Dispatcher {
   /**
    * TE-0219: a rediscovered orphan has no ChildProcess handle — the pid
    * probe is its exit. Reaped like a normal exit: the token's session is
-   * closed, and "gone with no status change since adoption" counts as a
-   * failed run under the TE-0208 breaker.
+   * closed, and "gone with the item ready or in_progress and no submission"
+   * counts as a failed run under the TE-0208 breaker (TE-0245: the outcome
+   * decides, not the version — a handoff grew meta.attempts and is no
+   * failure).
    */
   private reapAdoptedChildren(): void {
     for (const entry of [...this.children.values()]) {
       if (entry.child !== undefined || entry.pid <= 0 || pidAlive(entry.pid)) continue;
       this.children.delete(entry.id);
       if (this.pendingClaim === entry.id) this.pendingClaim = undefined;
-      const baseline = entry.baselineVersion;
+      const baseline = entry.baselineAttempts ?? 0;
       const cleanup =
         entry.token && this.baseUrl
           ? this.closeRemoteSession(this.baseUrl, entry.token)
@@ -691,13 +693,12 @@ export class Dispatcher {
           ).index.get(entry.id);
           if (
             entry.mode !== "review" &&
-            baseline !== undefined &&
             current &&
-            current.meta.version === baseline &&
+            (current.meta.attempts ?? 0) <= baseline &&
             (current.meta.status === "ready" || current.meta.status === "in_progress")
           ) {
-            this.triedVersions.set(entry.id, baseline);
-            this.recordItemFailure(entry.id, "discovered agent exited with no status change");
+            this.triedVersions.set(entry.id, current.meta.version);
+            this.recordItemFailure(entry.id, "discovered agent exited with no submission");
           } else {
             this.itemFailures.delete(entry.id);
           }
@@ -1009,7 +1010,9 @@ export class Dispatcher {
             : undefined
           : this.pickCoder(resolved, pickedItem?.tier);
       if (!cmdSpec) break;
-      const startVersion = ops.index.get(pick.id)?.meta.version ?? 0;
+      const atStart = ops.index.get(pick.id);
+      const startVersion = atStart?.meta.version ?? 0;
+      const startAttempts = atStart?.meta.attempts ?? 0;
       onlineIds.add(pick.id);
       state.running.set(pick.id, pick.mode);
       if (pick.mode === "work") {
@@ -1020,7 +1023,7 @@ export class Dispatcher {
         this.fixes.set(pick.id, (this.fixes.get(pick.id) ?? 0) + 1);
         this.persist();
       }
-      this.startItem(pick, cmdSpec, startVersion);
+      this.startItem(pick, cmdSpec, startVersion, startAttempts);
       if (pick.mode === "work") break;
     }
   }
@@ -1176,7 +1179,7 @@ export class Dispatcher {
         started_at: p.started_at || new Date().toISOString(),
         token: p.token,
         sessionId: session.id,
-        baselineVersion: it.meta.version,
+        baselineAttempts: it.meta.attempts ?? 0,
         log: this.latestLogPath(item),
       });
       this.emit("dispatch_discover", {
@@ -1210,6 +1213,7 @@ export class Dispatcher {
     pick: Pick,
     cmdSpec: { command: string; source: "dispatch" | "run" },
     startVersion: number,
+    startAttempts: number,
   ): void {
     const role: "coder" | "reviewer" = pick.mode === "review" ? "reviewer" : "coder";
     const startedAt = new Date().toISOString();
@@ -1223,7 +1227,7 @@ export class Dispatcher {
     this.children.set(pick.id, activeEntry);
 
     if (!this.baseUrl) {
-      this.spawnChildProcess(pick, role, cmdSpec, startVersion, activeEntry, undefined);
+      this.spawnChildProcess(pick, role, cmdSpec, startAttempts, activeEntry, undefined);
       return;
     }
 
@@ -1245,7 +1249,7 @@ export class Dispatcher {
         }
         activeEntry.token = opened.token;
         activeEntry.sessionId = opened.sessionId;
-        this.spawnChildProcess(pick, role, cmdSpec, startVersion, activeEntry, opened.token);
+        this.spawnChildProcess(pick, role, cmdSpec, startAttempts, activeEntry, opened.token);
       })
       .catch((err: Error) => {
         this.children.delete(pick.id);
@@ -1258,7 +1262,7 @@ export class Dispatcher {
     pick: Pick,
     role: "coder" | "reviewer",
     cmdSpec: { command: string; source: "dispatch" | "run" },
-    startVersion: number,
+    startAttempts: number,
     activeEntry: ActiveChild,
     token: string | undefined,
   ): void {
@@ -1341,15 +1345,21 @@ export class Dispatcher {
               this.wsr.links,
               this.home,
             ).index.get(pick.id);
+            // TE-0245: the outcome decides, not the version — a run that
+            // claimed, wrote logs and released bumps the version yet ends
+            // ready with no submission, and counts as a failed run. A
+            // handoff also ends ready but grew meta.attempts, which already
+            // counts toward tier escalation.
+            const endedInHandoff = (current?.meta.attempts ?? 0) > startAttempts;
             if (
               pick.mode !== "review" &&
               current &&
-              current.meta.version === startVersion &&
+              !endedInHandoff &&
               (current.meta.status === "ready" || current.meta.status === "in_progress")
             ) {
-              this.triedVersions.set(pick.id, startVersion);
-              // TE-0208: a clean exit with no progress counts as a failed run
-              this.recordItemFailure(pick.id, "finished with no status change");
+              this.triedVersions.set(pick.id, current.meta.version);
+              // TE-0208: a clean exit with no submission counts as a failed run
+              this.recordItemFailure(pick.id, "finished with no submission");
             } else {
               this.itemFailures.delete(pick.id);
             }
@@ -1380,8 +1390,9 @@ export class Dispatcher {
 
   /**
    * TE-0208 per-item breaker: two failed runs on one item (nonzero exit or a
-   * clean exit with no progress) write dispatch_blocked on the item — admit
-   * refuses it until a human unblocks. The Log line names the last reason.
+   * clean exit that left the item unsubmitted — TE-0245) write
+   * dispatch_blocked on the item — admit refuses it until a human unblocks.
+   * The Log line names the last reason.
    */
   private recordItemFailure(itemId: string, why: string): void {
     const count = (this.itemFailures.get(itemId) ?? 0) + 1;
