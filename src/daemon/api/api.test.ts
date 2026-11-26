@@ -516,6 +516,56 @@ describe("review_unblocks: a dependency in review lets dependents start", () => 
   });
 });
 
+describe("review verdict idempotency (TE-0247)", () => {
+  it("a repeated identical verdict writes no second event; a differing verdict records as a correction; a fresh submit can be reviewed again", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "idem review" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const worker = ctx.sessions.hello("idem-worker");
+    const reviewer = ctx.sessions.hello("idem-reviewer");
+    await ops.claim(id, worker);
+    await ops.submit(id, worker, { what: "task done", how: "ran the steps" });
+    expect(store.idx.get(id)!.meta.status).toBe("in_review");
+
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const reviewEvents = async () =>
+      (await readAllEvents(join(wsr.ws.plansDir, "events"))).events.filter(
+        (e) => e.item === id && e.action === "review",
+      );
+
+    // the first verdict records one review event
+    const r1 = await ops.review(id, reviewer, "ok", undefined, "verified the work");
+    expect(r1.events.filter((e) => e.action === "review").length).toBe(1);
+    expect((await reviewEvents()).length).toBe(1);
+
+    // an identical repeat from the same session is a no-op — no event, no version bump
+    const version = store.idx.get(id)!.meta.version;
+    const r2 = await ops.review(id, reviewer, "ok", undefined, "verified the work");
+    expect(r2.events).toEqual([]);
+    expect((await reviewEvents()).length).toBe(1);
+    expect(store.idx.get(id)!.meta.version).toBe(version);
+
+    // a contradicting verdict records as a correction — latest stands (D-0138)
+    const ask = { problem: "the work is not right", recommendation: "fix it and resubmit" };
+    const r3 = await ops.review(id, reviewer, "issues", "changed my mind", "second thoughts", undefined, undefined, undefined, ask);
+    expect(r3.events.some((e) => e.action === "review")).toBe(true);
+    expect((await reviewEvents()).length).toBe(2);
+    expect(store.idx.get(id)!.meta.ai_review?.verdict).toBe("issues");
+
+    // a fresh submit clears the verdict — the item can be reviewed again
+    // (the issues verdict already sent it back to in_progress with the claim)
+    await ops.submit(id, worker, { what: "task done v2", how: "ran the steps again" });
+    const r4 = await ops.review(id, reviewer, "issues", "still not right", "second pass", undefined, undefined, undefined, ask);
+    expect(r4.events.some((e) => e.action === "review")).toBe(true);
+    expect((await reviewEvents()).length).toBe(3);
+  });
+});
+
 describe("accept waits for dependencies (TE-0194)", () => {
   it("B depends on A: accept refuses while A is open, --force lands it, auto-accept skips then takes it", async () => {
     const { WorkspaceOps } = await import("./ops.js");

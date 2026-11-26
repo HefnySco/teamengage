@@ -34,7 +34,7 @@ import {
 import { searchDocs, type SearchDoc, type SearchHit } from "../../core/index/search.js";
 import { JobStore } from "../../core/ops/job.js";
 import { renderMermaid, type MermaidOpts } from "../../core/mermaid/mermaid.js";
-import type { Actor } from "../../core/state/machine.js";
+import { MAX_AI_BOUNCES, type Actor } from "../../core/state/machine.js";
 import type { Claim } from "../../core/model/claim.js";
 import type { ItemMetrics } from "../../core/metrics/metrics.js";
 import {
@@ -2107,6 +2107,26 @@ export class WorkspaceOps {
       ...(verdict === "ok" && !needsHuman ? [] : askHumanWarnings(askHuman, true)),
     ].filter((w): w is string => !!w);
     const it = this.item(id);
+    // TE-0247: one verdict per submission. A fresh submit clears
+    // meta.ai_review, so a standing verdict belongs to the current
+    // submission. The same session repeating an identical verdict is a
+    // no-op; a changed verdict or changed review content records —
+    // latest stands (D-0138).
+    const prior = it.meta.ai_review;
+    if (prior?.reviewed_by === session.id && prior.verdict === verdict) {
+      const capped =
+        verdict === "issues" &&
+        (await this.aiBouncesSinceHumanTouch(id)) >= MAX_AI_BOUNCES;
+      const flagHuman = !!needsHuman || capped || !!it.meta.unverified_reason;
+      const identical =
+        (prior.needs_human === true) === flagHuman &&
+        prior.note === note &&
+        prior.summary === summary &&
+        prior.report === report &&
+        JSON.stringify(prior.ask_human ?? null) === JSON.stringify(askHuman ?? null);
+      if (identical)
+        return { meta: it.meta, effects: [], external: [], events: [], warnings };
+    }
     const claim = it.claim;
     const r = await this.store.perform(
       id,
