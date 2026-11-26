@@ -689,3 +689,120 @@ describe("human-wait gate — drop_request and open questions (TE-0246)", () => 
     expect(candidates.find((c) => c.id === "WS-0002")?.admission?.ok).toBe(false);
   });
 });
+
+describe("exclude_domains — the per-machine admission gate (TE-0248)", () => {
+  const makeAdmission = (overrides: Partial<AdmissionContext> = {}): AdmissionContext => ({
+    machine: "box",
+    now: Date.now(),
+    maxAttempts: 5,
+    fixRounds: 3,
+    fixes: new Map(),
+    coderNames: ["devin"],
+    mintedSessions: new Set(["devin@box#aaaa"]),
+    isLive: () => false,
+    takeoverGraceMs: 15 * 60_000,
+    excludeDomains: ["android"],
+    ...overrides,
+  });
+
+  it("refuses a work pick on an #android item even when the filter matches it, and names the domain", () => {
+    const ctx = makeAdmission();
+    const item = makeItem("WS-0001", "ready", { domains: ["android"] });
+    const a = admit(item, "work", ctx);
+    expect(a.ok).toBe(false);
+    expect(a.reasons.join(" ")).toContain("android");
+    // a filter clause that positively matches changes nothing — the gate wins
+    const filter = parseDispatchFilter("WS-xxxx");
+    const items = [item, makeItem("WS-0002", "ready")];
+    const pick = pickNext(
+      makeConfig(),
+      makeState(),
+      items,
+      ["WS-0001", "WS-0002"],
+      "box",
+      Infinity,
+      "devin",
+      filter,
+      ctx,
+    );
+    expect(pick).toEqual({ id: "WS-0002", mode: "work", reasons: expect.any(Array) });
+    const refused = listDispatchCandidates(
+      makeConfig(),
+      makeState(),
+      items,
+      ["WS-0001", "WS-0002"],
+      "box",
+      "devin",
+      filter,
+      ctx,
+    ).find((c) => c.id === "WS-0001");
+    expect(refused?.admission?.ok).toBe(false);
+    expect(refused?.admission?.reasons.join(" ")).toContain("android");
+  });
+
+  it("an item with no excluded domain admits as before", () => {
+    const ctx = makeAdmission();
+    expect(admit(makeItem("WS-0001", "ready", { domains: ["mavlink"] }), "work", ctx).ok).toBe(
+      true,
+    );
+    expect(admit(makeItem("WS-0002", "ready"), "work", ctx).ok).toBe(true);
+  });
+
+  it("an unset or empty exclude_domains gates nothing — case-insensitive either way", () => {
+    const item = makeItem("WS-0001", "ready", { domains: ["Android"] });
+    expect(admit(item, "work", makeAdmission({ excludeDomains: undefined })).ok).toBe(true);
+    expect(admit(item, "work", makeAdmission({ excludeDomains: [] })).ok).toBe(true);
+    // configured 'ANDROID' still matches the item's 'Android' — both normalize
+    const a = admit(item, "work", makeAdmission({ excludeDomains: ["ANDROID"] }));
+    expect(a.ok).toBe(false);
+    expect(a.reasons.join(" ")).toContain("#android");
+  });
+
+  it("gates every mode — an excluded domain never runs on this machine", () => {
+    const ctx = makeAdmission();
+    const dead = {
+      claim: { holder: "devin@box#aaaa", machine: "box", dead: true, last_seen: new Date(Date.now() - 20 * 60_000).toISOString() },
+    };
+    const tagged = (status: string) => makeItem("WS-0001", status, { domains: ["android"] });
+    expect(admit(tagged("ready"), "work", ctx).ok).toBe(false);
+    expect(
+      admit(tagged("in_review"), "review", { ...ctx, reviewerModels: ["sonnet"] }).ok,
+    ).toBe(false);
+    expect(
+      admit(
+        makeItem("WS-0001", "in_review", {
+          domains: ["android"],
+          claim: { holder: "a@box#1", machine: "box" },
+          ai_review: { verdict: "issues", note: "x" },
+        }),
+        "fix",
+        ctx,
+      ).ok,
+    ).toBe(false);
+    expect(
+      admit(makeItem("WS-0001", "in_progress", { domains: ["android"], ...dead }), "resume", ctx)
+        .ok,
+    ).toBe(false);
+    const unminted = {
+      claim: { holder: "other@box#zzzz", machine: "box", dead: true, last_seen: new Date(Date.now() - 20 * 60_000).toISOString() },
+    };
+    expect(
+      admit(makeItem("WS-0001", "in_progress", { domains: ["android"], ...unminted }), "takeover", ctx)
+        .ok,
+    ).toBe(false);
+  });
+
+  it("a pushed item is still refused — push beats the filter, never the machine gate", () => {
+    const ctx = makeAdmission();
+    const item = makeItem("WS-0001", "ready", {
+      domains: ["android"],
+      dispatch_push: { at: "2026-11-26T00:00:00Z" },
+    });
+    expect(matchesDispatchFilter(parseDispatchFilter("SE-xxxx"), item, "work", makeMap([item]))).toBe(
+      true,
+    );
+    const a = admit(item, "work", ctx);
+    expect(a.ok).toBe(false);
+    expect(a.reasons.join(" ")).toContain("android");
+  });
+});

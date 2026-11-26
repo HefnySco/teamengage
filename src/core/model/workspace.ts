@@ -356,6 +356,12 @@ export const RunConfig = z.object({
   concurrency: z.number().int().min(1).default(1),
   /** times the coder is sent back to fix an `issues` review before the human decides */
   fix_rounds: z.number().int().min(0).default(1),
+  /**
+   * TE-0248: domains this machine never runs — a permanent admission gate.
+   * admit() refuses any item whose domains intersect this list, whatever
+   * the dispatch filter says. Absent or empty: no gate.
+   */
+  exclude_domains: z.array(z.string()).optional(),
 });
 export type RunConfig = z.infer<typeof RunConfig>;
 

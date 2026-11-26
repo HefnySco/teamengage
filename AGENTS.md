@@ -309,7 +309,13 @@ Ask the human which agent CLI should **code** and which should **review**
 run:
   coder: devin -p --model swe-2-high --permission-mode accept-edits --
   reviewer: claude -p "$TE_PROMPT" --model sonnet --permission-mode acceptEdits --allowedTools Bash Read Edit Write Glob Grep
+  exclude_domains: [android]    # domains this machine never runs — a permanent admission gate
 ```
+
+`exclude_domains` is optional: an item tagged with a listed domain is
+refused by admission on this machine, whatever the dispatch filter says —
+use it for work this host cannot do (no Android SDK, no GPU). Absent or
+empty means no gate.
 
 **Check:** `te run --dry-run` names the first task it would start. Details:
 `team/README.md`.
@@ -344,6 +350,9 @@ te discover                             # re-attach agents still running after a
 
 - The live limit is `max_issues`. A selector filter narrows what is picked
   (`plan:TE-0212`, for example).
+- `exclude_domains` under `run:` in `~/.teamengage/machine.yaml` is a
+  permanent gate: an item tagged with a listed domain is never admitted on
+  this machine, whatever the filter says.
 - An item is refused after two failed runs, while it is blocked, or when no
   reviewer model differs from the coder's. The reason shows on its card.
 - Dispatch state survives a daemon restart. Run `te discover` after one to

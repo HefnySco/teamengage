@@ -102,6 +102,8 @@ export interface AdmissionContext {
   reviewModels?: { deep?: string; quick?: string; deep_from_tier: Tier };
   /** parsed --model of each configured reviewer command, config order — undefined = declares none (TE-0225) */
   reviewerModels?: (string | undefined)[];
+  /** machine.yaml run.exclude_domains — domains this machine never runs, every mode (TE-0248) */
+  excludeDomains?: string[];
 }
 
 export interface Admission {
@@ -140,6 +142,14 @@ export function reviewerModelAllowed(
 export function admit(item: RunItem, mode: Mode, ctx: AdmissionContext): Admission {
   const failed: string[] = [];
   const passed: string[] = [];
+  // TE-0248: machine.yaml run.exclude_domains is a permanent gate — an item
+  // in an excluded domain never runs on this machine, whatever the filter
+  // or a dispatch_push flag says. The reason names the refused domain.
+  const excluded = new Set((ctx.excludeDomains ?? []).map((d) => normalizeDomain(d)));
+  if (excluded.size) {
+    const hit = (item.domains ?? []).map((d) => normalizeDomain(d)).find((d) => excluded.has(d));
+    if (hit) failed.push(`domain #${hit} excluded by machine.yaml exclude_domains`);
+  }
   const attempts = item.attempts ?? 0;
   if (attempts >= ctx.maxAttempts) {
     failed.push(`attempts ${attempts} ≥ max_attempts ${ctx.maxAttempts}`);

@@ -91,6 +91,8 @@ interface ResolvedCommands {
   reviewers: ResolvedCommand[];
   fixRounds: number;
   defaultConcurrency: number;
+  /** machine.yaml run.exclude_domains — domains this machine never runs (TE-0248) */
+  excludeDomains?: string[];
 }
 
 const LEGACY_TE_RUN_RE = /(?:^|\s|\/)(?:te|teamengage)\s+run(?:\s|$)/;
@@ -605,6 +607,7 @@ export class Dispatcher {
       reviewers,
       fixRounds: runCfg.fix_rounds,
       defaultConcurrency: hasRunBlock ? runCfg.concurrency : 2,
+      excludeDomains: runCfg.exclude_domains,
     };
   }
 
@@ -790,6 +793,7 @@ export class Dispatcher {
       takeoverGraceMs: parseDuration(this.wsr.ws.config.takeover_grace_after),
       reviewModels: this.wsr.ws.config.review_models,
       reviewerModels: resolved.reviewers.map((entry) => commandModel(entry.command)),
+      excludeDomains: resolved.excludeDomains,
     };
   }
 

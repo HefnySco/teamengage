@@ -324,6 +324,30 @@ describe("Dispatcher per-item launch and online_issues cap (TE-0203)", () => {
     expect(start?.data.command).toBe("true #");
   });
 
+  it("machine.yaml run.exclude_domains refuses excluded items whatever the filter says (TE-0248)", async () => {
+    mkdirSync(join(home, ".teamengage"), { recursive: true });
+    writeFileSync(
+      join(home, ".teamengage", "machine.yaml"),
+      `name: test\nrun:\n  coder: 'true #'\n  exclude_domains: [android]\n`,
+    );
+    const wsr = await makeWs(
+      `dispatch:\n  enabled: true\n  max_issues: 2\n`,
+      [
+        { id: "WS-0001", status: "ready", domains: ["android"] },
+        { id: "WS-0002", status: "ready" },
+      ],
+    );
+    const d = dispatcher(wsr);
+    d.tick();
+    await untilEvent("dispatch_start", 1);
+    // only the untagged item starts — the #android one is refused by admission
+    const start = events.find((e) => e.kind === "dispatch_start");
+    expect(start?.data.id).toBe("WS-0002");
+    const refused = d.status().matched.find((c) => c.id === "WS-0001");
+    expect(refused?.admission?.ok).toBe(false);
+    expect(refused?.admission?.reasons.join(" ")).toContain("android");
+  });
+
   it("a command that fails 3 times in a row turns dispatch off and writes an event", async () => {
     // three ready items: the per-item breaker (TE-0208) blocks WS-0001 after
     // two failures, the next two items feed the third consecutive role fail

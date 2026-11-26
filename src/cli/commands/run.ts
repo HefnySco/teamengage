@@ -304,6 +304,7 @@ export async function runCmd(args: string[], home?: string): Promise<number> {
       takeoverGraceMs: parseDuration(ws.takeover_grace_after ?? "15m"),
       reviewModels: ws.review_models,
       reviewerModels: cfg.reviewer ? [commandModel(cfg.reviewer)] : [],
+      excludeDomains: cfg.exclude_domains,
     };
     let p: Pick | undefined;
     while (!stopping && (p = pickNext(cfg, st, items, ready, ws.machine, maxTasks, undefined, filter, admission))) {
