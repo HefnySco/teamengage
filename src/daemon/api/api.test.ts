@@ -564,6 +564,43 @@ describe("review verdict idempotency (TE-0247)", () => {
     expect(r4.events.some((e) => e.action === "review")).toBe(true);
     expect((await reviewEvents()).length).toBe(3);
   });
+
+  it("a repeat that changes only findings records; empty strings compare equal to absent fields", async () => {
+    const { WorkspaceOps } = await import("./ops.js");
+    const wsr = ctx.workspaces.get("ws")!;
+    const store = wsr.store;
+    const ops = new WorkspaceOps(wsr, ctx.sessions);
+    const human = { kind: "human" as const, session: "human", machine: "test" };
+    const { ids } = await store.createItems([{ type: "task", title: "idem findings" }], human);
+    const [id] = ids;
+    await ops.approve(id);
+    const worker = ctx.sessions.hello("idem-findings-worker");
+    const reviewer = ctx.sessions.hello("idem-findings-reviewer");
+    await ops.claim(id, worker);
+    await ops.submit(id, worker, { what: "task done", how: "ran the steps" });
+
+    const findings = [{ text: "fix the parser", severity: "must" as const }];
+    await ops.review(id, reviewer, "ok", undefined, "verified the work", undefined, undefined, findings);
+
+    const { readAllEvents } = await import("../../core/events/log.js");
+    const reviewEvents = async () =>
+      (await readAllEvents(join(wsr.ws.plansDir, "events"))).events.filter(
+        (e) => e.item === id && e.action === "review",
+      );
+
+    // empty strings land as absent fields — this is the same verdict
+    const same = await ops.review(id, reviewer, "ok", "", "verified the work", undefined, "", findings);
+    expect(same.events).toEqual([]);
+    expect((await reviewEvents()).length).toBe(1);
+
+    // a changed findings list is changed review content — it records
+    const changed = await ops.review(id, reviewer, "ok", "", "verified the work", undefined, "", [
+      { text: "fix the serializer", severity: "must" },
+    ]);
+    expect(changed.events.some((e) => e.action === "review")).toBe(true);
+    expect((await reviewEvents()).length).toBe(2);
+    expect(store.idx.get(id)!.meta.findings?.[0]?.text).toBe("fix the serializer");
+  });
 });
 
 describe("accept waits for dependencies (TE-0194)", () => {

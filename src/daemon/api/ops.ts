@@ -2120,10 +2120,12 @@ export class WorkspaceOps {
       const flagHuman = !!needsHuman || capped || !!it.meta.unverified_reason;
       const identical =
         (prior.needs_human === true) === flagHuman &&
-        prior.note === note &&
-        prior.summary === summary &&
-        prior.report === report &&
-        JSON.stringify(prior.ask_human ?? null) === JSON.stringify(askHuman ?? null);
+        prior.note === (note || undefined) &&
+        prior.summary === (summary || undefined) &&
+        prior.report === (report || undefined) &&
+        JSON.stringify(prior.ask_human ?? null) === JSON.stringify(askHuman ?? null) &&
+        JSON.stringify(it.meta.findings?.length ? it.meta.findings : null) ===
+          JSON.stringify(findings?.length ? findings : null);
       if (identical)
         return { meta: it.meta, effects: [], external: [], events: [], warnings };
     }
