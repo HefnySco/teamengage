@@ -17,7 +17,22 @@ export class EventBus {
   private clients = new Set<FastifyReply>();
   private buffer: Event[] = [];
 
-  constructor(private bufferSize = 2000) {}
+  constructor(private bufferSize = 2000) {
+    // heartbeat: a silent stream looks idle to NATs and proxies, and a
+    // half-open socket never errors client-side — the UI then shows stale
+    // data forever. A beat every 15 s keeps the connection live and gives
+    // the browser a liveness signal it can supervise.
+    const beat = setInterval(() => {
+      for (const reply of this.clients) {
+        try {
+          reply.raw.write(`event: heartbeat\ndata: {}\n\n`);
+        } catch {
+          this.clients.delete(reply);
+        }
+      }
+    }, 15_000);
+    beat.unref();
+  }
 
   publish(e: Event): void {
     this.buffer.push(e);

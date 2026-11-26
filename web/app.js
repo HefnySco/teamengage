@@ -52,10 +52,28 @@ const notify = (e) => listeners.forEach((f) => f(e));
 // tabs listen there and open no socket at all.
 const eventBus = "BroadcastChannel" in window ? new BroadcastChannel("te-events") : null;
 if (eventBus) eventBus.onmessage = (e) => notify(e.data);
+// the daemon beats every 15 s; silence past 75 s means the socket is
+// half-open (sleep, network drop, a dead daemon that never sent a FIN) —
+// EventSource cannot detect that itself, so a supervisor reopens it.
+const BEAT_TIMEOUT_MS = 75_000;
+let lastBeat = Date.now();
 const openSocket = () => {
   const es = new EventSource("/events");
-  const fan = (msg) => (notify(msg), eventBus?.postMessage(msg));
+  let firstBeat = true;
+  const fan = (msg) => ((lastBeat = Date.now()), notify(msg), eventBus?.postMessage(msg));
   es.onmessage = (e) => fan({ kind: "event", data: JSON.parse(e.data) });
+  es.addEventListener("heartbeat", () => {
+    lastBeat = Date.now();
+    if (firstBeat) {
+      firstBeat = false;
+      // a fresh socket may have missed events while it was down or while the
+      // daemon restarted — one sync pulse refetches every view; its own kind
+      // keeps it out of the floor logs
+      const msg = { kind: "socket_sync", data: {} };
+      notify(msg);
+      eventBus?.postMessage(msg);
+    }
+  });
   for (const kind of [
     "watch", "reconcile", "auto_accept", "auto_archive", "auto_release", "peer_timeout",
     "auto_source_done",
@@ -63,6 +81,13 @@ const openSocket = () => {
   ]) {
     es.addEventListener(kind, (e) => fan({ kind, data: JSON.parse(e.data) }));
   }
+  const guard = setInterval(() => {
+    if (es.readyState === EventSource.CLOSED || Date.now() - lastBeat > BEAT_TIMEOUT_MS) {
+      clearInterval(guard);
+      es.close();
+      openSocket();
+    }
+  }, 20_000);
 };
 if (eventBus && navigator.locks) {
   // the lock is held until the tab unloads; the next queued tab then leads
@@ -309,6 +334,64 @@ const StarBtn = ({ i, reload }) => html`
       toggleStar(i, reload);
     }}><${StarIcon} filled=${Boolean(i.star_color)} /></button>`;
 
+// ---- dispatch filter toggle (board cards) -----------------------------------
+// a funnel next to the star on ready/in_review cards: click adds the item id
+// to the dispatch filter (the selector the dispatcher matches against), click
+// again removes it. Membership reads the raw selector text — a non-negated
+// token whose id part (before any :status suffix) equals the item id counts;
+// #-domain, -exclusion and plan:/in: tokens never do. FILTER_SEP is declared
+// with the filter editor below — module init order puts it in place before
+// any render.
+const funnelPaths = {
+  outline:
+    "M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.351.468l-2.5 1a.5.5 0 0 1-.649-.468V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2zm1 .5v1.308l4.372 4.968A.5.5 0 0 1 7 8.61v5.287l2 1V8.61a.5.5 0 0 1 .128-.334L13.5 3.308V2h-11z",
+  filled:
+    "M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.351.468l-2.5 1a.5.5 0 0 1-.649-.468V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z",
+};
+const FunnelIcon = ({ filled }) => html`
+  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+    <path d=${filled ? funnelPaths.filled : funnelPaths.outline} />
+  </svg>`;
+const filterIdMatch = (t, id) =>
+  !t.startsWith("-") &&
+  !t.startsWith("#") &&
+  !/^(plan|in):/i.test(t) &&
+  t.split(":")[0].toUpperCase() === id.toUpperCase();
+const filterHasId = (raw, id) => (raw ?? "").split(FILTER_SEP).filter(Boolean).some((t) => filterIdMatch(t, id));
+const filterWithoutId = (raw, id) =>
+  (raw ?? "")
+    .split(FILTER_SEP)
+    .filter(Boolean)
+    .filter((t) => !filterIdMatch(t, id))
+    .join(", ");
+const toggleDispatchFilter = async (i, dispatch, reload) => {
+  const raw = dispatch?.filter ?? "";
+  const next = filterHasId(raw, i.id)
+    ? filterWithoutId(raw, i.id)
+    : [raw.replace(/[\s,]+$/, ""), i.id].filter(Boolean).join(", ");
+  try {
+    await post("/api/dispatch", { filter: next });
+    toast(filterHasId(raw, i.id) ? `${i.id} removed from the dispatch filter` : `${i.id} added to the dispatch filter`, "warning");
+  } catch (e) {
+    toast(`${i.id}: ${e.message}`);
+  }
+  reload?.();
+};
+// rendered on ready/in_review cards only — anything else is outside the
+// states the dispatcher can pick from the board
+const DispatchFilterBtn = ({ i, dispatch, reload }) => {
+  if (i.status !== "ready" && i.status !== "in_review") return null;
+  const on = dispatch ? filterHasId(dispatch.filter ?? "", i.id) : false;
+  return html`<button class="icon-btn ${on ? "on text-primary" : ""}"
+    title=${on
+      ? `in the dispatch filter — click to remove ${i.id}`
+      : `add ${i.id} to the dispatch filter — dispatch picks it whenever it matches`}
+    onClick=${(e) => {
+      e.stopPropagation(); // don't open the item
+      toggleDispatchFilter(i, dispatch, reload);
+    }}><${FunnelIcon} filled=${on} /></button>`;
+};
+
 // one <path> (or several) per glyph — same inline convention as the icons above
 const glyph = (paths) => html`
   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" style="vertical-align:-.125em">
@@ -453,7 +536,23 @@ export function useApi(path, deps = []) {
   const reload = () => api(path).then((d) => (setErr(null), setData(d)), setErr);
   useEffect(() => {
     reload();
-    return onEvent(() => reload());
+    // returning to the tab refetches even when the socket never noticed a
+    // problem — throttled so a focus flicker does not burst
+    let lastFetch = Date.now();
+    const throttled = () => {
+      if (Date.now() - lastFetch < 5_000) return;
+      lastFetch = Date.now();
+      reload();
+    };
+    const onVisible = () => document.hidden || throttled();
+    addEventListener("focus", throttled);
+    document.addEventListener("visibilitychange", onVisible);
+    const off = onEvent(() => reload());
+    return () => {
+      off();
+      removeEventListener("focus", throttled);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, deps);
   return { data, err, reload };
 }
@@ -2627,6 +2726,8 @@ const Board = ({ onOpen }) => {
   const { data, reload } = useApi("/api/items");
   const { data: ws, reload: reloadWs } = useApi("/api/workspace");
   const { data: sessions } = useApi("/api/sessions");
+  // the dispatch filter string — the funnel toggle on ready/in_review cards
+  const { data: dispatch, reload: reloadDispatch } = useApi("/api/dispatch");
   const [ideaOpen, setIdeaOpen] = useState(false);
   const [q, setQ] = useState(() => loadSearch("te.board.q"));
   const [domain, setDomainState] = useState(() => loadSearch("te.board.domain"));
@@ -2852,6 +2953,7 @@ const Board = ({ onOpen }) => {
                             e.stopPropagation(); // don't open the item
                             archive([i.id]);
                           }}><${ArchiveIcon} /></button>`}
+                        <${DispatchFilterBtn} i=${i} dispatch=${dispatch} reload=${reloadDispatch} />
                         <${StarBtn} i=${i} reload=${reload} />
                       </span>
                     </div>
